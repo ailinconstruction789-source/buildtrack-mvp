@@ -52,8 +52,8 @@ export default function ConstructionApp() {
   // ==========================================
   // 1. STATES
   // ==========================================
-  const [allUsers, setAllUsers] = useState([]);
-  const [loggedInUser, setLoggedInUser] = useState(null);
+  const [allUsers, setAllUsers] = useState<any[]>([]);
+  const [loggedInUser, setLoggedInUser] = useState<any>(null);
   const [loginData, setLoginData] = useState({ username: '', pin: '' });
 
   const [view, setView] = useState('dashboard'); 
@@ -214,6 +214,7 @@ export default function ConstructionApp() {
   }, []);
 
   useEffect(() => { const fetchUsers = async () => { try { const { data } = await supabase.from('users').select('*').order('role', { ascending: true }).order('username', { ascending: true }); setAllUsers(data || []); } catch (err) { console.error(err); } }; fetchUsers(); }, []);
+ // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (loggedInUser) fetchAllData(); }, [loggedInUser]);
   useEffect(() => { setScheduleInputs({}); }, [selectedPlot?.id]);
 
@@ -237,7 +238,7 @@ export default function ConstructionApp() {
       if (payloads.length === 0) { setIsSubmitting(false); return showAlert('แจ้งเตือน', 'ไม่มีการแก้ไขข้อมูล หรือกรอกวันที่ไม่ครบครับ'); }
       for (const p of payloads) { if (new Date(p.planned_end) < new Date(p.planned_start)) throw new Error('วันสิ้นสุดต้องอยู่หลังวันเริ่มงานครับ'); await supabase.from('plot_task_schedules').delete().match({ plot_id: p.plot_id, task_template_id: p.task_template_id }); await supabase.from('plot_task_schedules').insert([p]); }
       showAlert('สำเร็จ', 'บันทึกแผนงานทั้งหมดเรียบร้อยแล้ว'); setScheduleInputs({}); await fetchAllData();
-    } catch (e) { showAlert('ข้อผิดพลาด', e.message); } setIsSubmitting(false);
+    } catch (e) { showAlert('Error', (e as Error).message); } setIsSubmitting(false);
   };
 
   const handleConfirmCopy = () => {
@@ -259,7 +260,7 @@ export default function ConstructionApp() {
   const handleMouseUp = () => { setIsDrawing(false); setLastDrawCell(null); };
   const paintCell = (x, y) => setMapGrid(prev => [...prev.filter(c => !((c.type === 'plot' || c.type === 'road') && c.x === x && c.y === y)), { id: `${x}-${y}`, type: mapTool, x, y, plotId: mapTool === 'plot' ? mapSelectedPlot : null }]);
   const eraseCell = (x, y) => setMapGrid(prev => prev.filter(c => !((c.type === 'plot' || c.type === 'road') && c.x === x && c.y === y)));
-  const handleSaveMap = async () => { setIsSubmitting(true); try { const finalGrid = [...mapGrid.filter(c => c.type !== 'config'), { id: 'GRID_CONFIG', type: 'config', cols: gridCols, rows: gridRows }]; await supabase.from('projects').update({ layout_data: finalGrid }).eq('name', selectedProject.name); showAlert('สำเร็จ', 'บันทึกแผนผังเรียบร้อย!'); await fetchAllData(); setSelectedProject(prev => ({ ...prev, layout_data: finalGrid })); setIsEditMapMode(false); } catch (error) { showAlert('Error', error.message); } finally { setIsSubmitting(false); } };
+  const handleSaveMap = async () => { setIsSubmitting(true); try { const finalGrid = [...mapGrid.filter(c => c.type !== 'config'), { id: 'GRID_CONFIG', type: 'config', cols: gridCols, rows: gridRows }]; await supabase.from('projects').update({ layout_data: finalGrid }).eq('name', selectedProject.name); showAlert('สำเร็จ', 'บันทึกแผนผังเรียบร้อย!'); await fetchAllData(); setSelectedProject(prev => ({ ...prev, layout_data: finalGrid })); setIsEditMapMode(false); } catch (e) { showAlert('Error', (e as Error).message); } finally { setIsSubmitting(false); } };
 
   // =========================================================================
   // 🌟 ADMIN / PROCUREMENT FORMS HANDLERS (ฟังก์ชันกรอกข้อมูลทำงานจริง 100%) 🌟
@@ -274,7 +275,7 @@ export default function ConstructionApp() {
           const { data } = await supabase.from('users').select('*').order('role', { ascending: true }).order('username', { ascending: true }); 
           setAllUsers(data || []); 
           showAlert('สำเร็จ', `เพิ่มผู้ใช้งานเรียบร้อยแล้ว!`); 
-      } catch (e) { showAlert('Error', e.message); } finally { setIsSubmitting(false); } 
+      } catch (e) { showAlert('Error', (e as Error).message); } finally { setIsSubmitting(false); } 
   };
   
   const handleDeleteUser = (id, name, role) => { 
@@ -284,7 +285,7 @@ export default function ConstructionApp() {
               await supabase.from('users').delete().eq('username', name); 
               const { data } = await supabase.from('users').select('*').order('role', { ascending: true }).order('username', { ascending: true }); 
               setAllUsers(data || []); closeDialog(); 
-          } catch (e) { showAlert('Error', e.message); } 
+          } catch (e) { showAlert('Error', (e as Error).message); } 
       }); 
   };
   
@@ -293,7 +294,7 @@ export default function ConstructionApp() {
       try { 
           await supabase.from('projects').insert([{ name: newProjectName.trim() }]); 
           setNewProjectName(''); await fetchAllData(); setView('dashboard'); showAlert('สำเร็จ', 'สร้างโครงการใหม่เรียบร้อยแล้ว');
-      } catch (e) { showAlert('Error', e.message); } finally { setIsSubmitting(false); } 
+      } catch (e) { showAlert('Error', (e as Error).message); } finally { setIsSubmitting(false); } 
   };
   
   const handleAddPlot = async () => { 
@@ -301,7 +302,7 @@ export default function ConstructionApp() {
       try { 
           await supabase.from('plots').insert([{ id: newPlot.id.trim(), house_type_id: newPlot.house_type_id, foreman_name: newPlot.foreman_name, project_name: selectedProject.name }]); 
           setNewPlot({ id: '', house_type_id: '', foreman_name: '' }); await fetchAllData(); setView('project-detail'); showAlert('สำเร็จ', 'เพิ่มแปลงบ้านลงโครงการเรียบร้อยแล้ว');
-      } catch (e) { showAlert('Error', e.message); } finally { setIsSubmitting(false); } 
+      } catch (e) { showAlert('Error', (e as Error).message); } finally { setIsSubmitting(false); } 
   };
   
   const handleAddContractor = async () => { 
@@ -309,12 +310,12 @@ export default function ConstructionApp() {
       try { 
           await supabase.from('contractors').insert([{ name: newContractor.name.trim(), phone: newContractor.phone.trim() }]); 
           setNewContractor({ name: '', phone: '' }); await fetchAllData(); showAlert('สำเร็จ', 'เพิ่มรายชื่อช่างใหม่เรียบร้อยแล้ว');
-      } catch (e) { showAlert('Error', e.message); } finally { setIsSubmitting(false); } 
+      } catch (e) { showAlert('Error', (e as Error).message); } finally { setIsSubmitting(false); } 
   };
   
   const handleDeleteContractor = (id, name) => { 
       showConfirm('ยืนยันลบ', `ลบรายชื่อช่าง ${name} ออกจากระบบ?`, async () => { 
-          try { await supabase.from('contractors').delete().eq('id', id); await fetchAllData(); closeDialog(); } catch (e) { showAlert('Error', e.message); } 
+          try { await supabase.from('contractors').delete().eq('id', id); await fetchAllData(); closeDialog(); } catch (e) { showAlert('Error', (e as Error).message); } 
       }); 
   };
   
@@ -324,7 +325,7 @@ export default function ConstructionApp() {
           await supabase.from('plot_task_assignments').delete().match({ plot_id: selectedPlot.id, task_template_id: assignModal.task.id }); 
           await supabase.from('plot_task_assignments').insert([{ plot_id: selectedPlot.id, task_template_id: assignModal.task.id, contractor_name: assignModal.name, contractor_phone: assignModal.phone }]); 
           setAssignModal({ isOpen: false, task: null, name: '', phone: '' }); await fetchAllData(); showAlert('สำเร็จ', 'มอบหมายงานให้ช่างเรียบร้อยแล้ว');
-      } catch (e) { showAlert('Error', e.message); } setIsSubmitting(false); 
+      } catch (e) { showAlert('Error', (e as Error).message); } setIsSubmitting(false); 
   };
 
   const handleSendPost = async () => {
@@ -345,7 +346,7 @@ export default function ConstructionApp() {
       const { error } = await supabase.from('task_updates').insert([{ plot_id: selectedPlot.id, task_template_id: selectedTask.id, user_name: loggedInUser.username, role: currentUserRole, action: actionLabel, text_content: inputText || actionLabel, progress: progressValue, image_url: imageUrls.join(',') }]);
       if (error) throw error;
       await fetchAllData(); const { data } = await supabase.from('task_updates').select('*').eq('task_template_id', selectedTask.id).eq('plot_id', selectedPlot.id).order('created_at', { ascending: true }); setUpdates(data || []); setInputText(''); setSelectedFiles([]);
-    } catch (e) { showAlert('ข้อผิดพลาด', e.message); } setIsSending(false);
+    } catch (e) { showAlert('Error', (e as Error).message); } setIsSending(false);
   };
 
   const handleReviewAction = async (isApproved) => {
@@ -370,7 +371,7 @@ export default function ConstructionApp() {
          if (notifPayload.length > 0) await supabase.from('notifications').insert(notifPayload);
       }
       await fetchAllData(); const { data } = await supabase.from('task_updates').select('*').eq('task_template_id', selectedTask.id).eq('plot_id', selectedPlot.id).order('created_at', { ascending: true }); setUpdates(data || []); setProgressValue(finalP); setInputText(''); setSelectedFiles([]);
-    } catch (e) { showAlert('ข้อผิดพลาด', e.message); } setIsSending(false);
+    } catch (e) { showAlert('Error', (e as Error).message); } setIsSending(false);
   };
 
   // 🌟 Print Export Logic 🌟
