@@ -327,7 +327,29 @@ export default function ConstructionApp() {
           setAssignModal({ isOpen: false, task: null, name: '', phone: '' }); await fetchAllData(); showAlert('สำเร็จ', 'มอบหมายงานให้ช่างเรียบร้อยแล้ว');
       } catch (e) { showAlert('Error', (e as Error).message); } setIsSubmitting(false); 
   };
-
+// 🌟 ฟังก์ชันลบแปลงบ้าน 🌟
+  const handleDeletePlot = (plotId) => { 
+      showConfirm('ยืนยันลบแปลง', `ลบแปลง ${plotId} ใช่หรือไม่? (ข้อมูลงานที่อัปเดตไปแล้วทั้งหมดจะหายไป)`, async () => { 
+          setIsSubmitting(true);
+          try { 
+              // ลบข้อมูลที่เกี่ยวข้องก่อน (ป้องการ Error Foreign Key)
+              await supabase.from('task_updates').delete().eq('plot_id', plotId);
+              await supabase.from('plot_task_schedules').delete().eq('plot_id', plotId);
+              await supabase.from('plot_task_assignments').delete().eq('plot_id', plotId);
+              
+              // ลบแปลงหลัก
+              await supabase.from('plots').delete().eq('id', plotId); 
+              
+              await fetchAllData(); 
+              closeDialog(); 
+              showAlert('สำเร็จ', `ลบแปลง ${plotId} ออกจากระบบแล้ว`);
+          } catch (e) { 
+              showAlert('ข้อผิดพลาด', e.message); 
+          } finally {
+              setIsSubmitting(false);
+          }
+      }); 
+  };
   const handleSendPost = async () => {
     if ((!inputText.trim() && selectedFiles.length === 0) || isSending) return;
     setIsSending(true);
@@ -1140,8 +1162,13 @@ export default function ConstructionApp() {
                         const statusInfo = getPlotOverallStatus(plot.id);
 
                         return (
-                          <button key={plot.id} onClick={() => { setSelectedPlot(plot); setView('house-detail'); }} className="relative group w-full bg-white p-4 sm:p-8 rounded-xl sm:rounded-[2.5rem] border border-slate-200 text-left hover:border-blue-500 hover:shadow-xl hover:-translate-y-1 transition-all flex flex-col justify-between h-full">
-                            
+                          <div key={plot.id} onClick={() => { setSelectedPlot(plot); setView('house-detail'); }} className="relative group w-full bg-white p-4 sm:p-8 rounded-xl sm:rounded-[2.5rem] border border-slate-200 text-left hover:border-blue-500 hover:shadow-xl hover:-translate-y-1 transition-all flex flex-col justify-between h-full cursor-pointer">
+                           {/* 🌟 ปุ่มลบแปลงบ้าน (เห็นเฉพาะ Admin) 🌟 */}
+                            {isAdmin && (
+                              <button onClick={(e) => { e.stopPropagation(); handleDeletePlot(plot.id); }} className="absolute top-3 right-3 sm:top-5 sm:right-5 p-1.5 sm:p-2 bg-rose-50 text-rose-500 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-rose-500 hover:text-white transition-all z-20 shadow-sm" title="ลบแปลงนี้">
+                                <Trash2 size={16} />
+                              </button>
+                            )} 
                             {/* ส่วนหัวของการ์ด และป้ายสถานะ */}
                             <div className="flex justify-between items-start w-full mb-1 sm:mb-2">
                               <h3 className={`${isMobileLayout ? 'text-2xl' : 'text-4xl sm:text-5xl'} font-black text-slate-800 truncate`}>{plot.id}</h3>
@@ -1186,7 +1213,7 @@ export default function ConstructionApp() {
                                   <Pickaxe size={isMobileLayout ? 12 : 16} />
                               </div> 
                             )}
-                          </button>
+                          </div>
                         );
                       })}
                    </div>
