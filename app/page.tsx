@@ -66,7 +66,9 @@ export default function ConstructionApp() {
   const [houseTypes, setHouseTypes] = useState([]);
   const [taskTemplates, setTaskTemplates] = useState([]);
   const [loading, setLoading] = useState(false);
-
+  const [editPlotModal, setEditPlotModal] = useState({ isOpen: false, plot: null, id: '', house_type_id: '', foreman_name: '' });
+  const [editProjectModal, setEditProjectModal] = useState({ isOpen: false, oldName: '', newName: '' });
+  
   const [updates, setUpdates] = useState([]); 
   const [allUpdatesRecord, setAllUpdatesRecord] = useState([]); 
   const [latestUpdatesMap, setLatestUpdatesMap] = useState({});
@@ -349,6 +351,113 @@ export default function ConstructionApp() {
               setIsSubmitting(false);
           }
       }); 
+  };
+  // 🌟 ฟังก์ชันเปิดหน้าต่างแก้ไข และดึงค่าเดิมมาใส่ในช่องกรอก
+  const handleEditPlot = (plot) => {
+    setEditPlotModal({
+      isOpen: true,
+      plot: plot,
+      id: plot.id,
+      house_type_id: plot.house_type_id,
+      foreman_name: plot.foreman_name || ''
+    });
+  };
+
+  // 🌟 ฟังก์ชันบันทึกการแก้ไขลงฐานข้อมูล Supabase
+  const handleUpdatePlot = async () => {
+      if (!editPlotModal.id.trim() || !editPlotModal.house_type_id) return showAlert('แจ้งเตือน', 'กรุณากรอกข้อมูลให้ครบถ้วน');
+      setIsSubmitting(true);
+      
+      const oldId = editPlotModal.plot.id; // ชื่อเดิม (เช่น A-01)
+      const newId = editPlotModal.id.trim(); // ชื่อใหม่ (เช่น A-02)
+
+      try {
+        // 1. อัปเดตตารางแปลงหลัก (plots)
+        const { error: plotError } = await supabase
+          .from('plots')
+          .update({
+            id: newId,
+            house_type_id: editPlotModal.house_type_id,
+            foreman_name: editPlotModal.foreman_name
+          })
+          .eq('id', oldId);
+        if (plotError) throw plotError;
+
+        // 2. 🌟 สำคัญ: อัปเดตชื่อใน "ข้อมูลผังโครงการ" (layout_data) เพื่อไม่ให้ชื่อในแผนที่หาย
+        if (selectedProject && selectedProject.layout_data) {
+          const updatedLayout = selectedProject.layout_data.map(cell => {
+            if (cell.type === 'plot' && cell.plotId === oldId) {
+              return { ...cell, plotId: newId }; // เปลี่ยน ID ในช่องนั้นๆ เป็นชื่อใหม่
+            }
+            return cell;
+          });
+
+          const { error: layoutError } = await supabase
+            .from('projects')
+            .update({ layout_data: updatedLayout })
+            .eq('name', selectedProject.name);
+          
+          if (layoutError) throw layoutError;
+        }
+
+        // 3. อัปเดตข้อมูลอื่นๆ ที่เกี่ยวข้อง (แชท, แผนงาน, ช่าง) เพื่อให้ประวัติไม่หาย
+        await supabase.from('task_updates').update({ plot_id: newId }).eq('plot_id', oldId);
+        await supabase.from('plot_task_schedules').update({ plot_id: newId }).eq('plot_id', oldId);
+        await supabase.from('plot_task_assignments').update({ plot_id: newId }).eq('plot_id', oldId);
+
+        setEditPlotModal({ ...editPlotModal, isOpen: false });
+        await fetchAllData();
+        
+      // อัปเดตตัวแปรในหน้าปัจจุบันให้เห็นการเปลี่ยนแปลงทันที
+        if (selectedProject) {
+          const { data: updatedProj } = await supabase.from('projects').select('*').eq('name', selectedProject.name).single();
+          setSelectedProject(updatedProj);
+          
+          // 🌟 🌟 เพิ่ม 3 บรรทัดนี้ เพื่อสั่งให้หน้าจอวาดผังใหม่ตามชื่อที่แก้ทันที! 🌟 🌟
+          if (updatedProj && updatedProj.layout_data) {
+              setMapGrid(updatedProj.layout_data.filter(c => c.type !== 'config'));
+          }
+        }
+
+        showAlert('สำเร็จ', 'แก้ไขข้อมูลและอัปเดตผังโครงการเรียบร้อยแล้ว');
+      } catch (e) {
+        showAlert('ข้อผิดพลาด', e.message);
+      } finally {
+        setIsSubmitting(false);
+      }
+    };
+// 🌟 1. ฟังก์ชันเปิดหน้าต่างแก้ไขโครงการ
+  const handleEditProject = (proj) => {
+    setEditProjectModal({ isOpen: true, oldName: proj.name, newName: proj.name });
+  };
+
+  // 🌟 2. ฟังก์ชันบันทึกการแก้ไขชื่อโครงการ (อัปเดต 2 ตารางพร้อมกัน)
+  const handleUpdateProject = async () => {
+    if (!editProjectModal.newName.trim()) return showAlert('แจ้งเตือน', 'กรุณาระบุชื่อโครงการ');
+    setIsSubmitting(true);
+    try {
+      // ขั้นตอนที่ ก: อัปเดตตาราง projects
+      const { error: projError } = await supabase
+        .from('projects')
+        .update({ name: editProjectModal.newName.trim() })
+        .eq('name', editProjectModal.oldName);
+      if (projError) throw projError;
+
+      // ขั้นตอนที่ ข: อัปเดตตาราง plots ทุกแปลงที่สังกัดโครงการนี้ (สำคัญมาก!)
+      const { error: plotError } = await supabase
+        .from('plots')
+        .update({ project_name: editProjectModal.newName.trim() })
+        .eq('project_name', editProjectModal.oldName);
+      if (plotError) throw plotError;
+
+      setEditProjectModal({ ...editProjectModal, isOpen: false });
+      await fetchAllData();
+      showAlert('สำเร็จ', 'เปลี่ยนชื่อโครงการเรียบร้อยแล้ว');
+    } catch (e) {
+      showAlert('ข้อผิดพลาด', e.message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
   const handleSendPost = async () => {
     if ((!inputText.trim() && selectedFiles.length === 0) || isSending) return;
@@ -860,18 +969,28 @@ export default function ConstructionApp() {
                     
                     <div className={`grid gap-3 sm:gap-6 ${isMobileLayout ? 'grid-cols-1' : 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'}`}>
                       {projects.map((proj) => (
-                        <button key={proj.name} onClick={() => { 
+                        <div key={proj.name} onClick={() => { 
                             const conf = proj.layout_data?.find(c => c.type === 'config');
                             setGridCols(conf?.cols || 40); setGridRows(conf?.rows || 24); setMapZoom(1);
                             setSelectedProject(proj); setMapGrid(proj.layout_data?.filter(c => c.type !== 'config') || []); setIsEditMapMode(false); setView('project-detail'); 
-                        }} className="bg-white w-full p-5 sm:p-8 rounded-2xl sm:rounded-[2rem] border border-slate-200 text-left hover:border-blue-500 hover:shadow-2xl hover:-translate-y-1 transition-all group relative overflow-hidden">
+                        }} className="bg-white w-full p-5 sm:p-8 rounded-2xl sm:rounded-[2rem] border border-slate-200 text-left hover:border-blue-500 hover:shadow-2xl hover:-translate-y-1 transition-all group relative overflow-hidden cursor-pointer">
+                          
+                          {/* 🌟 ปุ่มแก้ไขชื่อโครงการ (แสดงเฉพาะ Admin) */}
+                          {isAdmin && (
+                            <button onClick={(e) => { e.stopPropagation(); handleEditProject(proj); }} className="absolute top-4 right-4 p-2 bg-slate-100 text-slate-500 rounded-xl opacity-0 group-hover:opacity-100 hover:bg-blue-600 hover:text-white transition-all z-20 shadow-sm" title="แก้ไขชื่อโครงการ">
+                              <Settings size={20} />
+                            </button>
+                          )}
+
+                          <Building size={isMobileLayout ? 60 : 100} className="absolute -right-4 -bottom-4 sm:-right-6 sm:-bottom-6 text-slate-50 group-hover:text-blue-50 transition-colors rotate-12" />
+                          <h3 className="text-xl sm:text-3xl font-black text-slate-800 mb-1 sm:mb-2 relative z-10 w-full truncate text-left">{proj.name}</h3>
                           <Building size={isMobileLayout ? 60 : 100} className="absolute -right-4 -bottom-4 sm:-right-6 sm:-bottom-6 text-slate-50 group-hover:text-blue-50 transition-colors rotate-12" />
                           <h3 className="text-xl sm:text-3xl font-black text-slate-800 mb-1 sm:mb-2 relative z-10 w-full truncate text-left">{proj.name}</h3>
                           <p className="text-[10px] sm:text-sm text-slate-400 font-bold uppercase tracking-wider mb-4 sm:mb-8 relative z-10 flex items-center gap-1.5">
                             <MapIcon size={12} className="sm:w-4 sm:h-4"/> {isForeman ? `งานของคุณ ${plots.filter(p => p.project_name === proj.name && p.foreman === loggedInUser.username).length} แปลง` : `รวมทั้งหมด ${proj.plotCount} แปลง`}
                           </p>
                           <div className="h-2 sm:h-3 bg-slate-100 rounded-full overflow-hidden relative z-10 mt-4 sm:mt-6"><div className="h-full bg-blue-600 transition-all duration-1000" style={{width: `${proj.progress}%`}}></div></div>
-                        </button>
+                        </div>
                       ))}
                     </div>
                   </div>
@@ -1169,6 +1288,12 @@ export default function ConstructionApp() {
                                 <Trash2 size={16} />
                               </button>
                             )} 
+                            {/* 🌟 เพิ่มปุ่มแก้ไข (ใหม่) วางไว้ทางซ้ายของปุ่มลบเล็กน้อย */}
+                            {isAdmin && (
+                              <button onClick={(e) => { e.stopPropagation(); handleEditPlot(plot); }} className="absolute top-3 right-12 sm:top-5 sm:right-16 p-1.5 sm:p-2 bg-blue-50 text-blue-500 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-blue-500 hover:text-white transition-all z-20 shadow-sm" title="แก้ไขแปลงนี้">
+                                <Settings size={16} />
+                              </button>
+                            )}
                             {/* ส่วนหัวของการ์ด และป้ายสถานะ */}
                             <div className="flex justify-between items-start w-full mb-1 sm:mb-2">
                               <h3 className={`${isMobileLayout ? 'text-2xl' : 'text-4xl sm:text-5xl'} font-black text-slate-800 truncate`}>{plot.id}</h3>
@@ -1640,7 +1765,64 @@ export default function ConstructionApp() {
               </nav>
            )}
         </div>
-            </div> 
+            </div>
+            {editPlotModal.isOpen && (
+                <div className="absolute inset-0 z-[600] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 fixed">
+                  <div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full p-6 space-y-5 animate-in zoom-in-95 duration-200">
+                    <div>
+                      <h3 className="text-xl font-black text-slate-800 italic uppercase flex items-center gap-2"><Settings className="text-blue-600"/> Edit Plot Info</h3>
+                      <p className="text-sm text-slate-500 font-bold">แก้ไขข้อมูลแปลง: {editPlotModal.plot?.id}</p>
+                    </div>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-black text-slate-500 mb-1 uppercase tracking-widest">รหัสแปลง</label>
+                        <input type="text" value={editPlotModal.id} onChange={(e) => setEditPlotModal({...editPlotModal, id: e.target.value.toUpperCase()})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-black text-blue-600 outline-none focus:border-blue-500 text-sm" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-black text-slate-500 mb-1 uppercase tracking-widest">แบบบ้าน</label>
+                        <select value={editPlotModal.house_type_id} onChange={(e) => setEditPlotModal({...editPlotModal, house_type_id: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:border-blue-500 text-slate-700">
+                          {houseTypes.map(type => <option key={type.id} value={type.id}>{type.type_name}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-black text-slate-500 mb-1 uppercase tracking-widest">โฟร์แมน</label>
+                        <select value={editPlotModal.foreman_name} onChange={(e) => setEditPlotModal({...editPlotModal, foreman_name: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:border-blue-500 text-slate-700">
+                          <option value="">-- เลือกโฟร์แมน --</option>
+                          {foremenList.map(f => <option key={f.id} value={f.username}>{f.username}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="flex gap-3 w-full mt-2">
+                      <button onClick={() => setEditPlotModal({...editPlotModal, isOpen: false})} className="flex-1 bg-slate-100 text-slate-600 font-bold py-3.5 rounded-xl hover:bg-slate-200">ยกเลิก</button>
+                      <button onClick={handleUpdatePlot} disabled={isSubmitting} className="flex-1 bg-blue-600 text-white font-bold py-3.5 rounded-xl hover:bg-blue-700 flex justify-center items-center gap-2">
+                        {isSubmitting ? <Loader2 className="animate-spin" size={16}/> : 'บันทึกแก้ไข'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )} 
+              {editProjectModal.isOpen && (
+                <div className="absolute inset-0 z-[600] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 fixed">
+                  <div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full p-6 space-y-5 animate-in zoom-in-95 duration-200">
+                    <div>
+                      <h3 className="text-xl font-black text-slate-800 italic uppercase flex items-center gap-2"><Settings className="text-blue-600"/> Edit Project Name</h3>
+                      <p className="text-sm text-slate-500 font-bold">ชื่อเดิม: {editProjectModal.oldName}</p>
+                    </div>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-black text-slate-500 mb-1 uppercase tracking-widest">ชื่อโครงการใหม่</label>
+                        <input type="text" value={editProjectModal.newName} onChange={(e) => setEditProjectModal({...editProjectModal, newName: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-bold text-slate-700 outline-none focus:border-blue-500" placeholder="ระบุชื่อโครงการ..." />
+                      </div>
+                    </div>
+                    <div className="flex gap-3 w-full mt-2">
+                      <button onClick={() => setEditProjectModal({...editProjectModal, isOpen: false})} className="flex-1 bg-slate-100 text-slate-600 font-bold py-3.5 rounded-xl hover:bg-slate-200">ยกเลิก</button>
+                      <button onClick={handleUpdateProject} disabled={isSubmitting} className="flex-1 bg-blue-600 text-white font-bold py-3.5 rounded-xl hover:bg-blue-700 flex justify-center items-center gap-2">
+                        {isSubmitting ? <Loader2 className="animate-spin" size={16}/> : 'บันทึกแก้ไข'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
         {/* 🖨️ 🌟 ระบบจัดหน้า A4 สำหรับพิมพ์ 🌟 🖨️ */}
         <div id="printable-a4" className="hidden print:block absolute top-0 left-0 w-full bg-white z-[9999] text-black">
            {imageChunks.map((chunk, pageIdx) => (
