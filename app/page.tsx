@@ -604,17 +604,50 @@ export default function ConstructionApp() {
      if (globalMinDate === Infinity) { globalMinDate = Date.now() - (7 * 86400000); globalMaxDate = Date.now() + (14 * 86400000); }
   }
 
-  const chartDuration = (globalMaxDate - globalMinDate) || 86400000;
-  const chartPad = chartDuration * 0.05; 
-  const chartStart = globalMinDate - chartPad; const chartEnd = globalMaxDate + chartPad; const totalChartMs = chartEnd - chartStart;
-  const getChartLeft = (timestamp) => Math.max(0, ((timestamp - chartStart) / totalChartMs) * 100);
-  const getChartWidth = (startTs, endTs) => Math.max(0.5, ((endTs - startTs) / totalChartMs) * 100); 
+// 🌟 ปรับระบบคำนวณตำแหน่งเส้นเวลาให้ตรงเป๊ะเที่ยงคืน และเผื่อความกว้างแถบให้ครอบคลุมเต็มวัน 🌟
+  const minD = new Date(globalMinDate); minD.setHours(0,0,0,0);
+  const maxD = new Date(globalMaxDate); maxD.setHours(0,0,0,0);
+  
+  // ล็อกเวลาเริ่มต้นและสิ้นสุดตารางให้ลงตัวที่ "เที่ยงคืนเป๊ะ" เสมอ (เผื่อหัวท้าย 2-3 วันไม่ให้อึดอัด)
+  const chartStart = minD.getTime() - (2 * 86400000);
+  const chartEnd = maxD.getTime() + (3 * 86400000); 
+  const totalChartMs = chartEnd - chartStart;
 
+  const getChartLeft = (timestamp) => {
+      const d = new Date(timestamp); d.setHours(0,0,0,0); // บังคับให้คำนวณจากเที่ยงคืนเป๊ะ
+      return Math.max(0, ((d.getTime() - chartStart) / totalChartMs) * 100);
+  };
+  
+  const getChartWidth = (startTs, endTs) => {
+      const dStart = new Date(startTs); dStart.setHours(0,0,0,0);
+      const dEnd = new Date(endTs); dEnd.setHours(0,0,0,0);
+      // บวกเวลาเพิ่ม 1 วันเต็ม (86400000 ms) เพื่อให้ความกว้างของแถบ ลากคลุมวันสิ้นสุดไปจนเต็มช่อง
+      return Math.max(0.5, (((dEnd.getTime() + 86400000) - dStart.getTime()) / totalChartMs) * 100);
+  };
+// 🌟 ปรับปรุงการเก็บข้อมูลวันที่และเดือนแยกแถวกัน 🌟
   const timeMarkers = [];
   if (hasAnySchedule) {
-     const dayMs = 86400000; const showDays = (totalChartMs / dayMs) <= 60; let current = new Date(chartStart);
+     const dayMs = 86400000; 
+     const showDays = (totalChartMs / dayMs) <= 60; 
+     let current = new Date(chartStart);
+     let lastMonthStr = "";
+
      while (current.getTime() <= chartEnd) {
-        timeMarkers.push({ label: current.getDate() === 1 || current.getTime() === chartStart ? current.toLocaleDateString('th-TH', { month: 'short', year: '2-digit' }) : current.getDate(), isMonth: current.getDate() === 1, left: getChartLeft(current.getTime()) });
+        const currentMonthStr = current.toLocaleDateString('th-TH', { month: 'short', year: '2-digit' });
+        let monthLabel = null;
+
+        // ถ้าเข้าสู่เดือนใหม่ หรือเป็นจุดเริ่มต้นผัง ให้บันทึกชื่อเดือนแยกไว้
+        if (currentMonthStr !== lastMonthStr) {
+           monthLabel = currentMonthStr;
+           lastMonthStr = currentMonthStr;
+        }
+
+        timeMarkers.push({ 
+           dayLabel: current.getDate(),        // แสดงตัวเลขวันที่เสมอ ไม่โดนข้อความทับแล้ว
+           monthLabel: monthLabel,             // แยกชื่อเดือนเอาไว้ไปแสดงแถวบน
+           isMonth: current.getDate() === 1,   // ส่งค่าไปทำเส้นไฮไลท์แนวตั้งในตารางด้านล่างเหมือนเดิม
+           left: getChartLeft(current.getTime()) 
+        });
         current.setDate(current.getDate() + (showDays ? 1 : 7)); 
      }
   }
@@ -1411,20 +1444,39 @@ export default function ConstructionApp() {
                          <thead className="sticky top-0 z-[60] bg-slate-100 shadow-sm text-[10px] sm:text-xs font-black uppercase text-slate-500 tracking-widest">
                            <tr>
                              <th className={`sticky left-0 bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 ${isMobileLayout ? 'w-[140px] max-w-[140px]' : 'w-[280px] min-w-[280px] max-w-[280px]'} shadow-[4px_0_15px_-5px_rgba(0,0,0,0.1)]`}>Task Name</th>
-                             {!isMobileLayout && ( <><th className="sticky left-[280px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-5 text-center w-[140px] max-w-[140px]">Start</th><th className="sticky left-[420px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-5 text-center w-[140px] max-w-[140px] shadow-[4px_0_10px_-4px_rgba(0,0,0,0.05)]">Finish</th></> )}
+                             {!isMobileLayout && ( 
+                                <>
+                                  <th className="sticky left-[280px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-5 text-center w-[140px] min-w-[140px] max-w-[140px]">Start</th>
+                                  <th className="sticky left-[420px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-5 text-center w-[100px] min-w-[100px] max-w-[100px] text-pink-600">Duration</th>
+                                  <th className="sticky left-[520px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-5 text-center w-[140px] min-w-[140px] max-w-[140px] shadow-[4px_0_10px_-4px_rgba(0,0,0,0.05)]">Finish</th>
+                                </> 
+                              )}
                              <th className={`bg-slate-100 border-b border-slate-200 p-0 relative ${isMobileLayout ? 'min-w-[400px] h-12' : 'min-w-[800px] h-20'} w-full z-[60]`}>
                                 {todayTs >= chartStart && todayTs <= chartEnd && (
                                    <div className="absolute top-0 bottom-[-5000px] border-l-2 sm:border-l-[3px] border-dashed border-rose-500 z-[10] flex flex-col items-center pointer-events-none" style={{ left: `${getChartLeft(todayTs)}%` }}>
                                       <span className="bg-rose-500 text-white text-[7px] sm:text-[11px] font-black px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-b-md sm:rounded-b-lg shadow-md mt-0 sm:mt-1">ปัจจุบัน</span>
                                    </div>
                                 )}
-                                <div className="absolute inset-0 flex pointer-events-none">
-                                   {timeMarkers.map((m, i) => (
-                                      <div key={i} className={`border-l h-full flex flex-col justify-end px-1 sm:px-3 pb-1 sm:pb-3 ${m.isMonth ? 'border-slate-300 bg-slate-200/50' : 'border-slate-200/50'}`} style={{position: 'absolute', left: `${m.left}%`}}>
-                                        <span className={`text-[7px] sm:text-xs font-bold ${m.isMonth ? 'text-slate-600' : 'text-slate-400'}`}>{m.label}</span>
-                                      </div>
-                                   ))}
-                                </div>
+                                  {/* 🌟 ปรับปรุงการวาด Row วันที่และเดือนเป็น 2 ชั้น 🌟 */}
+                                            <div className="absolute inset-0 flex pointer-events-none">
+                                                {timeMarkers.map((m, i) => (
+                                                  <div key={i} className={`border-l h-full relative ${m.isMonth ? 'border-slate-300 bg-slate-200/20' : 'border-slate-200/50'}`} style={{position: 'absolute', left: `${m.left}%`}}>
+                                                    
+                                                    {/* 🔵 แถวบน: แสดงชื่อเดือนแบบป้ายคลุมหัว (ตรงที่กากบาทสีน้ำเงิน) */}
+                                                    {m.monthLabel && (
+                                                        <div className="absolute top-1.5 sm:top-2 left-1 bg-slate-800 text-white font-black px-2 py-0.5 rounded shadow-sm text-[8px] sm:text-[10px] whitespace-nowrap z-30 border border-slate-700">
+                                                          {m.monthLabel}
+                                                        </div>
+                                                    )}
+                                                    
+                                                    {/* ⚪ แถวล่าง: แสดงตัวเลขวันที่ตามปกติทุกวัน */}
+                                                    <div className="absolute bottom-1 sm:bottom-2 left-1">
+                                                        <span className="text-[8px] sm:text-xs font-black text-slate-400">{m.dayLabel}</span>
+                                                    </div>
+
+                                                  </div>
+                                                ))}
+                                            </div>
                              </th>
                            </tr>
                          </thead>
@@ -1464,25 +1516,83 @@ export default function ConstructionApp() {
                                    </div>
                                    <div className={`mt-2 sm:mt-3 pt-2 sm:pt-3 border-t border-slate-100 ${isMobileLayout ? 'px-0' : 'px-1'}`}>
                                       {assignment ? ( <p className={`text-[9px] sm:text-xs font-bold text-slate-500 flex items-center gap-1 sm:gap-2`}><HardHat size={isMobileLayout?12:14} className="text-emerald-500"/> {isMobileLayout ? assignment.contractor_name.split(' ')[0] : assignment.contractor_name}</p> ) : ( <p className={`text-[9px] sm:text-xs font-bold text-rose-500 flex items-center gap-1 sm:gap-2`}><AlertTriangle size={isMobileLayout?12:14}/> {isMobileLayout ? 'ไม่ระบุ' : 'ยังไม่ระบุช่าง'}</p> )}
-                                      {(isProcurement || isAdmin) && ( <button onClick={(e) => { e.stopPropagation(); setAssignModal({ isOpen: true, task: task, name: assignment?.contractor_name || '', phone: assignment?.contractor_phone || '' }); }} className={`mt-2 sm:mt-4 w-full bg-emerald-50 text-emerald-700 font-bold ${isMobileLayout ? 'px-2 py-1.5 text-[8px] rounded-lg' : 'px-4 py-2.5 text-xs sm:text-sm rounded-xl'} hover:bg-emerald-100 transition-colors border border-emerald-200 flex items-center justify-center gap-1.5 sm:gap-2`}>
+                                      {(isProcurement || isAdmin || isProjectPlanner) && ( <button onClick={(e) => { e.stopPropagation(); setAssignModal({ isOpen: true, task: task, name: assignment?.contractor_name || '', phone: assignment?.contractor_phone || '' }); }} className={`mt-2 sm:mt-4 w-full bg-emerald-50 text-emerald-700 font-bold ${isMobileLayout ? 'px-2 py-1.5 text-[8px] rounded-lg' : 'px-4 py-2.5 text-xs sm:text-sm rounded-xl'} hover:bg-emerald-100 transition-colors border border-emerald-200 flex items-center justify-center gap-1.5 sm:gap-2`}>
                                           {assignment ? <><Wrench size={isMobileLayout ? 10 : 16}/> แก้ไข</> : <><UserPlus size={isMobileLayout ? 10 : 16}/> มอบหมาย</>}
                                         </button>
                                       )}
                                    </div>
                                  </td>
 
-                                 {!isMobileLayout && isProjectPlanner && (
-                                    <>
-                                      <td className="sticky left-[280px] bg-white z-[40] border-b border-r border-slate-200 p-4 align-top bg-pink-50/20"><input type="date" value={scheduleInputs[task.id]?.start !== undefined ? scheduleInputs[task.id].start : (plan.planned_start || '')} onChange={(e) => setScheduleInputs(prev => ({...prev, [task.id]: { ...prev[task.id], start: e.target.value, end: prev[task.id]?.end || plan.planned_end }}))} className="w-full border border-pink-200 rounded-lg px-2 py-2 text-[10px] sm:text-xs font-bold text-slate-700 outline-none focus:border-pink-500 bg-white shadow-sm" /></td>
-                                      <td className="sticky left-[420px] bg-white z-[40] border-b border-r border-slate-200 p-4 align-top bg-pink-50/20 shadow-[4px_0_10px_-4px_rgba(0,0,0,0.05)]"><input type="date" value={scheduleInputs[task.id]?.end !== undefined ? scheduleInputs[task.id].end : (plan.planned_end || '')} onChange={(e) => setScheduleInputs(prev => ({...prev, [task.id]: { ...prev[task.id], end: e.target.value, start: prev[task.id]?.start || plan.planned_start }}))} className="w-full border border-pink-200 rounded-lg px-2 py-2 text-[10px] sm:text-xs font-bold text-slate-700 outline-none focus:border-pink-500 bg-white shadow-sm" /></td>
-                                    </>
-                                 )}
-                                 {!isMobileLayout && !isProjectPlanner && (
-                                    <>
-                                      <td className="sticky left-[280px] bg-white z-[40] border-b border-r border-slate-200 p-4 align-top text-center"><div className="text-[10px] sm:text-sm font-bold text-slate-700 mb-2">{plan.planned_start ? new Date(plan.planned_start).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</div><div className="text-[10px] sm:text-sm font-bold text-blue-600">{dates?.start ? new Date(dates.start).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</div></td>
-                                      <td className="sticky left-[420px] bg-white z-[40] border-b border-r border-slate-200 p-4 align-top text-center shadow-[4px_0_10px_-4px_rgba(0,0,0,0.05)]"><div className="text-[10px] sm:text-sm font-bold text-slate-700 mb-2">{plan.planned_end ? new Date(plan.planned_end).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</div><div className="text-[10px] sm:text-sm font-bold text-green-600">{dates?.end ? new Date(dates.end).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</div></td>
-                                    </>
-                                 )}
+                                  {!isMobileLayout && currentUserRole === 'Project Planner' && (() => {
+                                    const currentStart = scheduleInputs[task.id]?.start !== undefined ? scheduleInputs[task.id].start : (plan.planned_start || '');
+                                    const currentEnd = scheduleInputs[task.id]?.end !== undefined ? scheduleInputs[task.id].end : (plan.planned_end || '');
+                                    
+                                    let initialDuration = '';
+                                    if (currentStart && currentEnd) {
+                                      const diffTime = new Date(currentEnd).getTime() - new Date(currentStart).getTime();
+                                      initialDuration = String(Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24))) + 1);
+                                    }
+                                    const currentDuration = scheduleInputs[task.id]?.duration !== undefined ? scheduleInputs[task.id].duration : initialDuration;
+
+                                    return (
+                                      <>
+                                        <td className="sticky left-[280px] bg-white z-[40] border-b border-r border-slate-200 p-4 align-top bg-pink-50/20 w-[140px] min-w-[140px] max-w-[140px]">
+                                            <input type="date" value={currentStart} 
+                                              onChange={(e) => {
+                                                  const newStart = e.target.value; let newEnd = currentEnd;
+                                                  if (newStart && currentDuration && Number(currentDuration) > 0) {
+                                                    const d = new Date(newStart); d.setDate(d.getDate() + (Number(currentDuration) - 1));
+                                                    newEnd = d.toISOString().split('T')[0];
+                                                  }
+                                                  setScheduleInputs(prev => ({...prev, [task.id]: { ...prev[task.id], start: newStart, end: newEnd, duration: currentDuration }}));
+                                              }} 
+                                              className="w-full border border-pink-200 rounded-lg px-2 py-2 text-[10px] sm:text-xs font-bold text-slate-700 outline-none focus:border-pink-500 bg-white shadow-sm" 
+                                            />
+                                        </td>
+                                        <td className="sticky left-[420px] bg-white z-[40] border-b border-r border-slate-200 p-4 align-top bg-pink-50/20 w-[100px] min-w-[100px] max-w-[100px]">
+                                            <input type="number" min="1" placeholder="วัน" value={currentDuration} 
+                                              onChange={(e) => {
+                                                  const newDuration = e.target.value; let newEnd = currentEnd;
+                                                  if (currentStart && newDuration && Number(newDuration) > 0) {
+                                                    const d = new Date(currentStart); d.setDate(d.getDate() + (Number(newDuration) - 1));
+                                                    newEnd = d.toISOString().split('T')[0];
+                                                  }
+                                                  setScheduleInputs(prev => ({...prev, [task.id]: { ...prev[task.id], duration: newDuration, end: newEnd, start: currentStart }}));
+                                              }}
+                                              className="w-full border border-pink-200 rounded-lg px-2 py-2 text-[10px] sm:text-xs font-black text-center text-pink-600 outline-none focus:border-pink-500 bg-white shadow-sm" 
+                                            />
+                                        </td>
+                                        <td className="sticky left-[520px] bg-white z-[40] border-b border-r border-slate-200 p-4 align-top bg-pink-50/20 shadow-[4px_0_10px_-4px_rgba(0,0,0,0.05)] w-[140px] min-w-[140px] max-w-[140px]">
+                                            <input type="date" value={currentEnd} 
+                                              onChange={(e) => {
+                                                  const newEnd = e.target.value; let newDuration = currentDuration;
+                                                  if (currentStart && newEnd) {
+                                                    const diffTime = new Date(newEnd).getTime() - new Date(currentStart).getTime();
+                                                    newDuration = String(Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24))) + 1);
+                                                  }
+                                                  setScheduleInputs(prev => ({...prev, [task.id]: { ...prev[task.id], end: newEnd, duration: newDuration, start: currentStart }}));
+                                              }} 
+                                              className="w-full border border-pink-200 rounded-lg px-2 py-2 text-[10px] sm:text-xs font-bold text-slate-700 outline-none focus:border-pink-500 bg-white shadow-sm" 
+                                            />
+                                        </td>
+                                      </>
+                                    );
+                                  })()}
+
+                                  {!isMobileLayout && currentUserRole !== 'Project Planner' && (() => {
+                                    let durationText = '-';
+                                    if (plan.planned_start && plan.planned_end) {
+                                      const diff = new Date(plan.planned_end).getTime() - new Date(plan.planned_start).getTime();
+                                      durationText = `${Math.max(0, Math.ceil(diff / (86400000))) + 1} วัน`;
+                                    }
+                                    return (
+                                      <>
+                                        <td className="sticky left-[280px] bg-white z-[40] border-b border-r border-slate-200 p-4 align-top text-center w-[140px] min-w-[140px] max-w-[140px]"><div className="text-[10px] sm:text-sm font-bold text-slate-700 mb-2">{plan.planned_start ? new Date(plan.planned_start).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</div><div className="text-[10px] sm:text-sm font-bold text-blue-600">{dates?.start ? new Date(dates.start).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</div></td>
+                                        <td className="sticky left-[420px] bg-white z-[40] border-b border-r border-slate-200 p-4 align-middle text-center w-[100px] min-w-[100px] max-w-[100px] font-black text-slate-600 text-xs sm:text-sm">{durationText}</td>
+                                        <td className="sticky left-[520px] bg-white z-[40] border-b border-r border-slate-200 p-4 align-top text-center shadow-[4px_0_10px_-4px_rgba(0,0,0,0.05)] w-[140px] min-w-[140px] max-w-[140px]"><div className="text-[10px] sm:text-sm font-bold text-slate-700 mb-2">{plan.planned_end ? new Date(plan.planned_end).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</div><div className="text-[10px] sm:text-sm font-bold text-green-600">{dates?.end ? new Date(dates.end).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</div></td>
+                                      </>
+                                    );
+                                  })()}
 
                                  <td className={`border-b border-slate-200 p-0 relative ${isMobileLayout ? 'h-[100px]' : 'h-[140px]'} z-10 w-full`}>
                                    <div className="absolute inset-0 flex pointer-events-none z-0">
@@ -1532,7 +1642,7 @@ export default function ConstructionApp() {
                               </div>
                            )}
 
-                           <main className={`flex-1 overflow-y-auto ${isMobileLayout ? 'p-3 pb-32 space-y-3' : 'p-4 sm:p-8 space-y-4 sm:space-y-6 pb-60'} bg-slate-50/50`}>
+                           <main className={`flex-1 overflow-y-auto ${isMobileLayout ? 'p-3 pb-32 space-y-3' : 'p-4 sm:px-8 sm:pt-8 sm:pb-[280px] space-y-4 sm:space-y-6'} bg-slate-50/50`}>
                                {updates.map((update) => (
                                <div key={update.id} className={`flex ${isMobileLayout ? 'gap-2' : 'gap-3 sm:gap-5'} animate-in slide-in-from-bottom-4`}>
                                    <div className={`${isMobileLayout ? 'w-8 h-8 rounded-lg text-xs' : 'w-10 h-10 sm:w-14 sm:h-14 rounded-2xl text-sm sm:text-base'} flex items-center justify-center text-white font-black shrink-0 shadow-lg ${update.role === 'QC' ? 'bg-purple-600' : update.role === 'Site Engineer' ? 'bg-blue-600' : 'bg-slate-600'}`}>{update.user_name.charAt(0)}</div>
