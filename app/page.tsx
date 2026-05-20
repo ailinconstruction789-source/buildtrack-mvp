@@ -1259,21 +1259,50 @@ export default function ConstructionApp() {
                            const w = bounds.maxX - bounds.minX + 1, h = bounds.maxY - bounds.minY + 1;
                            const statusInfo = getPlotOverallStatus(plotInfo.id);
 
-                           const isMatchContractor = searchContractor === '' || assignments.some(a => a.plot_id === plotId && a.contractor_name.toLowerCase().includes(searchContractor.toLowerCase()));
+                           // ดักจับว่าแปลงนี้ใช้ช่างที่เรากำลังค้นหาอยู่หรือไม่
+                           const currentPlotAssignment = assignments.slice().reverse().find(a => a.plot_id === plotId);
+                           const hasSearchedContractor = searchContractor.trim() !== '';
+                           const isMatchContractor = currentPlotAssignment?.contractor_name.toLowerCase().includes(searchContractor.toLowerCase());
+
                            const isActiveToday = plotsActiveToday.has(plotId);
 
+                           // ปรับสไตล์เอฟเฟกต์ไฮไลท์ช่าง
+                           let searchHighlightClass = "opacity-100 scale-100";
+                           let cardBorderClass = statusInfo.colors; 
+
+                           if (hasSearchedContractor) {
+                              if (isMatchContractor) {
+                                 // ถ้าใช่ช่างที่ค้นหา: ล็อกขอบสีทองหนาพิเศษ + ใส่เงาไฟนีออนกระพริบวิบวับ
+                                 searchHighlightClass = "opacity-100 scale-105 z-50 animate-pulse";
+                                 cardBorderClass = "bg-amber-50 border-amber-500 text-amber-900 shadow-[0_0_25px_rgba(245,158,11,0.8)] border-[4px]";
+                              } else {
+                                 // ถ้าไม่ใช่ช่างที่ค้นหา: ปรับจางลงมากเป็นสีขาวดำ เพื่อขับช่างคนนั้นให้เด่น
+                                 searchHighlightClass = "opacity-10 scale-95 grayscale pointer-events-none";
+                              }
+                           }
+
                            return (
-                             <div key={`label-${plotId}`} className={`absolute flex items-center justify-center p-1 transition-all ${isEditMapMode ? 'opacity-50 pointer-events-none' : 'hover:z-50 cursor-pointer group'} ${!isMatchContractor ? 'opacity-20 scale-95 grayscale' : 'opacity-100'}`} style={{ left: `${(bounds.minX / gridCols) * 100}%`, top: `${(bounds.minY / gridRows) * 100}%`, width: `${(w / gridCols) * 100}%`, height: `${(h / gridRows) * 100}%` }} onClick={() => { if (!isEditMapMode) { setSelectedPlot(plotInfo); setView('house-detail'); } }}>
+                             <div key={`label-${plotId}`} className={`absolute flex items-center justify-center p-1 transition-all ${isEditMapMode ? 'opacity-50 pointer-events-none' : 'hover:z-50 cursor-pointer group'} ${searchHighlightClass}`} style={{ left: `${(bounds.minX / gridCols) * 100}%`, top: `${(bounds.minY / gridRows) * 100}%`, width: `${(w / gridCols) * 100}%`, height: `${(h / gridRows) * 100}%` }} onClick={() => { if (!isEditMapMode) { setSelectedPlot(plotInfo); setView('house-detail'); } }}>
                                 
                                 {isActiveToday && (
-                                   <div className="absolute -top-3 -top-3 left-1/2 -translate-x-1/2 sm:-top-4 bg-yellow-400 text-slate-900 rounded-full p-1 sm:p-1.5 shadow-lg animate-bounce z-[60] border-2 border-white" title="มีการทำงานในแปลงนี้วันนี้">
+                                   <div className="absolute -top-3 -right-3 sm:-top-4 sm:-right-4 bg-yellow-400 text-slate-900 rounded-full p-1 sm:p-1.5 shadow-lg animate-bounce z-[60] border-2 border-white" title="มีการทำงานในแปลงนี้วันนี้">
                                       <Pickaxe size={14} className="w-3 h-3 sm:w-4 sm:h-4"/>
                                    </div>
                                 )}
 
-                                <div className={`w-full h-full border-[2px] sm:border-[3px] rounded-md sm:rounded-lg shadow-sm backdrop-blur-sm flex flex-col items-center justify-center relative transition-all group-hover:shadow-md group-hover:scale-[1.02] ${statusInfo.colors}`}>
+                                <div className={`w-full h-full border-[2px] sm:border-[3px] rounded-md sm:rounded-lg shadow-sm backdrop-blur-sm flex flex-col items-center justify-center relative transition-all group-hover:shadow-md group-hover:scale-[1.02] ${cardBorderClass}`}>
+                                   
+                                   {/* แสดงชื่อแปลงเป็นหลัก */}
                                    <span className="font-black text-[10px] sm:text-sm">{plotInfo.id}</span>
                                    
+                                   {/* 🌟 🌟 ถ้ามีการค้นหาช่างและเจอแปลงของช่าง: ให้แถมป้ายชื่อช่างแปะไว้ตรงกลางผังเลย! 🌟 🌟 */}
+                                   {hasSearchedContractor && isMatchContractor && (
+                                      <div className="absolute -bottom-2 bg-amber-500 text-slate-900 font-black px-1.5 py-0.5 rounded text-[8px] sm:text-[10px] uppercase tracking-wider shadow-md whitespace-nowrap border border-white z-40">
+                                         👷‍♂️ {currentPlotAssignment.contractor_name.split(' ')[0]}
+                                      </div>
+                                   )}
+                                   
+                                   {/* Tooltip รายละเอียดเมื่อเอาเมาส์ชี้ (คงเดิมไว้ทั้งหมด) */}
                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-[160px] sm:w-[180px] bg-slate-900 text-white rounded-xl sm:rounded-2xl shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all p-3 sm:p-4 pointer-events-none z-[100] border border-slate-700">
                                       <div className="flex justify-between items-center w-full mb-1 sm:mb-2">
                                          <span className="font-black text-xs sm:text-sm">{plotInfo.id}</span>
@@ -1529,70 +1558,161 @@ export default function ConstructionApp() {
                                     
                                     let initialDuration = '';
                                     if (currentStart && currentEnd) {
-                                      const diffTime = new Date(currentEnd).getTime() - new Date(currentStart).getTime();
-                                      initialDuration = String(Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24))) + 1);
+                                       const diffTime = new Date(currentEnd).getTime() - new Date(currentStart).getTime();
+                                       initialDuration = String(Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24))) + 1);
                                     }
                                     const currentDuration = scheduleInputs[task.id]?.duration !== undefined ? scheduleInputs[task.id].duration : initialDuration;
 
+                                    let actualDurationText = '-';
+                                    if (dates?.start) {
+                                       const aEnd = dates.end ? new Date(dates.end).getTime() : Date.now();
+                                       const aDiff = aEnd - new Date(dates.start).getTime();
+                                       actualDurationText = `${Math.max(0, Math.ceil(aDiff / 86400000)) + 1} วัน`;
+                                    }
+
                                     return (
-                                      <>
-                                        <td className="sticky left-[280px] bg-white z-[40] border-b border-r border-slate-200 p-4 align-top bg-pink-50/20 w-[140px] min-w-[140px] max-w-[140px]">
-                                            <input type="date" value={currentStart} 
-                                              onChange={(e) => {
-                                                  const newStart = e.target.value; let newEnd = currentEnd;
-                                                  if (newStart && currentDuration && Number(currentDuration) > 0) {
-                                                    const d = new Date(newStart); d.setDate(d.getDate() + (Number(currentDuration) - 1));
-                                                    newEnd = d.toISOString().split('T')[0];
-                                                  }
-                                                  setScheduleInputs(prev => ({...prev, [task.id]: { ...prev[task.id], start: newStart, end: newEnd, duration: currentDuration }}));
-                                              }} 
-                                              className="w-full border border-pink-200 rounded-lg px-2 py-2 text-[10px] sm:text-xs font-bold text-slate-700 outline-none focus:border-pink-500 bg-white shadow-sm" 
-                                            />
-                                        </td>
-                                        <td className="sticky left-[420px] bg-white z-[40] border-b border-r border-slate-200 p-4 align-top bg-pink-50/20 w-[100px] min-w-[100px] max-w-[100px]">
-                                            <input type="number" min="1" placeholder="วัน" value={currentDuration} 
-                                              onChange={(e) => {
-                                                  const newDuration = e.target.value; let newEnd = currentEnd;
-                                                  if (currentStart && newDuration && Number(newDuration) > 0) {
-                                                    const d = new Date(currentStart); d.setDate(d.getDate() + (Number(newDuration) - 1));
-                                                    newEnd = d.toISOString().split('T')[0];
-                                                  }
-                                                  setScheduleInputs(prev => ({...prev, [task.id]: { ...prev[task.id], duration: newDuration, end: newEnd, start: currentStart }}));
-                                              }}
-                                              className="w-full border border-pink-200 rounded-lg px-2 py-2 text-[10px] sm:text-xs font-black text-center text-pink-600 outline-none focus:border-pink-500 bg-white shadow-sm" 
-                                            />
-                                        </td>
-                                        <td className="sticky left-[520px] bg-white z-[40] border-b border-r border-slate-200 p-4 align-top bg-pink-50/20 shadow-[4px_0_10px_-4px_rgba(0,0,0,0.05)] w-[140px] min-w-[140px] max-w-[140px]">
-                                            <input type="date" value={currentEnd} 
-                                              onChange={(e) => {
-                                                  const newEnd = e.target.value; let newDuration = currentDuration;
-                                                  if (currentStart && newEnd) {
-                                                    const diffTime = new Date(newEnd).getTime() - new Date(currentStart).getTime();
-                                                    newDuration = String(Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24))) + 1);
-                                                  }
-                                                  setScheduleInputs(prev => ({...prev, [task.id]: { ...prev[task.id], end: newEnd, duration: newDuration, start: currentStart }}));
-                                              }} 
-                                              className="w-full border border-pink-200 rounded-lg px-2 py-2 text-[10px] sm:text-xs font-bold text-slate-700 outline-none focus:border-pink-500 bg-white shadow-sm" 
-                                            />
-                                        </td>
-                                      </>
+                                       <>
+                                         {/* Start Column (Planner) */}
+                                         <td className="sticky left-[280px] bg-white z-[40] border-b border-r border-slate-200 p-2 align-middle bg-pink-50/20 w-[140px] min-w-[140px] max-w-[140px]">
+                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
+                                                <span className="text-[8px] font-black uppercase text-pink-500 w-8 shrink-0 text-left">Plan:</span>
+                                                <input type="date" value={currentStart} 
+                                                   onChange={(e) => {
+                                                      const newStart = e.target.value; let newEnd = currentEnd;
+                                                      if (newStart && currentDuration && Number(currentDuration) > 0) {
+                                                         const d = new Date(newStart); d.setDate(d.getDate() + (Number(currentDuration) - 1));
+                                                         newEnd = d.toISOString().split('T')[0];
+                                                      }
+                                                      setScheduleInputs(prev => ({...prev, [task.id]: { ...prev[task.id], start: newStart, end: newEnd, duration: currentDuration }}));
+                                                   }} 
+                                                   className="flex-1 w-full border border-pink-200 rounded px-1 py-1 text-[9px] font-bold text-slate-700 outline-none focus:border-pink-500 bg-white shadow-sm" 
+                                                />
+                                            </div>
+                                            <div className="flex items-center gap-1">
+                                                <span className="text-[8px] font-black uppercase text-blue-500 w-8 shrink-0 text-left">Actual:</span>
+                                                <div className="flex-1 text-[9px] sm:text-[11px] font-bold text-blue-600 text-center">
+                                                  {dates?.start ? new Date(dates.start).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
+                                                </div>
+                                            </div>
+                                         </td>
+
+                                         {/* Duration Column (Planner) */}
+                                         <td className="sticky left-[420px] bg-white z-[40] border-b border-r border-slate-200 p-2 align-middle bg-pink-50/20 w-[100px] min-w-[100px] max-w-[100px]">
+                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
+                                                <span className="text-[8px] font-black uppercase text-pink-500 w-8 shrink-0 text-left">Plan:</span>
+                                                <input type="number" min="1" placeholder="วัน" value={currentDuration} 
+                                                   onChange={(e) => {
+                                                      const newDuration = e.target.value; let newEnd = currentEnd;
+                                                      if (currentStart && newDuration && Number(newDuration) > 0) {
+                                                         const d = new Date(currentStart); d.setDate(d.getDate() + (Number(newDuration) - 1));
+                                                         newEnd = d.toISOString().split('T')[0];
+                                                      }
+                                                      setScheduleInputs(prev => ({...prev, [task.id]: { ...prev[task.id], duration: newDuration, end: newEnd, start: currentStart }}));
+                                                   }}
+                                                   className="flex-1 w-full border border-pink-200 rounded px-1 py-1 text-[9px] font-black text-center text-pink-600 outline-none focus:border-pink-500 bg-white shadow-sm" 
+                                                />
+                                            </div>
+                                            <div className="flex items-center gap-1">
+                                                <span className="text-[8px] font-black uppercase text-blue-500 w-8 shrink-0 text-left">Actual:</span>
+                                                <div className="flex-1 text-[9px] sm:text-xs font-black text-blue-500 text-center">
+                                                  {actualDurationText}
+                                                </div>
+                                            </div>
+                                         </td>
+
+                                         {/* Finish Column (Planner) */}
+                                         <td className="sticky left-[520px] bg-white z-[40] border-b border-r border-slate-200 p-2 align-middle bg-pink-50/20 shadow-[4px_0_10px_-4px_rgba(0,0,0,0.05)] w-[140px] min-w-[140px] max-w-[140px]">
+                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
+                                                <span className="text-[8px] font-black uppercase text-pink-500 w-8 shrink-0 text-left">Plan:</span>
+                                                <input type="date" value={currentEnd} 
+                                                   onChange={(e) => {
+                                                      const newEnd = e.target.value; let newDuration = currentDuration;
+                                                      if (currentStart && newEnd) {
+                                                         const diffTime = new Date(newEnd).getTime() - new Date(currentStart).getTime();
+                                                         newDuration = String(Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24))) + 1);
+                                                      }
+                                                      setScheduleInputs(prev => ({...prev, [task.id]: { ...prev[task.id], end: newEnd, duration: newDuration, start: currentStart }}));
+                                                   }} 
+                                                   className="flex-1 w-full border border-pink-200 rounded px-1 py-1 text-[9px] font-bold text-slate-700 outline-none focus:border-pink-500 bg-white shadow-sm" 
+                                                />
+                                            </div>
+                                            <div className="flex items-center gap-1">
+                                                <span className="text-[8px] font-black uppercase text-blue-500 w-8 shrink-0 text-left">Actual:</span>
+                                                <div className="flex-1 text-[9px] sm:text-[11px] font-bold text-green-600 text-center">
+                                                  {dates?.end ? new Date(dates.end).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
+                                                </div>
+                                            </div>
+                                         </td>
+                                       </>
                                     );
-                                  })()}
+                                 })()}
 
                                   {!isMobileLayout && currentUserRole !== 'Project Planner' && (() => {
                                     let durationText = '-';
                                     if (plan.planned_start && plan.planned_end) {
-                                      const diff = new Date(plan.planned_end).getTime() - new Date(plan.planned_start).getTime();
-                                      durationText = `${Math.max(0, Math.ceil(diff / (86400000))) + 1} วัน`;
+                                       const diff = new Date(plan.planned_end).getTime() - new Date(plan.planned_start).getTime();
+                                       durationText = `${Math.max(0, Math.ceil(diff / (86400000))) + 1} วัน`;
                                     }
+
+                                    let actualDurationText = '-';
+                                    if (dates?.start) {
+                                       const aEnd = dates.end ? new Date(dates.end).getTime() : Date.now();
+                                       const aDiff = aEnd - new Date(dates.start).getTime();
+                                       actualDurationText = `${Math.max(0, Math.ceil(aDiff / 86400000)) + 1} วัน`;
+                                    }
+
                                     return (
-                                      <>
-                                        <td className="sticky left-[280px] bg-white z-[40] border-b border-r border-slate-200 p-4 align-top text-center w-[140px] min-w-[140px] max-w-[140px]"><div className="text-[10px] sm:text-sm font-bold text-slate-700 mb-2">{plan.planned_start ? new Date(plan.planned_start).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</div><div className="text-[10px] sm:text-sm font-bold text-blue-600">{dates?.start ? new Date(dates.start).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</div></td>
-                                        <td className="sticky left-[420px] bg-white z-[40] border-b border-r border-slate-200 p-4 align-middle text-center w-[100px] min-w-[100px] max-w-[100px] font-black text-slate-600 text-xs sm:text-sm">{durationText}</td>
-                                        <td className="sticky left-[520px] bg-white z-[40] border-b border-r border-slate-200 p-4 align-top text-center shadow-[4px_0_10px_-4px_rgba(0,0,0,0.05)] w-[140px] min-w-[140px] max-w-[140px]"><div className="text-[10px] sm:text-sm font-bold text-slate-700 mb-2">{plan.planned_end ? new Date(plan.planned_end).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</div><div className="text-[10px] sm:text-sm font-bold text-green-600">{dates?.end ? new Date(dates.end).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</div></td>
-                                      </>
+                                       <>
+                                         {/* Start Column */}
+                                         <td className="sticky left-[280px] bg-white z-[40] border-b border-r border-slate-200 p-2 align-middle w-[140px] min-w-[140px] max-w-[140px]">
+                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-slate-200">
+                                              <span className="text-[8px] font-black uppercase text-slate-400 w-8 shrink-0 text-left">Plan:</span>
+                                              <div className="flex-1 text-[9px] sm:text-[11px] font-bold text-slate-700 text-center">
+                                                {plan.planned_start ? new Date(plan.planned_start).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
+                                              </div>
+                                            </div>
+                                            <div className="flex items-center gap-1">
+                                              <span className="text-[8px] font-black uppercase text-blue-400 w-8 shrink-0 text-left">Actual:</span>
+                                              <div className="flex-1 text-[9px] sm:text-[11px] font-bold text-blue-600 text-center">
+                                                {dates?.start ? new Date(dates.start).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
+                                              </div>
+                                            </div>
+                                         </td>
+
+                                         {/* Duration Column */}
+                                         <td className="sticky left-[420px] bg-white z-[40] border-b border-r border-slate-200 p-2 align-middle w-[100px] min-w-[100px] max-w-[100px]">
+                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-slate-200">
+                                              <span className="text-[8px] font-black uppercase text-slate-400 w-8 shrink-0 text-left">Plan:</span>
+                                              <div className="flex-1 text-[9px] sm:text-xs font-black text-slate-600 text-center">
+                                                {durationText}
+                                              </div>
+                                            </div>
+                                            <div className="flex items-center gap-1">
+                                              <span className="text-[8px] font-black uppercase text-blue-400 w-8 shrink-0 text-left">Actual:</span>
+                                              <div className="flex-1 text-[9px] sm:text-xs font-black text-blue-500 text-center">
+                                                {actualDurationText}
+                                              </div>
+                                            </div>
+                                         </td>
+
+                                         {/* Finish Column */}
+                                         <td className="sticky left-[520px] bg-white z-[40] border-b border-r border-slate-200 p-2 align-middle shadow-[4px_0_10px_-4px_rgba(0,0,0,0.05)] w-[140px] min-w-[140px] max-w-[140px]">
+                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-slate-200">
+                                              <span className="text-[8px] font-black uppercase text-slate-400 w-8 shrink-0 text-left">Plan:</span>
+                                              <div className="flex-1 text-[9px] sm:text-[11px] font-bold text-slate-700 text-center">
+                                                {plan.planned_end ? new Date(plan.planned_end).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
+                                              </div>
+                                            </div>
+                                            <div className="flex items-center gap-1">
+                                              <span className="text-[8px] font-black uppercase text-blue-400 w-8 shrink-0 text-left">Actual:</span>
+                                              <div className="flex-1 text-[9px] sm:text-[11px] font-bold text-green-600 text-center">
+                                                {dates?.end ? new Date(dates.end).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
+                                              </div>
+                                            </div>
+                                         </td>
+                                       </>
                                     );
-                                  })()}
+                                 })()}
 
                                  <td className={`border-b border-slate-200 p-0 relative ${isMobileLayout ? 'h-[100px]' : 'h-[140px]'} z-10 w-full`}>
                                    <div className="absolute inset-0 flex pointer-events-none z-0">
