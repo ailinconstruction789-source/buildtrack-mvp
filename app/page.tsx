@@ -120,6 +120,11 @@ export default function ConstructionApp() {
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [allTaskImages, setAllTaskImages] = useState([]);
   const [selectedExportImages, setSelectedExportImages] = useState([]);
+  const [defects, setDefects] = useState([]);
+  const [defectModal, setDefectModal] = useState({ isOpen: false, task: null, plotId: '' });
+  const [newDefectText, setNewDefectText] = useState('');
+  const [defectFiles, setDefectFiles] = useState([]);
+  const [isSubmittingDefect, setIsSubmittingDefect] = useState(false);
 
   // ==========================================
   // 2. HELPER FUNCTIONS
@@ -180,6 +185,8 @@ export default function ConstructionApp() {
       const { data: contData } = await supabase.from('contractors').select('*');
       const { data: notifData } = await supabase.from('notifications').select('*').order('created_at', { ascending: false });
       const { data: scheduleData } = await supabase.from('plot_task_schedules').select('*');
+      const { data: defectsData } = await supabase.from('defects').select('*');
+      setDefects(defectsData || []);
 
       if (notifData && loggedInUser) setNotifications(notifData.filter(n => n.target_user === loggedInUser.username || n.target_role === loggedInUser.role));
       setAssignments(assignData || []); setContractors(contData || []); setAllUpdatesRecord(allUpdates || []);
@@ -458,6 +465,26 @@ export default function ConstructionApp() {
     } finally {
       setIsSubmitting(false);
     }
+  };
+  const handleSendDefect = async () => {
+    if ((!newDefectText.trim() && defectFiles.length === 0) || isSubmittingDefect) return;
+    setIsSubmittingDefect(true);
+    try {
+      let imageUrls = [];
+      if (defectFiles.length > 0) { 
+        imageUrls = await Promise.all(defectFiles.map(async (f) => { 
+          const comp = await compressImageNative(f.file);
+          const path = `${defectModal.plotId}/defect-${Date.now()}-${Math.random().toString(36).substr(2,9)}`; 
+          const { error } = await supabase.storage.from('task_images').upload(path, comp);
+          if (error) throw new Error('อัปโหลดรูปไม่สำเร็จ กรุณาลองใหม่');
+          return supabase.storage.from('task_images').getPublicUrl(path).data.publicUrl; 
+        })); 
+      }
+      const { error } = await supabase.from('defects').insert([{ plot_id: defectModal.plotId, task_id: defectModal.task?.id, description: newDefectText.trim(), reported_by: loggedInUser?.username || currentUserRole, status: 'pending', image_url: imageUrls.join(',') }]);
+      if (error) throw error;
+      setNewDefectText(''); setDefectFiles([]);
+      const { data } = await supabase.from('defects').select('*'); setDefects(data || []);
+    } catch (e) { showAlert('Error', (e as Error).message); } setIsSubmittingDefect(false);
   };
   const handleSendPost = async () => {
     if ((!inputText.trim() && selectedFiles.length === 0) || isSending) return;
@@ -1283,9 +1310,10 @@ export default function ConstructionApp() {
 
                            return (
                              <div key={`label-${plotId}`} className={`absolute flex items-center justify-center p-1 transition-all ${isEditMapMode ? 'opacity-50 pointer-events-none' : 'hover:z-50 cursor-pointer group'} ${searchHighlightClass}`} style={{ left: `${(bounds.minX / gridCols) * 100}%`, top: `${(bounds.minY / gridRows) * 100}%`, width: `${(w / gridCols) * 100}%`, height: `${(h / gridRows) * 100}%` }} onClick={() => { if (!isEditMapMode) { setSelectedPlot(plotInfo); setView('house-detail'); } }}>
-                                
+                             
+                                {/* ✅ โค้ดใหม่: จัดวางไอคอน Pickaxe ไว้ที่จุดกึ่งกลางของแปลงพอดี */}
                                 {isActiveToday && (
-                                   <div className="absolute -top-3 -right-3 sm:-top-4 sm:-right-4 bg-yellow-400 text-slate-900 rounded-full p-1 sm:p-1.5 shadow-lg animate-bounce z-[60] border-2 border-white" title="มีการทำงานในแปลงนี้วันนี้">
+                                   <div className="absolute top-1/5 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-yellow-400 text-slate-900 rounded-full p-1 sm:p-1.5 shadow-lg animate-bounce z-[60] border-2 border-white" title="มีการทำงานในแปลงนี้วันนี้">
                                       <Pickaxe size={14} className="w-3 h-3 sm:w-4 sm:h-4"/>
                                    </div>
                                 )}
@@ -1751,6 +1779,22 @@ export default function ConstructionApp() {
                                     </button>
                                  )}
                                  <div className={`${isMobileLayout ? 'text-3xl' : 'text-5xl sm:text-6xl'} font-black text-blue-400 italic tracking-tighter`}>{isTaskCompleted ? <CheckCircle size={isMobileLayout?32:48} className="text-green-400 inline-block"/> : `${progressValue}%`}</div>
+                                 {/* 🌟 ปุ่ม Punch List / Defect แยกหน้าต่างแบบมีรูปภาพ */}
+                                 {['QC', 'Foreman', 'Site Engineer', 'Admin'].includes(currentUserRole) && (
+                                    <button 
+                                       onClick={() => setDefectModal({ isOpen: true, task: selectedTask, plotId: selectedPlot.id })}
+                                       className={`ml-3 sm:ml-6 bg-rose-600 hover:bg-rose-700 text-white font-black flex items-center gap-1.5 shadow-md border border-rose-500 transition-all ${isMobileLayout ? 'px-2.5 py-2 text-[10px] rounded-lg' : 'px-4 py-3 text-sm rounded-xl'}`}
+                                    >
+                                       <ShieldAlert size={isMobileLayout ? 14 : 18} />
+                                       <span className="hidden sm:inline">แจ้งซ่อม (Defect)</span>
+                                       <span className="inline sm:hidden">แจ้งซ่อม</span>
+                                       {defects.filter(d => d.plot_id === selectedPlot.id && d.task_id === selectedTask.id && d.status === 'pending').length > 0 && (
+                                          <span className="bg-white text-rose-600 text-[10px] font-black px-1.5 py-0.5 rounded-full animate-pulse ml-1 shadow">
+                                             {defects.filter(d => d.plot_id === selectedPlot.id && d.task_id === selectedTask.id && d.status === 'pending').length}
+                                          </span>
+                                       )}
+                                    </button>
+                                 )}
                                </div>
                            </header>
 
@@ -2031,6 +2075,99 @@ export default function ConstructionApp() {
                   </div>
                 </div>
               )} 
+              {/* 🔴 DEFECT MODAL (Punch List) - แบบแนบรูปได้ */}
+              {defectModal.isOpen && (
+                <div className="fixed inset-0 z-[9999] bg-slate-900/70 backdrop-blur-sm flex justify-center items-center p-4 sm:p-0">
+                  <div className="bg-white rounded-2xl sm:rounded-[2rem] shadow-2xl w-full max-w-lg overflow-hidden flex flex-col h-[85vh] sm:max-h-[85vh] animate-in zoom-in-95 duration-200 border border-slate-100">
+                    
+                    {/* ส่วนหัว */}
+                    <div className="bg-gradient-to-r from-rose-600 to-rose-700 p-4 sm:p-6 flex justify-between items-center text-white shrink-0 shadow-sm">
+                      <div>
+                        <h3 className="font-black text-lg sm:text-xl flex items-center gap-2 tracking-tight"><ShieldAlert size={22}/> รายการ Defect / แจ้งซ่อม</h3>
+                        <p className="text-rose-100 text-xs sm:text-sm font-bold mt-1 tracking-widest">แปลง: {defectModal.plotId} | งาน: {defectModal.task?.task_name}</p>
+                      </div>
+                      <button onClick={() => { setDefectModal({ isOpen: false, task: null, plotId: '' }); setDefectFiles([]); setNewDefectText(''); }} className="p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors text-white"><X size={20} /></button>
+                    </div>
+                    
+                    {/* รายการ Defect */}
+                    <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-slate-50 space-y-3 custom-scrollbar">
+                      {defects.filter(d => d.plot_id === defectModal.plotId && d.task_id === defectModal.task?.id).length === 0 ? (
+                        <div className="text-center text-slate-400 py-12 font-bold flex flex-col items-center">
+                          <CheckCircle size={44} className="text-slate-300 mb-3 opacity-60" />
+                          🎉 สภาพเนื้องานเรียบร้อยดี<br/><span className="text-xs text-slate-400 font-medium mt-1">ยังไม่มีรายการแจ้งซ่อมในหน้านี้</span>
+                        </div>
+                      ) : (
+                        defects.filter(d => d.plot_id === defectModal.plotId && d.task_id === defectModal.task?.id).map(defect => (
+                          <div key={defect.id} className={`p-3.5 sm:p-4 rounded-2xl border ${defect.status === 'pending' ? 'bg-white border-rose-200 shadow-sm' : 'bg-emerald-50/60 border-emerald-200'}`}>
+                            <div className="flex justify-between items-start gap-2 mb-2">
+                              <span className={`font-bold text-sm sm:text-base leading-snug pr-2 ${defect.status === 'pending' ? 'text-slate-800' : 'text-slate-500 line-through'}`}>{defect.description || 'ไม่มีคำอธิบาย'}</span>
+                              <span className={`text-[10px] sm:text-xs font-black px-2.5 py-1 rounded-lg whitespace-nowrap shrink-0 ${defect.status === 'pending' ? 'bg-rose-100 text-rose-600' : 'bg-emerald-100 text-emerald-700'}`}>
+                                {defect.status === 'pending' ? 'รอแก้ไข' : '✅ แก้แล้ว'}
+                              </span>
+                            </div>
+                            
+                            {/* รูปภาพ Defect ถ้ามี */}
+                            {defect.image_url && (
+                                <div className={`grid gap-2 mb-3 ${defect.image_url.split(',').filter(u => u.trim() !== '').length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                                    {defect.image_url.split(',').filter(u => u.trim() !== '').map((url, i) => (
+                                        <img key={i} src={url.trim()} onClick={() => setFullImageUrl(url.trim())} className="w-full aspect-video object-cover rounded-xl cursor-zoom-in border border-slate-100 shadow-sm hover:opacity-90" alt="Defect" /> 
+                                    ))}
+                                </div>
+                            )}
+
+                            <div className="flex justify-between items-center text-[10px] sm:text-xs text-slate-500 mt-2 border-t border-slate-100 pt-2.5">
+                              <span className="flex items-center gap-1 font-bold text-slate-400"><HardHat size={12}/> ผู้แจ้ง: {defect.reported_by}</span>
+                              {defect.status === 'pending' && ['QC', 'Foreman', 'Site Engineer', 'Admin'].includes(currentUserRole) && (
+                                <button onClick={async () => {
+                                  await supabase.from('defects').update({ status: 'resolved' }).eq('id', defect.id);
+                                  const { data } = await supabase.from('defects').select('*'); setDefects(data || []);
+                                }} className="bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1.5 rounded-lg font-bold transition-colors shadow-sm flex items-center gap-1">
+                                  <CheckCircle size={14} /> ซ่อมเสร็จแล้ว
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    {/* ช่องพิมพ์และแนบรูป */}
+                    {['QC', 'Foreman', 'Site Engineer', 'Admin'].includes(currentUserRole) && (
+                      <div className="p-3 sm:p-4 border-t border-slate-200 bg-white shrink-0">
+                        {/* โซนแสดงรูปที่เลือก */}
+                        {defectFiles.length > 0 && (
+                            <div className="flex gap-2 sm:gap-3 mb-2 overflow-x-auto pb-1">
+                                {defectFiles.map((file, idx) => (
+                                    <div key={idx} className="relative shrink-0 animate-in fade-in zoom-in duration-300">
+                                        <img src={file.previewUrl} className="w-12 h-12 sm:w-14 sm:h-14 object-cover rounded-xl border-2 border-rose-500 shadow-sm" />
+                                        <button onClick={() => { const n = [...defectFiles]; n.splice(idx, 1); setDefectFiles(n); }} className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full p-0.5 sm:p-1 border-2 border-white hover:bg-red-600"><X size={10} /></button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                        <div className="flex items-center gap-2">
+                          <label className="text-slate-400 hover:text-rose-600 p-2.5 sm:p-3 rounded-xl bg-slate-100 cursor-pointer shadow-sm active:scale-90 transition-transform">
+                              <Camera size={isMobileLayout ? 20 : 22} />
+                              <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { const files = Array.from(e.target.files).map(f => ({ file: f, previewUrl: URL.createObjectURL(f) })); setDefectFiles([...defectFiles, ...files].slice(0, 4)); }} />
+                          </label>
+                          <input 
+                            type="text" value={newDefectText} onChange={(e) => setNewDefectText(e.target.value)}
+                            placeholder="ระบุจุดบกพร่อง..." 
+                            className="flex-1 bg-slate-50 border border-slate-300 rounded-xl px-3 sm:px-4 py-2.5 sm:py-3 text-xs sm:text-sm font-bold focus:border-rose-500 focus:bg-white outline-none transition-all"
+                            onKeyDown={(e) => { if (e.key === 'Enter') handleSendDefect(); }}
+                          />
+                          <button 
+                            onClick={handleSendDefect} disabled={isSubmittingDefect || (!newDefectText.trim() && defectFiles.length === 0)}
+                            className="bg-rose-600 text-white px-3 sm:px-5 py-2.5 sm:py-3 rounded-xl hover:bg-rose-700 transition-colors shadow-md flex items-center justify-center gap-1.5 font-bold text-xs sm:text-sm disabled:opacity-50"
+                          >
+                            {isSubmittingDefect ? <Loader2 className="animate-spin" size={16}/> : <><span className="hidden sm:inline">ส่งเรื่อง</span><Send size={14} /></>}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
               {editProjectModal.isOpen && (
                 <div className="absolute inset-0 z-[600] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 fixed">
                   <div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full p-6 space-y-5 animate-in zoom-in-95 duration-200">
