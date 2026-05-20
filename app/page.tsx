@@ -81,6 +81,31 @@ export default function ConstructionApp() {
   const [contractors, setContractors] = useState([]);
   
   const [inputText, setInputText] = useState('');
+  const [currentWeather, setCurrentWeather] = useState(null);
+
+  // 🌟 ดึงสภาพอากาศอัตโนมัติตามพิกัด GPS (ดึงจาก Open-Meteo ฟรีไม่มีลิมิต)
+  useEffect(() => {
+    const fetchWeather = async (lat = 13.75, lon = 100.51) => { // ค่าเริ่มต้นถ้าไม่เปิด GPS คือ กทม.
+       try {
+         const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`);
+         const data = await res.json();
+         const code = data.current_weather.weathercode;
+         let icon = '☀️', text = 'ฟ้าโปร่ง';
+         if (code > 0 && code <= 3) { icon = '⛅'; text = 'มีเมฆบางส่วน'; }
+         else if (code >= 45 && code <= 48) { icon = '🌫️'; text = 'มีหมอก'; }
+         else if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) { icon = '🌧️'; text = 'ฝนตก'; }
+         else if (code >= 95) { icon = '⛈️'; text = 'ฝนฟ้าคะนอง'; }
+         setCurrentWeather({ temp: data.current_weather.temperature, icon, text });
+       } catch (e) { console.error('Weather Fetch Error', e); }
+    };
+
+    if (navigator.geolocation) {
+       navigator.geolocation.getCurrentPosition(
+         (pos) => fetchWeather(pos.coords.latitude, pos.coords.longitude),
+         () => fetchWeather() // ถ้าผู้ใช้ไม่กดอนุญาต GPS ให้ใช้ค่าเริ่มต้น
+       );
+    } else fetchWeather();
+  }, []);
   const [progressValue, setProgressValue] = useState(0); 
   const [isSending, setIsSending] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState([]); 
@@ -120,6 +145,8 @@ export default function ConstructionApp() {
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [allTaskImages, setAllTaskImages] = useState([]);
   const [selectedExportImages, setSelectedExportImages] = useState([]);
+  const [isPresentationOpen, setIsPresentationOpen] = useState(false);
+  const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [defects, setDefects] = useState([]);
   const [defectModal, setDefectModal] = useState({ isOpen: false, task: null, plotId: '' });
   const [newDefectText, setNewDefectText] = useState('');
@@ -226,6 +253,17 @@ export default function ConstructionApp() {
  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (loggedInUser) fetchAllData(); }, [loggedInUser]);
   useEffect(() => { setScheduleInputs({}); }, [selectedPlot?.id]);
+  // 🌟 ระบบจับการกดปุ่มคีย์บอร์ด (ซ้าย, ขวา, ESC) สำหรับโหมด Presentation
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (!isPresentationOpen) return;
+      if (e.key === 'ArrowRight') setCurrentSlideIndex(prev => Math.min(prev + 1, plots.length - 1));
+      if (e.key === 'ArrowLeft') setCurrentSlideIndex(prev => Math.max(prev - 1, 0));
+      if (e.key === 'Escape') setIsPresentationOpen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isPresentationOpen, plots.length]);
 
   // ==========================================
   // 4. HANDLERS
@@ -501,7 +539,7 @@ export default function ConstructionApp() {
         })); 
       }
       const actionLabel = progressValue === 100 ? 'ส่งงาน 100%' : 'อัปเดตงาน';
-      const { error } = await supabase.from('task_updates').insert([{ plot_id: selectedPlot.id, task_template_id: selectedTask.id, user_name: loggedInUser.username, role: currentUserRole, action: actionLabel, text_content: inputText || actionLabel, progress: progressValue, image_url: imageUrls.join(',') }]);
+      const { error } = await supabase.from('task_updates').insert([{ plot_id: selectedPlot.id, task_template_id: selectedTask.id, user_name: loggedInUser.username, role: currentUserRole, action: actionLabel, text_content: inputText || actionLabel, progress: progressValue, image_url: imageUrls.join(','),weather_info: currentWeather ? `${currentWeather.icon} ${currentWeather.text} (${currentWeather.temp}°C)` : null }]);
       if (error) throw error;
       await fetchAllData(); const { data } = await supabase.from('task_updates').select('*').eq('task_template_id', selectedTask.id).eq('plot_id', selectedPlot.id).order('created_at', { ascending: true }); setUpdates(data || []); setInputText(''); setSelectedFiles([]);
     } catch (e) { showAlert('Error', (e as Error).message); } setIsSending(false);
@@ -520,7 +558,7 @@ export default function ConstructionApp() {
           return supabase.storage.from('task_images').getPublicUrl(path).data.publicUrl; 
         })); 
       }
-      const { error } = await supabase.from('task_updates').insert([{ plot_id: selectedPlot.id, task_template_id: selectedTask.id, user_name: loggedInUser.username, role: currentUserRole, action: actionLabel, text_content: inputText || (isApproved ? 'งานเรียบร้อยดี ตรวจผ่าน' : 'พบข้อบกพร่อง กรุณาแก้ไข'), progress: finalP, image_url: imageUrls.join(',') }]);
+      const { error } = await supabase.from('task_updates').insert([{ plot_id: selectedPlot.id, task_template_id: selectedTask.id, user_name: loggedInUser.username, role: currentUserRole, action: actionLabel, text_content: inputText || (isApproved ? 'งานเรียบร้อยดี ตรวจผ่าน' : 'พบข้อบกพร่อง กรุณาแก้ไข'), progress: finalP, image_url: imageUrls.join(','),weather_info: currentWeather ? `${currentWeather.icon} ${currentWeather.text} (${currentWeather.temp}°C)` : null }]);
       if (error) throw error;
       if (!isApproved) {
          const notifPayload = [];
@@ -942,13 +980,23 @@ export default function ConstructionApp() {
                       </div>
                    )}
                 </div>
-
+                {/* 🌟 วิดเจ็ตสภาพอากาศปัจจุบัน (เอามาวางแทรกตรงนี้เลยครับ!) 🌟 */}
+                      {currentWeather && (
+                          <div className="hidden sm:flex items-center gap-2 bg-sky-50 text-sky-700 px-3 py-1.5 rounded-xl border border-sky-200 shadow-sm ml-2 animate-in fade-in zoom-in duration-500">
+                            <span className="text-2xl drop-shadow-sm">{currentWeather.icon}</span>
+                            <div className="flex flex-col justify-center">
+                                <span className="text-[10px] font-black leading-none text-sky-600">{currentWeather.text}</span>
+                                <span className="text-sm font-black leading-tight mt-0.5">{currentWeather.temp}°C</span>
+                            </div>
+                          </div>
+                      )}
                 {/* 👤 User Profile */}
                 <div className="flex items-center gap-3 border-l border-slate-200 pl-4">
                    <div className="text-right hidden sm:block">
                       <p className="text-sm font-bold text-slate-700 leading-none mb-1">{loggedInUser.username}</p>
                       <p className={`text-[10px] font-black uppercase tracking-widest leading-none ${isAdmin ? 'text-rose-500' : isQC ? 'text-purple-500' : isSiteEngineer ? 'text-blue-500' : isProjectPlanner ? 'text-pink-500' : isProcurement ? 'text-emerald-500' : 'text-orange-500'}`}>{currentUserRole}</p>
                    </div>
+
                    <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-blue-600 to-purple-600 flex items-center justify-center text-white font-black shadow-md">{loggedInUser.username.charAt(0)}</div>
                    <button onClick={handleLogout} className="ml-1 p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors" title="ออกจากระบบ"><LogOut size={18}/></button>
                 </div>
@@ -1188,6 +1236,12 @@ export default function ConstructionApp() {
                         </div>
                         
                         <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
+                          {/* 🌟 ปุ่มเปิด Presentation Mode */}
+                          {['Project Planner', 'Admin'].includes(currentUserRole) && (
+                              <button onClick={() => { setIsPresentationOpen(true); setCurrentSlideIndex(0); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl font-black text-xs sm:text-sm shadow-md transition-all flex items-center gap-1.5 shrink-0">
+                                <Monitor size={16} /> <span className="hidden sm:inline">Presentation Mode</span><span className="inline sm:hidden">โหมดนำเสนอ</span>
+                              </button>
+                          )}
                           
                           {/* 🌟 UX: ช่องค้นหาช่างเข้างานวันนี้ (Contractor Radar) 🌟 */}
                           <div className="relative hidden lg:block mr-2 w-64">
@@ -1814,6 +1868,12 @@ export default function ConstructionApp() {
                                        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-2 sm:mb-4 gap-1 sm:gap-2">
                                          <p className={`text-[9px] sm:text-xs font-black uppercase italic tracking-widest leading-tight ${update.role === 'QC' ? 'text-purple-400' : update.role === 'Site Engineer' ? 'text-blue-400' : 'text-slate-400'}`}>{update.action} • {update.user_name} • {update.progress}%</p>
                                          <span className={`text-[8px] sm:text-xs text-slate-500 font-bold bg-slate-50 border border-slate-100 ${isMobileLayout ? 'px-2 py-0.5' : 'px-3 py-1.5'} rounded-lg shrink-0 w-fit`}>{new Date(update.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })} • {new Date(update.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.</span>
+                                         {/* 🌟 ป้ายสภาพอากาศ ณ เวลาที่รายงาน */}
+                                          {update.weather_info && (
+                                            <span className={`text-[8px] sm:text-xs text-sky-700 font-bold bg-sky-50 border border-sky-100 ${isMobileLayout ? 'px-2 py-0.5' : 'px-3 py-1.5'} rounded-lg shrink-0 w-fit flex items-center gap-1`} title="สภาพอากาศขณะรายงาน">
+                                                {update.weather_info}
+                                            </span>
+                                          )}
                                        </div>
                                        <p className={`text-slate-700 ${isMobileLayout ? 'text-xs mb-2' : 'text-sm sm:text-base mb-4'} font-medium leading-relaxed`}>{update.text_content}</p>
                                        {update.image_url && (
@@ -2190,6 +2250,247 @@ export default function ConstructionApp() {
                   </div>
                 </div>
               )}
+              {/* 📺 PRESENTATION MODAL (ห้องประชุม) */}
+              {isPresentationOpen && plots.length > 0 && (() => {
+                 const currentPlot = plots[currentSlideIndex];
+                 
+                 // 🌟 คำนวณความคืบหน้าและสถานะ (แก้บั๊ก getPlotStatus)
+                 const plotUpdates = allUpdatesRecord.filter(u => u.plot_id === currentPlot.id).sort((a,b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+                 const actualProgress = plotUpdates.length > 0 ? Math.max(...plotUpdates.map(u => Number(u.progress) || 0)) : 0;
+                 let sLabel = 'รอดำเนินการ'; let sStatus = 'pending';
+                 if (actualProgress >= 100) { sLabel = 'เสร็จสมบูรณ์'; sStatus = 'completed'; }
+                 else if (actualProgress > 0) { sLabel = 'กำลังดำเนินการ'; sStatus = 'on-track'; }
+                 const statusInfo = { actual: actualProgress, label: sLabel, status: sStatus };
+                 const latestUpdate = plotUpdates.length > 0 ? plotUpdates[0] : null;
+                 
+                 let plotImages = [];
+                 plotUpdates.forEach(u => {
+                    if (u.image_url) {
+                       const urls = u.image_url.split(',').filter(url => url.trim() !== '');
+                       
+                      // 🌟 ระบบค้นหาช่างฉบับปรับปรุงใหม่ ดึงชื่อช่างตรงตามงวดงานจริง 100%
+                       let contractorName = 'ช่างประจำแปลง';
+                       
+                       if (u.action) {
+                          // สเต็ป 1: หาจากชื่อที่ตรงกันหรือใกล้เคียงที่สุดในแปลงนี้ก่อน
+                          const matchedAssign = assignments.slice().reverse().find(a => 
+                             a.plot_id === currentPlot.id && a.task_name &&
+                             (a.task_name === u.action || u.action.includes(a.task_name) || a.task_name.includes(u.action))
+                          );
+                          
+                          if (matchedAssign) {
+                             contractorName = matchedAssign.contractor_name;
+                          } else {
+                             // สเต็ป 2: ถ้ายังไม่เจอ (เพราะชื่อยาว/สั้นไป) ให้ดักจับด้วยคำสำคัญหลักๆ ในชื่องาน (เช่น โครงสร้าง, ฐานราก, ผัง)
+                             const plotContracts = assignments.filter(a => a.plot_id === currentPlot.id);
+                             const keywordFind = plotContracts.find(a => {
+                                const cleanAction = u.action.replace(/\s+/g, '');
+                                const cleanTask = a.task_name ? a.task_name.replace(/\s+/g, '') : '';
+                                return cleanAction.includes(cleanTask) || cleanTask.includes(cleanAction) ||
+                                       (cleanAction.includes('ฐานราก') && cleanTask.includes('ฐานราก')) ||
+                                       (cleanAction.includes('โครงสร้าง') && cleanTask.includes('โครงสร้าง'));
+                             });
+                             if (keywordFind) contractorName = keywordFind.contractor_name;
+                          }
+                       }
+
+                       urls.forEach(url => { 
+                          if (plotImages.length < 4) {
+                             plotImages.push({ 
+                                url: url.trim(), 
+                                date: u.created_at, 
+                                action: u.action || 'อัปเดตสถานะงาน',
+                                contractor: contractorName
+                             }); 
+                          }
+                       });
+                    }
+                 });
+
+                 // 🌟 จัดกลุ่มรูปภาพตามชื่องาน (Action) เพื่อให้แสดงกรอบแยกงานอย่างถูกต้อง
+                 const groupedImages = plotImages.reduce((acc, img) => {
+                    if (!acc[img.action]) acc[img.action] = { contractor: img.contractor, images: [] };
+                    acc[img.action].images.push(img);
+                    return acc;
+                 }, {});
+                 
+                 const foremanAssignment = assignments.slice().reverse().find(a => a.plot_id === currentPlot.id);
+                 const foremanName = foremanAssignment ? foremanAssignment.contractor_name : (currentPlot.foreman || 'ไม่ระบุ');
+
+                 return (
+                    <div className="fixed inset-0 z-[99999] bg-slate-900 flex flex-col animate-in fade-in duration-300">
+                       {/* Top Bar */}
+                       <div className="flex justify-between items-center p-4 sm:p-5 bg-slate-950 border-b border-slate-800 text-white shadow-md shrink-0">
+                          <div className="flex items-center gap-4">
+                             <div className="bg-indigo-600 text-white font-black px-4 py-2 rounded-xl text-lg sm:text-xl shadow-[0_0_15px_rgba(79,70,229,0.5)]">
+                                แปลง: {currentPlot.id}
+                             </div>
+                             <div className="hidden sm:block text-slate-300 text-sm font-bold tracking-wider">
+                                โครงการ: {selectedProject?.name} <span className="mx-2">|</span> รายงานประจำสัปดาห์
+                             </div>
+                          </div>
+                          <div className="flex items-center gap-3 sm:gap-6">
+                             <span className="text-slate-400 font-bold text-sm bg-slate-800 px-3 py-1.5 rounded-lg">สไลด์ {currentSlideIndex + 1} / {plots.length}</span>
+                             <button onClick={() => setIsPresentationOpen(false)} className="bg-rose-500 hover:bg-rose-600 p-2 sm:px-4 sm:py-2 rounded-xl text-white font-bold transition flex items-center gap-2 shadow-sm">
+                                <X size={20} /> <span className="hidden sm:inline">ปิด (Esc)</span>
+                             </button>
+                          </div>
+                       </div>
+
+                       {/* Main Content Area */}
+                       <div className="flex-1 overflow-hidden flex items-center justify-center p-4 sm:p-8 relative w-full h-full">
+                          {/* Navigation Buttons */}
+                          <button onClick={() => setCurrentSlideIndex(p => Math.max(p - 1, 0))} disabled={currentSlideIndex === 0} className="absolute left-2 sm:left-6 p-3 sm:p-5 bg-white/10 hover:bg-white/20 text-white rounded-full disabled:opacity-0 transition z-50 backdrop-blur-md">
+                             <ChevronRight size={32} className="rotate-180" />
+                          </button>
+                          <button onClick={() => setCurrentSlideIndex(p => Math.min(p + 1, plots.length - 1))} disabled={currentSlideIndex === plots.length - 1} className="absolute right-2 sm:right-6 p-3 sm:p-5 bg-white/10 hover:bg-white/20 text-white rounded-full disabled:opacity-0 transition z-50 backdrop-blur-md">
+                             <ChevronRight size={32} />
+                          </button>
+
+                          {/* Presentation Slide Card (16:9) */}
+                          <div className="bg-slate-50 w-full max-w-7xl aspect-[4/3] sm:aspect-[16/9] rounded-2xl sm:rounded-[2rem] shadow-2xl flex flex-col sm:flex-row overflow-hidden border border-slate-700 max-h-full">
+                             
+{/* ✅ โค้ดใหม่ Left Panel (วางแทนที่ของเดิม) */}
+                             <div className="w-full sm:w-5/12 bg-white p-6 sm:p-8 flex flex-col justify-between border-b sm:border-b-0 sm:border-r border-slate-200 shrink-0 overflow-y-auto custom-scrollbar">
+                                <div>
+                                   <div className="flex justify-between items-start mb-4">
+                                      <div>
+                                         <h2 className="text-4xl sm:text-5xl font-black text-slate-800 mb-2">{currentPlot.id}</h2>
+                                         <div className={`inline-block px-4 py-1.5 rounded-full font-black text-sm sm:text-base shadow-sm ${statusInfo.status === 'delayed' ? 'bg-rose-100 text-rose-700' : statusInfo.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : statusInfo.status === 'ahead' ? 'bg-indigo-100 text-indigo-700' : statusInfo.status === 'on-track' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
+                                            {statusInfo.label}
+                                         </div>
+                                      </div>
+                                      <div className="text-right">
+                                         <p className="text-xs sm:text-sm font-bold text-slate-400 uppercase tracking-widest mb-1">ความคืบหน้า</p>
+                                         <div className="text-5xl sm:text-6xl font-black text-blue-600 tracking-tighter">{statusInfo.actual}%</div>
+                                      </div>
+                                   </div>
+                                   
+                                   <hr className="my-4 border-slate-100 border-[1.5px]" />
+                                   
+                                   <div className="space-y-5">
+                                      {/* 1. แสดงชื่อผู้ควบคุมงาน (Foreman หลักประจำบ้านหลังนี้) */}
+                                      <div className="bg-slate-50 border border-slate-200/60 p-3.5 rounded-xl">
+                                         <h4 className="text-xs font-black text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-1.5"><Users size={14} className="text-slate-400"/> ผู้ควบคุมงานโครงการ (Foreman)</h4>
+                                         <p className="font-black text-slate-800 text-base sm:text-lg">
+                                            {currentPlot.foreman || 'ไม่ระบุผู้ควบคุมงานหลัก'}
+                                         </p>
+                                      </div>
+
+                                      {/* 2. แสดงรายการงานที่มีการอัปเดตสัปดาห์นี้ พร้อมช่างประจำงวดงานนั้นๆ */}
+                                      <div>
+                                         <h4 className="text-xs font-black text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5"><Activity size={14} className="text-indigo-500"/> รายงานสถานะงานรายงวดในแปลงนี้</h4>
+                                         
+                                         {plotUpdates.length > 0 ? (
+                                            <div className="space-y-3 max-h-[35vh] overflow-y-auto pr-1 custom-scrollbar">
+                                               {/* หา Uniq Task Name ที่มีการอัปเดตในสัปดาห์นี้ */}
+                                               {Array.from(new Set(plotUpdates.map(u => u.action))).map((taskAction, tIdx) => {
+                                                  // ดึงข้อมูลอัปเดตล่าสุดของงานนี้
+                                                  const specificTaskUpdates = plotUpdates.filter(u => u.action === taskAction);
+                                                  const latestTaskUpdate = specificTaskUpdates[0];
+                                                  
+                                                  // ค้นหาช่างที่ถูกมอบหมายในงานย่อยชิ้นนี้
+                                                  const matchedAssign = assignments.slice().reverse().find(a => a.plot_id === currentPlot.id && a.task_name === taskAction);
+                                                  const contractorName = matchedAssign ? matchedAssign.contractor_name : 'ยังไม่มอบหมายช่าง';
+
+                                                  return (
+                                                     <div key={tIdx} className="bg-white border border-slate-200 p-3.5 rounded-xl shadow-sm hover:border-indigo-200 transition-colors">
+                                                        <div className="flex justify-between items-start gap-2 mb-1.5">
+                                                           <span className="font-black text-slate-800 text-sm sm:text-base">{taskAction}</span>
+                                                           <span className="bg-blue-50 text-blue-600 text-xs font-black px-2 py-0.5 rounded-md">{latestTaskUpdate.progress}%</span>
+                                                        </div>
+                                                        
+                                                        <div className="text-xs font-medium text-slate-500 mb-2 bg-slate-50 py-1 px-2 rounded-md w-fit flex items-center gap-1">
+                                                           <HardHat size={12} className="text-amber-500" /> 
+                                                           <span>ช่างผู้รับผิดชอบ: <strong className="text-slate-700 font-bold">{contractorName}</strong></span>
+                                                        </div>
+
+                                                        <p className="text-xs text-slate-600 italic pl-2 border-l-2 border-indigo-400 font-medium leading-relaxed bg-indigo-50/20 py-1 rounded-r-md">
+                                                           "{latestTaskUpdate.text_content}"
+                                                        </p>
+                                                        <p className="text-[10px] text-slate-400 font-bold mt-1.5 text-right">
+                                                           อัปเดตโดย {latestTaskUpdate.user_name} ({new Date(latestTaskUpdate.created_at).toLocaleDateString('th-TH')})
+                                                        </p>
+                                                     </div>
+                                                  );
+                                               })}
+                                            </div>
+                                         ) : (
+                                            <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl text-slate-400 italic text-sm font-medium flex items-center gap-2">
+                                               <Clock size={16}/> สัปดาห์นี้ยังไม่มีบันทึกรายงานสถานะงาน
+                                            </div>
+                                         )}
+                                      </div>
+                                   </div>
+                                </div>
+
+                                <div className="mt-4 pt-4 border-t border-slate-100 shrink-0">
+                                   <p className="text-xs text-slate-400 font-bold flex items-center justify-between">
+                                      <span>สร้างเมื่อ: {new Date().toLocaleDateString('th-TH')}</span>
+                                      <span className="flex items-center gap-1 text-slate-300"><Monitor size={12}/> BuildTrack Presentation</span>
+                                   </p>
+                                </div>
+                             </div>
+
+                            {/* Right Panel: Image Grid (จัดกลุ่มตามงานและช่าง) */}
+                             <div className="w-full sm:w-7/12 bg-slate-100 p-4 sm:p-6 flex flex-col relative overflow-y-auto custom-scrollbar">
+                                <h3 className="font-black text-slate-700 mb-4 flex items-center gap-2 text-xl sm:text-2xl shrink-0"><Camera className="text-slate-500"/> ภาพถ่าย 4 รูปล่าสุดแยกตามงวดงาน</h3>
+                                {plotImages.length > 0 ? (
+                                   <div className="flex-1 flex flex-col gap-4">
+                                      {Object.entries(groupedImages).map(([action, data]: [string, any], idx) => (
+                                         <div key={idx} className="bg-white p-3 sm:p-4 rounded-2xl shadow-sm border border-slate-200">
+                                            {/* หัวข้อ: ชื่องาน + ชื่อช่างประจำงานชิ้นนั้น */}
+                                            {/* ✅ โค้ดใหม่: รวมชื่องานย่อยและชื่อช่างไว้ในแถบเดียวกันตามที่ลูกพี่วงไว้ */}
+                                            <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-2">
+                                               {/* ฝั่งซ้ายโชว์ไอคอนและลำดับกลุ่ม */}
+                                               <span className="font-black text-slate-400 text-xs sm:text-sm border-l-4 border-rose-500 pl-2">
+                                                  กลุ่มงานที่ {idx + 1}
+                                               </span>
+                                               
+                                               {/* ฝั่งขวา: ป้ายชื่อป้ายใหญ่แสดง [ชื่องาน + ช่างผู้รับผิดชอบ] คู่กัน */}
+                                               <span className="bg-amber-50 border border-amber-200 text-amber-800 text-[10px] sm:text-xs font-black px-3 py-1.5 rounded-xl flex flex-wrap items-center gap-2 max-w-[85%] shadow-sm justify-end">
+                                                  <div className="flex items-center gap-1 bg-amber-200/50 px-2 py-0.5 rounded-md border border-amber-300/60 text-slate-800">
+                                                     <Activity size={12} className="text-indigo-600 animate-pulse"/>
+                                                     <span>งาน: <strong className="font-black">{action}</strong></span>
+                                                  </div>
+                                                  <div className="flex items-center gap-1 bg-white px-2 py-0.5 rounded-md border border-slate-200 text-amber-700">
+                                                     <HardHat size={12} className="text-amber-500"/>
+                                                     <span>ผู้รับเหมา: <strong className="font-black">{data.contractor}</strong></span>
+                                                  </div>
+                                               </span>
+                                            </div>
+                                            
+                                            {/* กริดรูปภาพที่สัมพันธ์กับงานนี้ */}
+                                            <div className={`grid gap-2 sm:gap-3 ${data.images.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
+                                               {data.images.map((img: any, i: number) => (
+                                                  <div key={i} className="relative bg-black rounded-xl overflow-hidden aspect-video group shadow-sm border border-slate-100">
+                                                     <img src={img.url} className="w-full h-full object-cover opacity-90 transition-transform duration-700 group-hover:scale-105 group-hover:opacity-100" alt={action} />
+                                                     
+                                                     {/* 🌟 ป้ายชื่ออัปเดตงาน ทับอยู่บนรูปภาพ */}
+                                                     <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent p-2.5 pt-8">
+                                                        <p className="text-white font-black text-[10px] sm:text-xs drop-shadow truncate mb-0.5">📂 {img.action}</p>
+                                                        <p className="text-white/70 font-bold text-[9px] sm:text-[11px] text-right">{new Date(img.date).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' })} น.</p>
+                                                     </div>
+                                                  </div>
+                                               ))}
+                                            </div>
+                                         </div>
+                                      ))}
+                                   </div>
+                                ) : (
+                                   <div className="flex-1 flex flex-col items-center justify-center bg-white/50 rounded-[2rem] border-2 border-dashed border-slate-300 min-h-[300px]">
+                                      <ImageIcon size={80} className="text-slate-300 mb-4" />
+                                      <p className="text-slate-500 font-black text-xl">ยังไม่มีรูปถ่ายความคืบหน้า</p>
+                                      <p className="text-slate-400 font-medium text-sm mt-1">โฟร์แมนต้องอัปโหลดรูปผ่านช่องแชทรายงานก่อน</p>
+                                   </div>
+                                )}
+                              </div>
+
+                          </div>
+                       </div>
+                    </div>
+                 );
+              })()}
         {/* 🖨️ 🌟 ระบบจัดหน้า A4 สำหรับพิมพ์ 🌟 🖨️ */}
         <div id="printable-a4" className="hidden print:block absolute top-0 left-0 w-full bg-white z-[9999] text-black">
            {imageChunks.map((chunk, pageIdx) => (
