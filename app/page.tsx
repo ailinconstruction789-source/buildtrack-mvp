@@ -68,6 +68,52 @@ export default function ConstructionApp() {
   const [loading, setLoading] = useState(false);
   const [editPlotModal, setEditPlotModal] = useState({ isOpen: false, plot: null, id: '', house_type_id: '', foreman_name: '' });
   const [editProjectModal, setEditProjectModal] = useState({ isOpen: false, oldName: '', newName: '' });
+// 🌟 State สำหรับระบบ 2.5D แบบเจาะจงรายงวดงาน (0-99% และ 100%)
+  const [editingHouseType, setEditingHouseType] = useState(null);
+  const [visualConfig, setVisualConfig] = useState({}); // เก็บค่าแบบ Map { [taskId]: { progress_image, progress_z, done_image, done_z } }
+  const [isUploadingLayer, setIsUploadingLayer] = useState(false);
+  const [simulatedStatus, setSimulatedStatus] = useState({}); // 🎮 สำหรับกล่องลองเล่นพรีวิวในหน้าตั้งค่า { [taskId]: 'none' | 'progress' | 'done' }
+
+  // ฟังก์ชันอัปโหลดรูปเฉพาะช่อง
+  const handleUploadSlot = async (taskId, type, file) => {
+    if (!file || !editingHouseType) return;
+    setIsUploadingLayer(true);
+    try {
+      const path = `visualizer/${editingHouseType.id}/${taskId}-${type}-${Date.now()}`;
+      const { error } = await supabase.storage.from('task_images').upload(path, file);
+      if (error) throw error;
+      const url = supabase.storage.from('task_images').getPublicUrl(path).data.publicUrl;
+      
+      setVisualConfig(prev => ({
+        ...prev,
+        [taskId]: {
+          ...prev[taskId],
+          [`${type}_image`]: url,
+          [`${type}_z`]: prev[taskId]?.[`${type}_z`] || 10 // ค่าเริ่มต้น Z-index เป็น 10
+        }
+      }));
+    } catch (err) {
+      showAlert('อัปโหลดล้มเหลว', err.message);
+    }
+    setIsUploadingLayer(false);
+  };
+
+  // ฟังก์ชันบันทึกการตั้งค่าลง Supabase
+  const handleSave25DConfig = async () => {
+    if (!editingHouseType) return;
+    setIsSubmitting(true);
+    try {
+      const { error } = await supabase.from('house_types')
+        .update({ visual_config: visualConfig })
+        .eq('id', editingHouseType.id);
+      if (error) throw error;
+      await fetchAllData();
+      showAlert('สำเร็จ', 'บันทึกการจัดเลเยอร์ 2.5D แบบรายงวดงานเรียบร้อยแล้วครับ');
+    } catch (e) {
+      showAlert('ผิดพลาด', e.message);
+    }
+    setIsSubmitting(false);
+  };
   
   const [updates, setUpdates] = useState([]); 
   const [allUpdatesRecord, setAllUpdatesRecord] = useState([]); 
@@ -121,6 +167,8 @@ export default function ConstructionApp() {
   const [filterForeman, setFilterForeman] = useState('');
   const [searchContractor, setSearchContractor] = useState(''); 
   const [inspectionSort, setInspectionSort] = useState('time');
+  const [inspectionViewMode, setInspectionViewMode] = useState('card');
+  const [inspectionFilterTab, setInspectionFilterTab] = useState('all');
   
   const [assignModal, setAssignModal] = useState({ isOpen: false, task: null, name: '', phone: '' });
   const [dialogConfig, setDialogConfig] = useState({ isOpen: false, title: '', message: '', type: 'confirm', onConfirm: null });
@@ -250,6 +298,51 @@ export default function ConstructionApp() {
   }, []);
 
   useEffect(() => { const fetchUsers = async () => { try { const { data } = await supabase.from('users').select('*').order('role', { ascending: true }).order('username', { ascending: true }); setAllUsers(data || []); } catch (err) { console.error(err); } }; fetchUsers(); }, []);
+  // 🌟 ระบบจำการล็อกอิน และตรวจจับเวลาหมดอายุ (ตั้งไว้ 60 นาที)
+  useEffect(() => {
+    const TIMEOUT_MS = 60 * 60 * 1000; // 60 นาที (ถ้าอยากได้ 120 นาที เปลี่ยนเลข 60 เป็น 120)
+    const savedUser = localStorage.getItem('buildtrack_user');
+    const lastActive = localStorage.getItem('buildtrack_last_active');
+
+    if (savedUser && lastActive) {
+      if (Date.now() - parseInt(lastActive) < TIMEOUT_MS) {
+        setLoggedInUser(JSON.parse(savedUser));
+        localStorage.setItem('buildtrack_last_active', Date.now().toString());
+      } else {
+        localStorage.removeItem('buildtrack_user');
+        localStorage.removeItem('buildtrack_last_active');
+      }
+    }
+
+    const updateActivity = () => {
+      if (localStorage.getItem('buildtrack_user')) {
+        localStorage.setItem('buildtrack_last_active', Date.now().toString());
+      }
+    };
+
+    window.addEventListener('mousemove', updateActivity);
+    window.addEventListener('keydown', updateActivity);
+    window.addEventListener('click', updateActivity);
+    window.addEventListener('touchstart', updateActivity);
+
+    const interval = setInterval(() => {
+      const lastAct = localStorage.getItem('buildtrack_last_active');
+      if (lastAct && (Date.now() - parseInt(lastAct) > TIMEOUT_MS)) {
+        setLoggedInUser(null);
+        localStorage.removeItem('buildtrack_user');
+        localStorage.removeItem('buildtrack_last_active');
+        alert('เซสชันหมดอายุเนื่องจากไม่ได้ใช้งานเกิน 60 นาที กรุณาล็อกอินใหม่ครับ 🔒');
+      }
+    }, 60000);
+
+    return () => {
+      window.removeEventListener('mousemove', updateActivity);
+      window.removeEventListener('keydown', updateActivity);
+      window.removeEventListener('click', updateActivity);
+      window.removeEventListener('touchstart', updateActivity);
+      clearInterval(interval);
+    };
+  }, []);
  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (loggedInUser) fetchAllData(); }, [loggedInUser]);
   useEffect(() => { setScheduleInputs({}); }, [selectedPlot?.id]);
@@ -268,8 +361,119 @@ export default function ConstructionApp() {
   // ==========================================
   // 4. HANDLERS
   // ==========================================
-  const handleLogin = () => { const user = allUsers.find(u => u.username === loginData.username && u.pin === loginData.pin); if (user) { setLoggedInUser(user); } else { showAlert('ล้มเหลว', 'ชื่อผู้ใช้หรือ PIN ไม่ถูกต้อง'); } };
-  const handleLogout = () => { setLoggedInUser(null); setLoginData({ username: '', pin: '' }); setView('dashboard'); setProjects([]); setPlots([]); setIsEditMapMode(false); setIsMobilePreview(false); };
+  const handleLogin = () => { 
+    const user = allUsers.find(u => u.username === loginData.username && u.pin === loginData.pin);
+    if (user) { 
+      setLoggedInUser(user); 
+      // 🌟 สั่งให้เบราว์เซอร์จำผู้ใช้ไว้ และเริ่มนับเวลา
+      localStorage.setItem('buildtrack_user', JSON.stringify(user)); 
+      localStorage.setItem('buildtrack_last_active', Date.now().toString());
+    } else { 
+      showAlert('ล้มเหลว', 'ชื่อผู้ใช้หรือ PIN ไม่ถูกต้อง'); 
+    } 
+  };
+// 🌟 ฟังก์ชันเพิ่ม/แก้ไขแบบบ้าน พร้อมระบบอัปเดตชื่ออัตโนมัติป้องกันลิงก์พัง
+  const [houseTypeForm, setHouseTypeForm] = useState({ id: '', type_name: '', memo: '' });
+  const [isEditingType, setIsEditingType] = useState(false);
+
+
+// 🌟 ฟังก์ชันจัดการงวดงาน (Task Templates)
+  const [editingTaskHouseId, setEditingTaskHouseId] = useState('');
+  const [taskForm, setTaskForm] = useState({ id: '', task_name: '', task_order: '' });
+  const [isEditingTask, setIsEditingTask] = useState(false);
+
+  const handleSaveTask = async () => {
+    if (!editingTaskHouseId) return showAlert('ข้อผิดพลาด', 'กรุณาเลือกแบบบ้านก่อน');
+    if (!taskForm.task_name.trim() || !taskForm.task_order) return showAlert('ข้อผิดพลาด', 'กรุณากรอกชื่อและลำดับงาน');
+    
+    setIsSubmitting(true);
+    try {
+      if (isEditingTask) {
+        // อัปเดตงานเดิม
+        const { error } = await supabase.from('task_templates')
+          .update({ task_name: taskForm.task_name.trim(), task_order: parseInt(taskForm.task_order) })
+          .eq('id', taskForm.id);
+        if (error) throw error;
+        showAlert('สำเร็จ', 'แก้ไขงวดงานเรียบร้อยแล้ว');
+      } else {
+        // เพิ่มงานใหม่
+        const { error } = await supabase.from('task_templates')
+          .insert([{ house_type_id: editingTaskHouseId, task_name: taskForm.task_name.trim(), task_order: parseInt(taskForm.task_order) }]);
+        if (error) throw error;
+        showAlert('สำเร็จ', 'เพิ่มงวดงานใหม่เรียบร้อยแล้ว');
+      }
+      setTaskForm({ id: '', task_name: '', task_order: '' });
+      setIsEditingTask(false);
+      await fetchAllData();
+    } catch (e) {
+      showAlert('ล้มเหลว', e.message);
+    }
+    setIsSubmitting(false);
+  };
+
+const handleDeleteTask = async (task) => {
+    setIsSubmitting(true);
+    try {
+      // 🎯 สเต็ป 1: วิ่งไปตรวจสอบข้อมูลความสัมพันธ์ในตารางต่างๆ ว่ามีการเอางานนี้ไปใช้หรือยัง
+      const { data: updatesCheck } = await supabase.from('task_updates').select('id').eq('task_template_id', task.id).limit(1);
+      const { data: schedulesCheck } = await supabase.from('plot_task_schedules').select('id').eq('task_template_id', task.id).limit(1);
+      const { data: assignmentsCheck } = await supabase.from('plot_task_assignments').select('id').eq('task_template_id', task.id).limit(1);
+      const { data: defectsCheck } = await supabase.from('defects').select('id').eq('task_id', task.id).limit(1);
+
+      // รวบรวมผลลัพธ์ว่ามีตารางไหนเจอข้อมูลบ้างไหม?
+      const isUsed = (updatesCheck && updatesCheck.length > 0) || 
+                     (schedulesCheck && schedulesCheck.length > 0) || 
+                     (assignmentsCheck && assignmentsCheck.length > 0) || 
+                     (defectsCheck && defectsCheck.length > 0);
+
+      if (isUsed) {
+         // 🛑 ถ้าเจอว่าถูกใช้งานแล้ว ให้บล็อกการลบ และแจ้งเตือนทันที
+         setIsSubmitting(false);
+         return showAlert(
+            'ไม่อนุญาตให้ลบ ❌', 
+            `ไม่สามารถลบงาน "${task.task_name}" ได้\n\nเนื่องจากงานนี้ถูกนำไปใช้งานแล้วในบางแปลง (มีการอัปเดตงาน, ผูกแผนงาน, หรือแจ้งซ่อม)\n\nกรุณาลบข้อมูลที่เกี่ยวข้องออกให้หมดก่อน จึงจะสามารถลบงวดงานนี้ได้ครับ`
+         );
+      }
+
+      // 🟢 สเต็ป 2: ถ้างานนี้เป็นงานใหม่เอี่ยม ยังไม่เคยถูกใช้งานเลย ค่อยอนุญาตให้ลบได้
+      setIsSubmitting(false);
+      showConfirm('ยืนยันลบงวดงาน', `คุณแน่ใจหรือไม่ว่าต้องการลบงาน "${task.task_name}"?\n(ตรวจสอบแล้ว งานนี้ยังไม่เคยถูกใช้งาน สามารถลบได้อย่างปลอดภัย)`, async () => {
+        setIsSubmitting(true);
+        try {
+          const { error } = await supabase.from('task_templates').delete().eq('id', task.id);
+          if (error) throw error;
+          
+          await fetchAllData();
+          closeDialog();
+          showAlert('สำเร็จ', 'ลบงวดงานออกจากระบบเรียบร้อยแล้ว');
+        } catch (e) {
+          showAlert('ล้มเหลว', 'เกิดข้อผิดพลาดในการลบ: ' + e.message);
+        }
+        setIsSubmitting(false);
+      });
+
+    } catch (e) {
+      setIsSubmitting(false);
+      showAlert('ข้อผิดพลาด', 'ไม่สามารถตรวจสอบสถานะการใช้งานของงานนี้ได้');
+    }
+  };
+const handleLogout = () => { 
+    showConfirm('ยืนยันการออกจากระบบ', 'คุณแน่ใจหรือไม่ว่าต้องการออกจากระบบ?', () => {
+      // 🌟 ล้างความจำในเบราว์เซอร์ทิ้ง
+      localStorage.removeItem('buildtrack_user');
+      localStorage.removeItem('buildtrack_last_active');
+
+      setLoggedInUser(null);
+      setLoginData({ username: '', pin: '' }); 
+      setView('dashboard'); 
+      setProjects([]); 
+      setPlots([]); 
+      setIsEditMapMode(false); 
+      setIsMobilePreview(false); 
+      
+      closeDialog(); // ปิดหน้าต่างยืนยัน
+    });
+  };
   
   const handleNotifClick = async (notif) => { 
     if (!notif.is_read) { await supabase.from('notifications').update({ is_read: true }).eq('id', notif.id); fetchAllData(); } 
@@ -597,6 +801,7 @@ export default function ConstructionApp() {
   const isQC = currentUserRole?.toLowerCase() === 'qc';
   const isSiteEngineer = currentUserRole?.toLowerCase() === 'site engineer';
   const isForeman = currentUserRole?.toLowerCase() === 'foreman';
+  const isOwner = currentUserRole?.toLowerCase() === 'owner';
 
   const isMobileLayout = isMobilePreview || isRealMobile; 
   const unreadNotifs = notifications.filter(n => !n.is_read);
@@ -617,15 +822,19 @@ export default function ConstructionApp() {
   });
 
   let inspectionQueue = [];
-  if (isSiteEngineer || isQC || isAdmin) {
+  if (isSiteEngineer || isQC || isAdmin || isOwner) {
     Object.values(latestUpdatesMap).forEach((upd: any) => {
       const task = taskTemplates.find(t => t.id === upd.task_template_id); const plot = plots.find(p => p.id === upd.plot_id); if (!task || !plot) return;
       const isPendingSE = isSiteEngineer && upd.progress === 100 && (upd.action === 'ส่งงาน 100%' || upd.role === 'Foreman');
       const isPendingQC = isQC && upd.progress === 100 && upd.action === 'Site Engineer อนุมัติ';
-      const isAdminView = isAdmin && upd.progress === 100 && (upd.action === 'ส่งงาน 100%' || upd.action === 'Site Engineer อนุมัติ');
+      const isAdminView = (isAdmin || isOwner) && upd.progress === 100 && (upd.action === 'ส่งงาน 100%' || upd.action === 'Site Engineer อนุมัติ');
       if (isPendingSE || isPendingQC || isAdminView) inspectionQueue.push({ ...upd, task_name: task.task_name, plot_id: plot.id, project_name: plot.project_name, foreman: plot.foreman, time: new Date(upd.created_at).getTime(), statusFor: isPendingQC || (isAdminView && upd.action === 'Site Engineer อนุมัติ') ? 'QC' : 'Site Engineer' });
     });
     inspectionQueue.sort((a, b) => { if (inspectionSort === 'plot') return a.plot_id.localeCompare(b.plot_id); return b.time - a.time; });
+    // 🌟 ระบบคัดกรองงานด่วน (ดองไว้นานกว่า 48 ชั่วโมง) และจัดแท็บ
+    inspectionQueue.forEach(q => { q.isUrgent = (Date.now() - q.time) > 172800000; }); 
+    const urgentQueueCount = inspectionQueue.filter(q => q.isUrgent).length;
+    const displayInspectionQueue = inspectionQueue.filter(q => inspectionFilterTab === 'all' || (inspectionFilterTab === 'urgent' && q.isUrgent));
   }
 
   const lastUpd = updates.length > 0 ? updates[updates.length - 1] : null;
@@ -669,53 +878,52 @@ export default function ConstructionApp() {
      if (globalMinDate === Infinity) { globalMinDate = Date.now() - (7 * 86400000); globalMaxDate = Date.now() + (14 * 86400000); }
   }
 
-// 🌟 ปรับระบบคำนวณตำแหน่งเส้นเวลาให้ตรงเป๊ะเที่ยงคืน และเผื่อความกว้างแถบให้ครอบคลุมเต็มวัน 🌟
-  const minD = new Date(globalMinDate); minD.setHours(0,0,0,0);
-  const maxD = new Date(globalMaxDate); maxD.setHours(0,0,0,0);
-  
-  // ล็อกเวลาเริ่มต้นและสิ้นสุดตารางให้ลงตัวที่ "เที่ยงคืนเป๊ะ" เสมอ (เผื่อหัวท้าย 2-3 วันไม่ให้อึดอัด)
-  const chartStart = minD.getTime() - (2 * 86400000);
-  const chartEnd = maxD.getTime() + (3 * 86400000); 
-  const totalChartMs = chartEnd - chartStart;
+      const minD = new Date(globalMinDate); minD.setHours(0,0,0,0);
+      const maxD = new Date(globalMaxDate); maxD.setHours(0,0,0,0);
+      
+      const chartStart = minD.getTime() - (2 * 86400000);
+      const chartEnd = maxD.getTime() + (3 * 86400000); 
+      
+      // 🎯 แก้ปัญหาเส้นทะลุ: คำนวณจำนวนวันทั้งหมดแบบเป๊ะๆ (+1 เพื่อให้วันสุดท้ายเต็มช่อง)
+      const totalChartDays = Math.round((chartEnd - chartStart) / 86400000) + 1;
+      const totalChartMs = totalChartDays * 86400000; 
 
-  const getChartLeft = (timestamp) => {
-      const d = new Date(timestamp); d.setHours(0,0,0,0); // บังคับให้คำนวณจากเที่ยงคืนเป๊ะ
-      return Math.max(0, ((d.getTime() - chartStart) / totalChartMs) * 100);
-  };
-  
-  const getChartWidth = (startTs, endTs) => {
-      const dStart = new Date(startTs); dStart.setHours(0,0,0,0);
-      const dEnd = new Date(endTs); dEnd.setHours(0,0,0,0);
-      // บวกเวลาเพิ่ม 1 วันเต็ม (86400000 ms) เพื่อให้ความกว้างของแถบ ลากคลุมวันสิ้นสุดไปจนเต็มช่อง
-      return Math.max(0.5, (((dEnd.getTime() + 86400000) - dStart.getTime()) / totalChartMs) * 100);
-  };
-// 🌟 ปรับปรุงการเก็บข้อมูลวันที่และเดือนแยกแถวกัน 🌟
-  const timeMarkers = [];
-  if (hasAnySchedule) {
-     const dayMs = 86400000; 
-     const showDays = (totalChartMs / dayMs) <= 60; 
-     let current = new Date(chartStart);
-     let lastMonthStr = "";
+      const getChartLeft = (timestamp) => {
+          const d = new Date(timestamp); d.setHours(0,0,0,0);
+          return Math.max(0, ((d.getTime() - chartStart) / totalChartMs) * 100);
+      };
 
-     while (current.getTime() <= chartEnd) {
-        const currentMonthStr = current.toLocaleDateString('th-TH', { month: 'short', year: '2-digit' });
-        let monthLabel = null;
+      const getChartWidth = (startTs, endTs) => {
+          const dStart = new Date(startTs); dStart.setHours(0,0,0,0);
+          const dEnd = new Date(endTs); dEnd.setHours(0,0,0,0);
+          return Math.max(0, (((dEnd.getTime() + 86400000) - dStart.getTime()) / totalChartMs) * 100);
+      };
 
-        // ถ้าเข้าสู่เดือนใหม่ หรือเป็นจุดเริ่มต้นผัง ให้บันทึกชื่อเดือนแยกไว้
-        if (currentMonthStr !== lastMonthStr) {
-           monthLabel = currentMonthStr;
-           lastMonthStr = currentMonthStr;
-        }
+      const timeMarkers = [];
+      if (hasAnySchedule) {
+         let current = new Date(chartStart);
+         let lastMonthStr = "";
 
-        timeMarkers.push({ 
-           dayLabel: current.getDate(),        // แสดงตัวเลขวันที่เสมอ ไม่โดนข้อความทับแล้ว
-           monthLabel: monthLabel,             // แยกชื่อเดือนเอาไว้ไปแสดงแถวบน
-           isMonth: current.getDate() === 1,   // ส่งค่าไปทำเส้นไฮไลท์แนวตั้งในตารางด้านล่างเหมือนเดิม
-           left: getChartLeft(current.getTime()) 
-        });
-        current.setDate(current.getDate() + (showDays ? 1 : 7)); 
-     }
-  }
+         // 🎯 บังคับกางวันที่ต่อเนื่อง 1, 2, 3, 4, ... เสมอ ไม่ว่าจะกี่วันก็ตาม
+         while (current.getTime() <= chartEnd) {
+            const currentMonthStr = current.toLocaleDateString('th-TH', { month: 'short', year: '2-digit' });
+            let monthLabel = null;
+
+            if (currentMonthStr !== lastMonthStr) {
+               monthLabel = currentMonthStr;
+               lastMonthStr = currentMonthStr;
+            }
+
+            timeMarkers.push({ 
+               dayLabel: current.getDate(),        
+               monthLabel: monthLabel,             
+               isMonth: current.getDate() === 1,   
+               left: getChartLeft(current.getTime()) 
+            });
+            // 🎯 บังคับบวกทีละ 1 วันเสมอ (เลิกใช้เงื่อนไข showDays ย่อสัปดาห์)
+            current.setDate(current.getDate() + 1); 
+         }
+      }
 
   const totalPlannedDays = (plotPlanEnd !== -Infinity && plotPlanStart !== Infinity) ? Math.ceil((plotPlanEnd - plotPlanStart) / 86400000) : 0;
   const daysElapsed = (plotPlanStart !== Infinity) ? Math.ceil((todayTs - plotPlanStart) / 86400000) : 0;
@@ -886,7 +1094,7 @@ export default function ConstructionApp() {
                      <nav className="space-y-1">
                         <button onClick={() => setView('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'dashboard' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Home size={18}/> Dashboard</button>
                         
-                        {(isAdmin || isProjectPlanner || isQC || isSiteEngineer) && (
+                        {(isAdmin || isProjectPlanner || isQC || isSiteEngineer || isOwner) && (
                            <button onClick={() => setView('reports')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'reports' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><PieChart size={18}/> Reports & Analytics</button>
                         )}
                      </nav>
@@ -901,6 +1109,12 @@ export default function ConstructionApp() {
                               <button onClick={() => setView('admin-project')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'admin-project' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><PlusCircle size={18}/> สร้างโครงการ</button>
                               <button onClick={() => setView('admin-plot')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'admin-plot' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><MapIcon size={18}/> เพิ่มแปลงบ้าน</button>
                               <button onClick={() => setView('admin-users')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'admin-users' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Users size={18}/> จัดการผู้ใช้งาน</button>
+                              {/* ✅ ปุ่มเมนูจัดการแบบบ้าน (Desktop) */}
+                              <button onClick={() => setView('admin-house-types')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'admin-house-types' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Building size={18}/> จัดการแบบบ้าน</button>
+                              {/* ✅ ปุ่มเมนูจัดการงวดงาน (Desktop) */}
+                              <button onClick={() => setView('admin-tasks')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'admin-tasks' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><ClipboardList size={18}/> จัดการงวดงาน (Tasks)</button>
+                              {/* ✅ ปุ่มเมนูตั้งค่า 2.5D สำหรับ Admin (Desktop) */}
+                              <button onClick={() => setView('admin-visualizer')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'admin-visualizer' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Monitor size={18}/> ตั้งค่า 2.5D แบบบ้าน</button>
                             </>
                           )}
                           {(isAdmin || isProcurement) && (
@@ -1033,31 +1247,89 @@ export default function ConstructionApp() {
                        </div>
                     </div>
 
-                    {(isSiteEngineer || isQC || isAdmin) && (
+                    {(isSiteEngineer || isQC || isAdmin || isOwner) && (
                       <div className="mb-6 sm:mb-12">
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3 sm:mb-6">
-                          <h2 className="font-black text-lg sm:text-2xl text-slate-800 italic uppercase tracking-tighter flex items-center gap-2"><ClipboardList className={isQC ? 'text-purple-600' : 'text-blue-600'} size={20}/> Inspection Queue <span className="bg-rose-600 text-white text-[10px] px-2 py-0.5 rounded-full">{inspectionQueue.length}</span></h2>
-                          <div className="flex bg-white rounded-lg sm:rounded-xl shadow-sm border border-slate-200 overflow-hidden text-[10px] sm:text-sm font-bold"><button onClick={() => setInspectionSort('time')} className={`px-3 sm:px-4 py-2 sm:py-2.5 flex items-center gap-1.5 ${inspectionSort === 'time' ? 'bg-slate-100 text-slate-800' : 'text-slate-400'}`}><Clock size={14}/> ล่าสุด</button><button onClick={() => setInspectionSort('plot')} className={`px-3 sm:px-4 py-2 sm:py-2.5 flex items-center gap-1.5 border-l border-slate-200 ${inspectionSort === 'plot' ? 'bg-slate-100 text-slate-800' : 'text-slate-400'}`}><SortAsc size={14}/> รหัสแปลง</button></div>
+                      {/* 🌟 ส่วนหัว: โซนแท็บเมนูและปุ่มเปลี่ยนมุมมอง */}
+                        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3 mb-4 sm:mb-6">
+                          <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6">
+                             <h2 className="font-black text-lg sm:text-2xl text-slate-800 italic uppercase tracking-tighter flex items-center gap-2"><ClipboardList className={isQC ? 'text-purple-600' : 'text-blue-600'} size={20}/> Inspection Queue <span className="bg-slate-800 text-white text-[10px] px-2 py-0.5 rounded-full">{inspectionQueue.length}</span></h2>
+                             
+                             {/* 🌟 1. TABS คัดงานด่วน */}
+                             <div className="flex bg-slate-200/60 p-1 rounded-xl w-fit border border-slate-200/80">
+                                <button onClick={() => setInspectionFilterTab('all')} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${inspectionFilterTab === 'all' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-700'}`}>ทั้งหมด</button>
+                                <button onClick={() => setInspectionFilterTab('urgent')} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${inspectionFilterTab === 'urgent' ? 'bg-rose-500 shadow-sm text-white' : 'text-slate-500 hover:text-rose-600'}`}><AlertTriangle size={14}/> ด่วน <span className={`${inspectionFilterTab === 'urgent' ? 'bg-white/20 text-white' : 'bg-rose-100 text-rose-600'} px-1.5 py-0.5 rounded-md text-[10px] leading-none`}>{inspectionQueue.filter(q => (Date.now() - q.time) > 172800000).length}</span></button>
+                             </div>
+                          </div>
+                          
+                          <div className="flex items-center gap-2 w-full xl:w-auto">
+                             {/* 🌟 2. View Mode Toggle (ปุ่มเปลี่ยนสลับ Card / List) */}
+                             <div className="flex bg-slate-200/60 p-1 rounded-xl shrink-0 border border-slate-200/80">
+                                <button onClick={() => setInspectionViewMode('card')} className={`p-1.5 sm:p-2 rounded-lg transition-all ${inspectionViewMode === 'card' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-400 hover:text-blue-500'}`} title="มุมมองการ์ด"><Grid size={16}/></button>
+                                <button onClick={() => setInspectionViewMode('list')} className={`p-1.5 sm:p-2 rounded-lg transition-all ${inspectionViewMode === 'list' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-400 hover:text-blue-500'}`} title="มุมมองตาราง"><ClipboardList size={16}/></button>
+                             </div>
+                             
+                             {/* เรียงลำดับ (ของเดิม) */}
+                             <div className="flex bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden text-[10px] sm:text-xs font-bold flex-1 xl:flex-none"><button onClick={() => setInspectionSort('time')} className={`flex-1 xl:flex-none px-3 sm:px-4 py-2 flex justify-center items-center gap-1.5 ${inspectionSort === 'time' ? 'bg-slate-100 text-slate-800' : 'text-slate-400'}`}><Clock size={14}/> ล่าสุด</button><button onClick={() => setInspectionSort('plot')} className={`flex-1 xl:flex-none px-3 sm:px-4 py-2 flex justify-center items-center gap-1.5 border-l border-slate-200 ${inspectionSort === 'plot' ? 'bg-slate-100 text-slate-800' : 'text-slate-400'}`}><SortAsc size={14}/> รหัสแปลง</button></div>
+                          </div>
                         </div>
-                        {inspectionQueue.length === 0 ? ( 
+
+                        {/* 🌟 พื้นที่แสดงผลคิวงาน */}
+                        {inspectionQueue.filter(q => inspectionFilterTab === 'all' || (inspectionFilterTab === 'urgent' && (Date.now() - q.time) > 172800000)).length === 0 ? ( 
                           <div className="bg-white rounded-2xl sm:rounded-[2rem] border border-dashed border-slate-300 p-8 sm:p-16 text-center flex flex-col items-center justify-center gap-3 sm:gap-4">
                              <div className="w-16 h-16 sm:w-20 sm:h-20 bg-slate-50 rounded-full flex items-center justify-center"><CheckCircle size={32} className="text-emerald-400 opacity-50"/></div>
-                             <p className="text-slate-400 font-bold italic text-sm sm:text-xl">ไม่มีงานรอตรวจสอบ</p>
+                             <p className="text-slate-400 font-bold italic text-sm sm:text-xl">ไม่มีงานรอตรวจสอบในหมวดหมู่นี้</p>
                           </div> 
                         ) : (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-6">
-                            {inspectionQueue.map(q => {
-                              const relatedProject = projects.find(p => p.name === q.project_name); const relatedPlot = plots.find(p => p.id === q.plot_id); const relatedTask = taskTemplates.find(t => t.id === q.task_template_id);
-                              return (
-                                <button key={`${q.plot_id}-${q.task_template_id}`} onClick={() => {
-                                   setSelectedProject(relatedProject); setSelectedPlot(relatedPlot); setSelectedTask(relatedTask); setView('task-progress');
-                                   supabase.from('task_updates').select('*').eq('task_template_id', q.task_template_id).eq('plot_id', q.plot_id).order('created_at', { ascending: true }).then(({data}) => { setUpdates(data || []); setProgressValue(data?.length ? data[data.length-1].progress : 0); });
-                                }} className="bg-white p-4 sm:p-6 rounded-xl sm:rounded-[1.5rem] border border-slate-200 shadow-sm hover:border-blue-500 hover:shadow-lg hover:-translate-y-1 transition-all text-left group">
-                                  <div className="flex justify-between items-start mb-2 sm:mb-3"><span className={`text-[9px] sm:text-xs font-black uppercase tracking-widest px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-md text-white ${q.statusFor === 'QC' ? 'bg-purple-600' : 'bg-blue-600'}`}>รอ {q.statusFor}</span><span className="text-[9px] sm:text-xs text-slate-400 font-bold">{new Date(q.time).toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'})}</span></div>
-                                  <h4 className="font-black text-slate-800 text-lg sm:text-2xl">{q.plot_id}</h4><p className="text-xs sm:text-base font-bold text-slate-600 truncate my-1 sm:my-1.5">{q.task_name}</p><p className="text-[10px] sm:text-sm text-slate-400 flex items-center gap-1 sm:gap-1.5 mt-1.5 sm:mt-2"><HardHat size={12} className="sm:w-3.5 sm:h-3.5"/> {q.foreman}</p>
-                                </button>
-                              );
-                            })}
+                          <div className="max-h-[50vh] sm:max-h-[600px] overflow-y-auto custom-scrollbar pr-1 sm:pr-3 pb-2">
+                            <div className={`${inspectionViewMode === 'card' ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4' : 'flex flex-col gap-2'}`}>
+                              {inspectionQueue.filter(q => inspectionFilterTab === 'all' || (inspectionFilterTab === 'urgent' && (Date.now() - q.time) > 172800000)).map(q => {
+                                const isUrgent = (Date.now() - q.time) > 172800000;
+                                const relatedProject = projects.find(p => p.name === q.project_name); const relatedPlot = plots.find(p => p.id === q.plot_id); const relatedTask = taskTemplates.find(t => t.id === q.task_template_id);
+                                
+                                const clickAction = () => { setSelectedProject(relatedProject); setSelectedPlot(relatedPlot); setSelectedTask(relatedTask); setView('task-progress'); supabase.from('task_updates').select('*').eq('task_template_id', q.task_template_id).eq('plot_id', q.plot_id).order('created_at', { ascending: true }).then(({data}) => { setUpdates(data || []); setProgressValue(data?.length ? data[data.length-1].progress : 0); }); };
+
+                                {/* 🌟 Layout แบบ List View (ตารางแนวนอน) */}
+                                if (inspectionViewMode === 'list') {
+                                   return (
+                                     <button key={`${q.plot_id}-${q.task_template_id}`} onClick={clickAction} className={`bg-white p-3 sm:p-4 rounded-xl sm:rounded-2xl border ${isUrgent ? 'border-rose-400 bg-rose-50/50' : 'border-slate-200'} shadow-sm hover:border-blue-500 hover:shadow-md transition-all text-left flex flex-col sm:flex-row sm:items-center justify-between gap-3 group`}>
+                                        <div className="flex items-center gap-3 sm:gap-4 flex-1 overflow-hidden">
+                                           <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-xl flex flex-col items-center justify-center shrink-0 shadow-inner ${q.statusFor === 'QC' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                                              <span className="text-[10px] sm:text-xs font-black uppercase">รอ {q.statusFor}</span>
+                                           </div>
+                                           <div className="flex-1 min-w-0">
+                                              <div className="flex items-center gap-2 mb-1">
+                                                 <h4 className="font-black text-slate-800 text-lg sm:text-xl truncate">{q.plot_id}</h4>
+                                                 {isUrgent && <span className="bg-rose-500 text-white text-[9px] sm:text-[10px] font-black px-1.5 py-0.5 rounded flex items-center gap-1 animate-pulse shadow-sm"><AlertTriangle size={10}/> ค้างตรวจนาน</span>}
+                                              </div>
+                                              <p className="text-xs sm:text-sm font-bold text-slate-600 truncate">{q.task_name}</p>
+                                           </div>
+                                        </div>
+                                        <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-center gap-2 shrink-0 border-t sm:border-t-0 sm:border-l border-slate-100 pt-2 sm:pt-0 sm:pl-4">
+                                           <p className="text-[10px] sm:text-xs text-slate-400 font-bold flex items-center gap-1"><HardHat size={12}/> {q.foreman}</p>
+                                           <span className={`text-[10px] sm:text-xs font-black ${isUrgent ? 'text-rose-600' : 'text-slate-400'}`}><Clock size={12} className="inline mr-1"/> {new Date(q.time).toLocaleDateString('th-TH', {month:'short', day:'numeric'})} {new Date(q.time).toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'})}</span>
+                                        </div>
+                                     </button>
+                                   )
+                                }
+
+                                {/* 🌟 Layout แบบ Card View (การ์ดสี่เหลี่ยมของเดิม แต่อัปเกรด) */}
+                                return (
+                                  <button key={`${q.plot_id}-${q.task_template_id}`} onClick={clickAction} className={`bg-white p-4 sm:p-5 rounded-2xl sm:rounded-[1.5rem] border ${isUrgent ? 'border-rose-400 bg-rose-50/50' : 'border-slate-200'} shadow-sm hover:border-blue-500 hover:shadow-lg hover:-translate-y-1 transition-all text-left group relative overflow-hidden`}>
+                                     {isUrgent && <div className="absolute top-0 left-0 w-full h-1.5 bg-rose-500"></div>}
+                                     <div className="flex justify-between items-start mb-3 mt-1 sm:mt-0">
+                                        <span className={`text-[9px] sm:text-xs font-black uppercase tracking-widest px-2.5 py-1 rounded-md text-white shadow-sm ${q.statusFor === 'QC' ? 'bg-purple-600' : 'bg-blue-600'}`}>รอ {q.statusFor}</span>
+                                        <span className={`text-[9px] sm:text-[10px] font-black flex items-center gap-1 px-2 py-1 rounded-md ${isUrgent ? 'bg-rose-100 text-rose-600 animate-pulse' : 'bg-slate-100 text-slate-500'}`}><Clock size={10}/> {new Date(q.time).toLocaleDateString('th-TH',{day:'numeric', month:'short'})} {new Date(q.time).toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'})}</span>
+                                     </div>
+                                     <div className="flex items-center gap-2 mb-1.5">
+                                        <h4 className="font-black text-slate-800 text-2xl">{q.plot_id}</h4>
+                                        {isUrgent && <AlertTriangle size={16} className="text-rose-500 animate-pulse"/>}
+                                     </div>
+                                     <p className="text-xs sm:text-sm font-bold text-slate-600 line-clamp-2 my-1.5 min-h-[32px] sm:min-h-[40px]">{q.task_name}</p>
+                                     <p className="text-[10px] sm:text-xs text-slate-400 flex items-center gap-1.5 mt-3 pt-3 border-t border-slate-200/60"><HardHat size={14} className="text-slate-300"/> {q.foreman}</p>
+                                  </button>
+                                );
+                              })}
+                            </div>
                           </div>
                         )}
                       </div>
@@ -1069,7 +1341,13 @@ export default function ConstructionApp() {
                          <div className="flex flex-wrap gap-2 shrink-0 w-full">
                            {isProcurement && (<button onClick={() => setView('procurement-contractors')} className="flex-1 items-center justify-center gap-1.5 bg-emerald-600 text-white px-3 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex"><Wrench size={14} /> ช่าง</button>)}
                            {isAdmin && (
-                             <><button onClick={() => setView('admin-users')} className="flex-1 items-center justify-center gap-1.5 bg-white text-rose-600 border border-rose-200 px-3 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex"><Users size={14} /> ผู้ใช้</button><button onClick={() => setView('admin-project')} className="flex-1 items-center justify-center gap-1.5 bg-slate-800 text-white px-3 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex"><PlusCircle size={14} /> โครงการ</button></>
+                             <>
+                               <button onClick={() => setView('admin-users')} className="flex-1 items-center justify-center gap-1.5 bg-white text-rose-600 border border-rose-200 px-2 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex whitespace-nowrap"><Users size={14} /> ผู้ใช้</button>
+                               <button onClick={() => setView('admin-project')} className="flex-1 items-center justify-center gap-1.5 bg-slate-800 text-white px-2 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex whitespace-nowrap"><PlusCircle size={14} /> โครงการ</button>
+                               <button onClick={() => setView('admin-house-types')} className="flex-1 items-center justify-center gap-1.5 bg-rose-50 text-rose-600 border border-rose-200 px-2 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex whitespace-nowrap"><Building size={14} /> แบบบ้าน</button>
+                               <button onClick={() => setView('admin-tasks')} className="flex-1 items-center justify-center gap-1.5 bg-rose-50 text-rose-600 border border-rose-200 px-2 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex whitespace-nowrap"><ClipboardList size={14} /> งวดงาน</button>
+                                                              <button onClick={() => setView('admin-visualizer')} className="flex-1 items-center justify-center gap-1.5 bg-rose-50 text-rose-600 border border-rose-200 px-2 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex whitespace-nowrap"><Monitor size={14} /> 2.5D</button>
+                             </>
                            )}
                          </div>
                       )}
@@ -1237,7 +1515,7 @@ export default function ConstructionApp() {
                         
                         <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
                           {/* 🌟 ปุ่มเปิด Presentation Mode */}
-                          {['Project Planner', 'Admin'].includes(currentUserRole) && (
+                          {['Project Planner', 'Admin', 'Owner'].includes(currentUserRole) && (
                               <button onClick={() => { setIsPresentationOpen(true); setCurrentSlideIndex(0); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl font-black text-xs sm:text-sm shadow-md transition-all flex items-center gap-1.5 shrink-0">
                                 <Monitor size={16} /> <span className="hidden sm:inline">Presentation Mode</span><span className="inline sm:hidden">โหมดนำเสนอ</span>
                               </button>
@@ -1340,6 +1618,14 @@ export default function ConstructionApp() {
                            const w = bounds.maxX - bounds.minX + 1, h = bounds.maxY - bounds.minY + 1;
                            const statusInfo = getPlotOverallStatus(plotInfo.id);
 
+                           // 🌟 หางานล่าสุดที่มีการอัปเดตของแปลงนี้
+                           const plotUpdates = allUpdatesRecord?.filter(u => u.plot_id === plotInfo.id) || [];
+                           const latestUpdate = plotUpdates.length > 0 ? plotUpdates[plotUpdates.length - 1] : null;
+                           const latestTask = latestUpdate ? taskTemplates.find(t => t.id === latestUpdate.task_template_id) : null;
+                           const latestTaskStr = latestTask ? `${latestTask.task_name} (${latestUpdate.progress}%)` : 'ยังไม่มีงานอัปเดต';
+
+                           // ดักจับว่าแปลงนี้ใช้ช่างที่เรากำลังค้นหาอยู่หรือไม่
+
                            // ดักจับว่าแปลงนี้ใช้ช่างที่เรากำลังค้นหาอยู่หรือไม่
                            const currentPlotAssignment = assignments.slice().reverse().find(a => a.plot_id === plotId);
                            const hasSearchedContractor = searchContractor.trim() !== '';
@@ -1390,7 +1676,13 @@ export default function ConstructionApp() {
                                          <span className="font-black text-xs sm:text-sm">{plotInfo.id}</span>
                                          <span className={`text-[8px] sm:text-[10px] font-black px-1.5 sm:px-2 py-0.5 rounded-full ${statusInfo.status === 'delayed' ? 'bg-rose-500 text-white' : statusInfo.status === 'completed' ? 'bg-emerald-500 text-white' : statusInfo.status === 'ahead' ? 'bg-indigo-500 text-white' : statusInfo.status === 'on-track' ? 'bg-blue-500 text-white' : 'bg-slate-600 text-slate-300'}`}>{statusInfo.label}</span>
                                       </div>
-                                      <p className="text-[9px] sm:text-[10px] text-slate-400 mb-2 sm:mb-3 flex items-center gap-1 sm:gap-1.5"><HardHat size={10} className="sm:w-3 sm:h-3"/> {plotInfo.foreman || 'ไม่ระบุ'}</p>
+                                      <p className="text-[9px] sm:text-[10px] text-slate-400 mb-1 sm:mb-2 flex items-center gap-1 sm:gap-1.5"><HardHat size={10} className="sm:w-3 sm:h-3"/> {plotInfo.foreman || 'ไม่ระบุ'}</p>
+                                      
+                                      {/* 🌟 กล่องแสดงงานล่าสุดใน Tooltip */}
+                                      <div className="bg-slate-800/80 p-1.5 sm:p-2 rounded-lg border border-slate-700/50 mb-2 sm:mb-3">
+                                         <p className="text-[8px] text-slate-500 uppercase font-bold tracking-widest mb-0.5 flex items-center gap-1"><Activity size={8}/> งานล่าสุด:</p>
+                                         <p className="text-[9px] sm:text-[10px] text-amber-400 font-bold truncate">{latestTaskStr}</p>
+                                      </div>
                                       
                                       <div className="w-full space-y-1.5 sm:space-y-2 mt-1">
                                          <div className="flex justify-between text-[8px] sm:text-[10px] font-bold text-slate-400 leading-none"><span>Plan</span><span>{statusInfo.planned}%</span></div>
@@ -1420,9 +1712,15 @@ export default function ConstructionApp() {
                    </div>
                    
                    <div className={`grid gap-3 sm:gap-6 ${isMobileLayout ? 'grid-cols-2' : 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'}`}>
-                      {displayPlots.map((plot) => {
+                        {displayPlots.map((plot) => {
                         // 🌟 ดึงข้อมูล Status ของแปลงนั้นๆ เพื่อเอา % แผนงาน (planned) และ % งานจริง (actual) 🌟
                         const statusInfo = getPlotOverallStatus(plot.id);
+                        
+                        // 🌟 หางานล่าสุดที่มีการอัปเดตของการ์ดแปลงนี้
+                        const plotUpdates = allUpdatesRecord?.filter(u => u.plot_id === plot.id) || [];
+                        const latestUpdate = plotUpdates.length > 0 ? plotUpdates[plotUpdates.length - 1] : null;
+                        const latestTask = latestUpdate ? taskTemplates.find(t => t.id === latestUpdate.task_template_id) : null;
+                        const latestTaskStr = latestTask ? `${latestTask.task_name} (${latestUpdate.progress}%)` : 'ยังไม่มีงานอัปเดต';
 
                         return (
                           <div key={plot.id} onClick={() => { setSelectedPlot(plot); setView('house-detail'); }} className="relative group w-full bg-white p-4 sm:p-8 rounded-xl sm:rounded-[2.5rem] border border-slate-200 text-left hover:border-blue-500 hover:shadow-xl hover:-translate-y-1 transition-all flex flex-col justify-between h-full cursor-pointer">
@@ -1447,7 +1745,18 @@ export default function ConstructionApp() {
                             </div>
 
                             <div className={`${isMobileLayout ? 'text-[9px]' : 'text-base'} font-bold text-slate-500 mb-1 sm:mb-3 flex items-center gap-1.5`}><HardHat size={isMobileLayout ? 12 : 18} className="text-orange-500" /> {plot.foreman || 'ไม่ระบุ'}</div>
-                            <p className={`${isMobileLayout ? 'text-[8px]' : 'text-xs'} text-slate-400 font-bold uppercase tracking-wider mb-4 sm:mb-6`}>{plot.type}</p>
+                            <p className={`${isMobileLayout ? 'text-[8px]' : 'text-xs'} text-slate-400 font-bold uppercase tracking-wider mb-2 sm:mb-3`}>{plot.type}</p>
+                            
+                            {/* 🌟 กล่องแสดงงานล่าสุดของการ์ด */}
+                            <div className="bg-blue-50/50 border border-blue-100 rounded-lg p-2 sm:p-3 mb-3 sm:mb-4 flex items-center gap-2">
+                               <Activity size={isMobileLayout ? 12 : 16} className="text-blue-500 shrink-0"/>
+                               <div className="min-w-0 flex-1">
+                                  <p className="text-[8px] sm:text-[10px] text-slate-400 font-bold uppercase">อัปเดตล่าสุด</p>
+                                  <p className="text-[10px] sm:text-xs font-black text-blue-700 truncate">{latestTaskStr}</p>
+                               </div>
+                            </div>
+                            
+                            {/* 🌟 ส่วนแถบ Progress: แบ่งเป็น Plan และ Actual 🌟 */}
                             
                             {/* 🌟 ส่วนแถบ Progress: แบ่งเป็น Plan และ Actual 🌟 */}
                             <div className="w-full mt-auto space-y-2 sm:space-y-4">
@@ -1548,7 +1857,68 @@ export default function ConstructionApp() {
                           </div>
                        </div>
                      </div>
+                     {/* 🌟 โซน 2.5D Task-Linked Visual Progress (แสดงผลตามสถานะงานจริง) 🌟 */}
+                     {houseTypes.find(t => t.id === selectedPlot?.house_type_id)?.visual_config && (
+                         <div className="bg-slate-900 border-b-8 border-slate-950 p-6 sm:p-10 flex flex-col lg:flex-row items-center gap-8 relative overflow-hidden">
+                            <div className="absolute top-1/2 left-1/4 -translate-y-1/2 w-64 h-64 bg-blue-500/20 blur-[100px] rounded-full pointer-events-none"></div>
 
+                            {/* 🏗️ ฝั่งซ้าย: รูปภาพซ้อนเลเยอร์ตามค่าความคืบหน้าจริงของงานย่อย */}
+                            <div className="relative w-full lg:w-1/2 aspect-[4/3] sm:aspect-[16/9] lg:aspect-square max-w-[500px] flex items-center justify-center bg-slate-950/40 p-2 rounded-2xl border border-slate-800">
+                               {(() => {
+                                  // 🧠 แกะลอจิกตรวจสอบสถานะเรียงตาม Z-Index
+                                  const config = houseTypes.find(t => t.id === selectedPlot?.house_type_id).visual_config || {};
+                                  const activeLayers = [];
+
+                                  taskTemplates
+                                     .filter(t => t.house_type_id === selectedPlot?.house_type_id)
+                                     .forEach(task => {
+                                        const taskConfig = config[task.id];
+                                        if (!taskConfig) return; // งานนี้ไม่มีรูปข้ามไปเลย
+
+                                        // ดึงเปอร์เซ็นต์ความคืบหน้าจริงของงานนี้จากแอป
+                                        const actualProgress = latestUpdatesMap[`${selectedPlot.id}-${task.id}`]?.progress || 0;
+
+                                        if (actualProgress === 100 && taskConfig.done_image) {
+                                           activeLayers.push({ url: taskConfig.done_image, z: Number(taskConfig.done_z || 10), name: task.task_name });
+                                        } else if (actualProgress > 0 && actualProgress < 100 && taskConfig.progress_image) {
+                                           activeLayers.push({ url: taskConfig.progress_image, z: Number(taskConfig.progress_z || 10), name: task.task_name });
+                                        }
+                                     });
+
+                                  // จัดลำดับเลเยอร์ภาพเพื่อป้องกันรูปเพี้ยน
+                                  return activeLayers
+                                     .sort((a, b) => a.z - b.z)
+                                     .map((layer, idx) => (
+                                        <img 
+                                           key={idx}
+                                           src={layer.url} 
+                                           className="absolute inset-0 w-full h-full object-contain drop-shadow-2xl animate-fade-in" 
+                                           style={{ zIndex: layer.z }}
+                                           alt={layer.name} 
+                                        />
+                                     ));
+                               })()}
+                            </div>
+
+                            {/* 📊 ฝั่งขวา: สรุปรายงานการประกอบร่างดิจิทัล */}
+                            <div className="w-full lg:w-1/2 text-white space-y-4 relative z-10">
+                               <div>
+                                  <h3 className="text-2xl sm:text-3xl font-black italic tracking-tighter mb-1 flex items-center gap-2">
+                                     <Monitor className="text-blue-500" size={24}/> 2.5D DIGITAL TWIN
+                                  </h3>
+                                  <p className="text-slate-400 font-bold text-xs tracking-widest uppercase">แบบบ้าน: {selectedPlot?.type} (ประมวลผลรายงวดงานจริง)</p>
+                               </div>
+
+                               <div className="text-xs bg-slate-950/60 p-4 rounded-xl border border-slate-800 text-slate-400 font-medium leading-relaxed">
+                                  <p>💡 ระบบจะคำนวณการแสดงผลภาพแบบแยกตามงวดงานจริงหน้าไซต์:</p>
+                                  <ul className="list-disc list-inside mt-2 space-y-1 text-slate-300">
+                                     <li>งวดงานสถานะ <span className="text-amber-400 font-bold">กำลังดำเนินการ (1-99%)</span> จะดึงภาพเลเยอร์โครงสร้างชั่วคราว</li>
+                                     <li>งวดงานสถานะ <span className="text-emerald-400 font-bold">เสร็จสมบูรณ์ (100%)</span> จะดึงภาพสำเร็จมาประกอบร่างทับซ้อนตามลำดับเลเยอร์</li>
+                                  </ul>
+                               </div>
+                            </div>
+                         </div>
+                     )}            
                      <div className="bg-slate-50 w-full overflow-x-auto custom-scrollbar border-t border-slate-200" style={{ maxHeight: '800px', overflowY: 'auto' }}>
                        {isMobileLayout && <div className="text-center text-[10px] text-slate-400 font-bold py-2 bg-slate-100 border-b border-slate-200">↔️ ปัดซ้าย-ขวา เพื่อดูตาราง ↔️</div>}
                        <table className={`text-left border-collapse w-full relative ${isMobileLayout ? 'min-w-[600px]' : 'min-w-[1200px]'}`}>
@@ -1562,33 +1932,32 @@ export default function ConstructionApp() {
                                   <th className="sticky left-[520px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-5 text-center w-[140px] min-w-[140px] max-w-[140px] shadow-[4px_0_10px_-4px_rgba(0,0,0,0.05)]">Finish</th>
                                 </> 
                               )}
-                             <th className={`bg-slate-100 border-b border-slate-200 p-0 relative ${isMobileLayout ? 'min-w-[400px] h-12' : 'min-w-[800px] h-20'} w-full z-[60]`}>
-                                {todayTs >= chartStart && todayTs <= chartEnd && (
-                                   <div className="absolute top-0 bottom-[-5000px] border-l-2 sm:border-l-[3px] border-dashed border-rose-500 z-[10] flex flex-col items-center pointer-events-none" style={{ left: `${getChartLeft(todayTs)}%` }}>
-                                      <span className="bg-rose-500 text-white text-[7px] sm:text-[11px] font-black px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-b-md sm:rounded-b-lg shadow-md mt-0 sm:mt-1">ปัจจุบัน</span>
-                                   </div>
-                                )}
-                                  {/* 🌟 ปรับปรุงการวาด Row วันที่และเดือนเป็น 2 ชั้น 🌟 */}
-                                            <div className="absolute inset-0 flex pointer-events-none">
-                                                {timeMarkers.map((m, i) => (
-                                                  <div key={i} className={`border-l h-full relative ${m.isMonth ? 'border-slate-300 bg-slate-200/20' : 'border-slate-200/50'}`} style={{position: 'absolute', left: `${m.left}%`}}>
-                                                    
-                                                    {/* 🔵 แถวบน: แสดงชื่อเดือนแบบป้ายคลุมหัว (ตรงที่กากบาทสีน้ำเงิน) */}
-                                                    {m.monthLabel && (
-                                                        <div className="absolute top-1.5 sm:top-2 left-1 bg-slate-800 text-white font-black px-2 py-0.5 rounded shadow-sm text-[8px] sm:text-[10px] whitespace-nowrap z-30 border border-slate-700">
-                                                          {m.monthLabel}
-                                                        </div>
-                                                    )}
-                                                    
-                                                    {/* ⚪ แถวล่าง: แสดงตัวเลขวันที่ตามปกติทุกวัน */}
-                                                    <div className="absolute bottom-1 sm:bottom-2 left-1">
-                                                        <span className="text-[8px] sm:text-xs font-black text-slate-400">{m.dayLabel}</span>
-                                                    </div>
-
-                                                  </div>
-                                                ))}
-                                            </div>
-                             </th>
+                                 {/* 🌟 2. ปรับหัวตารางวันที่ให้เรียงต่อเนื่อง และล็อกขนาดช่องละ 36px 🌟 */}
+                                 <th className="bg-slate-100 border-b border-slate-200 p-0 relative w-full z-[60]" style={{ minWidth: `${totalChartDays * 36}px`, height: isMobileLayout ? '48px' : '80px' }}>
+                                    {todayTs >= chartStart && todayTs <= chartEnd && (
+                                       <div className="absolute top-0 bottom-0 border-l-2 sm:border-l-[3px] border-dashed border-rose-500 z-[10] flex flex-col items-center pointer-events-none" style={{ left: `${getChartLeft(todayTs)}%` }}>
+                                          <span className="bg-rose-500 text-white text-[7px] sm:text-[11px] font-black px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-b-md sm:rounded-b-lg shadow-md mt-0 sm:mt-1">ปัจจุบัน</span>
+                                       </div>
+                                    )}
+                                              
+                                    <div className="absolute inset-0 flex pointer-events-none">
+                                       {timeMarkers.map((m, i) => (
+                                          <div key={i} className={`border-l h-full relative ${m.isMonth ? 'border-slate-300 bg-slate-200/20' : 'border-slate-200/50'}`} style={{position: 'absolute', left: `${m.left}%`, width: `${(1 / totalChartDays) * 100}%`}}>
+                                                        
+                                             {m.monthLabel && (
+                                                <div className="absolute top-1.5 sm:top-2 left-1 bg-slate-800 text-white font-black px-2 py-0.5 rounded shadow-sm text-[8px] sm:text-[10px] whitespace-nowrap z-30 border border-slate-700">
+                                                   {m.monthLabel}
+                                                </div>
+                                             )}
+                                                        
+                                             {/* 🎯 บังคับจัดเลขวันที่ให้อยู่ตรงกลางช่องพอดีเป๊ะ (เติม 0 ข้างหน้าถ้าเป็นเลขหลักเดียว) */}
+                                             <div className="absolute bottom-1 sm:bottom-2 w-full flex justify-center">
+                                                <span className="text-[8px] sm:text-xs font-black text-slate-400">{String(m.dayLabel).padStart(2, '0')}</span>
+                                             </div>
+                                          </div>
+                                       ))}
+                                    </div>
+                                 </th>
                            </tr>
                          </thead>
                          <tbody>
@@ -1626,7 +1995,16 @@ export default function ConstructionApp() {
                                       <div className="text-slate-400 group-hover/item:text-blue-600 p-1 sm:p-2 rounded-lg bg-slate-50 mt-1 sm:mt-0"><ChevronRight size={isMobileLayout ? 14 : 20}/></div>
                                    </div>
                                    <div className={`mt-2 sm:mt-3 pt-2 sm:pt-3 border-t border-slate-100 ${isMobileLayout ? 'px-0' : 'px-1'}`}>
-                                      {assignment ? ( <p className={`text-[9px] sm:text-xs font-bold text-slate-500 flex items-center gap-1 sm:gap-2`}><HardHat size={isMobileLayout?12:14} className="text-emerald-500"/> {isMobileLayout ? assignment.contractor_name.split(' ')[0] : assignment.contractor_name}</p> ) : ( <p className={`text-[9px] sm:text-xs font-bold text-rose-500 flex items-center gap-1 sm:gap-2`}><AlertTriangle size={isMobileLayout?12:14}/> {isMobileLayout ? 'ไม่ระบุ' : 'ยังไม่ระบุช่าง'}</p> )}
+                                    {assignment ? ( 
+                                          <div className="flex flex-col">
+                                             <p className={`text-[9px] sm:text-xs font-bold text-slate-500 flex items-center gap-1 sm:gap-2`}><HardHat size={isMobileLayout?12:14} className="text-emerald-500 shrink-0"/> <span className="truncate">{isMobileLayout ? assignment.contractor_name.split(' ')[0] : assignment.contractor_name}</span></p>
+                                             {assignment.contractor_phone && (
+                                                <p className={`text-[8px] sm:text-[10px] font-bold text-slate-400 flex items-center gap-1 sm:gap-2 mt-0.5 sm:mt-1`}><Phone size={isMobileLayout?10:12} className="shrink-0 ml-0.5 sm:ml-1"/> <span className="truncate">{assignment.contractor_phone}</span></p>
+                                             )}
+                                          </div>
+                                      ) : ( 
+                                          <p className={`text-[9px] sm:text-xs font-bold text-rose-500 flex items-center gap-1 sm:gap-2`}><AlertTriangle size={isMobileLayout?12:14}/> {isMobileLayout ? 'ไม่ระบุ' : 'ยังไม่ระบุช่าง'}</p> 
+                                      )}
                                       {(isProcurement || isAdmin || isProjectPlanner) && ( <button onClick={(e) => { e.stopPropagation(); setAssignModal({ isOpen: true, task: task, name: assignment?.contractor_name || '', phone: assignment?.contractor_phone || '' }); }} className={`mt-2 sm:mt-4 w-full bg-emerald-50 text-emerald-700 font-bold ${isMobileLayout ? 'px-2 py-1.5 text-[8px] rounded-lg' : 'px-4 py-2.5 text-xs sm:text-sm rounded-xl'} hover:bg-emerald-100 transition-colors border border-emerald-200 flex items-center justify-center gap-1.5 sm:gap-2`}>
                                           {assignment ? <><Wrench size={isMobileLayout ? 10 : 16}/> แก้ไข</> : <><UserPlus size={isMobileLayout ? 10 : 16}/> มอบหมาย</>}
                                         </button>
@@ -1795,16 +2173,23 @@ export default function ConstructionApp() {
                                        </>
                                     );
                                  })()}
-
-                                 <td className={`border-b border-slate-200 p-0 relative ${isMobileLayout ? 'h-[100px]' : 'h-[140px]'} z-10 w-full`}>
-                                   <div className="absolute inset-0 flex pointer-events-none z-0">
-                                      {timeMarkers.map((m, i) => ( <div key={i} className={`border-l h-full ${m.isMonth ? 'border-slate-300 bg-slate-50/50' : 'border-slate-100'}`} style={{position: 'absolute', left: `${m.left}%`}}></div> ))}
-                                   </div>
-                                   <div className="relative w-full h-full flex flex-col justify-center px-0">
-                                      {pStartTs && pEndTs && ( <div className={`absolute ${isMobileLayout ? 'h-1.5' : 'h-3'} bg-slate-800 rounded-full z-[20] shadow-sm`} style={{ left: `${getChartLeft(pStartTs)}%`, width: `${getChartWidth(pStartTs, pEndTs)}%` }} /> )}
-                                      {aStartTs && ( <div className={`absolute ${isMobileLayout ? 'h-3.5 mt-5' : 'h-5 mt-7'} rounded-full z-[25] shadow-sm ${statusObj.barColor}`} style={{ left: `${getChartLeft(aStartTs)}%`, width: `${getChartWidth(aStartTs, aEndTs)}%` }}><span className={`absolute ${isMobileLayout ? '-top-3.5 text-[7px] px-1 py-0' : '-top-5 text-[9px] px-1.5 py-0.5'} left-0 font-black text-slate-600 bg-white/95 border border-slate-200 rounded shadow-sm`}>{tProgress}%</span></div> )}
-                                   </div>
-                                 </td>
+                                    {/* 🌟 2. ปรับช่องกราฟแท่ง (วาดเส้นปัจจุบันในแต่ละแถวแทน) 🌟 */}
+                                     <td className="border-b border-slate-200 p-0 relative z-10 w-full" style={{ minWidth: `${totalChartDays * 36}px`, height: isMobileLayout ? '100px' : '140px' }}>
+                                       <div className="absolute inset-0 flex pointer-events-none z-0">
+                                          {timeMarkers.map((m, i) => ( <div key={i} className={`border-l h-full ${m.isMonth ? 'border-slate-300 bg-slate-50/50' : 'border-slate-100'}`} style={{position: 'absolute', left: `${m.left}%`, width: `${(1 / totalChartDays) * 100}%`}}></div> ))}
+                                          
+                                          {/* ✅ เพิ่มเส้นประสีแดงของ "วันปัจจุบัน" เข้ามาเชื่อมต่อกันในแต่ละแถวตรงนี้! */}
+                                          {todayTs >= chartStart && todayTs <= chartEnd && (
+                                             <div className="absolute top-0 bottom-0 border-l-2 sm:border-l-[3px] border-dashed border-rose-500/80 z-[15] pointer-events-none" style={{ left: `${getChartLeft(todayTs)}%` }}></div>
+                                          )}
+                                       </div>
+                                       
+                                       <div className="relative w-full h-full flex flex-col justify-center px-0">
+                                          {pStartTs && pEndTs && ( <div className={`absolute ${isMobileLayout ? 'h-1.5' : 'h-3'} bg-slate-800 rounded-sm z-[20] shadow-sm`} style={{ left: `${getChartLeft(pStartTs)}%`, width: `${getChartWidth(pStartTs, pEndTs)}%` }} /> )}
+                                          
+                                          {aStartTs && ( <div className={`absolute ${isMobileLayout ? 'h-3.5 mt-5' : 'h-5 mt-7'} rounded-sm z-[25] shadow-sm ${statusObj.barColor}`} style={{ left: `${getChartLeft(aStartTs)}%`, width: `${getChartWidth(aStartTs, aEndTs)}%` }}><span className={`absolute ${isMobileLayout ? '-top-3.5 text-[7px] px-1 py-0' : '-top-5 text-[9px] px-1.5 py-0.5'} left-0 font-black text-slate-600 bg-white/95 border border-slate-200 rounded shadow-sm`}>{tProgress}%</span></div> )}
+                                       </div>
+                                     </td>
                                </tr>
                              )
                            })}
@@ -1834,7 +2219,7 @@ export default function ConstructionApp() {
                                  )}
                                  <div className={`${isMobileLayout ? 'text-3xl' : 'text-5xl sm:text-6xl'} font-black text-blue-400 italic tracking-tighter`}>{isTaskCompleted ? <CheckCircle size={isMobileLayout?32:48} className="text-green-400 inline-block"/> : `${progressValue}%`}</div>
                                  {/* 🌟 ปุ่ม Punch List / Defect แยกหน้าต่างแบบมีรูปภาพ */}
-                                 {['QC', 'Foreman', 'Site Engineer', 'Admin'].includes(currentUserRole) && (
+                                 {['QC', 'Foreman', 'Site Engineer', 'Admin', 'Owner'].includes(currentUserRole) && (
                                     <button 
                                        onClick={() => setDefectModal({ isOpen: true, task: selectedTask, plotId: selectedPlot.id })}
                                        className={`ml-3 sm:ml-6 bg-rose-600 hover:bg-rose-700 text-white font-black flex items-center gap-1.5 shadow-md border border-rose-500 transition-all ${isMobileLayout ? 'px-2.5 py-2 text-[10px] rounded-lg' : 'px-4 py-3 text-sm rounded-xl'}`}
@@ -1931,7 +2316,7 @@ export default function ConstructionApp() {
                                      </div>
                                    </div>
                                  ) : ( <div className={`bg-slate-100 text-slate-400 py-3 sm:py-4 rounded-xl sm:rounded-[1.5rem] font-black text-center uppercase tracking-widest border border-slate-200 ${isMobileLayout ? 'text-[9px]' : 'text-xs sm:text-sm'}`}>รองานผ่าน Site Engineer ก่อน</div> )
-                               ) : isProcurement || isProjectPlanner ? (
+                               ) : isProcurement || isProjectPlanner || isOwner ? (
                                    <div className={`bg-slate-100 text-slate-500 py-3 sm:py-4 px-4 sm:px-6 rounded-xl sm:rounded-[1.5rem] font-black text-center uppercase tracking-widest border border-slate-200 flex items-center justify-center gap-2 ${isMobileLayout ? 'text-[10px]' : 'text-xs sm:text-sm'}`}><AlertCircle size={18}/> ใช้สิทธิ์อัปเดตงานไม่ได้</div>
                                ) : (
                                  isPendingSE || isPendingQC ? (
@@ -1990,7 +2375,7 @@ export default function ConstructionApp() {
                        <div className="flex flex-col sm:flex-row gap-3 mb-8">
                          <input type="text" value={newUser.name} onChange={(e) => setNewUser({...newUser, name: e.target.value})} placeholder="ชื่อผู้ใช้ใหม่..." className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:border-rose-500" />
                          <select value={newUser.role} onChange={(e) => setNewUser({...newUser, role: e.target.value})} className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:border-rose-500 text-slate-700">
-                           <option value="Foreman">Foreman</option><option value="Site Engineer">Site Engineer</option><option value="QC">QC</option><option value="Project Planner">Project Planner (วางแผน)</option><option value="Procurement">Procurement (จัดจ้าง)</option><option value="Admin">Admin</option>
+                           <option value="Foreman">Foreman</option><option value="Site Engineer">Site Engineer</option><option value="QC">QC</option><option value="Project Planner">Project Planner (วางแผน)</option><option value="Procurement">Procurement (จัดจ้าง)</option><option value="Admin">Admin</option><option value="Owner">Owner (ผู้บริหาร / ดูได้อย่างเดียว)</option>
                          </select>
                          <button onClick={handleAddUser} disabled={isSubmitting} className="bg-rose-600 text-white px-6 py-3 rounded-xl font-black shadow-lg hover:bg-rose-700 flex justify-center items-center gap-2">{isSubmitting ? <Loader2 className="animate-spin" size={18}/> : 'เพิ่มผู้ใช้'}</button>
                        </div>
@@ -2007,7 +2392,323 @@ export default function ConstructionApp() {
                     </div>
                  </div>
                )}
+               {/* 🌟 ADMIN: ตั้งค่า 2.5D แบบรายงวดงาน (Task-Driven 2.5D Config) 🌟 */}
+               {view === 'admin-visualizer' && isAdmin && (
+                 <div className="animate-in slide-in-from-bottom duration-300 max-w-6xl mx-auto mt-4 sm:mt-8 px-4 sm:px-0">
+                    <button onClick={() => setView('dashboard')} className="mb-4 sm:mb-6 text-xs sm:text-base font-bold text-blue-600 flex items-center gap-1.5">← BACK TO DASHBOARD</button>
+                    
+                    <div className="bg-white p-4 sm:p-8 rounded-3xl border border-slate-200 shadow-xl">
+                       <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b pb-4 mb-6 gap-4">
+                          <div>
+                             <h2 className="text-xl sm:text-2xl font-black text-slate-800 uppercase italic tracking-tight flex items-center gap-2"><Monitor className="text-rose-600"/> 2.5D Task-Linked Visualizer</h2>
+                             <p className="text-xs text-slate-400 font-bold mt-1">กางงวดงานทั้งหมดเพื่อผูกรูปภาพตามสถานะงานจริง</p>
+                          </div>
+                          
+                          {/* เมนูเลือกแบบบ้าน */}
+                          <div className="w-full sm:w-64">
+                             <select 
+                                value={editingHouseType?.id || ''} 
+                                onChange={(e) => {
+                                   const type = houseTypes.find(t => t.id === e.target.value);
+                                   setEditingHouseType(type);
+                                   setVisualConfig(type?.visual_config || {});
+                                   setSimulatedStatus({}); // รีเซ็ตกล่องลองเล่นพรีวิว
+                                }} 
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-black text-xs sm:text-sm text-slate-700 outline-none focus:border-rose-500 shadow-sm"
+                             >
+                                <option value="">-- เลือกแบบบ้านเพื่อตั้งค่า --</option>
+                                {houseTypes.map(t => <option key={t.id} value={t.id}>{t.type_name}</option>)}
+                             </select>
+                          </div>
+                       </div>
 
+                       {editingHouseType ? (
+                          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                             
+                             {/* 🖥️ ฝั่งซ้าย (4 ส่วน): กล่อง Live Preview + แผงสวิตช์ลองเล่นจำลองสถานะ */}
+                             <div className="lg:col-span-4 space-y-4">
+                                <div className="sticky top-4 space-y-4">
+                                   <div className="bg-slate-950 p-4 rounded-2xl aspect-square border-2 border-slate-800 shadow-2xl flex items-center justify-center relative overflow-hidden">
+                                      <span className="absolute top-2 left-2 text-[9px] font-bold text-slate-500 tracking-widest uppercase bg-slate-900/80 px-2 py-0.5 rounded-md border border-slate-800 z-30">Live 2.5D Preview</span>
+                                      
+                                      {/* วนลูปรูปภาพมาซ้อนทับกันตาม Z-Index ที่ตั้งไว้ */}
+                                      <div className="relative w-full h-full flex items-center justify-center">
+                                         {taskTemplates
+                                            .filter(t => t.house_type_id === editingHouseType.id)
+                                            .flatMap(task => {
+                                               const config = visualConfig[task.id] || {};
+                                               const status = simulatedStatus[task.id] || 'none';
+                                               const layers = [];
+                                               
+                                               if (status === 'progress' && config.progress_image) {
+                                                  layers.push({ url: config.progress_image, z: Number(config.progress_z || 10) });
+                                               }
+                                               if (status === 'done' && config.done_image) {
+                                                  layers.push({ url: config.done_image, z: Number(config.done_z || 10) });
+                                               }
+                                               return layers;
+                                            })
+                                            .sort((a, b) => a.z - b.z) // เรียงลำดับจากล่างขึ้นบนตาม Z-Index
+                                            .map((layer, index) => (
+                                               <img key={index} src={layer.url} className="absolute inset-0 w-full h-full object-contain transition-all duration-300" style={{ zIndex: layer.z }} alt="Preview layer" />
+                                            ))
+                                         }
+                                      </div>
+                                   </div>
+                                   
+                                   {/* ปุ่มเซฟใหญ่ */}
+                                   <button 
+                                      onClick={handleSave25DConfig} 
+                                      disabled={isSubmitting || isUploadingLayer}
+                                      className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black py-3 rounded-xl shadow-lg transition-all flex justify-center items-center gap-2 text-sm uppercase tracking-wider"
+                                   >
+                                      {isSubmitting ? <Loader2 className="animate-spin" size={18}/> : <Save size={18}/>} บันทึกโครงสร้างเลเยอร์นี้
+                                   </button>
+                                </div>
+                             </div>
+
+                             {/* 📋 ฝั่งขวา (8 ส่วน): รายการ Task งวดงานทั้งหมดที่ดึงขึ้นมาอัตโนมัติ */}
+                             <div className="lg:col-span-8 space-y-4 max-h-[70vh] overflow-y-auto pr-2 custom-scrollbar">
+                                {taskTemplates.filter(t => t.house_type_id === editingHouseType.id).length === 0 ? (
+                                   <p className="text-center text-slate-400 italic py-10 font-bold">ยังไม่มีงวดงานถูกผูกไว้กับแบบบ้านนี้ กรุณาไปเพิ่มงวดงานก่อนครับ</p>
+                                ) : (
+                                   taskTemplates
+                                      .filter(t => t.house_type_id === editingHouseType.id)
+                                      .sort((a, b) => a.task_order - b.task_order)
+                                      .map((task) => {
+                                         const config = visualConfig[task.id] || {};
+                                         const currentSimStatus = simulatedStatus[task.id] || 'none';
+                                         
+                                         return (
+                                            <div key={task.id} className="bg-slate-50 p-4 rounded-2xl border border-slate-200 shadow-sm space-y-4 hover:border-blue-300 transition-colors">
+                                               {/* ส่วนหัวของชื่องาน */}
+                                               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b pb-2 border-slate-200">
+                                                  <div className="flex items-center gap-2">
+                                                     <span className="w-6 h-6 rounded-lg bg-slate-800 text-white font-black text-[10px] flex items-center justify-center">{task.task_order}</span>
+                                                     <h4 className="font-black text-slate-700 text-sm">{task.task_name}</h4>
+                                                  </div>
+                                                  {/* 🎮 สวิตช์จำลองสถานะสำหรับช่อง Preview */}
+                                                  <div className="flex bg-slate-200 p-0.5 rounded-lg text-[9px] font-bold w-fit self-end">
+                                                     <button onClick={() => setSimulatedStatus({...simulatedStatus, [task.id]: 'none'})} className={`px-2 py-1 rounded-md transition-colors ${currentSimStatus === 'none' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}`}>ยังไม่เริ่ม</button>
+                                                     <button onClick={() => setSimulatedStatus({...simulatedStatus, [task.id]: 'progress'})} className={`px-2 py-1 rounded-md transition-colors ${currentSimStatus === 'progress' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-500'}`}>กำลังทำ (0-99%)</button>
+                                                     <button onClick={() => setSimulatedStatus({...simulatedStatus, [task.id]: 'done'})} className={`px-2 py-1 rounded-md transition-colors ${currentSimStatus === 'done' ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-500'}`}>เสร็จสิ้น (100%)</button>
+                                                  </div>
+                                               </div>
+
+                                               {/* ตารางแบ่ง 2 สล็อตสำหรับรูปภาพ */}
+                                               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                  
+                                                  {/* สล็อต 1: ช่วงกำลังดำเนินการ (0-99%) */}
+                                                  <div className="bg-white p-3 rounded-xl border border-slate-200 flex flex-col justify-between gap-3">
+                                                     <div className="flex items-center justify-between">
+                                                        <span className="text-[10px] font-black text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 uppercase tracking-wider">🚧 ช่วงกำลังทำ (0-99%)</span>
+                                                        <div className="flex items-center gap-1">
+                                                           <span className="text-[9px] text-slate-400 font-bold">Z-Index:</span>
+                                                           <input type="number" value={config.progress_z ?? 10} onChange={(e) => setVisualConfig({...visualConfig, [task.id]: { ...config, progress_z: Number(e.target.value) }})} className="w-12 text-center border rounded p-0.5 text-xs font-black bg-slate-50" title="ลำดับการวางซ้อนภาพ เลขมากจะทับเลขน้อย" />
+                                                        </div>
+                                                     </div>
+                                                     <div className="flex items-center gap-3">
+                                                        <div className="w-14 h-14 bg-slate-100 border rounded-lg flex items-center justify-center overflow-hidden shrink-0">
+                                                           {config.progress_image ? <img src={config.progress_image} className="w-full h-full object-contain" /> : <ImageIcon className="text-slate-300" size={20}/>}
+                                                        </div>
+                                                        <div className="flex-1 space-y-1">
+                                                           <label className="block text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold py-1.5 px-2 rounded-md text-center cursor-pointer border transition-colors">
+                                                              <input type="file" accept="image/png" className="hidden" onChange={(e) => handleUploadSlot(task.id, 'progress', e.target.files?.[0])} disabled={isUploadingLayer} />
+                                                              {isUploadingLayer ? 'อัปโหลด...' : 'เลือกไฟล์ PNG'}
+                                                           </label>
+                                                           {config.progress_image && (
+                                                              <button onClick={() => setVisualConfig({...visualConfig, [task.id]: { ...config, progress_image: '' }})} className="w-full text-[9px] text-rose-500 font-bold text-center block hover:underline">ลบรูปออก</button>
+                                                           )}
+                                                        </div>
+                                                     </div>
+                                                  </div>
+
+                                                  {/* สล็อต 2: ช่วงเสร็จสมบูรณ์ (100%) */}
+                                                  <div className="bg-white p-3 rounded-xl border border-slate-200 flex flex-col justify-between gap-3">
+                                                     <div className="flex items-center justify-between">
+                                                        <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 uppercase tracking-wider">✅ เสร็จสิ้น (100%)</span>
+                                                        <div className="flex items-center gap-1">
+                                                           <span className="text-[9px] text-slate-400 font-bold">Z-Index:</span>
+                                                           <input type="number" value={config.done_z ?? 10} onChange={(e) => setVisualConfig({...visualConfig, [task.id]: { ...config, done_z: Number(e.target.value) }})} className="w-12 text-center border rounded p-0.5 text-xs font-black bg-slate-50" title="ลำดับการวางซ้อนภาพ เลขมากจะทับเลขน้อย" />
+                                                        </div>
+                                                     </div>
+                                                     <div className="flex items-center gap-3">
+                                                        <div className="w-14 h-14 bg-slate-100 border rounded-lg flex items-center justify-center overflow-hidden shrink-0">
+                                                           {config.done_image ? <img src={config.done_image} className="w-full h-full object-contain" /> : <ImageIcon className="text-slate-300" size={20}/>}
+                                                        </div>
+                                                        <div className="flex-1 space-y-1">
+                                                           <label className="block text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold py-1.5 px-2 rounded-md text-center cursor-pointer border transition-colors">
+                                                              <input type="file" accept="image/png" className="hidden" onChange={(e) => handleUploadSlot(task.id, 'done', e.target.files?.[0])} disabled={isUploadingLayer} />
+                                                              {isUploadingLayer ? 'อัปโหลด...' : 'เลือกไฟล์ PNG'}
+                                                           </label>
+                                                           {config.done_image && (
+                                                              <button onClick={() => setVisualConfig({...visualConfig, [task.id]: { ...config, done_image: '' }})} className="w-full text-[9px] text-rose-500 font-bold text-center block hover:underline">ลบรูปออก</button>
+                                                           )}
+                                                        </div>
+                                                     </div>
+                                                  </div>
+
+                                               </div>
+                                            </div>
+                                         );
+                                      })
+                                )}
+                             </div>
+
+                          </div>
+                       ) : (
+                          <div className="text-center text-slate-400 font-bold py-20 border border-dashed rounded-2xl bg-slate-50">
+                             ← กรุณาเลือกแบบบ้านที่ด้านบน เพื่อเริ่มต้นกางงวดงานจัดเลเยอร์ภาพครับ
+                          </div>
+                       )}
+                    </div>
+                 </div>
+               )}
+               {/* 🌟 หน้าจอ ADMIN: จัดการแบบบ้าน (HOUSE TYPES) 🌟 */}
+               {view === 'admin-house-types' && isAdmin && (
+                 <div className="animate-in slide-in-from-bottom duration-300 max-w-4xl mx-auto mt-4 sm:mt-8 px-4 sm:px-0">
+                   <button onClick={() => setView('dashboard')} className="mb-4 sm:mb-6 text-xs sm:text-base font-bold text-blue-600 flex items-center gap-1.5">← BACK TO DASHBOARD</button>
+                   
+                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                      {/* 🛠️ ฝั่งซ้าย: ฟอร์ม กรอกข้อมูล เพิ่ม/แก้ไข */}
+                      <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-md h-fit">
+                         <h3 className="font-black text-slate-800 text-lg mb-4 uppercase italic tracking-tight border-b pb-2 flex items-center gap-1.5 text-rose-600">
+                            {isEditingType ? '📝 แก้ไขแบบบ้าน' : '➕ เพิ่มแบบบ้านใหม่'}
+                         </h3>
+                         <div className="space-y-4">
+                            <div>
+                               <label className="block text-[10px] font-black text-slate-500 mb-1 uppercase tracking-widest">ชื่อแบบบ้าน</label>
+                               <input type="text" placeholder="เช่น Type A, บ้านเดี่ยวสองชั้น" value={houseTypeForm.type_name} onChange={(e) => setHouseTypeForm({...houseTypeForm, type_name: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-bold text-sm outline-none focus:border-rose-500" />
+                            </div>
+                            <div>
+                               <label className="block text-[10px] font-black text-slate-500 mb-1 uppercase tracking-widest">บันทึกความจำ / รายละเอียด</label>
+                               <textarea placeholder="คำอธิบายเพิ่มเติม..." value={houseTypeForm.memo} onChange={(e) => setHouseTypeForm({...houseTypeForm, memo: e.target.value})} rows={3} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-bold text-sm outline-none focus:border-rose-500 resize-none" />
+                            </div>
+                            
+                            <div className="flex gap-2 pt-2">
+                               {isEditingType && (
+                                  <button onClick={() => { setHouseTypeForm({ id: '', type_name: '', memo: '' }); setIsEditingType(false); }} className="bg-slate-100 text-slate-500 px-3 py-2 rounded-xl font-bold text-xs hover:bg-slate-200">ยกเลิก</button>
+                                )}
+                               <button onClick={handleSaveHouseType} disabled={isSubmitting} className="flex-1 bg-rose-600 text-white font-black py-2.5 rounded-xl text-xs shadow-md hover:bg-rose-700 flex justify-center items-center gap-1.5">
+                                  {isSubmitting ? <Loader2 className="animate-spin" size={14}/> : (isEditingType ? 'บันทึกการแก้ไข' : 'เพิ่มแบบบ้าน')}
+                               </button>
+                            </div>
+                         </div>
+                      </div>
+
+                      {/* 📋 ฝั่งขวา: รายชื่อตารางแบบบ้านที่มีอยู่เดิม */}
+                      <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-md lg:col-span-2">
+                         <h3 className="font-black text-slate-800 text-lg mb-4 uppercase italic tracking-tight border-b pb-2 flex items-center gap-1.5"><Building size={18} className="text-slate-400"/> แบบบ้านทั้งหมด ({houseTypes.length})</h3>
+                         
+                         <div className="space-y-2 max-h-[450px] overflow-y-auto pr-1 custom-scrollbar">
+                            {houseTypes.map(t => (
+                               <div key={t.id} className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 flex items-center justify-between gap-4 group hover:border-rose-200 transition-colors">
+                                  <div className="min-w-0">
+                                     <h4 className="font-black text-slate-800 text-sm sm:text-base truncate">{t.type_name}</h4>
+                                     <p className="text-[11px] text-slate-400 font-medium truncate mt-0.5">{t.memo || 'ไม่มีรายละเอียดเพิ่มเติม'}</p>
+                                  </div>
+                                  <div className="flex gap-1.5 shrink-0">
+                                     <button 
+                                        onClick={() => {
+                                           setHouseTypeForm({ id: t.id, type_name: t.type_name, memo: t.memo || '' });
+                                           setIsEditingType(true);
+                                        }} 
+                                        className="bg-white border border-slate-200 text-slate-600 p-2 rounded-lg font-bold text-xs hover:bg-slate-100 hover:text-blue-600 transition-colors shadow-sm"
+                                        title="แก้ไขชื่อและรายละเอียด"
+                                     >
+                                        แก้ไขชื่อ
+                                     </button>
+                                  </div>
+                               </div>
+                            ))}
+                         </div>
+                      </div>
+                   </div>
+                 </div>
+               )}
+               {/* 🌟 หน้าจอ ADMIN: จัดการงวดงาน (TASK TEMPLATES) 🌟 */}
+               {view === 'admin-tasks' && isAdmin && (
+                 <div className="animate-in slide-in-from-bottom duration-300 max-w-5xl mx-auto mt-4 sm:mt-8 px-4 sm:px-0">
+                   <button onClick={() => setView('dashboard')} className="mb-4 sm:mb-6 text-xs sm:text-base font-bold text-blue-600 flex items-center gap-1.5">← BACK TO DASHBOARD</button>
+                   
+                   <div className="bg-white p-6 sm:p-10 rounded-2xl sm:rounded-[2.5rem] border border-slate-200 shadow-xl">
+                      <h2 className="text-xl sm:text-3xl font-black text-slate-800 uppercase italic tracking-tight mb-6 flex items-center gap-2"><ClipboardList className="text-rose-600"/> Manage Tasks</h2>
+                      
+                      {/* Dropdown เลือกแบบบ้าน */}
+                      <div className="mb-8">
+                         <label className="block text-xs font-black text-slate-500 mb-2 uppercase tracking-widest">เลือกแบบบ้านที่ต้องการตั้งค่างวดงาน</label>
+                         <select 
+                            value={editingTaskHouseId} 
+                            onChange={(e) => {
+                               setEditingTaskHouseId(e.target.value);
+                               setTaskForm({ id: '', task_name: '', task_order: '' });
+                               setIsEditingTask(false);
+                            }} 
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-bold text-slate-700 outline-none focus:border-rose-500"
+                         >
+                            <option value="">-- กรุณาเลือกแบบบ้าน --</option>
+                            {houseTypes.map(t => <option key={t.id} value={t.id}>{t.type_name}</option>)}
+                         </select>
+                      </div>
+
+                      {editingTaskHouseId && (
+                         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 border-t border-slate-100 pt-8">
+                            
+                            {/* ฝั่งซ้าย: ฟอร์มเพิ่ม/แก้ไขงวดงาน */}
+                            <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 h-fit">
+                               <h3 className="font-black text-slate-800 text-base mb-4 uppercase italic tracking-tight flex items-center gap-1.5 text-rose-600">
+                                  {isEditingTask ? '📝 แก้ไขงวดงาน' : '➕ เพิ่มงวดงานใหม่'}
+                               </h3>
+                               <div className="space-y-4">
+                                  <div>
+                                     <label className="block text-[10px] font-black text-slate-500 mb-1 uppercase tracking-widest">ลำดับงาน (ตัวเลข)</label>
+                                     <input type="number" placeholder="เช่น 1, 2, 3..." value={taskForm.task_order} onChange={(e) => setTaskForm({...taskForm, task_order: e.target.value})} className="w-full border border-slate-300 rounded-xl px-3 py-2.5 font-bold text-sm outline-none focus:border-rose-500" />
+                                  </div>
+                                  <div>
+                                     <label className="block text-[10px] font-black text-slate-500 mb-1 uppercase tracking-widest">ชื่องวดงาน</label>
+                                     <textarea placeholder="เช่น งานเทฐานราก, งานก่อผนัง..." value={taskForm.task_name} onChange={(e) => setTaskForm({...taskForm, task_name: e.target.value})} rows={2} className="w-full border border-slate-300 rounded-xl px-3 py-2.5 font-bold text-sm outline-none focus:border-rose-500 resize-none" />
+                                  </div>
+                                  <div className="flex gap-2 pt-2">
+                                     {isEditingTask && (
+                                        <button onClick={() => { setTaskForm({ id: '', task_name: '', task_order: '' }); setIsEditingTask(false); }} className="bg-slate-200 text-slate-600 px-3 py-2 rounded-xl font-bold text-xs hover:bg-slate-300">ยกเลิก</button>
+                                     )}
+                                     <button onClick={handleSaveTask} disabled={isSubmitting} className="flex-1 bg-rose-600 text-white font-black py-2.5 rounded-xl text-xs shadow-md hover:bg-rose-700 flex justify-center items-center gap-1.5">
+                                        {isSubmitting ? <Loader2 className="animate-spin" size={14}/> : (isEditingTask ? 'บันทึกการแก้ไข' : 'เพิ่มงาน')}
+                                     </button>
+                                  </div>
+                               </div>
+                            </div>
+
+                            {/* ฝั่งขวา: รายการงวดงานทั้งหมด */}
+                            <div className="lg:col-span-2 space-y-2 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+                               {taskTemplates.filter(t => t.house_type_id === editingTaskHouseId).length === 0 ? (
+                                  <p className="text-center text-slate-400 italic py-10 font-bold">ยังไม่มีงวดงานในแบบบ้านนี้</p>
+                               ) : (
+                                  taskTemplates
+                                    .filter(t => t.house_type_id === editingTaskHouseId)
+                                    .sort((a, b) => a.task_order - b.task_order)
+                                    .map(task => (
+                                     <div key={task.id} className="bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between gap-4 group hover:border-blue-300 transition-colors shadow-sm">
+                                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                                           <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center font-black text-slate-500 shrink-0 text-xs">
+                                              {task.task_order}
+                                           </div>
+                                           <h4 className="font-bold text-slate-700 text-sm truncate">{task.task_name}</h4>
+                                        </div>
+                                        <div className="flex gap-1.5 shrink-0 opacity-100 lg:opacity-0 group-hover:opacity-100 transition-opacity">
+                                           <button onClick={() => { setTaskForm({ id: task.id, task_name: task.task_name, task_order: task.task_order }); setIsEditingTask(true); }} className="p-2 bg-slate-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"><Settings size={16}/></button>
+                                           <button onClick={() => handleDeleteTask(task)} className="p-2 bg-slate-50 text-rose-500 rounded-lg hover:bg-rose-100 transition-colors"><Trash2 size={16}/></button>
+                                        </div>
+                                     </div>
+                                  ))
+                               )}
+                            </div>
+
+                         </div>
+                      )}
+                   </div>
+                 </div>
+               )}
                {/* 🌟 3. ADMIN FORMS: PROJECTS 🌟 */}
                {view === 'admin-project' && isAdmin && (
                  <div className="animate-in slide-in-from-bottom duration-300 max-w-xl mx-auto mt-4 sm:mt-8 px-4 sm:px-0">
@@ -2078,7 +2779,7 @@ export default function ConstructionApp() {
                     <Home size={20} className={view === 'dashboard' ? 'fill-blue-100' : ''}/>
                     <span className="text-[9px] font-black mt-1">หน้าหลัก</span>
                  </button>
-                 {(isAdmin || isProjectPlanner || isQC || isSiteEngineer) && (
+                 {(isAdmin || isProjectPlanner || isQC || isSiteEngineer || isOwner) && (
                     <button onClick={() => setView('reports')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${view === 'reports' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
                        <PieChart size={20} className={view === 'reports' ? 'fill-blue-100' : ''}/>
                        <span className="text-[9px] font-black mt-1">รายงาน</span>
