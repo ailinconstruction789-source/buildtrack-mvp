@@ -9,50 +9,49 @@ import {
   PieChart, Home, Activity, Download, Copy, Pickaxe, ShieldAlert, Printer, CheckSquare, Square, ImageIcon
 } from 'lucide-react';
 
-// 🌟 1. ฟังก์ชันบีบอัดรูปภาพ Native (แก้ปัญหา Error: compressImageNative is not a function) 🌟
-const compressImageNative = (file: File): Promise<File> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = (event) => {
-      const img = new Image();
-      img.src = event.target?.result as string;
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        const MAX_WIDTH = 1280;
-        const MAX_HEIGHT = 1280;
-        let width = img.width;
-        let height = img.height;
-
-        if (width > height) {
-          if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
-        } else {
-          if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; }
-        }
-        canvas.width = width;
-        canvas.height = height;
-        ctx?.drawImage(img, 0, 0, width, height);
-
-        canvas.toBlob((blob) => {
-          if (blob) {
-            resolve(new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() }));
-          } else {
-            reject(new Error('Canvas to Blob failed'));
-          }
-        }, 'image/jpeg', 0.7);
-      };
-      img.onerror = (error) => reject(error);
-    };
-    reader.onerror = (error) => reject(error);
-  });
-};
-
 export default function ConstructionApp() {
   // ==========================================
   // 1. STATES
   // ==========================================
   const [allUsers, setAllUsers] = useState<any[]>([]);
+  // 🌟 1. ฟังก์ชันบีบอัดรูปภาพ Native (แก้ปัญหา Error: compressImageNative is not a function) 🌟
+  const compressImageNative = (file: File): Promise<File> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          const MAX_WIDTH = 1280;
+          const MAX_HEIGHT = 1280;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height) {
+            if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
+          } else {
+            if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; }
+          }
+          canvas.width = width;
+          canvas.height = height;
+          ctx?.drawImage(img, 0, 0, width, height);
+
+          canvas.toBlob((blob) => {
+            if (blob) {
+              resolve(new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() }));
+            } else {
+              reject(new Error('Canvas to Blob failed'));
+            }
+          }, 'image/jpeg', 0.7);
+        };
+        img.onerror = (error) => reject(error);
+      };
+      reader.onerror = (error) => reject(error);
+    });
+  };
   const [loggedInUser, setLoggedInUser] = useState<any>(null);
   const [loginData, setLoginData] = useState({ username: '', pin: '' });
 
@@ -708,14 +707,22 @@ const handleLogout = () => {
       setIsSubmitting(false);
     }
   };
-  const handleSendDefect = async () => {
+const handleSendDefect = async () => {
     if ((!newDefectText.trim() && defectFiles.length === 0) || isSubmittingDefect) return;
     setIsSubmittingDefect(true);
     try {
       let imageUrls = [];
       if (defectFiles.length > 0) { 
         imageUrls = await Promise.all(defectFiles.map(async (f) => { 
-          const comp = await compressImageNative(f.file);
+          // 🌟 ปรับตรงนี้: เช็คก่อนว่ามีฟังก์ชันไหม ถ้าไม่มีให้ใช้ไฟล์ต้นฉบับเลย
+          let comp;
+          if (typeof compressImageNative === 'function') {
+            comp = await compressImageNative(f.file);
+          } else {
+            console.warn("ไม่พบฟังก์ชันบีบอัดรูป ใช้ไฟล์ต้นฉบับ");
+            comp = f.file;
+          }
+          
           const path = `${defectModal.plotId}/defect-${Date.now()}-${Math.random().toString(36).substr(2,9)}`; 
           const { error } = await supabase.storage.from('task_images').upload(path, comp);
           if (error) throw new Error('อัปโหลดรูปไม่สำเร็จ กรุณาลองใหม่');
@@ -724,6 +731,19 @@ const handleLogout = () => {
       }
       const { error } = await supabase.from('defects').insert([{ plot_id: defectModal.plotId, task_id: defectModal.task?.id, description: newDefectText.trim(), reported_by: loggedInUser?.username || currentUserRole, status: 'pending', image_url: imageUrls.join(',') }]);
       if (error) throw error;
+      
+      // 🌟 1. ยิงการแจ้งเตือนไปหา Foreman ที่ดูแลแปลงนี้ 🌟
+      const relatedPlot = plots.find(p => p.id === defectModal.plotId);
+      if (relatedPlot && relatedPlot.foreman) {
+         await supabase.from('notifications').insert([{
+            plot_id: defectModal.plotId,
+            task_template_id: defectModal.task?.id,
+            message: `🛠️ แจ้งซ่อม (Defect) ใหม่: ${newDefectText.trim() || 'คลิกเพื่อดูรูปภาพและรายละเอียดในระบบ'}`,
+            target_user: relatedPlot.foreman,
+            target_role: 'Foreman'
+         }]);
+      }
+
       setNewDefectText(''); setDefectFiles([]);
       const { data } = await supabase.from('defects').select('*'); setDefects(data || []);
     } catch (e) { showAlert('Error', (e as Error).message); } setIsSubmittingDefect(false);
@@ -1072,7 +1092,7 @@ const handleLogout = () => {
         )}
 
         {fullImageUrl && (
-          <div className="fixed inset-0 z-[600] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 cursor-zoom-out" onClick={() => setFullImageUrl(null)}><button className="absolute top-6 right-6 text-white hover:text-rose-500 transition-colors bg-white/10 p-3 rounded-full backdrop-blur-md" onClick={() => setFullImageUrl(null)}><X size={28} /></button><img src={fullImageUrl} className="max-w-full max-h-[90vh] object-contain rounded-2xl shadow-2xl" onClick={(e) => e.stopPropagation()} alt="Full size" /></div>
+          <div className="fixed inset-0 z-[99999] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 cursor-zoom-out" onClick={() => setFullImageUrl(null)}><button className="absolute top-6 right-6 text-white hover:text-rose-500 transition-colors bg-white/10 p-3 rounded-full backdrop-blur-md" onClick={() => setFullImageUrl(null)}><X size={28} /></button><img src={fullImageUrl} className="max-w-full max-h-[90vh] object-contain rounded-2xl shadow-2xl" onClick={(e) => e.stopPropagation()} alt="Full size" /></div>
         )}
 
         {dialogConfig.isOpen && (
@@ -1093,9 +1113,9 @@ const handleLogout = () => {
                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3 px-2">Main Menu</p>
                      <nav className="space-y-1">
                         <button onClick={() => setView('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'dashboard' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Home size={18}/> Dashboard</button>
-                        
-                        {(isAdmin || isProjectPlanner || isQC || isSiteEngineer || isOwner) && (
-                           <button onClick={() => setView('reports')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'reports' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><PieChart size={18}/> Reports & Analytics</button>
+              Reports          
+                        {(isAdmin || isProjectPlanner || isQC || isSiteEngineer || isOwner || isForeman) && (
+                           <button onClick={() => setView('reports')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'reports' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><PieChart size={18}/>  & Analytics</button>
                         )}
                      </nav>
                    </div>
@@ -1487,7 +1507,105 @@ const handleLogout = () => {
                          </table>
                        </div>
                     </div>
+                    {/* 🌟 ตารางสรุปสถานะการแจ้งซ่อม (Defect Tracking Summary - ฉบับปรับปรุงตามสั่ง) 🌟 */}
+                    <div className="bg-white rounded-2xl sm:rounded-[2rem] border border-slate-200 shadow-md overflow-hidden mb-6">
+                       <div className="p-5 sm:p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                          <h3 className="font-black text-xl sm:text-2xl text-slate-800 flex items-center gap-2.5"><ShieldAlert className="text-rose-500" size={24}/> Defect Tracking Summary</h3>
+                          <span className="bg-rose-100 text-rose-600 text-xs sm:text-sm font-black px-3.5 py-2 rounded-xl shadow-sm">
+                             {isForeman 
+                               ? `รอดำเนินการของคุณ: ${defects.filter(d => { const p = plots.find(plot => plot.id === d.plot_id); return d.status === 'pending' && p?.foreman === (loggedInUser?.username || currentUserRole); }).length} รายการ`
+                               : `รอดำเนินการทั้งหมด: ${defects.filter(d => d.status === 'pending').length} รายการ`
+                             }
+                          </span>
+                       </div>
+                       
+                       <div className="overflow-x-auto custom-scrollbar">
+                          <table className="w-full text-left border-collapse min-w-[1100px]">
+                            <thead className="bg-slate-100 border-b border-slate-200">
+                              <tr>
+                               <th className="p-4 pl-6 sm:pl-8 text-xs font-black uppercase text-slate-600 tracking-wider w-28">วันที่แจ้ง</th>
+                               <th className="p-4 text-xs font-black uppercase text-slate-600 tracking-wider w-24">แปลง</th>
+                               <th className="p-4 text-xs font-black uppercase text-slate-600 tracking-wider min-w-[250px]">งวดงาน (Task)</th>
+                               <th className="p-4 text-xs font-black uppercase text-slate-600 tracking-wider w-40">ผู้แจ้ง (Reporter)</th>
+                               <th className="p-4 text-xs font-black uppercase text-slate-600 tracking-wider">รายละเอียด Defect</th>
+                               <th className="p-4 text-xs font-black uppercase text-slate-600 tracking-wider w-40">โฟร์แมน</th>
+                               <th className="p-4 pr-6 sm:pr-8 text-xs font-black uppercase text-slate-600 tracking-wider text-center w-32">สถานะ</th>
+                             </tr>
+                           </thead>
+                           <tbody className="divide-y divide-slate-100">
+                             {(() => {
+                                // 🧠 ลอจิกกรองข้อมูล: ถ้าเป็น Foreman ให้เห็นเฉพาะแปลงที่ตัวเองรับผิดชอบ แต่ถ้าตำแหน่งอื่นให้เห็นครบหมด
+                                const filteredDefects = defects.filter(defect => {
+                                   if (isForeman) {
+                                      const plotInfo = plots.find(p => p.id === defect.plot_id);
+                                      return plotInfo?.foreman === (loggedInUser?.username || currentUserRole);
+                                   }
+                                   return true; // ตำแหน่งอื่นๆ เห็นทั้งหมด
+                                });
 
+                                if (filteredDefects.length === 0) {
+                                   return <tr><td colSpan="7" className="text-center p-12 text-slate-400 font-bold text-sm sm:text-base">ไม่มีรายการแจ้งซ่อมในระบบระบบย่อยนี้ 🎉</td></tr>;
+                                }
+
+                                return filteredDefects
+                                   .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                                   .map((defect, idx) => {
+                                      const pInfo = plots.find(p => p.id === defect.plot_id);
+                                      const foremanName = pInfo ? pInfo.foreman : 'ไม่ระบุ';
+                                      
+                                      // ดึงชื่องวดงานที่ผูกอยู่กับ defect รายการนี้
+                                      const taskInfo = taskTemplates.find(t => t.id === defect.task_id);
+                                      const taskName = taskInfo ? taskInfo.task_name : 'งานทั่วไป / ไม่ระบุ';
+
+                                      return (
+                                         <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
+                                            {/* วันที่แจ้ง (ปรับขนาดตัวหนังสือให้อ่านง่ายสบายตาเป็น text-sm) */}
+                                            <td className="p-4 pl-6 sm:pl-8 font-bold text-slate-500 text-xs sm:text-sm">{new Date(defect.created_at).toLocaleDateString('th-TH')}</td>
+                                            
+                                            {/* เลขแปลง */}
+                                            <td className="p-4 font-black text-slate-800 text-sm sm:text-base">{defect.plot_id}</td>
+                                            
+                                            {/* 🌟 คอลัมน์ที่เพิ่มใหม่: งวดงาน (Task) */}
+                                            <td className="p-4 font-bold text-slate-700 text-xs sm:text-sm">
+                                               {/* เอา truncate และ max-w-[180px] ออก และเพิ่มการปัดบรรทัดอัตโนมัติ (break-words) */}
+                                               <span className="bg-slate-100 text-slate-700 px-3 py-1.5 rounded-md border border-slate-200 inline-block w-full break-words leading-relaxed" title={taskName}>
+                                                  {taskName}
+                                               </span>
+                                            </td>
+                                            
+                                            {/* ผู้แจ้ง */}
+                                            <td className="p-4 font-bold text-slate-600 text-xs sm:text-sm">
+                                               <span className="bg-blue-50 text-blue-700 border border-blue-100 px-2 py-1 rounded-md">{defect.reported_by}</span>
+                                            </td>
+                                            
+                                            {/* รายละเอียด Defect */}
+                                            <td className="p-4 text-xs sm:text-sm text-slate-600 font-medium truncate max-w-[250px]" title={defect.description}>
+                                               {defect.description || 'ดูรูปภาพหลักในระบบ'}
+                                            </td>
+                                            
+                                            {/* โฟร์แมนผู้ดูแล */}
+                                            <td className="p-4 font-bold text-slate-700 text-xs sm:text-sm flex items-center gap-1.5 mt-1">
+                                               <HardHat size={16} className="text-amber-500 shrink-0"/> {foremanName}
+                                            </td>
+                                            
+                                            {/* สถานะ (ล็อกให้อยู่แถวเดียว ไม่แตกบรรทัดด้วย whitespace-nowrap และพรีเมียมขึ้น) */}
+                                            <td className="p-4 pr-6 sm:pr-8 text-center">
+                                               <span className={`font-black px-3.5 py-1.5 rounded-xl text-xs sm:text-sm shadow-sm inline-block whitespace-nowrap border ${
+                                                  defect.status === 'pending' 
+                                                     ? 'bg-rose-50 border-rose-200 text-rose-600' 
+                                                     : 'bg-emerald-50 border-emerald-200 text-emerald-600'
+                                               }`}>
+                                                  {defect.status === 'pending' ? '🔴 รอแก้ไข' : '🟢 แก้แล้ว'}
+                                               </span>
+                                            </td>
+                                         </tr>
+                                      );
+                                   });
+                             })()}
+                           </tbody>
+                         </table>
+                       </div>
+                    </div>
                  </div>
                )}
 
@@ -2779,12 +2897,20 @@ const handleLogout = () => {
                     <Home size={20} className={view === 'dashboard' ? 'fill-blue-100' : ''}/>
                     <span className="text-[9px] font-black mt-1">หน้าหลัก</span>
                  </button>
-                 {(isAdmin || isProjectPlanner || isQC || isSiteEngineer || isOwner) && (
+                 {(isAdmin || isProjectPlanner || isQC || isSiteEngineer || isOwner || isForeman) && (
                     <button onClick={() => setView('reports')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${view === 'reports' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
                        <PieChart size={20} className={view === 'reports' ? 'fill-blue-100' : ''}/>
                        <span className="text-[9px] font-black mt-1">รายงาน</span>
                     </button>
                  )}
+                 {/* 🌟 ปุ่มออกจากระบบบนมือถือ (เพิ่มใหม่ตามสั่ง) 🌟 */}
+                    <button 
+                      onClick={handleLogout} 
+                      className="flex flex-col items-center justify-center flex-1 py-2 font-bold text-[10px] text-rose-500 hover:text-rose-700 transition-colors"
+                    >
+                      <LogOut size={20} className="text-rose-500" />
+                      ออกระบบ
+                    </button>
                  {(isAdmin || isProcurement) && (
                     <button onClick={() => setView('procurement-contractors')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${view === 'procurement-contractors' ? 'text-emerald-600' : 'text-slate-400 hover:text-slate-600'}`}>
                        <Wrench size={20} className={view === 'procurement-contractors' ? 'fill-emerald-100' : ''}/>
