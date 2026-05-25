@@ -1433,7 +1433,7 @@ const handleSendDefect = async () => {
            
            {/* 📱 Top Header (Mobile & Preview Only) */}
            {isMobileLayout && (
-             <header className="bg-slate-900 text-white p-3 sm:p-4 shrink-0 shadow-md z-30">
+             <header className="bg-slate-900 text-white p-3 sm:p-4 shrink-0 shadow-md z-[100] relative">
                <div className="flex justify-between items-center">
                  <div className="flex items-center gap-2" onClick={() => setView('dashboard')}>
                    <div className="bg-blue-600 p-1.5 rounded-lg"><LayoutDashboard size={18} /></div>
@@ -1466,7 +1466,7 @@ const handleSendDefect = async () => {
 
            {/* 💻 Top Header (Desktop) */}
            {!isMobileLayout && (
-             <header className="bg-white border-b border-slate-200 p-3 sm:p-4 shrink-0 shadow-sm z-30 flex justify-end items-center gap-4">
+             <header className="bg-white border-b border-slate-200 p-3 sm:p-4 shrink-0 shadow-sm z-[100] flex justify-end items-center gap-4 relative">
                 
                 {/* 🔔 Notifications */}
                 <div className="relative">
