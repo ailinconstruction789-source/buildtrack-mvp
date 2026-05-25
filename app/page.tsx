@@ -175,6 +175,7 @@ export default function ConstructionApp() {
   const [scheduleInputs, setScheduleInputs] = useState({}); 
   const [copyModalOpen, setCopyModalOpen] = useState(false);
   const [copySourcePlot, setCopySourcePlot] = useState('');
+  const [copyStartDate, setCopyStartDate] = useState('');
   // 🌟 Daily Activity Report States 🌟
   const [activityReportOpen, setActivityReportOpen] = useState(false);
   const [activityReportDate, setActivityReportDate] = useState(new Date().toLocaleDateString('en-CA'));
@@ -258,12 +259,27 @@ export default function ConstructionApp() {
       const { data: types } = await supabase.from('house_types').select('*');
       const { data: tasks } = await supabase.from('task_templates').select('*').order('task_order', { ascending: true });
       const { data: plotsData } = await supabase.from('plots').select('*, house_types(type_name)').order('created_at', { ascending: true });
-      const { data: allUpdates } = await supabase.from('task_updates').select('*').order('created_at', { ascending: true });
-      const { data: assignData } = await supabase.from('plot_task_assignments').select('*');
       const { data: contData } = await supabase.from('contractors').select('*');
       const { data: notifData } = await supabase.from('notifications').select('*').order('created_at', { ascending: false });
-      const { data: scheduleData } = await supabase.from('plot_task_schedules').select('*');
-      const { data: defectsData } = await supabase.from('defects').select('*');
+
+      // 🌟 ฟังก์ชันพิเศษ "ทะลุลิมิต 1000 แถว" ของ Supabase 🌟
+      const fetchWithoutLimit = async (tableName, orderByCol = null) => {
+          let allData = [];
+          for (let i = 0; i < 50; i++) { // วนลูป 50 รอบ = รองรับข้อมูลได้สูงสุด 50,000 แถว!
+              let query = supabase.from(tableName).select('*').range(i * 1000, ((i + 1) * 1000) - 1);
+              if (orderByCol) query = query.order(orderByCol, { ascending: true });
+              const { data } = await query;
+              if (data && data.length > 0) allData = [...allData, ...data];
+              if (!data || data.length < 1000) break; // ถ้าดึงมาไม่ถึง 1000 แถว แปลว่าข้อมูลหมดแล้ว ให้หยุดลูป
+          }
+          return allData;
+      };
+
+      // 🌟 ใช้ฟังก์ชันดึงข้อมูลทะลุลิมิตกับตารางที่ข้อมูลเยอะ 🌟
+      const allUpdates = await fetchWithoutLimit('task_updates', 'created_at');
+      const assignData = await fetchWithoutLimit('plot_task_assignments');
+      const scheduleData = await fetchWithoutLimit('plot_task_schedules');
+      const defectsData = await fetchWithoutLimit('defects');
       setDefects(defectsData || []);
 
       if (notifData && loggedInUser) setNotifications(notifData.filter(n => n.target_user === loggedInUser.username || n.target_role === loggedInUser.role));
@@ -495,13 +511,58 @@ const handleLogout = () => {
     } catch (e) { showAlert('Error', (e as Error).message); } setIsSubmitting(false);
   };
 
+// 🌟 ฟังก์ชันดึงแผนงานแบบมีระบบ Auto-Shift (เลื่อนวันให้อัตโนมัติ)
   const handleConfirmCopy = () => {
-    const newInputs = { ...scheduleInputs }; const sourceTasks = taskTemplates.filter(t => t.house_type_id === selectedPlot.house_type_id); let hasData = false;
-    sourceTasks.forEach(task => { const sourcePlan = schedules[`${copySourcePlot}-${task.id}`]; if (sourcePlan && sourcePlan.planned_start && sourcePlan.planned_end) { newInputs[task.id] = { start: sourcePlan.planned_start, end: sourcePlan.planned_end }; hasData = true; } });
-    if (!hasData) { showAlert('แจ้งเตือน', 'แปลงต้นทางที่คุณเลือกยังไม่มีข้อมูลแผนงานครับ'); return; }
-    setScheduleInputs(newInputs); setCopyModalOpen(false); setCopySourcePlot(''); showAlert('สำเร็จ', 'ดึงข้อมูลแผนงานสำเร็จ! กรุณากด "บันทึกแผนงานทั้งหมด" เพื่อยืนยันลงระบบครับ');
-  };
+    const newInputs = { ...scheduleInputs };
+    // ดึงงานทั้งหมดและจัดเรียงตามลำดับ (1, 2, 3...)
+    const sourceTasks = taskTemplates.filter(t => t.house_type_id === selectedPlot.house_type_id).sort((a,b) => a.task_order - b.task_order); 
+    let hasData = false;
+    
+    // 1. หาวันเริ่มงานของงาน "ลำดับแรกสุด" ที่มีข้อมูลของแปลงต้นฉบับ
+    let originalFirstStartDate = null;
+    for (const task of sourceTasks) {
+        const sourcePlan = schedules[`${copySourcePlot}-${task.id}`];
+        if (sourcePlan && sourcePlan.planned_start) {
+            originalFirstStartDate = new Date(sourcePlan.planned_start).getTime();
+            break; 
+        }
+    }
 
+    // 2. คำนวณส่วนต่างเวลา (Offset) ระหว่างวันต้นฉบับ กับวันที่ผู้ใช้กำหนดใหม่
+    let offsetMs = 0;
+    if (originalFirstStartDate && copyStartDate) {
+        const newStartMs = new Date(copyStartDate).getTime();
+        offsetMs = newStartMs - originalFirstStartDate;
+    }
+
+    // 3. วนลูปบวกจำนวนวัน (Offset) เข้าไปในทุกๆ งาน
+    sourceTasks.forEach(task => { 
+        const sourcePlan = schedules[`${copySourcePlot}-${task.id}`]; 
+        if (sourcePlan && sourcePlan.planned_start && sourcePlan.planned_end) { 
+            // เอาวันที่เดิมมาบวก Offset ที่คำนวณไว้
+            const shiftedStart = new Date(new Date(sourcePlan.planned_start).getTime() + offsetMs);
+            const shiftedEnd = new Date(new Date(sourcePlan.planned_end).getTime() + offsetMs);
+            
+            // คำนวณระยะเวลาจำนวนวัน (Duration) ส่งไปด้วย
+            const durationDiff = shiftedEnd.getTime() - shiftedStart.getTime();
+            const durationDays = String(Math.max(0, Math.ceil(durationDiff / (1000 * 60 * 60 * 24))) + 1);
+
+            newInputs[task.id] = { 
+                start: shiftedStart.toISOString().split('T')[0], 
+                end: shiftedEnd.toISOString().split('T')[0],
+                duration: durationDays
+            }; 
+            hasData = true; 
+        } 
+    });
+
+    if (!hasData) { showAlert('แจ้งเตือน', 'แปลงต้นทางที่คุณเลือกยังไม่มีข้อมูลแผนงานครับ'); return; }
+    setScheduleInputs(newInputs); 
+    setCopyModalOpen(false); 
+    setCopySourcePlot(''); 
+    setCopyStartDate('');
+    showAlert('สำเร็จ', 'ดึงข้อมูลและปรับเลื่อนแผนงานอัตโนมัติสำเร็จ! กรุณากด "บันทึก" ด้านขวาบน เพื่อยืนยันลงระบบครับ');
+  };
   const handleExportCSV = () => {
     let csvContent = "data:text/csv;charset=utf-8,\uFEFFชื่อโครงการ,รหัสแปลง (Plot),แบบบ้าน,โฟร์แมน,ความคืบหน้าจริง (%),ความคืบหน้าตามแผน (%),สถานะ\n";
     displayPlots.forEach(plot => { const statusInfo = getPlotOverallStatus(plot.id); csvContent += `${plot.project_name?.replace(/,/g, ' ')},${plot.id?.replace(/,/g, ' ')},${plot.type?.replace(/,/g, ' ')},${plot.foreman?.replace(/,/g, ' ') || 'ไม่ระบุ'},${plot.progress}%,${statusInfo.planned}%,${statusInfo.label}\n`; });
@@ -573,13 +634,38 @@ const handleLogout = () => {
       }); 
   };
   
-  const handleAssignContractor = async () => { 
-      setIsSubmitting(true); 
+const handleAssignContractor = async () => { 
+      setIsSubmitting(true);
       try { 
-          await supabase.from('plot_task_assignments').delete().match({ plot_id: selectedPlot.id, task_template_id: assignModal.task.id }); 
-          await supabase.from('plot_task_assignments').insert([{ plot_id: selectedPlot.id, task_template_id: assignModal.task.id, contractor_name: assignModal.name, contractor_phone: assignModal.phone }]); 
-          setAssignModal({ isOpen: false, task: null, name: '', phone: '' }); await fetchAllData(); showAlert('สำเร็จ', 'มอบหมายงานให้ช่างเรียบร้อยแล้ว');
-      } catch (e) { showAlert('Error', (e as Error).message); } setIsSubmitting(false); 
+          // 1. ลบของเก่าออกก่อน
+          const { error: delErr } = await supabase.from('plot_task_assignments').delete().match({ plot_id: selectedPlot.id, task_template_id: assignModal.task.id });
+          if (delErr) throw delErr;
+
+          // 2. บันทึกข้อมูลใหม่ลงไป และขอข้อมูลกลับมาด้วยคำสั่ง .select()
+          const { data: newAssign, error: insErr } = await supabase.from('plot_task_assignments').insert([{ 
+              plot_id: selectedPlot.id, 
+              task_template_id: assignModal.task.id, 
+              contractor_name: assignModal.name, 
+              contractor_phone: assignModal.phone 
+          }]).select();
+          
+          if (insErr) throw insErr;
+
+          // 🌟 3. อัปเดต State ตรงๆ เพื่อให้ตารางฝั่งซ้ายเปลี่ยนชื่อช่าง "ทันที" ไม่ง้อโหลดใหม่ 🌟
+          if (newAssign && newAssign.length > 0) {
+              setAssignments(prev => {
+                  const filtered = prev.filter(a => !(String(a.plot_id) === String(selectedPlot.id) && String(a.task_template_id) === String(assignModal.task.id)));
+                  return [...filtered, newAssign[0]];
+              });
+          }
+
+          setAssignModal({ isOpen: false, task: null, name: '', phone: '' }); 
+          fetchAllData(); // โหลดซ้ำไว้เบื้องหลังชิวๆ
+          showAlert('สำเร็จ', 'มอบหมายงานให้ช่างเรียบร้อยแล้ว');
+      } catch (e) { 
+          showAlert('Error', 'เกิดข้อผิดพลาดจากฐานข้อมูล: ' + (e as Error).message);
+      } 
+      setIsSubmitting(false); 
   };
 // 🌟 ฟังก์ชันลบแปลงบ้าน 🌟
   const handleDeletePlot = (plotId) => { 
@@ -1161,23 +1247,57 @@ const handleSendDefect = async () => {
               </div>
             );
         })()}
-        {copyModalOpen && (
+          {copyModalOpen && (
           <div className="absolute inset-0 z-[600] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 fixed">
             <div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full p-6 space-y-5 animate-in zoom-in-95 duration-200">
               <div><h3 className="text-xl font-black text-slate-800 italic uppercase flex items-center gap-2"><Copy className="text-blue-600"/> Copy Schedule</h3><p className="text-sm text-slate-500 font-bold tracking-widest mt-1">คัดลอกแผนงานจากแปลงต้นแบบ</p></div>
               <div className="space-y-4">
+   
+                {/* ช่อง 1: เลือกแปลง */}
                 <div>
                   <label className="block text-sm font-black text-slate-500 mb-2 uppercase tracking-widest">เลือกแปลงต้นทาง (แบบบ้านเดียวกัน)</label>
-                  <select value={copySourcePlot} onChange={(e) => setCopySourcePlot(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-bold outline-none focus:border-blue-500 text-slate-700 cursor-pointer">
-                    <option value="" disabled>-- เลือกแปลง --</option>
+                  <select 
+                    value={copySourcePlot} 
+                    onChange={(e) => {
+                       const selectedPlotId = e.target.value;
+                       setCopySourcePlot(selectedPlotId);
+                       // 🎯 หา "วันที่ของงานแรกสุด" ของแปลงที่เลือกมาใส่เป็นค่าเริ่มต้นให้อัตโนมัติ
+                       const sourceTasks = taskTemplates.filter(t => t.house_type_id === selectedPlot?.house_type_id).sort((a,b) => a.task_order - b.task_order);
+                       let foundStartDate = '';
+                       for (const task of sourceTasks) {
+                           const sourcePlan = schedules[`${selectedPlotId}-${task.id}`];
+                           if (sourcePlan && sourcePlan.planned_start) {
+                               foundStartDate = sourcePlan.planned_start;
+                               break;
+                           }
+                       }
+                       setCopyStartDate(foundStartDate);
+                    }} 
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-bold outline-none focus:border-blue-500 text-slate-700 cursor-pointer"
+                  >
+                    <option value="" disabled>-- เลือกแปลงต้นทาง --</option>
                     {plots.filter(p => p.house_type_id === selectedPlot?.house_type_id && p.id !== selectedPlot?.id).map(p => (<option key={p.id} value={p.id}>{p.id} ({p.foreman || 'ไม่ระบุโฟร์แมน'})</option>))}
                   </select>
                 </div>
-                <div className="bg-blue-50 p-3 rounded-xl border border-blue-100 flex items-start gap-2"><AlertCircle size={16} className="text-blue-500 shrink-0 mt-0.5"/><p className="text-xs font-bold text-blue-700 leading-relaxed">ระบบจะดึงวันที่ตามแผนมาใส่ในช่องกรอกให้คุณตรวจสอบก่อนกดบันทึกจริงครับ</p></div>
+
+                {/* ช่อง 2: กำหนดวันเริ่มงาน (จะโผล่มาเมื่อเลือกแปลงแล้ว) */}
+                {copySourcePlot && (
+                   <div className="animate-in fade-in slide-in-from-top-2">
+                      <label className="block text-sm font-black text-blue-600 mb-2 uppercase tracking-widest">กำหนดวันเริ่มงานใหม่ (งานที่ 1)</label>
+                      <input 
+                         type="date" 
+                         value={copyStartDate} 
+                         onChange={(e) => setCopyStartDate(e.target.value)} 
+                         className="w-full bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 font-bold outline-none focus:border-blue-500 text-blue-700"
+                      />
+                      <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 flex items-start gap-2 mt-3"><AlertCircle size={16} className="text-blue-500 shrink-0 mt-0.5"/><p className="text-[10px] font-bold text-slate-500 leading-relaxed">💡 ระบบจะคำนวณและ <span className="text-blue-600">เลื่อนวันทำงานของทุกๆ งวดงาน ให้สอดคล้องกันอัตโนมัติ</span> โดยคงระยะห่างไว้เท่าต้นฉบับครับ</p></div>
+                   </div>
+                )}
               </div>
-              <div className="flex gap-3 w-full mt-2">
-                <button onClick={() => setCopyModalOpen(false)} className="flex-1 bg-slate-100 text-slate-600 font-bold py-3.5 rounded-xl hover:bg-slate-200">ยกเลิก</button>
-                <button onClick={handleConfirmCopy} disabled={!copySourcePlot} className="flex-1 bg-blue-600 text-white font-bold py-3.5 rounded-xl hover:bg-blue-700 flex justify-center items-center gap-2 disabled:opacity-50"><Download size={16}/> ดึงข้อมูล</button>
+
+              <div className="flex gap-3 w-full mt-2 border-t border-slate-100 pt-4">
+                <button onClick={() => { setCopyModalOpen(false); setCopySourcePlot(''); setCopyStartDate(''); }} className="flex-1 bg-slate-100 text-slate-600 font-bold py-3.5 rounded-xl hover:bg-slate-200">ยกเลิก</button>
+                <button onClick={handleConfirmCopy} disabled={!copySourcePlot || !copyStartDate} className="flex-1 bg-blue-600 text-white font-bold py-3.5 rounded-xl hover:bg-blue-700 flex justify-center items-center gap-2 disabled:opacity-50"><Download size={16}/> ดึงข้อมูล</button>
               </div>
             </div>
           </div>
@@ -2079,7 +2199,10 @@ const handleSendDefect = async () => {
                     {isProjectPlanner && (
                       <div className="flex gap-1 ml-auto">
                         <button onClick={() => setCopyModalOpen(true)} className="bg-slate-700 text-slate-200 px-2 py-1 rounded text-[10px] hover:bg-slate-600 border border-slate-600 font-bold">คัดลอก</button>
-                        <button onClick={handleSaveAllSchedules} disabled={isSubmitting} className="bg-rose-600 text-white px-2 py-1 rounded text-[10px] hover:bg-rose-700 font-bold">บันทึก</button>
+                        <button onClick={handleSaveAllSchedules} disabled={isSubmitting} className="bg-rose-600 text-white px-2 py-1 rounded text-[10px] hover:bg-rose-700 font-bold flex items-center justify-center gap-1 min-w-[50px] disabled:opacity-70 disabled:cursor-not-allowed">
+                           {isSubmitting ? <Loader2 className="animate-spin" size={12}/> : null}
+                           {isSubmitting ? 'กำลังบันทึก...' : 'บันทึก'}
+                        </button>
                       </div>
                     )}
                   </div>
@@ -2191,7 +2314,7 @@ const handleSendDefect = async () => {
                            {taskTemplates.filter(t => t.house_type_id === selectedPlot.house_type_id).map((task) => {
                              const key = `${selectedPlot.id}-${task.id}`;
                              const tProgress = latestUpdatesMap[key]?.progress || 0;
-                             const assignment = assignments.slice().reverse().find(a => a.plot_id === selectedPlot.id && a.task_template_id === task.id);
+                             const assignment = assignments.slice().reverse().find(a => String(a.plot_id) === String(selectedPlot.id) && String(a.task_template_id) === String(task.id));
                              const dates = taskDates[key];
                              const plan = schedules[key] || {};
                              const statusObj = getTaskStatus(plan.planned_end, dates?.end, tProgress);
@@ -2202,9 +2325,13 @@ const handleSendDefect = async () => {
                              const aEndTs = dates?.end ? new Date(dates.end).getTime() : (aStartTs ? Date.now() : null);
 
                              return (
-                                <tr key={task.id} className="group hover:bg-slate-50/80 transition-colors bg-white cursor-pointer" onClick={(e: any) => {
-                                  // ถ้าคลิกโดนช่องกรอกข้อความ (INPUT) ให้ข้ามคำสั่งนี้ไป
-                                  if (e.target && e.target.tagName === 'INPUT') return;
+                                  <tr key={task.id} className="group hover:bg-slate-50/80 transition-colors bg-white cursor-pointer" onClick={(e: any) => {
+                                  // 🛡️ ป้องกันการทำงานซ้อนทับกัน (ดักจับทั้งปุ่ม, Select, Input และรองรับทุก Browser)
+                                  const target = e.target as HTMLElement;
+                                  if (target) {
+                                      if (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'BUTTON') return;
+                                      if (typeof target.closest === 'function' && (target.closest('button') || target.closest('select') || target.closest('input'))) return;
+                                  }
                                   
                                   // โหลดข้อมูลเข้าสู่หน้า Task Progress
                                   setSelectedTask(task);
