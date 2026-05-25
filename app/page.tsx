@@ -56,6 +56,7 @@ export default function ConstructionApp() {
   const [loginData, setLoginData] = useState({ username: '', pin: '' });
 
   const [view, setView] = useState('dashboard'); 
+  const [taskReturnView, setTaskReturnView] = useState('house-detail');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
   const [selectedPlot, setSelectedPlot] = useState(null);
@@ -129,28 +130,67 @@ export default function ConstructionApp() {
   const [inputText, setInputText] = useState('');
   const [currentWeather, setCurrentWeather] = useState(null);
 
-  // 🌟 ดึงสภาพอากาศอัตโนมัติตามพิกัด GPS (ดึงจาก Open-Meteo ฟรีไม่มีลิมิต)
-  useEffect(() => {
-    const fetchWeather = async (lat = 13.75, lon = 100.51) => { // ค่าเริ่มต้นถ้าไม่เปิด GPS คือ กทม.
-       try {
-         const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`);
-         const data = await res.json();
-         const code = data.current_weather.weathercode;
-         let icon = '☀️', text = 'ฟ้าโปร่ง';
-         if (code > 0 && code <= 3) { icon = '⛅'; text = 'มีเมฆบางส่วน'; }
-         else if (code >= 45 && code <= 48) { icon = '🌫️'; text = 'มีหมอก'; }
-         else if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) { icon = '🌧️'; text = 'ฝนตก'; }
-         else if (code >= 95) { icon = '⛈️'; text = 'ฝนฟ้าคะนอง'; }
-         setCurrentWeather({ temp: data.current_weather.temperature, icon, text });
-       } catch (e) { console.error('Weather Fetch Error', e); }
-    };
+// 🌤️ Weather Widget 2.0 States
+  const [weatherInfo, setWeatherInfo] = useState<any>(null);
+  const [showWeatherWidget, setShowWeatherWidget] = useState(false);
 
+  // 🌟 ฟังก์ชันแปลรหัสสภาพอากาศ (WMO Code) เป็นภาษาไทย + ไอคอน
+  const getWeatherDetails = (code: number) => {
+    if (code === 0) return { icon: '☀️', text: 'ฟ้าใส แดดแรง' };
+    if (code === 1 || code === 2) return { icon: '🌤️', text: 'มีเมฆบางส่วน' };
+    if (code === 3) return { icon: '☁️', text: 'เมฆหนาตึบ' };
+    if (code >= 45 && code <= 48) return { icon: '🌫️', text: 'มีหมอก' };
+    if (code >= 51 && code <= 67) return { icon: '🌧️', text: 'ฝนตก' };
+    if (code >= 80 && code <= 82) return { icon: '⛈️', text: 'ฝนตกหนัก' };
+    if (code >= 95) return { icon: '🌩️', text: 'พายุฝนฟ้าคะนอง' };
+    return { icon: '🌡️', text: 'สภาพอากาศปกติ' };
+  };
+
+  // 🌟 ฟังก์ชันดึงข้อมูลพยากรณ์และสถานที่
+  useEffect(() => {
     if (navigator.geolocation) {
-       navigator.geolocation.getCurrentPosition(
-         (pos) => fetchWeather(pos.coords.latitude, pos.coords.longitude),
-         () => fetchWeather() // ถ้าผู้ใช้ไม่กดอนุญาต GPS ให้ใช้ค่าเริ่มต้น
-       );
-    } else fetchWeather();
+      navigator.geolocation.getCurrentPosition(async (position) => {
+        const { latitude, longitude } = position.coords;
+        try {
+          // 1. ดึงชื่อสถานที่ฟรี (Reverse Geocoding)
+          const locRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=th`);
+          const locData = await locRes.json();
+          const placeName = locData.locality || locData.city || "หน้าไซต์งาน";
+
+          // 2. ดึงสภาพอากาศ (ปัจจุบัน + ล่วงหน้ารายชั่วโมง + UV)
+          const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code&hourly=temperature_2m,weather_code,precipitation_probability,uv_index&timezone=auto&forecast_days=1`);
+          const wData = await weatherRes.json();
+
+          // คำนวณพยากรณ์ 4 ชั่วโมงข้างหน้า
+          const currentHour = new Date().getHours();
+          const nextHours = wData.hourly.time.slice(currentHour + 1, currentHour + 5).map((time: string, idx: number) => ({
+            time: new Date(time).getHours() + ":00",
+            temp: Math.round(wData.hourly.temperature_2m[currentHour + 1 + idx]),
+            details: getWeatherDetails(wData.hourly.weather_code[currentHour + 1 + idx]),
+            rainProb: wData.hourly.precipitation_probability[currentHour + 1 + idx]
+          }));
+
+          // ระบบเตือนภัยหน้างาน (UV & Rain)
+          const currentUV = wData.hourly.uv_index[currentHour];
+          const willRain = nextHours.some((h: any) => h.rainProb > 50);
+          
+          let alert = null;
+          if (willRain) alert = { type: 'rain', msg: '🔵 มีโอกาสฝนตกในอีกไม่กี่ชั่วโมง เตรียมคลุมวัสดุ!' };
+          else if (currentUV > 8) alert = { type: 'uv-high', msg: '🔴 UV รุนแรงมาก! หลีกเลี่ยงการตากแดดต่อเนื่อง' };
+          else if (currentUV > 5) alert = { type: 'uv-med', msg: '🟠 แดดแรง ทาครีมกันแดดและดื่มน้ำบ่อยๆ นะครับ' };
+
+          setWeatherInfo({
+            location: placeName,
+            currentTemp: Math.round(wData.current.temperature_2m),
+            currentDetails: getWeatherDetails(wData.current.weather_code),
+            hourly: nextHours,
+            alert: alert
+          });
+        } catch (e) {
+          console.error("ดึงข้อมูลอากาศไม่สำเร็จ:", e);
+        }
+      });
+    }
   }, []);
   const [progressValue, setProgressValue] = useState(0); 
   const [isSending, setIsSending] = useState(false);
@@ -853,7 +893,7 @@ const handleSendDefect = async () => {
         })); 
       }
       const actionLabel = progressValue === 100 ? 'ส่งงาน 100%' : 'อัปเดตงาน';
-      const { error } = await supabase.from('task_updates').insert([{ plot_id: selectedPlot.id, task_template_id: selectedTask.id, user_name: loggedInUser.username, role: currentUserRole, action: actionLabel, text_content: inputText || actionLabel, progress: progressValue, image_url: imageUrls.join(','),weather_info: currentWeather ? `${currentWeather.icon} ${currentWeather.text} (${currentWeather.temp}°C)` : null }]);
+      const { error } = await supabase.from('task_updates').insert([{ plot_id: selectedPlot.id, task_template_id: selectedTask.id, user_name: loggedInUser.username, role: currentUserRole, action: actionLabel, text_content: inputText || actionLabel, progress: progressValue, image_url: imageUrls.join(','),weather_info: weatherInfo ? `${weatherInfo.currentDetails.icon} ${weatherInfo.currentDetails.text} (${weatherInfo.currentTemp}°C)` : null }]);
       if (error) throw error;
       await fetchAllData(); const { data } = await supabase.from('task_updates').select('*').eq('task_template_id', selectedTask.id).eq('plot_id', selectedPlot.id).order('created_at', { ascending: true }); setUpdates(data || []); setInputText(''); setSelectedFiles([]);
     } catch (e) { showAlert('Error', (e as Error).message); } setIsSending(false);
@@ -872,7 +912,7 @@ const handleSendDefect = async () => {
           return supabase.storage.from('task_images').getPublicUrl(path).data.publicUrl; 
         })); 
       }
-      const { error } = await supabase.from('task_updates').insert([{ plot_id: selectedPlot.id, task_template_id: selectedTask.id, user_name: loggedInUser.username, role: currentUserRole, action: actionLabel, text_content: inputText || (isApproved ? 'งานเรียบร้อยดี ตรวจผ่าน' : 'พบข้อบกพร่อง กรุณาแก้ไข'), progress: finalP, image_url: imageUrls.join(','),weather_info: currentWeather ? `${currentWeather.icon} ${currentWeather.text} (${currentWeather.temp}°C)` : null }]);
+      const { error } = await supabase.from('task_updates').insert([{ plot_id: selectedPlot.id, task_template_id: selectedTask.id, user_name: loggedInUser.username, role: currentUserRole, action: actionLabel, text_content: inputText || (isApproved ? 'งานเรียบร้อยดี ตรวจผ่าน' : 'พบข้อบกพร่อง กรุณาแก้ไข'), progress: finalP, image_url: imageUrls.join(','),weather_info: weatherInfo ? `${weatherInfo.currentDetails.icon} ${weatherInfo.currentDetails.text} (${weatherInfo.currentTemp}°C)` : null }]);
       if (error) throw error;
       if (!isApproved) {
          const notifPayload = [];
@@ -1447,16 +1487,73 @@ const handleSendDefect = async () => {
                       </div>
                    )}
                 </div>
-                {/* 🌟 วิดเจ็ตสภาพอากาศปัจจุบัน (เอามาวางแทรกตรงนี้เลยครับ!) 🌟 */}
-                      {currentWeather && (
-                          <div className="hidden sm:flex items-center gap-2 bg-sky-50 text-sky-700 px-3 py-1.5 rounded-xl border border-sky-200 shadow-sm ml-2 animate-in fade-in zoom-in duration-500">
-                            <span className="text-2xl drop-shadow-sm">{currentWeather.icon}</span>
-                            <div className="flex flex-col justify-center">
-                                <span className="text-[10px] font-black leading-none text-sky-600">{currentWeather.text}</span>
-                                <span className="text-sm font-black leading-tight mt-0.5">{currentWeather.temp}°C</span>
-                            </div>
-                          </div>
+               {/* 🌤️ Weather Widget 2.0 (เวอร์ชันเพิ่มคำบอกสภาพอากาศปัจจุบัน) */}
+                <div className="relative z-50">
+                  <button 
+                    onClick={() => setShowWeatherWidget(!showWeatherWidget)}
+                    className="hidden sm:flex items-center gap-2 bg-sky-50 hover:bg-sky-100 text-sky-700 px-3 py-1.5 rounded-xl border border-sky-200 shadow-sm ml-2 transition-all cursor-pointer"
+                  >
+                    {weatherInfo ? (
+                      <>
+                        {/* ไอคอนสภาพอากาศตัวใหญ่ */}
+                        <span className="text-2xl drop-shadow-sm">{weatherInfo.currentDetails.icon}</span>
+                        
+                        {/* 🌟 ปรับตรงนี้: จัดข้อความให้โชว์ทั้ง สถานที่ และ สภาพอากาศปัจจุบันคู่กับอุณหภูมิ */}
+                        <div className="flex flex-col justify-center text-left">
+                           {/* บรรทัดบน: โชว์หมุดพิกัดสถานที่ */}
+                           <span className="text-[9px] font-black leading-none text-sky-600 truncate max-w-[100px]">📍 {weatherInfo.location}</span>
+                           {/* บรรทัดล่าง: โชว์คำบอกสภาพอากาศปัจจุบัน + อุณหภูมิ */}
+                           <span className="text-xs font-black leading-tight mt-0.5 whitespace-nowrap">
+                              {weatherInfo.currentDetails.text} {weatherInfo.currentTemp}°C
+                           </span>
+                        </div>
+                      </>
+                    ) : (
+                      <span className="text-[10px] font-bold text-sky-500 flex items-center gap-1"><Loader2 size={12} className="animate-spin"/> กำลังโหลด...</span>
+                    )}
+                  </button>
+
+                  {/* 🔽 Dropdown แสดงรายละเอียดพยากรณ์ (ปล่อยไว้เหมือนเดิมได้เลยครับ) */}
+                  {showWeatherWidget && weatherInfo && (
+                    <div className="absolute right-0 top-full mt-3 w-[280px] bg-white rounded-2xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.2)] border border-slate-100 p-4 animate-in fade-in slide-in-from-top-2">
+                      <div className="flex justify-between items-start mb-3">
+                        <div>
+                          <h4 className="text-sm font-black text-slate-800 flex items-center gap-1"><MapIcon size={14} className="text-rose-500"/> {weatherInfo.location}</h4>
+                          <p className="text-[10px] text-slate-500 font-bold">{new Date().toLocaleDateString('th-TH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                        </div>
+                        <button onClick={() => setShowWeatherWidget(false)} className="text-slate-400 hover:text-slate-700"><X size={16}/></button>
+                      </div>
+
+                      <div className="flex items-center gap-3 bg-blue-50/50 p-3 rounded-xl mb-3 border border-blue-50">
+                        <span className="text-4xl">{weatherInfo.currentDetails.icon}</span>
+                        <div>
+                          <div className="text-2xl font-black text-blue-700 leading-none">{weatherInfo.currentTemp}°C</div>
+                          <div className="text-xs font-bold text-blue-600/80 mt-1">{weatherInfo.currentDetails.text}</div>
+                        </div>
+                      </div>
+
+                      {weatherInfo.alert && (
+                        <div className={`p-2.5 rounded-lg mb-4 text-[10px] font-bold border ${weatherInfo.alert.type === 'rain' ? 'bg-blue-100 text-blue-800 border-blue-200' : weatherInfo.alert.type === 'uv-high' ? 'bg-rose-100 text-rose-800 border-rose-200' : 'bg-orange-100 text-orange-800 border-orange-200'}`}>
+                          {weatherInfo.alert.msg}
+                        </div>
                       )}
+
+                      <div className="border-t border-slate-100 pt-3">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">พยากรณ์ 4 ชม. ข้างหน้า</p>
+                        <div className="flex justify-between gap-1">
+                          {weatherInfo.hourly.map((h: any, i: number) => (
+                            <div key={i} className="flex flex-col items-center justify-center bg-slate-50 rounded-lg p-2 flex-1 border border-slate-100">
+                              <span className="text-[10px] font-bold text-slate-500">{h.time}</span>
+                              <span className="text-lg my-1">{h.details.icon}</span>
+                              <span className="text-[11px] font-black text-slate-700">{h.temp}°</span>
+                              {h.rainProb > 20 && <span className="text-[8px] font-bold text-blue-500 mt-0.5">{h.rainProb}%</span>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
                 {/* 👤 User Profile */}
                 <div className="flex items-center gap-3 border-l border-slate-200 pl-4">
                    <div className="text-right hidden sm:block">
@@ -1539,7 +1636,7 @@ const handleSendDefect = async () => {
                                 const isUrgent = (Date.now() - q.time) > 172800000;
                                 const relatedProject = projects.find(p => p.name === q.project_name); const relatedPlot = plots.find(p => p.id === q.plot_id); const relatedTask = taskTemplates.find(t => t.id === q.task_template_id);
                                 
-                                const clickAction = () => { setSelectedProject(relatedProject); setSelectedPlot(relatedPlot); setSelectedTask(relatedTask); setView('task-progress'); supabase.from('task_updates').select('*').eq('task_template_id', q.task_template_id).eq('plot_id', q.plot_id).order('created_at', { ascending: true }).then(({data}) => { setUpdates(data || []); setProgressValue(data?.length ? data[data.length-1].progress : 0); }); };
+                                const clickAction = () => { setSelectedProject(relatedProject); setSelectedPlot(relatedPlot); setSelectedTask(relatedTask); setTaskReturnView('dashboard'); setView('task-progress'); supabase.from('task_updates').select('*').eq('task_template_id', q.task_template_id).eq('plot_id', q.plot_id).order('created_at', { ascending: true }).then(({data}) => { setUpdates(data || []); setProgressValue(data?.length ? data[data.length-1].progress : 0); }); };
 
                                 {/* 🌟 Layout แบบ List View (ตารางแนวนอน) */}
                                 if (inspectionViewMode === 'list') {
@@ -2335,6 +2432,7 @@ const handleSendDefect = async () => {
                                   
                                   // โหลดข้อมูลเข้าสู่หน้า Task Progress
                                   setSelectedTask(task);
+                                  setTaskReturnView('house-detail');
                                   setView('task-progress');
                                   supabase.from('task_updates').select('*')
                                     .eq('task_template_id', task.id)
@@ -2592,7 +2690,7 @@ const handleSendDefect = async () => {
                {/* 💬 LEVEL 4: Task Progress */}
                {view === 'task-progress' && selectedTask && (
                    <div className="animate-in slide-in-from-right duration-300">
-                       <button onClick={() => setView('house-detail')} className="mb-4 sm:mb-6 text-xs sm:text-base font-bold text-blue-600 flex items-center gap-1.5 hover:-translate-x-1 transition-transform">← {isMobileLayout ? 'BACK' : 'BACK TO PLOT'}</button>
+                       <button onClick={() => setView(taskReturnView)} className="mb-4 sm:mb-6 text-xs sm:text-base font-bold text-blue-600 flex items-center gap-1.5 hover:-translate-x-1 transition-transform">← {isMobileLayout ? 'BACK' : (taskReturnView === 'dashboard' ? 'BACK TO DASHBOARD' : 'BACK TO PLOT')}</button>
                        <div className="bg-white rounded-2xl sm:rounded-[2.5rem] shadow-2xl border border-slate-200 overflow-hidden flex flex-col h-[75vh] sm:h-[800px] relative border-b-8 border-b-blue-600">
                            <header className={`${isMobileLayout ? 'p-4' : 'p-6 sm:p-10'} bg-slate-800 text-white flex justify-between items-center shrink-0`}>
                                <div>
