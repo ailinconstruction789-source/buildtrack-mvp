@@ -2368,17 +2368,13 @@ const handleSendDefect = async () => {
                      )}            
                      <div className="bg-slate-50 w-full overflow-x-auto custom-scrollbar border-t border-slate-200" style={{ maxHeight: '800px', overflowY: 'auto' }}>
                        {isMobileLayout && <div className="text-center text-[10px] text-slate-400 font-bold py-2 bg-slate-100 border-b border-slate-200">↔️ ปัดซ้าย-ขวา เพื่อดูตาราง ↔️</div>}
-                       <table className={`text-left border-collapse w-full relative ${isMobileLayout ? 'min-w-[600px]' : 'min-w-[1200px]'}`}>
+                         <table className="text-left border-collapse w-full relative min-w-max">
                          <thead className="sticky top-0 z-[60] bg-slate-100 shadow-sm text-[10px] sm:text-xs font-black uppercase text-slate-500 tracking-widest">
                            <tr>
-                             <th className={`sticky left-0 bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 ${isMobileLayout ? 'w-[140px] max-w-[140px]' : 'w-[280px] min-w-[280px] max-w-[280px]'} shadow-[4px_0_15px_-5px_rgba(0,0,0,0.1)]`}>Task Name</th>
-                             {!isMobileLayout && ( 
-                                <>
-                                  <th className="sticky left-[280px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-5 text-center w-[140px] min-w-[140px] max-w-[140px]">Start</th>
-                                  <th className="sticky left-[420px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-5 text-center w-[100px] min-w-[100px] max-w-[100px] text-pink-600">Duration</th>
-                                  <th className="sticky left-[520px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-5 text-center w-[140px] min-w-[140px] max-w-[140px] shadow-[4px_0_10px_-4px_rgba(0,0,0,0.05)]">Finish</th>
-                                </> 
-                              )}
+                             <th className={`sticky left-0 bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 ${isMobileLayout ? 'w-[220px] min-w-[220px] max-w-[220px]' : 'w-[280px] min-w-[280px] max-w-[280px]'} shadow-[4px_0_15px_-5px_rgba(0,0,0,0.1)]`}>Task Name</th>
+                             <th className={`${isMobileLayout ? 'bg-slate-100 z-[60]' : 'sticky left-[280px] bg-slate-100 z-[65]'} border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>Start</th>
+                             <th className={`${isMobileLayout ? 'bg-slate-100 z-[60]' : 'sticky left-[420px] bg-slate-100 z-[65]'} border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px] text-pink-600`}>Duration</th>
+                             <th className={`${isMobileLayout ? 'bg-slate-100 z-[60]' : 'sticky left-[520px] bg-slate-100 z-[65]'} border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[4px_0_10px_-4px_rgba(0,0,0,0.05)]`}>Finish</th>
                                  {/* 🌟 2. ปรับหัวตารางวันที่ให้เรียงต่อเนื่อง และล็อกขนาดช่องละ 36px 🌟 */}
                                  <th className="bg-slate-100 border-b border-slate-200 p-0 relative w-full z-[60]" style={{ minWidth: `${totalChartDays * 36}px`, height: isMobileLayout ? '40px' : '56px' }}>
                                     {todayTs >= chartStart && todayTs <= chartEnd && (
@@ -2445,13 +2441,22 @@ const handleSendDefect = async () => {
                                }}>
                                 {/* 🌟 2. [ฉบับแก้ไข] บีบความสูงแถวฝั่งซ้าย ล็อก Task Name 2 บรรทัด และล็อกคอลัมน์ให้อยู่กับที่ 🌟 */}
                                 {/* 🌟 ปรับขยายความสูงแถว เพื่อไม่ให้เบอร์โทรโดนทับ (มือถือ 90px / คอม 100px) */}
-                                 <td className={`p-2 sm:p-3 border-b border-slate-200 ${isMobileLayout ? 'h-[90px]' : 'h-[100px]'} flex flex-col justify-between min-w-0 bg-white sticky left-0 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]`}>
+                                 <td className={`p-2 sm:p-3 border-b border-slate-200 ${isMobileLayout ? 'h-[90px] w-[220px] min-w-[220px] max-w-[220px]' : 'h-[100px] w-[280px] min-w-[280px] max-w-[280px]'} flex flex-col justify-between bg-white sticky left-0 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]`}>
                                     <div className="min-w-0">
-                                       <div className="flex items-start gap-1.5">
+                                        <div className="flex items-start gap-1.5">
                                           <span className="text-[10px] sm:text-xs font-black text-slate-400 shrink-0 bg-slate-100 px-1.5 py-0.5 rounded border mt-0.5">#{task.task_order}</span>
-                                          {/* 🎯 บังคับชื่องานให้แสดงสูงสุด 2 บรรทัดเท่ากันหมด (line-clamp-2) ถ้าสั้นก็อยู่บรรทัดเดียว แต่ความสูงแถวจะเท่ากันเป๊ะ */}
+                                          {/* 🎯 บังคับชื่องานให้แสดงสูงสุด 2 บรรทัดเท่ากันหมด */}
                                           <h4 className="font-black text-slate-800 text-xs sm:text-sm leading-tight text-ellipsis overflow-hidden [display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical]" title={task.task_name}>
                                              {task.task_name}
+                                             
+                                             {/* ⛏️ ไอคอนคนทำงาน จะโชว์เฉพาะงานที่มีการอัปเดต "วันนี้" และยังไม่เสร็จ 100% */}
+                                             {latestUpdatesMap[`${selectedPlot.id}-${task.id}`] && 
+                                              new Date(latestUpdatesMap[`${selectedPlot.id}-${task.id}`].created_at).toLocaleDateString('en-CA') === new Date().toLocaleDateString('en-CA') && 
+                                              latestUpdatesMap[`${selectedPlot.id}-${task.id}`].progress < 100 && (
+                                                <span title="มีการอัปเดตงานในวันนี้" className="inline-flex items-center justify-center bg-orange-100 text-orange-600 p-[2px] rounded shadow-sm animate-pulse ml-1.5 align-text-bottom">
+                                                   <Pickaxe size={12} />
+                                                </span>
+                                             )}
                                           </h4>
                                        </div>
                                     </div>
@@ -2492,7 +2497,7 @@ const handleSendDefect = async () => {
                                     </div>
                                  </td>
 
-                                  {!isMobileLayout && currentUserRole === 'Project Planner' && (() => {
+                                  {currentUserRole === 'Project Planner' && (() => {
                                     const currentStart = scheduleInputs[task.id]?.start !== undefined ? scheduleInputs[task.id].start : (plan.planned_start || '');
                                     const currentEnd = scheduleInputs[task.id]?.end !== undefined ? scheduleInputs[task.id].end : (plan.planned_end || '');
                                     
@@ -2513,7 +2518,7 @@ const handleSendDefect = async () => {
                                     return (
                                        <>
                                          {/* Start Column (Planner) */}
-                                         <td className="sticky left-[280px] bg-white z-[40] border-b border-r border-slate-200 p-2 align-middle bg-pink-50/20 w-[140px] min-w-[140px] max-w-[140px]">
+                                          <td className={`${isMobileLayout ? 'bg-pink-50/20 z-[10]' : 'sticky left-[280px] bg-pink-50/20 z-[40]'} sm:bg-white border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>
                                             <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
                                                 <span className="text-[8px] font-black uppercase text-pink-500 w-8 shrink-0 text-left">Plan:</span>
                                                 <input type="date" value={currentStart} 
@@ -2537,8 +2542,8 @@ const handleSendDefect = async () => {
                                          </td>
                                             
                                           {/* Duration Column (Planner) */}
-                                         <td className="sticky left-[420px] bg-white z-[40] border-b border-r border-slate-200 p-2 align-middle bg-pink-50/20 w-[100px] min-w-[100px] max-w-[100px]">
-                                            <div className="flex items-center justify-center pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
+                                            <td className={`${isMobileLayout ? 'bg-pink-50/20 z-[10]' : 'sticky left-[280px] bg-pink-50/20 z-[40]'} sm:bg-white border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>
+                                              <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
                                                 {/* ❌ เอาคำว่า Plan: ออก และจัดตัวเลขให้อยู่กึ่งกลาง */}
                                                 <input type="number" min="1" placeholder="วัน" value={currentDuration} 
                                                    onChange={(e) => {
@@ -2562,8 +2567,8 @@ const handleSendDefect = async () => {
                                          </td>
 
                                          {/* Finish Column (Planner) */}
-                                         <td className="sticky left-[520px] bg-white z-[40] border-b border-r border-slate-200 p-2 align-middle bg-pink-50/20 shadow-[4px_0_10px_-4px_rgba(0,0,0,0.05)] w-[140px] min-w-[140px] max-w-[140px]">
-                                            <div className="flex items-center justify-center pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
+                                          <td className={`${isMobileLayout ? 'bg-pink-50/20 z-[10]' : 'sticky left-[280px] bg-pink-50/20 z-[40]'} sm:bg-white border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>
+                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
                                                 {/* ❌ เอาคำว่า Plan: ออก และจัดตัวเลขให้อยู่กึ่งกลาง */}
                                                 <input type="date" value={currentEnd} 
                                                    onChange={(e) => {
@@ -2589,7 +2594,7 @@ const handleSendDefect = async () => {
                                     );
                                  })()}
 
-                                  {!isMobileLayout && currentUserRole !== 'Project Planner' && (() => {
+                                  {currentUserRole !== 'Project Planner' && (() => {
                                     let durationText = '-';
                                     if (plan.planned_start && plan.planned_end) {
                                        const diff = new Date(plan.planned_end).getTime() - new Date(plan.planned_start).getTime();
@@ -2606,8 +2611,8 @@ const handleSendDefect = async () => {
                                     return (
                                        <>
                                          {/* Start Column */}
-                                         <td className="sticky left-[280px] bg-white z-[40] border-b border-r border-slate-200 p-2 align-middle w-[140px] min-w-[140px] max-w-[140px]">
-                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-slate-200">
+                                          <td className={`${isMobileLayout ? 'bg-pink-50/20 z-[10]' : 'sticky left-[280px] bg-pink-50/20 z-[40]'} sm:bg-white border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>
+                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
                                               <span className="text-[8px] font-black uppercase text-slate-400 w-8 shrink-0 text-left">Plan:</span>
                                               <div className="flex-1 text-[9px] sm:text-[11px] font-bold text-slate-700 text-center">
                                                 {plan.planned_start ? new Date(plan.planned_start).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
@@ -2622,8 +2627,8 @@ const handleSendDefect = async () => {
                                          </td>
 
                                           {/* Duration Column */}
-                                         <td className="sticky left-[420px] bg-white z-[40] border-b border-r border-slate-200 p-2 align-middle w-[100px] min-w-[100px] max-w-[100px]">
-                                            <div className="flex items-center justify-center pb-1.5 mb-1.5 border-b border-dashed border-slate-200">
+                                          <td className={`${isMobileLayout ? 'bg-pink-50/20 z-[10]' : 'sticky left-[280px] bg-pink-50/20 z-[40]'} sm:bg-white border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>
+                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
                                               {/* ❌ เอาคำว่า Plan: ออก และจัดตัวเลขให้อยู่กึ่งกลาง */}
                                               <div className="w-full text-[9px] sm:text-xs font-black text-slate-600 text-center">
                                                   {durationText}
@@ -2638,8 +2643,8 @@ const handleSendDefect = async () => {
                                          </td>
 
                                          {/* Finish Column */}
-                                         <td className="sticky left-[520px] bg-white z-[40] border-b border-r border-slate-200 p-2 align-middle shadow-[4px_0_10px_-4px_rgba(0,0,0,0.05)] w-[140px] min-w-[140px] max-w-[140px]">
-                                            <div className="flex items-center justify-center pb-1.5 mb-1.5 border-b border-dashed border-slate-200">
+                                          <td className={`${isMobileLayout ? 'bg-pink-50/20 z-[10]' : 'sticky left-[280px] bg-pink-50/20 z-[40]'} sm:bg-white border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>
+                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
                                               {/* ❌ เอาคำว่า Plan: ออก และจัดตัวเลขให้อยู่กึ่งกลาง */}
                                               <div className="w-full text-[9px] sm:text-[11px] font-bold text-slate-700 text-center">
                                                 {plan.planned_end ? new Date(plan.planned_end).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
