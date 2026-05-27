@@ -2368,13 +2368,13 @@ const handleSendDefect = async () => {
                      )}            
                      <div className="bg-slate-50 w-full overflow-x-auto custom-scrollbar border-t border-slate-200" style={{ maxHeight: '800px', overflowY: 'auto' }}>
                        {isMobileLayout && <div className="text-center text-[10px] text-slate-400 font-bold py-2 bg-slate-100 border-b border-slate-200">↔️ ปัดซ้าย-ขวา เพื่อดูตาราง ↔️</div>}
-                         <table className="text-left border-collapse w-full relative min-w-max">
+                         <table className={`text-left border-collapse w-full relative ${isMobileLayout ? 'min-w-max' : 'min-w-[1200px]'}`}>
                          <thead className="sticky top-0 z-[60] bg-slate-100 shadow-sm text-[10px] sm:text-xs font-black uppercase text-slate-500 tracking-widest">
                            <tr>
                              <th className={`sticky left-0 bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 ${isMobileLayout ? 'w-[220px] min-w-[220px] max-w-[220px]' : 'w-[280px] min-w-[280px] max-w-[280px]'} shadow-[4px_0_15px_-5px_rgba(0,0,0,0.1)]`}>Task Name</th>
-                             <th className={`${isMobileLayout ? 'bg-slate-100 z-[60]' : 'sticky left-[280px] bg-slate-100 z-[65]'} border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>Start</th>
-                             <th className={`${isMobileLayout ? 'bg-slate-100 z-[60]' : 'sticky left-[420px] bg-slate-100 z-[65]'} border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px] text-pink-600`}>Duration</th>
-                             <th className={`${isMobileLayout ? 'bg-slate-100 z-[60]' : 'sticky left-[520px] bg-slate-100 z-[65]'} border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[4px_0_10px_-4px_rgba(0,0,0,0.05)]`}>Finish</th>
+                            <th className={`sticky left-[280px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>Start</th>
+                            <th className={`sticky left-[420px] sm:left-[360px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px] text-pink-600`}>Duration</th>
+                            <th className={`sticky left-[520px] sm:left-[460px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>Finish</th>
                                  {/* 🌟 2. ปรับหัวตารางวันที่ให้เรียงต่อเนื่อง และล็อกขนาดช่องละ 36px 🌟 */}
                                  <th className="bg-slate-100 border-b border-slate-200 p-0 relative w-full z-[60]" style={{ minWidth: `${totalChartDays * 36}px`, height: isMobileLayout ? '40px' : '56px' }}>
                                     {todayTs >= chartStart && todayTs <= chartEnd && (
@@ -2542,7 +2542,7 @@ const handleSendDefect = async () => {
                                          </td>
                                             
                                           {/* Duration Column (Planner) */}
-                                            <td className={`${isMobileLayout ? 'bg-pink-50/20 z-[10]' : 'sticky left-[280px] bg-pink-50/20 z-[40]'} sm:bg-white border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>
+                                            <td className={`${isMobileLayout ? 'bg-pink-50/20 z-[10]' : 'sticky left-[420px] bg-pink-50/20 z-[40]'} sm:bg-white border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>
                                               <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
                                                 {/* ❌ เอาคำว่า Plan: ออก และจัดตัวเลขให้อยู่กึ่งกลาง */}
                                                 <input type="number" min="1" placeholder="วัน" value={currentDuration} 
@@ -2567,7 +2567,7 @@ const handleSendDefect = async () => {
                                          </td>
 
                                          {/* Finish Column (Planner) */}
-                                          <td className={`${isMobileLayout ? 'bg-pink-50/20 z-[10]' : 'sticky left-[280px] bg-pink-50/20 z-[40]'} sm:bg-white border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>
+                                          <td className={`${isMobileLayout ? 'bg-pink-50/20 z-[10]' : 'sticky left-[520px] bg-pink-50/20 z-[40]'} sm:bg-white border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>
                                             <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
                                                 {/* ❌ เอาคำว่า Plan: ออก และจัดตัวเลขให้อยู่กึ่งกลาง */}
                                                 <input type="date" value={currentEnd} 
@@ -2627,7 +2627,7 @@ const handleSendDefect = async () => {
                                          </td>
 
                                           {/* Duration Column */}
-                                          <td className={`${isMobileLayout ? 'bg-pink-50/20 z-[10]' : 'sticky left-[280px] bg-pink-50/20 z-[40]'} sm:bg-white border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>
+                                          <td className={`${isMobileLayout ? 'bg-pink-50/20 z-[10]' : 'sticky left-[420px] bg-pink-50/20 z-[40]'} sm:bg-white border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>
                                             <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
                                               {/* ❌ เอาคำว่า Plan: ออก และจัดตัวเลขให้อยู่กึ่งกลาง */}
                                               <div className="w-full text-[9px] sm:text-xs font-black text-slate-600 text-center">
@@ -2643,7 +2643,7 @@ const handleSendDefect = async () => {
                                          </td>
 
                                          {/* Finish Column */}
-                                          <td className={`${isMobileLayout ? 'bg-pink-50/20 z-[10]' : 'sticky left-[280px] bg-pink-50/20 z-[40]'} sm:bg-white border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>
+                                          <td className={`${isMobileLayout ? 'bg-pink-50/20 z-[10]' : 'sticky left-[520px] bg-pink-50/20 z-[40]'} sm:bg-white border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>
                                             <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
                                               {/* ❌ เอาคำว่า Plan: ออก และจัดตัวเลขให้อยู่กึ่งกลาง */}
                                               <div className="w-full text-[9px] sm:text-[11px] font-bold text-slate-700 text-center">
