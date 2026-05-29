@@ -404,6 +404,7 @@ export default function ConstructionApp() {
   }, []);
  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (loggedInUser) fetchAllData(); }, [loggedInUser]);
+  useEffect(() => { if (loggedInUser?.role === 'Owner') setView('global-feed'); }, [loggedInUser]);
   useEffect(() => { setScheduleInputs({}); }, [selectedPlot?.id]);
   // 🌟 ระบบจับการกดปุ่มคีย์บอร์ด (ซ้าย, ขวา, ESC) สำหรับโหมด Presentation
   useEffect(() => {
@@ -434,6 +435,36 @@ export default function ConstructionApp() {
 // 🌟 ฟังก์ชันเพิ่ม/แก้ไขแบบบ้าน พร้อมระบบอัปเดตชื่ออัตโนมัติป้องกันลิงก์พัง
   const [houseTypeForm, setHouseTypeForm] = useState({ id: '', type_name: '', memo: '' });
   const [isEditingType, setIsEditingType] = useState(false);
+  // 🌟 ฟังก์ชันบันทึกข้อมูลแบบบ้าน (เพิ่มใหม่ / แก้ไข)
+  const handleSaveHouseType = async () => {
+    if (!houseTypeForm.type_name.trim()) return showAlert('แจ้งเตือน', 'กรุณาระบุชื่อแบบบ้านครับ');
+    
+    setIsSubmitting(true);
+    try {
+      if (isEditingType) {
+        // อัปเดตแบบบ้านเดิม
+        const { error } = await supabase.from('house_types')
+          .update({ type_name: houseTypeForm.type_name.trim(), memo: houseTypeForm.memo })
+          .eq('id', houseTypeForm.id);
+        if (error) throw error;
+        showAlert('สำเร็จ', 'แก้ไขข้อมูลแบบบ้านเรียบร้อยแล้ว');
+      } else {
+        // เพิ่มแบบบ้านใหม่
+        const { error } = await supabase.from('house_types')
+          .insert([{ type_name: houseTypeForm.type_name.trim(), memo: houseTypeForm.memo }]);
+        if (error) throw error;
+        showAlert('สำเร็จ', 'เพิ่มแบบบ้านใหม่เข้าสู่ระบบเรียบร้อยแล้ว');
+      }
+      
+      // ล้างค่าฟอร์มและโหลดข้อมูลใหม่
+      setHouseTypeForm({ id: '', type_name: '', memo: '' });
+      setIsEditingType(false);
+      await fetchAllData();
+    } catch (e) {
+      showAlert('ล้มเหลว', (e as Error).message);
+    }
+    setIsSubmitting(false);
+  };
 
 
 // 🌟 ฟังก์ชันจัดการงวดงาน (Task Templates)
@@ -898,7 +929,41 @@ const handleSendDefect = async () => {
       await fetchAllData(); const { data } = await supabase.from('task_updates').select('*').eq('task_template_id', selectedTask.id).eq('plot_id', selectedPlot.id).order('created_at', { ascending: true }); setUpdates(data || []); setInputText(''); setSelectedFiles([]);
     } catch (e) { showAlert('Error', (e as Error).message); } setIsSending(false);
   };
-
+// 🗑️ ฟังก์ชันลบประวัติการรายงานงาน (Recall Post)
+  const handleDeleteUpdate = async (updateId, taskTemplateId, plotId) => {
+    showConfirm(
+      'ยืนยันการลบรายงาน ⚠️', 
+      'คุณแน่ใจหรือไม่ว่าต้องการลบประวัติรายงานชิ้นนี้? ระบบจะทำการคำนวณเปอร์เซ็นต์ความคืบหน้าย้อนกลับไปยังครั้งก่อนหน้าให้อัตโนมัติครับ', 
+      async () => {
+        setIsSending(true);
+        try {
+          // 1. ยิงคำสั่งลบแถวใน Supabase
+          const { error } = await supabase.from('task_updates').delete().eq('id', updateId);
+          if (error) throw error;
+          
+          // 2. สั่งโหลดข้อมูลภาพรวมใหม่ทั้งหมดเพื่อรีเซ็ต % แผนผังและแดชบอร์ด
+          await fetchAllData(); 
+          
+          // 3. ดึงประวัติแชทที่เหลือในงวดงานนี้กลับมาโชว์ใหม่
+          const { data } = await supabase.from('task_updates')
+            .select('*')
+            .eq('task_template_id', taskTemplateId)
+            .eq('plot_id', plotId)
+            .order('created_at', { ascending: true });
+            
+          setUpdates(data || []);
+          // คำนวณค่า progress ปัจจุบันใหม่จากแถวสุดท้ายที่เหลืออยู่ (ถ้าไม่เหลือเลยให้เป็น 0)
+          setProgressValue(data?.length ? data[data.length - 1].progress : 0);
+          
+          closeDialog();
+          showAlert('สำเร็จ ✨', 'ลบประวัติการอัปเดตงานและปรับปรุงความคืบหน้าเรียบร้อยแล้วครับ');
+        } catch (e) {
+          showAlert('Error', (e as Error).message);
+        }
+        setIsSending(false);
+      }
+    );
+  };
   const handleReviewAction = async (isApproved) => {
     setIsSending(true); const finalP = isApproved ? 100 : 95; const roleLabel = currentUserRole === 'Site Engineer' ? 'Site Engineer' : 'QC'; const actionLabel = isApproved ? `${roleLabel} อนุมัติ` : `${roleLabel} แจ้งแก้ไข`;
     try {
@@ -1135,10 +1200,52 @@ const handleSendDefect = async () => {
             <div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full p-6 space-y-5 animate-in zoom-in-95 duration-200">
               <div><h3 className="text-xl font-black text-slate-800 italic uppercase">Assign Contractor</h3><p className="text-sm text-slate-500 font-bold tracking-widest">{selectedPlot?.id} - {assignModal.task?.task_name}</p></div>
               <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-black text-slate-500 mb-1 uppercase tracking-widest">เลือกช่างผู้รับเหมา</label>
-                  {contractors.length === 0 ? ( <p className="text-base text-rose-500 font-bold italic">ไม่พบรายชื่อช่างในระบบ</p> ) : (
-                    <select value={assignModal.name} onChange={(e) => { const c = contractors.find(x => x.name === e.target.value); setAssignModal({...assignModal, name: c?.name || '', phone: c?.phone || ''}); }} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-bold outline-none focus:border-emerald-500 text-slate-700 cursor-pointer"><option value="" disabled>-- เลือกช่าง --</option>{contractors.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}</select>
+              {/* 🌟 อัปเกรด: ระบบค้นหาและเลือกช่าง (Searchable Dropdown) */}
+                <div className="relative z-50">
+                  <label className="block text-sm font-black text-slate-500 mb-1 uppercase tracking-widest">ค้นหา / เลือกช่างผู้รับเหมา</label>
+                  {contractors.length === 0 ? ( 
+                    <p className="text-base text-rose-500 font-bold italic">ไม่พบรายชื่อช่างในระบบ</p> 
+                  ) : (
+                    <div className="relative">
+                      {/* กล่อง Input ค้นหา */}
+                      <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-500/20 overflow-hidden pr-3 transition-all">
+                        <Search size={16} className="text-slate-400 ml-4 shrink-0" />
+                        <input
+                          type="text"
+                          value={assignModal.name}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            const c = contractors.find(x => x.name.toLowerCase() === val.toLowerCase());
+                            setAssignModal({...assignModal, name: val, phone: c?.phone || '', showDropdown: true});
+                          }}
+                          onFocus={() => setAssignModal({...assignModal, showDropdown: true})}
+                          onBlur={() => setTimeout(() => setAssignModal(prev => ({...prev, showDropdown: false})), 200)}
+                          placeholder="พิมพ์ชื่อช่างเพื่อค้นหา..."
+                          className="w-full px-3 py-3 font-bold outline-none text-slate-700 bg-transparent text-sm placeholder:text-slate-400"
+                        />
+                        <ChevronRight size={16} className={`text-slate-400 shrink-0 transition-transform ${assignModal.showDropdown ? '-rotate-90' : 'rotate-90'}`} />
+                      </div>
+
+                      {/* รายการ Dropdown ที่จะโผล่มาตอนคลิกหรือพิมพ์ */}
+                      {assignModal.showDropdown && (
+                        <div className="absolute z-[700] w-full mt-2 bg-white border border-slate-200 rounded-xl shadow-2xl max-h-48 overflow-y-auto py-2 animate-in fade-in slide-in-from-top-2 custom-scrollbar">
+                          {contractors.filter(c => c.name.toLowerCase().includes((assignModal.name || '').toLowerCase())).length === 0 ? (
+                            <div className="px-4 py-3 text-sm font-bold text-slate-400 text-center">ไม่พบชื่อช่างที่ค้นหา</div>
+                          ) : (
+                            contractors.filter(c => c.name.toLowerCase().includes((assignModal.name || '').toLowerCase())).map(c => (
+                              <div
+                                key={c.id}
+                                onClick={() => setAssignModal({...assignModal, name: c.name, phone: c.phone, showDropdown: false})}
+                                className="px-4 py-2.5 hover:bg-emerald-50 cursor-pointer font-bold text-slate-700 text-sm transition-colors flex items-center justify-between border-b border-slate-50 last:border-0"
+                              >
+                                <span>{c.name}</span>
+                                {c.phone && <span className="text-[10px] text-slate-400 font-medium tracking-wider">📞 {c.phone}</span>}
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
                 <div><label className="block text-sm font-black text-slate-500 mb-1 uppercase tracking-widest">เบอร์โทรศัพท์ (อัตโนมัติ)</label><input type="text" value={assignModal.phone} readOnly className="w-full bg-slate-100 border border-slate-200 rounded-xl px-4 py-3 font-bold text-slate-500 cursor-not-allowed" /></div>
@@ -1384,7 +1491,11 @@ const handleSendDefect = async () => {
                 <div className="space-y-6">
                    <div>
                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3 px-2">Main Menu</p>
-                     <nav className="space-y-1">
+                      <nav className="space-y-1">
+                        {/* 📜 เมนูแรกสุด: ไทม์ไลน์รวมหน้าไซต์ (สำหรับ Owner และ Admin) */}
+                        {(isAdmin || isOwner || isSiteEngineer) && (
+                           <button onClick={() => setView('global-feed')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'global-feed' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><ClipboardList size={18}/> Live Feed หน้าไซต์</button>
+                        )}
                         <button onClick={() => setView('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'dashboard' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Home size={18}/> Dashboard</button>
               Reports          
                         {(isAdmin || isProjectPlanner || isQC || isSiteEngineer || isOwner || isForeman) && (
@@ -1570,7 +1681,102 @@ const handleSendDefect = async () => {
            {/* 🌟 Scrollable Content Area 🌟 */}
            <main className={`flex-1 overflow-y-auto custom-scrollbar ${isMobileLayout ? 'p-3 pb-24' : 'p-6 sm:p-8 pb-12'} scroll-smooth relative`}>
              <div className={`${isMobileLayout || view === 'reports' ? 'w-full' : 'max-w-[1400px] mx-auto'}`}> 
-               
+               {/* 📜 🌟 View: Global Timeline Feed (ฟีดรวมทุกรายงานเพื่อผู้บริหาร) 🌟 */}
+               {view === 'global-feed' && (
+                 <div className="animate-in fade-in zoom-in-95 duration-500 max-w-[900px] mx-auto">
+                    <div className="mb-6 sm:mb-8">
+                       <h2 className="font-black text-2xl sm:text-4xl text-slate-800 italic uppercase tracking-tighter flex items-center gap-2">
+                          <Activity className="text-blue-600 animate-pulse" size={28}/> Site Activity Live Feed
+                       </h2>
+                       <p className="text-slate-500 text-[10px] sm:text-sm font-bold uppercase tracking-widest mt-1">ไทม์ไลน์รวมการรายงานแบบ Real-time จากทุกแปลงงาน</p>
+                    </div>
+
+                    <div className="space-y-4 sm:space-y-6 pb-12">
+                       {(!allUpdatesRecord || allUpdatesRecord.length === 0) ? (
+                          <div className="bg-white rounded-3xl border border-dashed border-slate-300 p-12 text-center text-slate-400 font-bold italic">
+                             ยังไม่มีประวัติการรายงานงานในระบบย่อยนี้
+                          </div>
+                       ) : (
+                          // ดึงประวัติทั้งหมดมากลับด้าน (slice.reverse) เพื่อเอาล่าสุดขึ้นก่อน
+                          allUpdatesRecord.slice().reverse().map((update: any) => {
+                             const task = taskTemplates.find(t => t.id === update.task_template_id);
+                             const taskName = task ? task.task_name : update.action;
+                             
+                             return (
+                                <div key={update.id} className="bg-white rounded-2xl sm:rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden animate-in slide-in-from-bottom-4">
+                                   
+                                   {/* ส่วนหัวโพสต์: ล็อกพิกัดแปลง + ชื่องวดงาน */}
+                                   <div className="bg-slate-800 px-4 sm:px-6 py-3 flex flex-wrap justify-between items-center gap-2">
+                                      <div className="flex items-center gap-2 min-w-0">
+                                         <span className="bg-amber-400 text-slate-900 font-black text-xs sm:text-sm px-2.5 py-1 rounded-xl shadow-sm shrink-0">
+                                            📍 แปลง {update.plot_id}
+                                         </span>
+                                         <h4 className="font-black text-white text-xs sm:text-sm truncate" title={taskName}>
+                                            🛠️ {taskName}
+                                         </h4>
+                                      </div>
+                                      <span className="bg-white/20 text-white font-black text-[10px] px-2.5 py-1 rounded-lg uppercase tracking-wider">
+                                         {update.progress}%
+                                      </span>
+                                   </div>
+
+                                   {/* ส่วนเนื้อหาภายในกล่องแชท */}
+                                   <div className="p-4 sm:p-6 space-y-4">
+                                      {/* ข้อมูลผู้รายงาน และ สภาพอากาศ */}
+                                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                                         <div className="flex items-center gap-2.5">
+                                            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-600 to-purple-600 flex items-center justify-center text-white font-black text-sm shadow-md">
+                                               {update.user_name.charAt(0)}
+                                            </div>
+                                            <div>
+                                               <span className="font-black text-slate-800 text-sm flex items-center gap-1.5">
+                                                  {update.user_name} 
+                                                  <span className={`text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded ${update.role === 'QC' ? 'bg-purple-100 text-purple-600' : update.role === 'Site Engineer' ? 'bg-blue-100 text-blue-600' : 'bg-orange-100 text-orange-600'}`}>
+                                                     {update.role}
+                                                  </span>
+                                               </span>
+                                               <p className="text-[10px] text-slate-400 font-bold mt-0.5">
+                                                  {new Date(update.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })} • {new Date(update.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.
+                                               </p>
+                                            </div>
+                                         </div>
+
+                                         {/* ป้ายสภาพอากาศ ณ เวลารายงาน */}
+                                         {update.weather_info && (
+                                            <div className="text-[10px] sm:text-xs text-sky-700 font-black bg-sky-50 border border-sky-100 px-2.5 py-1 rounded-xl flex items-center gap-1.5 w-fit" title="สภาพอากาศขณะรายงาน">
+                                               <span>{update.weather_info}</span>
+                                            </div>
+                                         )}
+                                      </div>
+
+                                      {/* ข้อความบรรยายเนื้อหางาน */}
+                                      <p className="text-slate-700 text-xs sm:text-sm font-medium leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-100/50">
+                                         {update.text_content}
+                                      </p>
+
+                                      {/* รูปภาพผลงาน (ถ้ามีรูปภาพ จะรองรับการกดคลิกซูมดูรูปใหญ่ได้ทันที) */}
+                                      {update.image_url && (
+                                         <div className={`grid gap-2 sm:gap-3 ${update.image_url.split(',').filter(u => u.trim() !== '').length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                                            {update.image_url.split(',').filter(u => u.trim() !== '').map((url, i) => (
+                                               <img 
+                                                  key={i} 
+                                                  src={url.trim()} 
+                                                  onClick={() => setFullImageUrl(url.trim())} 
+                                                  className="w-full h-40 sm:h-56 object-cover rounded-xl border border-slate-200 shadow-sm cursor-zoom-in hover:opacity-95 transition-opacity" 
+                                                  alt="Live Feed Report Image" 
+                                               /> 
+                                            ))}
+                                         </div>
+                                      )}
+                                   </div>
+
+                                </div>
+                             );
+                          })
+                       )}
+                    </div>
+                 </div>
+               )}
                {/* 🏢 View: Dashboard */}
                {view === 'dashboard' && (
                   <div className="animate-in fade-in zoom-in-95 duration-500">
@@ -2372,9 +2578,9 @@ const handleSendDefect = async () => {
                          <thead className="sticky top-0 z-[60] bg-slate-100 shadow-sm text-[10px] sm:text-xs font-black uppercase text-slate-500 tracking-widest">
                            <tr>
                              <th className={`sticky left-0 bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 ${isMobileLayout ? 'w-[220px] min-w-[220px] max-w-[220px]' : 'w-[280px] min-w-[280px] max-w-[280px]'} shadow-[4px_0_15px_-5px_rgba(0,0,0,0.1)]`}>Task Name</th>
-                            <th className={`sticky left-[280px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>Start</th>
-                            <th className={`sticky left-[420px] sm:left-[360px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px] text-pink-600`}>Duration</th>
-                            <th className={`sticky left-[520px] sm:left-[460px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>Finish</th>
+                             <th className="sticky left-[220px] sm:left-[280px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-5px_0_10px_-5px_rgba(0,0,0,0.05)]">Start</th>
+                             <th className="sticky left-[335px] sm:left-[420px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px] text-pink-600">Duration</th>
+                             <th className="sticky left-[405px] sm:left-[520px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[5px_0_10px_-5px_rgba(0,0,0,0.1)]">Finish</th>
                                  {/* 🌟 2. ปรับหัวตารางวันที่ให้เรียงต่อเนื่อง และล็อกขนาดช่องละ 36px 🌟 */}
                                  <th className="bg-slate-100 border-b border-slate-200 p-0 relative w-full z-[60]" style={{ minWidth: `${totalChartDays * 36}px`, height: isMobileLayout ? '40px' : '56px' }}>
                                     {todayTs >= chartStart && todayTs <= chartEnd && (
@@ -2518,7 +2724,7 @@ const handleSendDefect = async () => {
                                     return (
                                        <>
                                          {/* Start Column (Planner) */}
-                                          <td className={`${isMobileLayout ? 'bg-pink-50/20 z-[10]' : 'sticky left-[280px] bg-pink-50/20 z-[40]'} sm:bg-white border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>
+                                          <td className="sticky left-[220px] sm:left-[280px] bg-pink-50/20 sm:bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-5px_0_10px_-5px_rgba(0,0,0,0.05)]">
                                             <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
                                                 <span className="text-[8px] font-black uppercase text-pink-500 w-8 shrink-0 text-left">Plan:</span>
                                                 <input type="date" value={currentStart} 
@@ -2542,7 +2748,7 @@ const handleSendDefect = async () => {
                                          </td>
                                             
                                           {/* Duration Column (Planner) */}
-                                            <td className={`${isMobileLayout ? 'bg-pink-50/20 z-[10]' : 'sticky left-[420px] bg-pink-50/20 z-[40]'} sm:bg-white border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>
+                                            <td className="sticky left-[335px] sm:left-[420px] bg-pink-50/20 sm:bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px]">
                                               <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
                                                 {/* ❌ เอาคำว่า Plan: ออก และจัดตัวเลขให้อยู่กึ่งกลาง */}
                                                 <input type="number" min="1" placeholder="วัน" value={currentDuration} 
@@ -2567,7 +2773,7 @@ const handleSendDefect = async () => {
                                          </td>
 
                                          {/* Finish Column (Planner) */}
-                                          <td className={`${isMobileLayout ? 'bg-pink-50/20 z-[10]' : 'sticky left-[520px] bg-pink-50/20 z-[40]'} sm:bg-white border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>
+                                          <td className="sticky left-[405px] sm:left-[520px] bg-pink-50/20 sm:bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[5px_0_10px_-5px_rgba(0,0,0,0.1)]">
                                             <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
                                                 {/* ❌ เอาคำว่า Plan: ออก และจัดตัวเลขให้อยู่กึ่งกลาง */}
                                                 <input type="date" value={currentEnd} 
@@ -2611,7 +2817,7 @@ const handleSendDefect = async () => {
                                     return (
                                        <>
                                          {/* Start Column */}
-                                          <td className={`${isMobileLayout ? 'bg-pink-50/20 z-[10]' : 'sticky left-[280px] bg-pink-50/20 z-[40]'} sm:bg-white border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>
+                                          <td className="sticky left-[220px] sm:left-[280px] bg-pink-50/20 sm:bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-5px_0_10px_-5px_rgba(0,0,0,0.05)]">
                                             <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
                                               <span className="text-[8px] font-black uppercase text-slate-400 w-8 shrink-0 text-left">Plan:</span>
                                               <div className="flex-1 text-[9px] sm:text-[11px] font-bold text-slate-700 text-center">
@@ -2627,7 +2833,7 @@ const handleSendDefect = async () => {
                                          </td>
 
                                           {/* Duration Column */}
-                                          <td className={`${isMobileLayout ? 'bg-pink-50/20 z-[10]' : 'sticky left-[420px] bg-pink-50/20 z-[40]'} sm:bg-white border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>
+                                          <td className="sticky left-[335px] sm:left-[420px] bg-pink-50/20 sm:bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px]">
                                             <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
                                               {/* ❌ เอาคำว่า Plan: ออก และจัดตัวเลขให้อยู่กึ่งกลาง */}
                                               <div className="w-full text-[9px] sm:text-xs font-black text-slate-600 text-center">
@@ -2643,7 +2849,7 @@ const handleSendDefect = async () => {
                                          </td>
 
                                          {/* Finish Column */}
-                                          <td className={`${isMobileLayout ? 'bg-pink-50/20 z-[10]' : 'sticky left-[520px] bg-pink-50/20 z-[40]'} sm:bg-white border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px]`}>
+                                          <td className="sticky left-[405px] sm:left-[520px] bg-pink-50/20 sm:bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[5px_0_10px_-5px_rgba(0,0,0,0.1)]">
                                             <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
                                               {/* ❌ เอาคำว่า Plan: ออก และจัดตัวเลขให้อยู่กึ่งกลาง */}
                                               <div className="w-full text-[9px] sm:text-[11px] font-bold text-slate-700 text-center">
@@ -2741,7 +2947,20 @@ const handleSendDefect = async () => {
                                {updates.map((update) => (
                                <div key={update.id} className={`flex ${isMobileLayout ? 'gap-2' : 'gap-3 sm:gap-5'} animate-in slide-in-from-bottom-4`}>
                                    <div className={`${isMobileLayout ? 'w-8 h-8 rounded-lg text-xs' : 'w-10 h-10 sm:w-14 sm:h-14 rounded-2xl text-sm sm:text-base'} flex items-center justify-center text-white font-black shrink-0 shadow-lg ${update.role === 'QC' ? 'bg-purple-600' : update.role === 'Site Engineer' ? 'bg-blue-600' : 'bg-slate-600'}`}>{update.user_name.charAt(0)}</div>
-                                   <div className={`flex-1 bg-white ${isMobileLayout ? 'p-3 rounded-2xl' : 'p-5 sm:p-6 rounded-[1.5rem] sm:rounded-[2rem]'} border border-slate-200 shadow-sm relative`}>
+                                    {/* สังเกตตรงนี้: ผมแอบเติม pr-8 เข้าไปท้ายสุดของบรรทัดเพื่อไม่ให้ข้อความไปบังปุ่มลบครับ */}
+                                   <div className={`flex-1 bg-white ${isMobileLayout ? 'p-3 rounded-2xl' : 'p-5 sm:p-6 rounded-[1.5rem] sm:rounded-[2rem]'} border border-slate-200 shadow-sm relative pr-8`}>
+                                       
+                                       {/* 🗑️ ปุ่มลบรายงาน (สิทธิ์: คนส่งรายงานชิ้นนี้เอง หรือ Admin) และงานนั้นต้องยังไม่จบ 100% */}
+                                       {(update.user_name === loggedInUser?.username || isAdmin) && !isTaskCompleted && (
+                                          <button
+                                             onClick={() => handleDeleteUpdate(update.id, selectedTask.id, selectedPlot.id)}
+                                             className="absolute top-3 right-3 text-slate-400 hover:text-rose-500 p-1.5 hover:bg-rose-50 rounded-xl transition-all hover:scale-105"
+                                             title="ลบรายงานความผิดพลาดชิ้นนี้"
+                                          >
+                                             <Trash2 size={15} />
+                                          </button>
+                                       )}
+
                                        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-2 sm:mb-4 gap-1 sm:gap-2">
                                          <p className={`text-[9px] sm:text-xs font-black uppercase italic tracking-widest leading-tight ${update.role === 'QC' ? 'text-purple-400' : update.role === 'Site Engineer' ? 'text-blue-400' : 'text-slate-400'}`}>{update.action} • {update.user_name} • {update.progress}%</p>
                                          <span className={`text-[8px] sm:text-xs text-slate-500 font-bold bg-slate-50 border border-slate-100 ${isMobileLayout ? 'px-2 py-0.5' : 'px-3 py-1.5'} rounded-lg shrink-0 w-fit`}>{new Date(update.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })} • {new Date(update.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.</span>
@@ -3267,6 +3486,13 @@ const handleSendDefect = async () => {
            {/* 📱 Mobile Bottom Navigation */}
            {isMobileLayout && (
               <nav className="bg-white border-t border-slate-200 p-2 fixed bottom-0 left-[14px] right-[14px] rounded-b-[2rem] z-[100] shadow-[0_-10px_40px_rgba(0,0,0,0.1)] flex justify-around">
+                {/* 📜 ปุ่มแรกบนมือถือ: ฟีดรวม */}
+                 {(isAdmin || isOwner) && (
+                    <button onClick={() => setView('global-feed')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${view === 'global-feed' ? 'text-blue-600' : 'text-slate-400'}`}>
+                       <ClipboardList size={20} className={view === 'global-feed' ? 'fill-blue-100' : ''}/>
+                       <span className="text-[9px] font-black mt-1">ฟีดรวม</span>
+                    </button>
+                 )}
                  <button onClick={() => setView('dashboard')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${view === 'dashboard' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
                     <Home size={20} className={view === 'dashboard' ? 'fill-blue-100' : ''}/>
                     <span className="text-[9px] font-black mt-1">หน้าหลัก</span>
