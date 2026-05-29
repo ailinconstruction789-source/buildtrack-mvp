@@ -2578,9 +2578,9 @@ const handleSendDefect = async () => {
                          <thead className="sticky top-0 z-[60] bg-slate-100 shadow-sm text-[10px] sm:text-xs font-black uppercase text-slate-500 tracking-widest">
                            <tr>
                              <th className={`sticky left-0 bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 ${isMobileLayout ? 'w-[220px] min-w-[220px] max-w-[220px]' : 'w-[280px] min-w-[280px] max-w-[280px]'} shadow-[4px_0_15px_-5px_rgba(0,0,0,0.1)]`}>Task Name</th>
-                             <th className="sticky left-[220px] sm:left-[280px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-5px_0_10px_-5px_rgba(0,0,0,0.05)]">Start</th>
+                             <th className="sticky left-[220px] sm:left-[280px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.08)]">Start</th>
                              <th className="sticky left-[335px] sm:left-[420px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px] text-pink-600">Duration</th>
-                             <th className="sticky left-[405px] sm:left-[520px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[5px_0_10px_-5px_rgba(0,0,0,0.1)]">Finish</th>
+                             <th className="sticky left-[405px] sm:left-[520px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[6px_0_10px_-6px_rgba(0,0,0,0.1)]">Finish</th>
                                  {/* 🌟 2. ปรับหัวตารางวันที่ให้เรียงต่อเนื่อง และล็อกขนาดช่องละ 36px 🌟 */}
                                  <th className="bg-slate-100 border-b border-slate-200 p-0 relative w-full z-[60]" style={{ minWidth: `${totalChartDays * 36}px`, height: isMobileLayout ? '40px' : '56px' }}>
                                     {todayTs >= chartStart && todayTs <= chartEnd && (
@@ -2723,37 +2723,39 @@ const handleSendDefect = async () => {
 
                                     return (
                                        <>
-                                         {/* Start Column (Planner) */}
-                                          <td className="sticky left-[220px] sm:left-[280px] bg-pink-50/20 sm:bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-5px_0_10px_-5px_rgba(0,0,0,0.05)]">
-                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
+                                          {/* Start Column (Planner) - ล็อกแน่นบนมือถือ */}
+                                          <td className="sticky left-[220px] sm:left-[280px] bg-pink-50/20 sm:bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.08)]">
+                                             <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
                                                 <span className="text-[8px] font-black uppercase text-pink-500 w-8 shrink-0 text-left">Plan:</span>
                                                 <input type="date" value={currentStart} 
                                                    onChange={(e) => {
-                                                      const newStart = e.target.value; let newEnd = currentEnd;
+                                                      const newStart = e.target.value;
+                                                      let newEnd = currentEnd;
                                                       if (newStart && currentDuration && Number(currentDuration) > 0) {
-                                                         const d = new Date(newStart); d.setDate(d.getDate() + (Number(currentDuration) - 1));
+                                                         const d = new Date(newStart);
+                                                         d.setDate(d.getDate() + (Number(currentDuration) - 1));
                                                          newEnd = d.toISOString().split('T')[0];
                                                       }
                                                       setScheduleInputs(prev => ({...prev, [task.id]: { ...prev[task.id], start: newStart, end: newEnd, duration: currentDuration }}));
                                                    }} 
                                                    className="flex-1 w-full border border-pink-200 rounded px-1 py-1 text-[9px] font-bold text-slate-700 outline-none focus:border-pink-500 bg-white shadow-sm" 
                                                 />
-                                            </div>
-                                            <div className="flex items-center gap-1">
+                                             </div>
+                                             <div className="flex items-center gap-1">
                                                 <span className="text-[8px] font-black uppercase text-blue-500 w-8 shrink-0 text-left">Actual:</span>
                                                 <div className="flex-1 text-[9px] sm:text-[11px] font-bold text-blue-600 text-center">
                                                   {dates?.start ? new Date(dates.start).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
                                                 </div>
-                                            </div>
-                                         </td>
+                                             </div>
+                                          </td>
                                             
-                                          {/* Duration Column (Planner) */}
-                                            <td className="sticky left-[335px] sm:left-[420px] bg-pink-50/20 sm:bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px]">
-                                              <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
-                                                {/* ❌ เอาคำว่า Plan: ออก และจัดตัวเลขให้อยู่กึ่งกลาง */}
+                                          {/* Duration Column (Planner) - ล็อกแน่นบนมือถือ */}
+                                          <td className="sticky left-[335px] sm:left-[420px] bg-pink-50/20 sm:bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px]">
+                                             <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
                                                 <input type="number" min="1" placeholder="วัน" value={currentDuration} 
                                                    onChange={(e) => {
-                                                      const newDuration = e.target.value; let newEnd = currentEnd;
+                                                      const newDuration = e.target.value;
+                                                      let newEnd = currentEnd;
                                                       if (currentStart && newDuration && Number(newDuration) > 0) {
                                                          const d = new Date(currentStart);
                                                          d.setDate(d.getDate() + (Number(newDuration) - 1));
@@ -2763,19 +2765,17 @@ const handleSendDefect = async () => {
                                                    }}
                                                    className="w-full border border-pink-200 rounded px-1 py-1 text-[9px] font-black text-center text-pink-600 outline-none focus:border-pink-500 bg-white shadow-sm" 
                                                 />
-                                            </div>
-                                            <div className="flex items-center justify-center">
-                                                {/* ❌ เอาคำว่า Actual: ออก และจัดตัวเลขให้อยู่กึ่งกลาง */}
+                                             </div>
+                                             <div className="flex items-center justify-center">
                                                 <div className="w-full text-[9px] sm:text-xs font-black text-blue-500 text-center">
                                                   {actualDurationText}
                                                 </div>
-                                            </div>
-                                         </td>
+                                             </div>
+                                          </td>
 
-                                         {/* Finish Column (Planner) */}
-                                          <td className="sticky left-[405px] sm:left-[520px] bg-pink-50/20 sm:bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[5px_0_10px_-5px_rgba(0,0,0,0.1)]">
-                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
-                                                {/* ❌ เอาคำว่า Plan: ออก และจัดตัวเลขให้อยู่กึ่งกลาง */}
+                                          {/* Finish Column (Planner) - ล็อกแน่นบนมือถือ */}
+                                          <td className="sticky left-[405px] sm:left-[520px] bg-pink-50/20 sm:bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[6px_0_10px_-6px_rgba(0,0,0,0.1)]">
+                                             <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
                                                 <input type="date" value={currentEnd} 
                                                    onChange={(e) => {
                                                       const newEnd = e.target.value;
@@ -2788,14 +2788,13 @@ const handleSendDefect = async () => {
                                                    }} 
                                                    className="w-full border border-pink-200 rounded px-1 py-1 text-[9px] font-bold text-slate-700 outline-none focus:border-pink-500 bg-white shadow-sm text-center" 
                                                 />
-                                            </div>
-                                            <div className="flex items-center justify-center">
-                                                {/* ❌ เอาคำว่า Actual: ออก และจัดตัวเลขให้อยู่กึ่งกลาง */}
+                                             </div>
+                                             <div className="flex items-center justify-center">
                                                 <div className="w-full text-[9px] sm:text-[11px] font-bold text-green-600 text-center">
                                                   {dates?.end ? new Date(dates.end).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
                                                 </div>
-                                            </div>
-                                         </td>
+                                             </div>
+                                          </td>
                                        </>
                                     );
                                  })()}
@@ -2816,12 +2815,12 @@ const handleSendDefect = async () => {
 
                                     return (
                                        <>
-                                         {/* Start Column */}
-                                          <td className="sticky left-[220px] sm:left-[280px] bg-pink-50/20 sm:bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-5px_0_10px_-5px_rgba(0,0,0,0.05)]">
-                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
+                                          {/* Start Column (ดูทั่วไป) - ล็อกแน่นบนมือถือ */}
+                                          <td className="sticky left-[220px] sm:left-[280px] bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.08)]">
+                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-slate-200">
                                               <span className="text-[8px] font-black uppercase text-slate-400 w-8 shrink-0 text-left">Plan:</span>
                                               <div className="flex-1 text-[9px] sm:text-[11px] font-bold text-slate-700 text-center">
-                                                {plan.planned_start ? new Date(plan.planned_start).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
+                                                 {plan.planned_start ? new Date(plan.planned_start).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
                                               </div>
                                             </div>
                                             <div className="flex items-center gap-1">
@@ -2830,34 +2829,30 @@ const handleSendDefect = async () => {
                                                 {dates?.start ? new Date(dates.start).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
                                               </div>
                                             </div>
-                                         </td>
+                                          </td>
 
-                                          {/* Duration Column */}
-                                          <td className="sticky left-[335px] sm:left-[420px] bg-pink-50/20 sm:bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px]">
-                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
-                                              {/* ❌ เอาคำว่า Plan: ออก และจัดตัวเลขให้อยู่กึ่งกลาง */}
+                                          {/* Duration Column (ดูทั่วไป) - ล็อกแน่นบนมือถือ */}
+                                          <td className="sticky left-[335px] sm:left-[420px] bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px]">
+                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-slate-200">
                                               <div className="w-full text-[9px] sm:text-xs font-black text-slate-600 text-center">
-                                                  {durationText}
+                                                 {durationText}
                                               </div>
                                             </div>
                                             <div className="flex items-center justify-center">
-                                              {/* ❌ เอาคำว่า Actual: ออก และจัดตัวเลขให้อยู่กึ่งกลาง */}
                                               <div className="w-full text-[9px] sm:text-xs font-black text-blue-500 text-center">
-                                                  {actualDurationText}
+                                                 {actualDurationText}
                                               </div>
                                             </div>
                                          </td>
 
-                                         {/* Finish Column */}
-                                          <td className="sticky left-[405px] sm:left-[520px] bg-pink-50/20 sm:bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[5px_0_10px_-5px_rgba(0,0,0,0.1)]">
-                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
-                                              {/* ❌ เอาคำว่า Plan: ออก และจัดตัวเลขให้อยู่กึ่งกลาง */}
+                                         {/* Finish Column (ดูทั่วไป) - ล็อกแน่นบนมือถือ */}
+                                         <td className="sticky left-[405px] sm:left-[520px] bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[6px_0_10px_-6px_rgba(0,0,0,0.1)]">
+                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-slate-200">
                                               <div className="w-full text-[9px] sm:text-[11px] font-bold text-slate-700 text-center">
-                                                {plan.planned_end ? new Date(plan.planned_end).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
+                                                 {plan.planned_end ? new Date(plan.planned_end).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
                                               </div>
                                             </div>
                                             <div className="flex items-center justify-center">
-                                              {/* ❌ เอาคำว่า Actual: ออก และจัดตัวเลขให้อยู่กึ่งกลาง */}
                                               <div className="w-full text-[9px] sm:text-[11px] font-bold text-green-600 text-center">
                                                 {dates?.end ? new Date(dates.end).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
                                               </div>
