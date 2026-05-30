@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 // ถอด browser-image-compression ออกเพื่อใช้ Native ป้องกัน Error
 import { 
@@ -2574,8 +2574,8 @@ const handleSendDefect = async () => {
                      )}            
                      <div className="bg-slate-50 w-full overflow-x-auto custom-scrollbar border-t border-slate-200" style={{ maxHeight: '800px', overflowY: 'auto' }}>
                        {isMobileLayout && <div className="text-center text-[10px] text-slate-400 font-bold py-2 bg-slate-100 border-b border-slate-200">↔️ ปัดซ้าย-ขวา เพื่อดูตาราง ↔️</div>}
-                         <table className={`text-left border-collapse w-full relative ${isMobileLayout ? 'min-w-max' : 'min-w-[1200px]'}`}>
-                         <thead className="sticky top-0 z-[60] bg-slate-100 shadow-sm text-[10px] sm:text-xs font-black uppercase text-slate-500 tracking-widest">
+                         <table className={`text-left border-collapse w-full relative ${isMobileLayout ? 'block' : 'min-w-[1200px]'}`}>
+                         <thead className={`${isMobileLayout ? 'hidden' : 'sticky top-0 z-[60] bg-slate-100 shadow-sm text-[10px] sm:text-xs font-black uppercase text-slate-500 tracking-widest'}`}>
                            <tr>
                              <th className={`sticky left-0 bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 ${isMobileLayout ? 'w-[220px] min-w-[220px] max-w-[220px]' : 'w-[280px] min-w-[280px] max-w-[280px]'} shadow-[4px_0_15px_-5px_rgba(0,0,0,0.1)]`}>Task Name</th>
                              <th className="sticky left-[220px] sm:left-[280px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.08)]">Start</th>
@@ -2609,42 +2609,143 @@ const handleSendDefect = async () => {
                                  </th>
                            </tr>
                          </thead>
-                         <tbody>
-                           {taskTemplates.filter(t => t.house_type_id === selectedPlot.house_type_id).map((task) => {
-                             const key = `${selectedPlot.id}-${task.id}`;
-                             const tProgress = latestUpdatesMap[key]?.progress || 0;
-                             const assignment = assignments.slice().reverse().find(a => String(a.plot_id) === String(selectedPlot.id) && String(a.task_template_id) === String(task.id));
-                             const dates = taskDates[key];
-                             const plan = schedules[key] || {};
-                             const statusObj = getTaskStatus(plan.planned_end, dates?.end, tProgress);
+                         <tbody className={isMobileLayout ? 'block p-3 sm:p-0 bg-slate-100' : ''}>
+                          {taskTemplates.filter(t => t.house_type_id === selectedPlot.house_type_id).map((task) => {
+                            const key             = `${selectedPlot.id}-${task.id}`;
+                            const tProgress       = latestUpdatesMap[key]?.progress || 0;
+                            const assignment      = assignments.find(a => a.task_template_id === task.id);
 
-                             const pStartTs = plan.planned_start ? new Date(plan.planned_start).getTime() : null;
-                             const pEndTs = plan.planned_end ? new Date(plan.planned_end).getTime() : null;
-                             const aStartTs = dates?.start ? new Date(dates.start).getTime() : null;
-                             const aEndTs = dates?.end ? new Date(dates.end).getTime() : (aStartTs ? Date.now() : null);
+                            // ✅ Fixed: was schedulePlan[task.id] / actualDates[task.id]
+                            const plan  = schedules[key]  || {};
+                            const dates = taskDates[key]  || {};
 
-                             return (
-                                  <tr key={task.id} className="group hover:bg-slate-50/80 transition-colors bg-white cursor-pointer" onClick={(e: any) => {
-                                  // 🛡️ ป้องกันการทำงานซ้อนทับกัน (ดักจับทั้งปุ่ม, Select, Input และรองรับทุก Browser)
-                                  const target = e.target as HTMLElement;
-                                  if (target) {
-                                      if (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'BUTTON') return;
-                                      if (typeof target.closest === 'function' && (target.closest('button') || target.closest('select') || target.closest('input'))) return;
-                                  }
-                                  
-                                  // โหลดข้อมูลเข้าสู่หน้า Task Progress
-                                  setSelectedTask(task);
-                                  setTaskReturnView('house-detail');
-                                  setView('task-progress');
-                                  supabase.from('task_updates').select('*')
-                                    .eq('task_template_id', task.id)
-                                    .eq('plot_id', selectedPlot.id)
-                                    .order('created_at', { ascending: true })
-                                    .then(({data}) => { 
-                                       setUpdates(data || []); 
-                                       setProgressValue(data?.length ? data[data.length-1].progress : 0); 
-                                    });
-                               }}>
+                            // ✅ Fixed: removed duplicate const tProgress (was line 2620)
+
+                            const isTaskCompleted = tProgress === 100;
+
+                            // Timestamps for Gantt bars
+                            const aStartTs = dates?.start ? new Date(dates.start).getTime() : null;
+                            const aEndTs   = dates?.end   ? new Date(dates.end).getTime()   : (aStartTs ? Date.now() : null);
+
+                            // ✅ Added: pStartTs / pEndTs / statusObj were missing — used by Gantt chart at line 2950–2955
+                            const pStartTs  = plan.planned_start ? new Date(plan.planned_start).getTime() : null;
+                            const pEndTs    = plan.planned_end   ? new Date(plan.planned_end).getTime()   : null;
+                            const statusObj = getTaskStatus(plan.planned_end, dates?.end, tProgress);
+
+                            // Card view helpers
+                            const contractorName  = assignment ? assignment.contractor_name  : '';
+                            const contractorPhone = assignment ? assignment.contractor_phone : '';
+                            let durationText = '-';
+                            if (plan.planned_start && plan.planned_end) {
+                              const diff = new Date(plan.planned_end).getTime() - new Date(plan.planned_start).getTime();
+                              durationText = `${Math.max(0, Math.ceil(diff / 86400000)) + 1} วัน`;
+                            }
+                            let actualDurationText = '-';
+                            if (dates?.start) {
+                              const aEnd = dates.end ? new Date(dates.end).getTime() : Date.now();
+                              actualDurationText = `${Math.max(0, Math.ceil((aEnd - new Date(dates.start).getTime()) / 86400000)) + 1} วัน`;
+                            }
+
+                            const openTaskProgress = () => {
+                              setSelectedTask(task);
+                              setTaskReturnView('plot-detail');
+                              setView('task-progress');
+                              supabase.from('task_updates').select('*')
+                                .eq('task_template_id', task.id)
+                                .eq('plot_id', selectedPlot.id)
+                                .order('created_at', { ascending: true })
+                                .then(({ data }) => {
+                                  setUpdates(data || []);
+                                  setProgressValue(data?.length ? data[data.length - 1].progress : 0);
+                                });
+                            };
+
+                            return (
+                                <React.Fragment key={task.id}>
+                                  {/* 📱 1. โซนมือถือ: แบบการ์ด (Mobile Card View) */}
+                                  {isMobileLayout && (
+                                      <tr className="block mb-4">
+                                        <td className="block bg-white rounded-[1.5rem] shadow-[0_8px_30px_-10px_rgba(0,0,0,0.1)] p-5 border border-slate-200 relative overflow-hidden">
+                                            {/* แถบสีด้านบนการ์ด บอกสถานะ 100% */}
+                                            {tProgress === 100 && <div className="absolute top-0 left-0 w-full h-1.5 bg-emerald-400"></div>}
+
+                                            {/* หัวการ์ด: ชื่องาน & ป้าย % */}
+                                            <div className="flex items-start justify-between mb-4 border-b border-slate-100 pb-3 mt-1">
+                                              <div className="flex items-start gap-2.5 pr-2">
+                                                  <span className="text-[10px] font-black text-slate-400 bg-slate-100 px-2 py-0.5 rounded border mt-0.5 shrink-0">#{task.task_order}</span>
+                                                  <div>
+                                                    <h4 className="font-black text-slate-800 text-sm leading-tight mb-1">{task.task_name}</h4>
+                                                    {contractorName ? (
+                                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-100"><HardHat size={12} /> {contractorName ? `${String(contractorName).split(' ')[0]} ${contractorPhone ? `(${contractorPhone})` : ''}` : 'ยังไม่ระบุ'}</span>
+                                                    ) : (
+                                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded-md"><Users size={12} /> ยังไม่ระบุช่าง</span>
+                                                    )}
+                                                  </div>
+                                              </div>
+                                              <div className={`shrink-0 px-2.5 py-1 rounded-xl text-xs font-black ${tProgress === 100 ? 'bg-emerald-100 text-emerald-700' : tProgress > 0 ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>
+                                                  {tProgress}%
+                                              </div>
+                                            </div>
+
+                                            {/* ข้อมูลวันที่: แผนงาน vs ทำจริง */}
+                                            <div className="grid grid-cols-2 gap-3 mb-5">
+                                              <div className="bg-slate-50 rounded-xl p-3 border border-slate-100 relative overflow-hidden">
+                                                  <div className="absolute top-0 left-0 w-1 h-full bg-slate-300"></div>
+                                                  <span className="text-[9px] font-black uppercase text-slate-500 block mb-1.5 flex items-center gap-1"><Calendar size={10}/> แผนงาน</span>
+                                                  <div className="text-[10px] font-bold text-slate-700 space-y-0.5">
+                                                    <p>เริ่ม: <span className="text-slate-900">{plan.planned_start ? new Date(plan.planned_start).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</span></p>
+                                                    <p>จบ: <span className="text-slate-900">{plan.planned_end ? new Date(plan.planned_end).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</span></p>
+                                                  </div>
+                                                  <div className="text-[10px] font-black text-pink-500 mt-2 bg-pink-50 inline-block px-1.5 py-0.5 rounded">{durationText}</div>
+                                              </div>
+                                              <div className="bg-blue-50/50 rounded-xl p-3 border border-blue-100/50 relative overflow-hidden">
+                                                  <div className="absolute top-0 left-0 w-1 h-full bg-blue-400"></div>
+                                                  <span className="text-[9px] font-black uppercase text-blue-500 block mb-1.5 flex items-center gap-1"><Activity size={10}/> ทำจริง</span>
+                                                  <div className="text-[10px] font-bold text-blue-800 space-y-0.5">
+                                                    <p>เริ่ม: <span className="text-blue-900">{dates?.start ? new Date(dates.start).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</span></p>
+                                                    <p>จบ: <span className="text-blue-900">{dates?.end ? new Date(dates.end).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</span></p>
+                                                  </div>
+                                                  <div className="text-[10px] font-black text-blue-600 mt-2 bg-blue-100/50 inline-block px-1.5 py-0.5 rounded">{actualDurationText}</div>
+                                              </div>
+                                            </div>
+
+                                            {/* Progress Bar */}
+                                            <div className="mb-5">
+                                              <div className="flex justify-between items-end mb-1.5">
+                                                  <span className="text-[10px] font-black text-slate-500">ความคืบหน้างวดงาน</span>
+                                                  {latestUpdatesMap[`${selectedPlot.id}-${task.id}`] && new Date(latestUpdatesMap[`${selectedPlot.id}-${task.id}`].created_at).toLocaleDateString('en-CA') === new Date().toLocaleDateString('en-CA') && (
+                                                    <span className="flex items-center gap-1 text-[9px] text-orange-600 bg-orange-100 px-1.5 py-0.5 rounded-md animate-pulse font-black"><Pickaxe size={10}/> อัปเดตวันนี้</span>
+                                                  )}
+                                              </div>
+                                              <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden border border-slate-200">
+                                                  <div className={`h-full rounded-full transition-all duration-1000 ${tProgress === 100 ? 'bg-gradient-to-r from-emerald-400 to-emerald-500' : 'bg-gradient-to-r from-blue-500 to-indigo-500'}`} style={{ width: `${tProgress}%` }}></div>
+                                              </div>
+                                            </div>
+
+                                            {/* ปุ่มกด Action */}
+                                            <div className="flex gap-2">
+                                              {(currentUserRole === 'Project Planner' || currentUserRole === 'Admin' || currentUserRole === 'Owner' || currentUserRole === 'Procurement') && (
+                                                  <button onClick={(e) => { e.stopPropagation(); setAssignModal({ isOpen: true, task: task, name: contractorName, phone: contractorPhone }); }} className="flex-[1] py-3 bg-white border-2 border-slate-200 text-slate-600 text-[11px] font-black rounded-xl hover:bg-slate-50 hover:border-slate-300 active:scale-95 transition-all flex flex-col items-center justify-center gap-1 shadow-sm">
+                                                    <UserCog size={16} className={contractorName ? 'text-amber-500' : 'text-slate-400'} /> {contractorName ? 'เปลี่ยนช่าง' : 'เลือกช่าง'}
+                                                  </button>
+                                              )}
+                                              <button onClick={(e) => { e.stopPropagation(); openTaskProgress(); }} className={`flex-[2] py-3 ${tProgress === 100 ? 'bg-emerald-600 hover:bg-emerald-500 border-emerald-700' : 'bg-slate-800 hover:bg-slate-700 border-slate-900'} text-white text-[11px] sm:text-xs font-black rounded-xl active:scale-95 transition-all flex flex-col items-center justify-center gap-1 shadow-md border-b-4 active:border-b-0 active:translate-y-[4px]`}>
+                                                  <Camera size={16} className={tProgress === 100 ? 'text-emerald-100' : 'text-blue-300'} /> {tProgress === 100 ? 'ดูประวัติ / แจ้งซ่อม' : 'อัปเดตความคืบหน้า'}
+                                              </button>
+                                            </div>
+                                        </td>
+                                      </tr>
+                                  )}
+
+                                  {/* 💻 2. โซน PC: ตาราง Gantt Chart (ซ่อนในมือถือ โชว์เฉพาะใน PC) */}
+                                  <tr className={`group hover:bg-slate-50/80 transition-colors bg-white cursor-pointer ${isMobileLayout ? 'hidden' : 'table-row'}`} onClick={(e: any) => { 
+                                      const target = e.target as HTMLElement; 
+                                      if (target) { 
+                                        if (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'BUTTON') return; 
+                                        if (typeof target.closest === 'function' && (target.closest('button') || target.closest('select') || target.closest('input'))) return; 
+                                      } 
+                                      openTaskProgress(); 
+                                  }}>
                                 {/* 🌟 2. [ฉบับแก้ไข] บีบความสูงแถวฝั่งซ้าย ล็อก Task Name 2 บรรทัด และล็อกคอลัมน์ให้อยู่กับที่ 🌟 */}
                                 {/* 🌟 ปรับขยายความสูงแถว เพื่อไม่ให้เบอร์โทรโดนทับ (มือถือ 90px / คอม 100px) */}
                                  <td className={`p-2 sm:p-3 border-b border-slate-200 ${isMobileLayout ? 'h-[90px] w-[220px] min-w-[220px] max-w-[220px] z-[45]' : 'h-[100px] w-[280px] min-w-[280px] max-w-[280px] z-20'} flex flex-col justify-between bg-white sticky left-0 shadow-[4px_0_10px_-4px_rgba(0,0,0,0.1)]`}>
@@ -2884,6 +2985,7 @@ const handleSendDefect = async () => {
                                        </div>
                                      </td>
                                </tr>
+                               </React.Fragment>
                              )
                            })}
                          </tbody>
