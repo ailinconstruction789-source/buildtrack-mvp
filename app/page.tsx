@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 // ถอด browser-image-compression ออกเพื่อใช้ Native ป้องกัน Error
 import { 
@@ -9,49 +9,50 @@ import {
   PieChart, Home, Activity, Download, Copy, Pickaxe, ShieldAlert, Printer, CheckSquare, Square, ImageIcon
 } from 'lucide-react';
 
+// 🌟 ฟังก์ชันบีบอัดรูปภาพ Native — อยู่นอก component เพื่อไม่ให้ถูกสร้างใหม่ทุก render 🌟
+const compressImageNative = (file: File): Promise<File> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target?.result as string;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        const MAX_WIDTH = 1280;
+        const MAX_HEIGHT = 1280;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
+        } else {
+          if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        ctx?.drawImage(img, 0, 0, width, height);
+
+        canvas.toBlob((blob) => {
+          if (blob) {
+            resolve(new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() }));
+          } else {
+            reject(new Error('Canvas to Blob failed'));
+          }
+        }, 'image/jpeg', 0.7);
+      };
+      img.onerror = (error) => reject(error);
+    };
+    reader.onerror = (error) => reject(error);
+  });
+};
+
 export default function ConstructionApp() {
   // ==========================================
   // 1. STATES
   // ==========================================
   const [allUsers, setAllUsers] = useState<any[]>([]);
-  // 🌟 1. ฟังก์ชันบีบอัดรูปภาพ Native (แก้ปัญหา Error: compressImageNative is not a function) 🌟
-  const compressImageNative = (file: File): Promise<File> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = (event) => {
-        const img = new Image();
-        img.src = event.target?.result as string;
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
-          const MAX_WIDTH = 1280;
-          const MAX_HEIGHT = 1280;
-          let width = img.width;
-          let height = img.height;
-
-          if (width > height) {
-            if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
-          } else {
-            if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; }
-          }
-          canvas.width = width;
-          canvas.height = height;
-          ctx?.drawImage(img, 0, 0, width, height);
-
-          canvas.toBlob((blob) => {
-            if (blob) {
-              resolve(new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() }));
-            } else {
-              reject(new Error('Canvas to Blob failed'));
-            }
-          }, 'image/jpeg', 0.7);
-        };
-        img.onerror = (error) => reject(error);
-      };
-      reader.onerror = (error) => reject(error);
-    });
-  };
   const [loggedInUser, setLoggedInUser] = useState<any>(null);
   const [loginData, setLoginData] = useState({ username: '', pin: '' });
 
@@ -148,17 +149,22 @@ export default function ConstructionApp() {
 
   // 🌟 ฟังก์ชันดึงข้อมูลพยากรณ์และสถานที่
   useEffect(() => {
+    let isMounted = true;
+    const controller = new AbortController();
+    const { signal } = controller;
+
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(async (position) => {
+        if (!isMounted) return;
         const { latitude, longitude } = position.coords;
         try {
           // 1. ดึงชื่อสถานที่ฟรี (Reverse Geocoding)
-          const locRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=th`);
+          const locRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=th`, { signal });
           const locData = await locRes.json();
           const placeName = locData.locality || locData.city || "หน้าไซต์งาน";
 
           // 2. ดึงสภาพอากาศ (ปัจจุบัน + ล่วงหน้ารายชั่วโมง + UV)
-          const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code&hourly=temperature_2m,weather_code,precipitation_probability,uv_index&timezone=auto&forecast_days=1`);
+          const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code&hourly=temperature_2m,weather_code,precipitation_probability,uv_index&timezone=auto&forecast_days=1`, { signal });
           const wData = await weatherRes.json();
 
           // คำนวณพยากรณ์ 4 ชั่วโมงข้างหน้า
@@ -179,18 +185,21 @@ export default function ConstructionApp() {
           else if (currentUV > 8) alert = { type: 'uv-high', msg: '🔴 UV รุนแรงมาก! หลีกเลี่ยงการตากแดดต่อเนื่อง' };
           else if (currentUV > 5) alert = { type: 'uv-med', msg: '🟠 แดดแรง ทาครีมกันแดดและดื่มน้ำบ่อยๆ นะครับ' };
 
-          setWeatherInfo({
-            location: placeName,
-            currentTemp: Math.round(wData.current.temperature_2m),
-            currentDetails: getWeatherDetails(wData.current.weather_code),
-            hourly: nextHours,
-            alert: alert
-          });
-        } catch (e) {
-          console.error("ดึงข้อมูลอากาศไม่สำเร็จ:", e);
+          if (isMounted) {
+            setWeatherInfo({
+              location: placeName,
+              currentTemp: Math.round(wData.current.temperature_2m),
+              currentDetails: getWeatherDetails(wData.current.weather_code),
+              hourly: nextHours,
+              alert: alert
+            });
+          }
+        } catch (e: any) {
+          if (e?.name !== 'AbortError') console.error("ดึงข้อมูลอากาศไม่สำเร็จ:", e);
         }
       });
     }
+    return () => { isMounted = false; controller.abort(); };
   }, []);
   const [progressValue, setProgressValue] = useState(0); 
   const [isSending, setIsSending] = useState(false);
@@ -295,31 +304,47 @@ export default function ConstructionApp() {
   const fetchAllData = async () => {
     try {
       setLoading(true);
-      const { data: projs } = await supabase.from('projects').select('*').order('created_at', { ascending: true });
-      const { data: types } = await supabase.from('house_types').select('*');
-      const { data: tasks } = await supabase.from('task_templates').select('*').order('task_order', { ascending: true });
-      const { data: plotsData } = await supabase.from('plots').select('*, house_types(type_name)').order('created_at', { ascending: true });
-      const { data: contData } = await supabase.from('contractors').select('*');
-      const { data: notifData } = await supabase.from('notifications').select('*').order('created_at', { ascending: false });
 
       // 🌟 ฟังก์ชันพิเศษ "ทะลุลิมิต 1000 แถว" ของ Supabase 🌟
+      // ใช้ push(...data) แทน spread เพื่อหลีกเลี่ยง O(n²) memory allocation
       const fetchWithoutLimit = async (tableName, orderByCol = null) => {
-          let allData = [];
-          for (let i = 0; i < 50; i++) { // วนลูป 50 รอบ = รองรับข้อมูลได้สูงสุด 50,000 แถว!
+          const allData: any[] = [];
+          for (let i = 0; i < 50; i++) {
               let query = supabase.from(tableName).select('*').range(i * 1000, ((i + 1) * 1000) - 1);
               if (orderByCol) query = query.order(orderByCol, { ascending: true });
-              const { data } = await query;
-              if (data && data.length > 0) allData = [...allData, ...data];
-              if (!data || data.length < 1000) break; // ถ้าดึงมาไม่ถึง 1000 แถว แปลว่าข้อมูลหมดแล้ว ให้หยุดลูป
+              const { data, error } = await query;
+              if (error) { console.error(`fetchWithoutLimit error on ${tableName}:`, error); break; }
+              if (data && data.length > 0) allData.push(...data);
+              if (!data || data.length < 1000) break;
           }
           return allData;
       };
 
-      // 🌟 ใช้ฟังก์ชันดึงข้อมูลทะลุลิมิตกับตารางที่ข้อมูลเยอะ 🌟
-      const allUpdates = await fetchWithoutLimit('task_updates', 'created_at');
-      const assignData = await fetchWithoutLimit('plot_task_assignments');
-      const scheduleData = await fetchWithoutLimit('plot_task_schedules');
-      const defectsData = await fetchWithoutLimit('defects');
+      // 🌟 รัน query ทั้งหมดพร้อมกัน (parallel) แทนการรอทีละอัน 🌟
+      const [
+        { data: projs },
+        { data: types },
+        { data: tasks },
+        { data: plotsData },
+        { data: contData },
+        { data: notifData },
+        allUpdates,
+        assignData,
+        scheduleData,
+        defectsData,
+      ] = await Promise.all([
+        supabase.from('projects').select('*').order('created_at', { ascending: true }),
+        supabase.from('house_types').select('*'),
+        supabase.from('task_templates').select('*').order('task_order', { ascending: true }),
+        supabase.from('plots').select('*, house_types(type_name)').order('created_at', { ascending: true }),
+        supabase.from('contractors').select('*'),
+        supabase.from('notifications').select('*').order('created_at', { ascending: false }),
+        fetchWithoutLimit('task_updates', 'created_at'),
+        fetchWithoutLimit('plot_task_assignments'),
+        fetchWithoutLimit('plot_task_schedules'),
+        fetchWithoutLimit('defects'),
+      ]);
+
       setDefects(defectsData || []);
 
       if (notifData && loggedInUser) setNotifications(notifData.filter(n => n.target_user === loggedInUser.username || n.target_role === loggedInUser.role));
@@ -375,7 +400,11 @@ export default function ConstructionApp() {
 
     const updateActivity = () => {
       if (localStorage.getItem('buildtrack_user')) {
-        localStorage.setItem('buildtrack_last_active', Date.now().toString());
+        // 🌟 Throttle: อัปเดตทุก 30 วินาทีเท่านั้น ป้องกัน write ถี่เกินไปบน touchscreen / keyboard
+        const last = parseInt(localStorage.getItem('buildtrack_last_active') || '0');
+        if (Date.now() - last > 30000) {
+          localStorage.setItem('buildtrack_last_active', Date.now().toString());
+        }
       }
     };
 
@@ -425,8 +454,9 @@ export default function ConstructionApp() {
     const user = allUsers.find(u => u.username === loginData.username && u.pin === loginData.pin);
     if (user) { 
       setLoggedInUser(user); 
-      // 🌟 สั่งให้เบราว์เซอร์จำผู้ใช้ไว้ และเริ่มนับเวลา
-      localStorage.setItem('buildtrack_user', JSON.stringify(user)); 
+      // 🌟 บันทึกผู้ใช้โดยไม่เก็บ PIN ใน localStorage เพื่อความปลอดภัย
+      const { pin, ...safeUser } = user;
+      localStorage.setItem('buildtrack_user', JSON.stringify(safeUser)); 
       localStorage.setItem('buildtrack_last_active', Date.now().toString());
     } else { 
       showAlert('ล้มเหลว', 'ชื่อผู้ใช้หรือ PIN ไม่ถูกต้อง'); 
@@ -504,11 +534,18 @@ export default function ConstructionApp() {
 const handleDeleteTask = async (task) => {
     setIsSubmitting(true);
     try {
-      // 🎯 สเต็ป 1: วิ่งไปตรวจสอบข้อมูลความสัมพันธ์ในตารางต่างๆ ว่ามีการเอางานนี้ไปใช้หรือยัง
-      const { data: updatesCheck } = await supabase.from('task_updates').select('id').eq('task_template_id', task.id).limit(1);
-      const { data: schedulesCheck } = await supabase.from('plot_task_schedules').select('id').eq('task_template_id', task.id).limit(1);
-      const { data: assignmentsCheck } = await supabase.from('plot_task_assignments').select('id').eq('task_template_id', task.id).limit(1);
-      const { data: defectsCheck } = await supabase.from('defects').select('id').eq('task_id', task.id).limit(1);
+      // 🎯 ตรวจสอบความสัมพันธ์ทุกตารางพร้อมกัน (parallel) แทนการรอทีละอัน
+      const [
+        { data: updatesCheck },
+        { data: schedulesCheck },
+        { data: assignmentsCheck },
+        { data: defectsCheck },
+      ] = await Promise.all([
+        supabase.from('task_updates').select('id').eq('task_template_id', task.id).limit(1),
+        supabase.from('plot_task_schedules').select('id').eq('task_template_id', task.id).limit(1),
+        supabase.from('plot_task_assignments').select('id').eq('task_template_id', task.id).limit(1),
+        supabase.from('defects').select('id').eq('task_id', task.id).limit(1),
+      ]);
 
       // รวบรวมผลลัพธ์ว่ามีตารางไหนเจอข้อมูลบ้างไหม?
       const isUsed = (updatesCheck && updatesCheck.length > 0) || 
@@ -566,7 +603,7 @@ const handleLogout = () => {
   };
   
   const handleNotifClick = async (notif) => { 
-    if (!notif.is_read) { await supabase.from('notifications').update({ is_read: true }).eq('id', notif.id); fetchAllData(); } 
+    if (!notif.is_read) { await supabase.from('notifications').update({ is_read: true }).eq('id', notif.id); await fetchAllData(); } 
     setShowNotifs(false); 
     const pInfo = plots.find(p => p.id === notif.plot_id); const pProject = projects.find(pj => pj.name === pInfo?.project_name); const tInfo = taskTemplates.find(t => t.id === notif.task_template_id); 
     if (pInfo && pProject && tInfo) { setSelectedProject(pProject); setSelectedPlot(pInfo); setSelectedTask(tInfo); setView('task-progress'); supabase.from('task_updates').select('*').eq('task_template_id', tInfo.id).eq('plot_id', pInfo.id).order('created_at', { ascending: true }).then(({data}) => { setUpdates(data || []); setProgressValue(data?.length ? data[data.length-1].progress : 0); }); } 
@@ -577,7 +614,11 @@ const handleLogout = () => {
     try {
       const payloads = []; Object.keys(scheduleInputs).forEach(taskId => { const plan = scheduleInputs[taskId]; if (plan.start && plan.end) { payloads.push({ plot_id: selectedPlot.id, task_template_id: taskId, planned_start: plan.start, planned_end: plan.end }); } });
       if (payloads.length === 0) { setIsSubmitting(false); return showAlert('แจ้งเตือน', 'ไม่มีการแก้ไขข้อมูล หรือกรอกวันที่ไม่ครบครับ'); }
-      for (const p of payloads) { if (new Date(p.planned_end) < new Date(p.planned_start)) throw new Error('วันสิ้นสุดต้องอยู่หลังวันเริ่มงานครับ'); await supabase.from('plot_task_schedules').delete().match({ plot_id: p.plot_id, task_template_id: p.task_template_id }); await supabase.from('plot_task_schedules').insert([p]); }
+      // 🌟 ตรวจสอบวันที่ทุกรายการก่อน ก่อนที่จะแตะ Database 🌟
+      for (const p of payloads) { if (new Date(p.planned_end) < new Date(p.planned_start)) throw new Error('วันสิ้นสุดต้องอยู่หลังวันเริ่มงานครับ'); }
+      // 🌟 upsert แบบ batch ครั้งเดียว แทนการ delete+insert ทีละรายการ (atomic & fast) 🌟
+      const { error } = await supabase.from('plot_task_schedules').upsert(payloads, { onConflict: 'plot_id,task_template_id' });
+      if (error) throw error;
       showAlert('สำเร็จ', 'บันทึกแผนงานทั้งหมดเรียบร้อยแล้ว'); setScheduleInputs({}); await fetchAllData();
     } catch (e) { showAlert('Error', (e as Error).message); } setIsSubmitting(false);
   };
@@ -635,9 +676,13 @@ const handleLogout = () => {
     showAlert('สำเร็จ', 'ดึงข้อมูลและปรับเลื่อนแผนงานอัตโนมัติสำเร็จ! กรุณากด "บันทึก" ด้านขวาบน เพื่อยืนยันลงระบบครับ');
   };
   const handleExportCSV = () => {
-    let csvContent = "data:text/csv;charset=utf-8,\uFEFFชื่อโครงการ,รหัสแปลง (Plot),แบบบ้าน,โฟร์แมน,ความคืบหน้าจริง (%),ความคืบหน้าตามแผน (%),สถานะ\n";
+    let csvContent = "\uFEFFชื่อโครงการ,รหัสแปลง (Plot),แบบบ้าน,โฟร์แมน,ความคืบหน้าจริง (%),ความคืบหน้าตามแผน (%),สถานะ\n";
     displayPlots.forEach(plot => { const statusInfo = getPlotOverallStatus(plot.id); csvContent += `${plot.project_name?.replace(/,/g, ' ')},${plot.id?.replace(/,/g, ' ')},${plot.type?.replace(/,/g, ' ')},${plot.foreman?.replace(/,/g, ' ') || 'ไม่ระบุ'},${plot.progress}%,${statusInfo.planned}%,${statusInfo.label}\n`; });
-    const link = document.createElement("a"); link.setAttribute("href", encodeURI(csvContent)); link.setAttribute("download", `BuildTrack_Report_${new Date().toISOString().split('T')[0]}.csv`); document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    // 🌟 ใช้ Blob แทน encodeURI เพื่อรองรับภาษาไทยและอักขระพิเศษได้ถูกต้อง 🌟
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a"); link.setAttribute("href", url); link.setAttribute("download", `BuildTrack_Report_${new Date().toISOString().split('T')[0]}.csv`); document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const toggleFence = (dir, x, y, mode) => { setMapGrid(prev => { const id = `fence-${dir}-${x}-${y}`; if (mode === 'add') { return prev.some(c => c.id === id) ? prev : [...prev, { id, type: `fence-${dir}`, x, y }]; } else { return prev.filter(c => c.id !== id); } }); };
@@ -926,7 +971,10 @@ const handleSendDefect = async () => {
       const actionLabel = progressValue === 100 ? 'ส่งงาน 100%' : 'อัปเดตงาน';
       const { error } = await supabase.from('task_updates').insert([{ plot_id: selectedPlot.id, task_template_id: selectedTask.id, user_name: loggedInUser.username, role: currentUserRole, action: actionLabel, text_content: inputText || actionLabel, progress: progressValue, image_url: imageUrls.join(','),weather_info: weatherInfo ? `${weatherInfo.currentDetails.icon} ${weatherInfo.currentDetails.text} (${weatherInfo.currentTemp}°C)` : null }]);
       if (error) throw error;
-      await fetchAllData(); const { data } = await supabase.from('task_updates').select('*').eq('task_template_id', selectedTask.id).eq('plot_id', selectedPlot.id).order('created_at', { ascending: true }); setUpdates(data || []); setInputText(''); setSelectedFiles([]);
+      await fetchAllData();
+      // 🌟 ดึงประวัติงานสดๆ หลัง fetchAllData เพื่ออัปเดต chat view
+      const { data } = await supabase.from('task_updates').select('*').eq('task_template_id', selectedTask.id).eq('plot_id', selectedPlot.id).order('created_at', { ascending: true });
+      setUpdates(data || []); setInputText(''); setSelectedFiles([]);
     } catch (e) { showAlert('Error', (e as Error).message); } setIsSending(false);
   };
 // 🗑️ ฟังก์ชันลบประวัติการรายงานงาน (Recall Post)
@@ -985,7 +1033,10 @@ const handleSendDefect = async () => {
          else if (currentUserRole === 'QC') { notifPayload.push({ plot_id: selectedPlot.id, task_template_id: selectedTask.id, message: `ตีกลับงานโดย QC: ${selectedTask.task_name}`, target_user: selectedPlot.foreman, target_role: 'Foreman' }); notifPayload.push({ plot_id: selectedPlot.id, task_template_id: selectedTask.id, message: `QC ตีกลับงานที่อนุมัติแล้ว: ${selectedTask.task_name}`, target_user: null, target_role: 'Site Engineer' }); }
          if (notifPayload.length > 0) await supabase.from('notifications').insert(notifPayload);
       }
-      await fetchAllData(); const { data } = await supabase.from('task_updates').select('*').eq('task_template_id', selectedTask.id).eq('plot_id', selectedPlot.id).order('created_at', { ascending: true }); setUpdates(data || []); setProgressValue(finalP); setInputText(''); setSelectedFiles([]);
+      await fetchAllData();
+      // 🌟 ดึงประวัติงานสดๆ หลัง fetchAllData เพื่ออัปเดต chat view
+      const { data } = await supabase.from('task_updates').select('*').eq('task_template_id', selectedTask.id).eq('plot_id', selectedPlot.id).order('created_at', { ascending: true });
+      setUpdates(data || []); setProgressValue(finalP); setInputText(''); setSelectedFiles([]);
     } catch (e) { showAlert('Error', (e as Error).message); } setIsSending(false);
   };
 
@@ -1028,35 +1079,36 @@ const handleSendDefect = async () => {
     return new Set(allUpdatesRecord.filter(u => new Date(u.created_at).toLocaleDateString('en-CA') === todayDateString).map(u => u.plot_id));
   }, [allUpdatesRecord, todayDateString]);
 
-  const displayPlots = plots.filter(p => {
+  const displayPlots = useMemo(() => plots.filter(p => {
     const isCurrentProject = p.project_name === selectedProject?.name;
     const matchSearch = p.id.toLowerCase().includes(searchPlot.toLowerCase());
     const matchForeman = filterForeman === '' || p.foreman === filterForeman;
     const roleAllowed = !isForeman || p.foreman === loggedInUser?.username;
     return isCurrentProject && matchSearch && matchForeman && roleAllowed;
-  });
+  }), [plots, selectedProject?.name, searchPlot, filterForeman, isForeman, loggedInUser?.username]);
 
-  let inspectionQueue = [];
-  if (isSiteEngineer || isQC || isAdmin || isOwner) {
+  const inspectionQueue = useMemo(() => {
+    if (!(isSiteEngineer || isQC || isAdmin || isOwner)) return [];
+    const queue: any[] = [];
     Object.values(latestUpdatesMap).forEach((upd: any) => {
       const task = taskTemplates.find(t => t.id === upd.task_template_id); const plot = plots.find(p => p.id === upd.plot_id); if (!task || !plot) return;
-      const isPendingSE = isSiteEngineer && upd.progress === 100 && (upd.action === 'ส่งงาน 100%' || upd.role === 'Foreman');
-      const isPendingQC = isQC && upd.progress === 100 && upd.action === 'Site Engineer อนุมัติ';
+      const isPendingSEItem = isSiteEngineer && upd.progress === 100 && (upd.action === 'ส่งงาน 100%' || upd.role === 'Foreman');
+      const isPendingQCItem = isQC && upd.progress === 100 && upd.action === 'Site Engineer อนุมัติ';
       const isAdminView = (isAdmin || isOwner) && upd.progress === 100 && (upd.action === 'ส่งงาน 100%' || upd.action === 'Site Engineer อนุมัติ');
-      if (isPendingSE || isPendingQC || isAdminView) inspectionQueue.push({ ...upd, task_name: task.task_name, plot_id: plot.id, project_name: plot.project_name, foreman: plot.foreman, time: new Date(upd.created_at).getTime(), statusFor: isPendingQC || (isAdminView && upd.action === 'Site Engineer อนุมัติ') ? 'QC' : 'Site Engineer' });
+      if (isPendingSEItem || isPendingQCItem || isAdminView) queue.push({ ...upd, task_name: task.task_name, plot_id: plot.id, project_name: plot.project_name, foreman: plot.foreman, time: new Date(upd.created_at).getTime(), statusFor: isPendingQCItem || (isAdminView && upd.action === 'Site Engineer อนุมัติ') ? 'QC' : 'Site Engineer', isUrgent: (Date.now() - new Date(upd.created_at).getTime()) > 172800000 });
     });
-    inspectionQueue.sort((a, b) => { if (inspectionSort === 'plot') return a.plot_id.localeCompare(b.plot_id); return b.time - a.time; });
-    // 🌟 ระบบคัดกรองงานด่วน (ดองไว้นานกว่า 48 ชั่วโมง) และจัดแท็บ
-    inspectionQueue.forEach(q => { q.isUrgent = (Date.now() - q.time) > 172800000; }); 
-    const urgentQueueCount = inspectionQueue.filter(q => q.isUrgent).length;
-    const displayInspectionQueue = inspectionQueue.filter(q => inspectionFilterTab === 'all' || (inspectionFilterTab === 'urgent' && q.isUrgent));
-  }
+    queue.sort((a, b) => { if (inspectionSort === 'plot') return a.plot_id.localeCompare(b.plot_id); return b.time - a.time; });
+    return queue;
+  }, [latestUpdatesMap, taskTemplates, plots, isSiteEngineer, isQC, isAdmin, isOwner, inspectionSort]);
+
+  const urgentQueueCount = useMemo(() => inspectionQueue.filter(q => q.isUrgent).length, [inspectionQueue]);
+  const displayInspectionQueue = useMemo(() => inspectionQueue.filter(q => inspectionFilterTab === 'all' || (inspectionFilterTab === 'urgent' && q.isUrgent)), [inspectionQueue, inspectionFilterTab]);
 
   const lastUpd = updates.length > 0 ? updates[updates.length - 1] : null;
   const isPendingSE = lastUpd?.progress === 100 && (lastUpd?.action === 'ส่งงาน 100%' || lastUpd?.role === 'Foreman');
   const isPendingQC = lastUpd?.progress === 100 && lastUpd?.action === 'Site Engineer อนุมัติ';
   const isTaskCompleted = lastUpd?.progress === 100 && (lastUpd?.action === 'QC อนุมัติ' || lastUpd?.action === 'QC อนุมัติผ่าน');
-  const currentAssignment = assignments.slice().reverse().find(a => a.plot_id === selectedPlot?.id && a.task_template_id === selectedTask?.id);
+  const currentAssignment = assignments.slice().reverse().find(a => String(a.plot_id) === String(selectedPlot?.id) && String(a.task_template_id) === String(selectedTask?.id));
   const isLockedForForeman = isForeman && !currentAssignment;
 
   const plotBounds = {};
@@ -1065,10 +1117,10 @@ const handleSendDefect = async () => {
     else { plotBounds[c.plotId].minX = Math.min(plotBounds[c.plotId].minX, c.x); plotBounds[c.plotId].maxX = Math.max(plotBounds[c.plotId].maxX, c.x); plotBounds[c.plotId].minY = Math.min(plotBounds[c.plotId].minY, c.y); plotBounds[c.plotId].maxY = Math.max(plotBounds[c.plotId].maxY, c.y); }
   });
 
-  let totalPlotsCount = plots.length;
-  let completedPlotsCount = plots.filter(p => p.progress === 100).length;
-  let delayedPlotsCount = 0; plots.forEach(p => { if (getPlotOverallStatus(p.id).status === 'delayed') delayedPlotsCount++; });
-  let activePlotsCount = totalPlotsCount - completedPlotsCount;
+  const totalPlotsCount = plots.length;
+  const completedPlotsCount = useMemo(() => plots.filter(p => p.progress === 100).length, [plots]);
+  const delayedPlotsCount = useMemo(() => plots.filter(p => getPlotOverallStatus(p.id).status === 'delayed').length, [plots, latestUpdatesMap, schedules, taskTemplates]);
+  const activePlotsCount = totalPlotsCount - completedPlotsCount;
   const totalReworks = (allUpdatesRecord || []).filter(u => u.action.includes('แจ้งแก้ไข') || u.action.includes('ไม่อนุมัติ')).length;
 
   let globalMinDate = Infinity; let globalMaxDate = -Infinity;
@@ -1702,20 +1754,31 @@ const handleSendDefect = async () => {
                              const task = taskTemplates.find(t => t.id === update.task_template_id);
                              const taskName = task ? task.task_name : update.action;
                              
+                             // 🌟 ดึงข้อมูลชื่อโครงการของแปลงนี้ขึ้นมา
+                             const currentPlotInfo = plots.find(p => String(p.id) === String(update.plot_id));
+                             const projectNameText = currentPlotInfo ? currentPlotInfo.project_name : 'ไม่ระบุโครงการ';
+                             
                              return (
                                 <div key={update.id} className="bg-white rounded-2xl sm:rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden animate-in slide-in-from-bottom-4">
                                    
-                                   {/* ส่วนหัวโพสต์: ล็อกพิกัดแปลง + ชื่องวดงาน */}
+                                   {/* ส่วนหัวโพสต์: ป้ายชื่อโครงการ + ล็อกพิกัดแปลง + ชื่องวดงาน */}
                                    <div className="bg-slate-800 px-4 sm:px-6 py-3 flex flex-wrap justify-between items-center gap-2">
-                                      <div className="flex items-center gap-2 min-w-0">
-                                         <span className="bg-amber-400 text-slate-900 font-black text-xs sm:text-sm px-2.5 py-1 rounded-xl shadow-sm shrink-0">
+                                      <div className="flex items-center gap-2 flex-wrap min-w-0">
+                                         
+                                         {/* 🏢 ป้ายชื่อโครงการ (เพิ่มใหม่ สีน้ำเงินเด่นๆ) */}
+                                         <span className="bg-blue-600 text-white font-black text-[10px] sm:text-xs px-2.5 py-1 rounded-xl shadow-sm shrink-0 flex items-center gap-1">
+                                            🏢 {projectNameText}
+                                         </span>
+
+                                         <span className="bg-amber-400 text-slate-900 font-black text-[10px] sm:text-xs px-2.5 py-1 rounded-xl shadow-sm shrink-0">
                                             📍 แปลง {update.plot_id}
                                          </span>
-                                         <h4 className="font-black text-white text-xs sm:text-sm truncate" title={taskName}>
+                                         
+                                         <h4 className="font-black text-white text-xs sm:text-sm truncate max-w-[200px] sm:max-w-none" title={taskName}>
                                             🛠️ {taskName}
                                          </h4>
                                       </div>
-                                      <span className="bg-white/20 text-white font-black text-[10px] px-2.5 py-1 rounded-lg uppercase tracking-wider">
+                                      <span className="bg-white/20 text-white font-black text-[10px] px-2.5 py-1 rounded-lg uppercase tracking-wider ml-auto">
                                          {update.progress}%
                                       </span>
                                    </div>
@@ -1780,31 +1843,52 @@ const handleSendDefect = async () => {
                {/* 🏢 View: Dashboard */}
                {view === 'dashboard' && (
                   <div className="animate-in fade-in zoom-in-95 duration-500">
-                    
-                    <div className="mb-6 sm:mb-12">
-                       <h2 className="font-black text-xl sm:text-3xl text-slate-800 italic uppercase tracking-tighter mb-4 sm:mb-6">Executive Summary</h2>
-                       <div className={`grid gap-3 sm:gap-6 ${isMobileLayout ? 'grid-cols-2' : 'grid-cols-4'}`}>
-                          <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-slate-200 shadow-sm flex flex-col justify-center items-center sm:items-start text-center sm:text-left h-28 sm:h-auto">
-                            <div className="flex items-center gap-1.5 sm:gap-3 text-slate-500 mb-1 sm:mb-4"><FolderOpen size={16} className="sm:w-5 sm:h-5 hidden sm:block"/><span className="text-[10px] sm:text-sm font-black uppercase tracking-wide truncate">Total Projects</span></div>
-                            <div className="text-2xl sm:text-5xl font-black text-slate-800">{projects.length}</div>
-                          </div>
-                          <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-slate-200 shadow-sm flex flex-col justify-center items-center sm:items-start text-center sm:text-left h-28 sm:h-auto">
-                            <div className="flex items-center gap-1.5 sm:gap-3 text-blue-500 mb-1 sm:mb-4"><Activity size={16} className="sm:w-5 sm:h-5 hidden sm:block"/><span className="text-[10px] sm:text-sm font-black uppercase tracking-wide truncate">Active Plots</span></div>
-                            <div className="text-2xl sm:text-5xl font-black text-blue-600">{activePlotsCount}</div>
-                          </div>
-                          <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-slate-200 shadow-sm flex flex-col justify-center items-center sm:items-start text-center sm:text-left h-28 sm:h-auto">
-                            <div className="flex items-center gap-1.5 sm:gap-3 text-emerald-500 mb-1 sm:mb-4"><CheckCircle size={16} className="sm:w-5 sm:h-5 hidden sm:block"/><span className="text-[10px] sm:text-sm font-black uppercase tracking-wide truncate">Completed</span></div>
-                            <div className="text-2xl sm:text-5xl font-black text-emerald-600">{completedPlotsCount}</div>
-                          </div>
-                          <div className={`p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border shadow-sm flex flex-col justify-center items-center sm:items-start text-center sm:text-left h-28 sm:h-auto ${delayedPlotsCount > 0 ? 'bg-rose-50 border-rose-200' : 'bg-white border-slate-200'}`}>
-                            <div className={`flex items-center gap-1.5 sm:gap-3 mb-1 sm:mb-4 ${delayedPlotsCount > 0 ? 'text-rose-500' : 'text-slate-400'}`}><AlertCircle size={16} className="sm:w-5 sm:h-5 hidden sm:block"/><span className="text-[10px] sm:text-sm font-black uppercase tracking-wide truncate">Delayed</span></div>
-                            <div className={`text-2xl sm:text-5xl font-black ${delayedPlotsCount > 0 ? 'text-rose-600' : 'text-slate-300'}`}>{delayedPlotsCount}</div>
-                          </div>
-                       </div>
+                      {(isSiteEngineer || isQC || isAdmin || isOwner) && (
+                      <div className="mb-6 sm:mb-12 mt-8 ">
+                      <div className="flex flex-col md:flex-row md:justify-between md:items-end mb-3 sm:mb-6 gap-3">
+                      <h2 className="font-black text-xl sm:text-3xl text-slate-800 italic uppercase tracking-tighter">Projects Overview</h2>
+                      {isMobileLayout && (
+                         <div className="flex flex-wrap gap-2 shrink-0 w-full">
+                           {isProcurement && (<button onClick={() => setView('procurement-contractors')} className="flex-1 items-center justify-center gap-1.5 bg-emerald-600 text-white px-3 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex"><Wrench size={14} /> ช่าง</button>)}
+                           {isAdmin && (
+                             <>
+                               <button onClick={() => setView('admin-users')} className="flex-1 items-center justify-center gap-1.5 bg-white text-rose-600 border border-rose-200 px-2 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex whitespace-nowrap"><Users size={14} /> ผู้ใช้</button>
+                               <button onClick={() => setView('admin-project')} className="flex-1 items-center justify-center gap-1.5 bg-slate-800 text-white px-2 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex whitespace-nowrap"><PlusCircle size={14} /> โครงการ</button>
+                               <button onClick={() => setView('admin-house-types')} className="flex-1 items-center justify-center gap-1.5 bg-rose-50 text-rose-600 border border-rose-200 px-2 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex whitespace-nowrap"><Building size={14} /> แบบบ้าน</button>
+                               <button onClick={() => setView('admin-tasks')} className="flex-1 items-center justify-center gap-1.5 bg-rose-50 text-rose-600 border border-rose-200 px-2 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex whitespace-nowrap"><ClipboardList size={14} /> งวดงาน</button>
+                               <button onClick={() => setView('admin-visualizer')} className="flex-1 items-center justify-center gap-1.5 bg-rose-50 text-rose-600 border border-rose-200 px-2 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex whitespace-nowrap"><Monitor size={14} /> 2.5D</button>
+                             </>
+                           )}
+                         </div>
+                      )}
                     </div>
+                    
+                    <div className={`grid gap-3 sm:gap-6 ${isMobileLayout ? 'grid-cols-1' : 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'}`}>
+                      {projects.map((proj) => (
+                        <div key={proj.name} onClick={() => { 
+                            const conf = proj.layout_data?.find(c => c.type === 'config');
+                            setGridCols(conf?.cols || 40); setGridRows(conf?.rows || 24); setMapZoom(1);
+                            setSelectedProject(proj); setMapGrid(proj.layout_data?.filter(c => c.type !== 'config') || []); setIsEditMapMode(false); setView('project-detail'); 
+                        }} className="bg-white w-full p-5 sm:p-8 rounded-2xl sm:rounded-[2rem] border border-slate-200 text-left hover:border-blue-500 hover:shadow-2xl hover:-translate-y-1 transition-all group relative overflow-hidden cursor-pointer">
+                          
+                          {/* 🌟 ปุ่มแก้ไขชื่อโครงการ (แสดงเฉพาะ Admin) */}
+                          {isAdmin && (
+                            <button onClick={(e) => { e.stopPropagation(); handleEditProject(proj); }} className="absolute top-4 right-4 p-2 bg-slate-100 text-slate-500 rounded-xl opacity-0 group-hover:opacity-100 hover:bg-blue-600 hover:text-white transition-all z-20 shadow-sm" title="แก้ไขชื่อโครงการ">
+                              <Settings size={20} />
+                            </button>
+                          )}
 
-                    {(isSiteEngineer || isQC || isAdmin || isOwner) && (
-                      <div className="mb-6 sm:mb-12">
+                          <Building size={isMobileLayout ? 60 : 100} className="absolute -right-4 -bottom-4 sm:-right-6 sm:-bottom-6 text-slate-50 group-hover:text-blue-50 transition-colors rotate-12" />
+                          <h3 className="text-xl sm:text-3xl font-black text-slate-800 mb-1 sm:mb-2 relative z-10 w-full truncate text-left">{proj.name}</h3>
+                          <Building size={isMobileLayout ? 60 : 100} className="absolute -right-4 -bottom-4 sm:-right-6 sm:-bottom-6 text-slate-50 group-hover:text-blue-50 transition-colors rotate-12" />
+                          <h3 className="text-xl sm:text-3xl font-black text-slate-800 mb-1 sm:mb-2 relative z-10 w-full truncate text-left">{proj.name}</h3>
+                          <p className="text-[10px] sm:text-sm text-slate-400 font-bold uppercase tracking-wider mb-4 sm:mb-8 relative z-10 flex items-center gap-1.5">
+                            <MapIcon size={12} className="sm:w-4 sm:h-4"/> {isForeman ? `งานของคุณ ${plots.filter(p => p.project_name === proj.name && p.foreman === loggedInUser.username).length} แปลง` : `รวมทั้งหมด ${proj.plotCount} แปลง`}
+                          </p>
+                          <div className="h-2 sm:h-3 bg-slate-100 rounded-full overflow-hidden relative z-10 mt-4 sm:mt-6"><div className="h-full bg-blue-600 transition-all duration-1000" style={{width: `${proj.progress}%`}}></div></div>
+                        </div>
+                      ))}
+                    </div>
                       {/* 🌟 ส่วนหัว: โซนแท็บเมนูและปุ่มเปลี่ยนมุมมอง */}
                         <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3 mb-4 sm:mb-6">
                           <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6">
@@ -1891,49 +1975,27 @@ const handleSendDefect = async () => {
                       </div>
                     )}
 
-                    <div className="flex flex-col md:flex-row md:justify-between md:items-end mb-3 sm:mb-6 gap-3">
-                      <h2 className="font-black text-xl sm:text-3xl text-slate-800 italic uppercase tracking-tighter">Projects Overview</h2>
-                      {isMobileLayout && (
-                         <div className="flex flex-wrap gap-2 shrink-0 w-full">
-                           {isProcurement && (<button onClick={() => setView('procurement-contractors')} className="flex-1 items-center justify-center gap-1.5 bg-emerald-600 text-white px-3 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex"><Wrench size={14} /> ช่าง</button>)}
-                           {isAdmin && (
-                             <>
-                               <button onClick={() => setView('admin-users')} className="flex-1 items-center justify-center gap-1.5 bg-white text-rose-600 border border-rose-200 px-2 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex whitespace-nowrap"><Users size={14} /> ผู้ใช้</button>
-                               <button onClick={() => setView('admin-project')} className="flex-1 items-center justify-center gap-1.5 bg-slate-800 text-white px-2 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex whitespace-nowrap"><PlusCircle size={14} /> โครงการ</button>
-                               <button onClick={() => setView('admin-house-types')} className="flex-1 items-center justify-center gap-1.5 bg-rose-50 text-rose-600 border border-rose-200 px-2 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex whitespace-nowrap"><Building size={14} /> แบบบ้าน</button>
-                               <button onClick={() => setView('admin-tasks')} className="flex-1 items-center justify-center gap-1.5 bg-rose-50 text-rose-600 border border-rose-200 px-2 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex whitespace-nowrap"><ClipboardList size={14} /> งวดงาน</button>
-                                                              <button onClick={() => setView('admin-visualizer')} className="flex-1 items-center justify-center gap-1.5 bg-rose-50 text-rose-600 border border-rose-200 px-2 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex whitespace-nowrap"><Monitor size={14} /> 2.5D</button>
-                             </>
-                           )}
-                         </div>
-                      )}
-                    </div>
-                    
-                    <div className={`grid gap-3 sm:gap-6 ${isMobileLayout ? 'grid-cols-1' : 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'}`}>
-                      {projects.map((proj) => (
-                        <div key={proj.name} onClick={() => { 
-                            const conf = proj.layout_data?.find(c => c.type === 'config');
-                            setGridCols(conf?.cols || 40); setGridRows(conf?.rows || 24); setMapZoom(1);
-                            setSelectedProject(proj); setMapGrid(proj.layout_data?.filter(c => c.type !== 'config') || []); setIsEditMapMode(false); setView('project-detail'); 
-                        }} className="bg-white w-full p-5 sm:p-8 rounded-2xl sm:rounded-[2rem] border border-slate-200 text-left hover:border-blue-500 hover:shadow-2xl hover:-translate-y-1 transition-all group relative overflow-hidden cursor-pointer">
-                          
-                          {/* 🌟 ปุ่มแก้ไขชื่อโครงการ (แสดงเฉพาะ Admin) */}
-                          {isAdmin && (
-                            <button onClick={(e) => { e.stopPropagation(); handleEditProject(proj); }} className="absolute top-4 right-4 p-2 bg-slate-100 text-slate-500 rounded-xl opacity-0 group-hover:opacity-100 hover:bg-blue-600 hover:text-white transition-all z-20 shadow-sm" title="แก้ไขชื่อโครงการ">
-                              <Settings size={20} />
-                            </button>
-                          )}
 
-                          <Building size={isMobileLayout ? 60 : 100} className="absolute -right-4 -bottom-4 sm:-right-6 sm:-bottom-6 text-slate-50 group-hover:text-blue-50 transition-colors rotate-12" />
-                          <h3 className="text-xl sm:text-3xl font-black text-slate-800 mb-1 sm:mb-2 relative z-10 w-full truncate text-left">{proj.name}</h3>
-                          <Building size={isMobileLayout ? 60 : 100} className="absolute -right-4 -bottom-4 sm:-right-6 sm:-bottom-6 text-slate-50 group-hover:text-blue-50 transition-colors rotate-12" />
-                          <h3 className="text-xl sm:text-3xl font-black text-slate-800 mb-1 sm:mb-2 relative z-10 w-full truncate text-left">{proj.name}</h3>
-                          <p className="text-[10px] sm:text-sm text-slate-400 font-bold uppercase tracking-wider mb-4 sm:mb-8 relative z-10 flex items-center gap-1.5">
-                            <MapIcon size={12} className="sm:w-4 sm:h-4"/> {isForeman ? `งานของคุณ ${plots.filter(p => p.project_name === proj.name && p.foreman === loggedInUser.username).length} แปลง` : `รวมทั้งหมด ${proj.plotCount} แปลง`}
-                          </p>
-                          <div className="h-2 sm:h-3 bg-slate-100 rounded-full overflow-hidden relative z-10 mt-4 sm:mt-6"><div className="h-full bg-blue-600 transition-all duration-1000" style={{width: `${proj.progress}%`}}></div></div>
-                        </div>
-                      ))}
+                      <div className="mb-6 sm:mb-12">
+                       <h2 className="font-black text-xl sm:text-3xl text-slate-800 italic uppercase tracking-tighter mb-4 sm:mb-6">Executive Summary</h2>
+                       <div className={`grid gap-3 sm:gap-6 ${isMobileLayout ? 'grid-cols-2' : 'grid-cols-4'}`}>
+                          <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-slate-200 shadow-sm flex flex-col justify-center items-center sm:items-start text-center sm:text-left h-28 sm:h-auto">
+                            <div className="flex items-center gap-1.5 sm:gap-3 text-slate-500 mb-1 sm:mb-4"><FolderOpen size={16} className="sm:w-5 sm:h-5 hidden sm:block"/><span className="text-[10px] sm:text-sm font-black uppercase tracking-wide truncate">Total Projects</span></div>
+                            <div className="text-2xl sm:text-5xl font-black text-slate-800">{projects.length}</div>
+                          </div>
+                          <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-slate-200 shadow-sm flex flex-col justify-center items-center sm:items-start text-center sm:text-left h-28 sm:h-auto">
+                            <div className="flex items-center gap-1.5 sm:gap-3 text-blue-500 mb-1 sm:mb-4"><Activity size={16} className="sm:w-5 sm:h-5 hidden sm:block"/><span className="text-[10px] sm:text-sm font-black uppercase tracking-wide truncate">Active Plots</span></div>
+                            <div className="text-2xl sm:text-5xl font-black text-blue-600">{activePlotsCount}</div>
+                          </div>
+                          <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-slate-200 shadow-sm flex flex-col justify-center items-center sm:items-start text-center sm:text-left h-28 sm:h-auto">
+                            <div className="flex items-center gap-1.5 sm:gap-3 text-emerald-500 mb-1 sm:mb-4"><CheckCircle size={16} className="sm:w-5 sm:h-5 hidden sm:block"/><span className="text-[10px] sm:text-sm font-black uppercase tracking-wide truncate">Completed</span></div>
+                            <div className="text-2xl sm:text-5xl font-black text-emerald-600">{completedPlotsCount}</div>
+                          </div>
+                          <div className={`p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border shadow-sm flex flex-col justify-center items-center sm:items-start text-center sm:text-left h-28 sm:h-auto ${delayedPlotsCount > 0 ? 'bg-rose-50 border-rose-200' : 'bg-white border-slate-200'}`}>
+                            <div className={`flex items-center gap-1.5 sm:gap-3 mb-1 sm:mb-4 ${delayedPlotsCount > 0 ? 'text-rose-500' : 'text-slate-400'}`}><AlertCircle size={16} className="sm:w-5 sm:h-5 hidden sm:block"/><span className="text-[10px] sm:text-sm font-black uppercase tracking-wide truncate">Delayed</span></div>
+                            <div className={`text-2xl sm:text-5xl font-black ${delayedPlotsCount > 0 ? 'text-rose-600' : 'text-slate-300'}`}>{delayedPlotsCount}</div>
+                          </div>
+                       </div>
                     </div>
                   </div>
                )}
@@ -2574,8 +2636,8 @@ const handleSendDefect = async () => {
                      )}            
                      <div className="bg-slate-50 w-full overflow-x-auto custom-scrollbar border-t border-slate-200" style={{ maxHeight: '800px', overflowY: 'auto' }}>
                        {isMobileLayout && <div className="text-center text-[10px] text-slate-400 font-bold py-2 bg-slate-100 border-b border-slate-200">↔️ ปัดซ้าย-ขวา เพื่อดูตาราง ↔️</div>}
-                         <table className={`text-left border-collapse w-full relative ${isMobileLayout ? 'min-w-max' : 'min-w-[1200px]'}`}>
-                         <thead className="sticky top-0 z-[60] bg-slate-100 shadow-sm text-[10px] sm:text-xs font-black uppercase text-slate-500 tracking-widest">
+                         <table className={`text-left border-collapse w-full relative ${isMobileLayout ? 'block' : 'min-w-[1200px]'}`}>
+                         <thead className={`${isMobileLayout ? 'hidden' : 'sticky top-0 z-[60] bg-slate-100 shadow-sm text-[10px] sm:text-xs font-black uppercase text-slate-500 tracking-widest'}`}>
                            <tr>
                              <th className={`sticky left-0 bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 ${isMobileLayout ? 'w-[220px] min-w-[220px] max-w-[220px]' : 'w-[280px] min-w-[280px] max-w-[280px]'} shadow-[4px_0_15px_-5px_rgba(0,0,0,0.1)]`}>Task Name</th>
                              <th className="sticky left-[220px] sm:left-[280px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.08)]">Start</th>
@@ -2609,42 +2671,145 @@ const handleSendDefect = async () => {
                                  </th>
                            </tr>
                          </thead>
-                         <tbody>
-                           {taskTemplates.filter(t => t.house_type_id === selectedPlot.house_type_id).map((task) => {
-                             const key = `${selectedPlot.id}-${task.id}`;
-                             const tProgress = latestUpdatesMap[key]?.progress || 0;
-                             const assignment = assignments.slice().reverse().find(a => String(a.plot_id) === String(selectedPlot.id) && String(a.task_template_id) === String(task.id));
-                             const dates = taskDates[key];
-                             const plan = schedules[key] || {};
-                             const statusObj = getTaskStatus(plan.planned_end, dates?.end, tProgress);
+                         <tbody className={isMobileLayout ? 'block p-3 sm:p-0 bg-slate-100' : ''}>
+                          {taskTemplates.filter(t => t.house_type_id === selectedPlot.house_type_id).map((task) => {
+                            const key             = `${selectedPlot.id}-${task.id}`;
+                            const tProgress       = latestUpdatesMap[key]?.progress || 0;
+                            const assignment      = assignments.find(a => a.task_template_id === task.id);
 
-                             const pStartTs = plan.planned_start ? new Date(plan.planned_start).getTime() : null;
-                             const pEndTs = plan.planned_end ? new Date(plan.planned_end).getTime() : null;
-                             const aStartTs = dates?.start ? new Date(dates.start).getTime() : null;
-                             const aEndTs = dates?.end ? new Date(dates.end).getTime() : (aStartTs ? Date.now() : null);
+                            // ✅ Fixed: was schedulePlan[task.id] / actualDates[task.id]
+                            const plan  = schedules[key]  || {};
+                            const dates = taskDates[key]  || {};
 
-                             return (
-                                  <tr key={task.id} className="group hover:bg-slate-50/80 transition-colors bg-white cursor-pointer" onClick={(e: any) => {
-                                  // 🛡️ ป้องกันการทำงานซ้อนทับกัน (ดักจับทั้งปุ่ม, Select, Input และรองรับทุก Browser)
-                                  const target = e.target as HTMLElement;
-                                  if (target) {
-                                      if (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'BUTTON') return;
-                                      if (typeof target.closest === 'function' && (target.closest('button') || target.closest('select') || target.closest('input'))) return;
-                                  }
-                                  
-                                  // โหลดข้อมูลเข้าสู่หน้า Task Progress
-                                  setSelectedTask(task);
-                                  setTaskReturnView('house-detail');
-                                  setView('task-progress');
-                                  supabase.from('task_updates').select('*')
-                                    .eq('task_template_id', task.id)
-                                    .eq('plot_id', selectedPlot.id)
-                                    .order('created_at', { ascending: true })
-                                    .then(({data}) => { 
-                                       setUpdates(data || []); 
-                                       setProgressValue(data?.length ? data[data.length-1].progress : 0); 
-                                    });
-                               }}>
+                            // ✅ Fixed: removed duplicate const tProgress (was line 2620)
+
+                            const isTaskCompleted = tProgress === 100;
+
+                            // Timestamps for Gantt bars
+                            const aStartTs = dates?.start ? new Date(dates.start).getTime() : null;
+                            const aEndTs   = dates?.end   ? new Date(dates.end).getTime()   : (aStartTs ? Date.now() : null);
+
+                            // ✅ Added: pStartTs / pEndTs / statusObj were missing — used by Gantt chart at line 2950–2955
+                            const pStartTs  = plan.planned_start ? new Date(plan.planned_start).getTime() : null;
+                            const pEndTs    = plan.planned_end   ? new Date(plan.planned_end).getTime()   : null;
+                            const statusObj = getTaskStatus(plan.planned_end, dates?.end, tProgress);
+
+                            // Card view helpers
+                            const contractorName  = assignment ? assignment.contractor_name  : '';
+                            const contractorPhone = assignment ? assignment.contractor_phone : '';
+                            let durationText = '-';
+                            if (plan.planned_start && plan.planned_end) {
+                              const diff = new Date(plan.planned_end).getTime() - new Date(plan.planned_start).getTime();
+                              durationText = `${Math.max(0, Math.ceil(diff / 86400000)) + 1} วัน`;
+                            }
+                            let actualDurationText = '-';
+                            if (dates?.start) {
+                              const aEnd = dates.end ? new Date(dates.end).getTime() : Date.now();
+                              actualDurationText = `${Math.max(0, Math.ceil((aEnd - new Date(dates.start).getTime()) / 86400000)) + 1} วัน`;
+                            }
+
+                            const openTaskProgress = () => {
+                              setSelectedTask(task);
+                              setTaskReturnView('house-detail');
+                              setView('task-progress');
+                              supabase.from('task_updates').select('*')
+                                .eq('task_template_id', task.id)
+                                .eq('plot_id', selectedPlot.id)
+                                .order('created_at', { ascending: true })
+                                .then(({ data }) => {
+                                  setUpdates(data || []);
+                                  setProgressValue(data?.length ? data[data.length - 1].progress : 0);
+                                });
+                            };
+
+                            return (
+                                <React.Fragment key={task.id}>
+                                  {/* 📱 1. โซนมือถือ: แบบการ์ด (Mobile Card View) */}
+                                  {isMobileLayout && (
+                                      <tr className="block mb-4">
+                                        <td className="block bg-white rounded-[1.5rem] shadow-[0_8px_30px_-10px_rgba(0,0,0,0.1)] p-5 border border-slate-200 relative overflow-hidden">
+                                            {/* แถบสีด้านบนการ์ด บอกสถานะ 100% */}
+                                            {tProgress === 100 && <div className="absolute top-0 left-0 w-full h-1.5 bg-emerald-400"></div>}
+
+                                            {/* หัวการ์ด: ชื่องาน & ป้าย % */}
+                                            <div className="flex items-start justify-between mb-4 border-b border-slate-100 pb-3 mt-1">
+                                              <div className="flex items-start gap-2.5 pr-2">
+                                                  <span className="text-[10px] font-black text-slate-400 bg-slate-100 px-2 py-0.5 rounded border mt-0.5 shrink-0">#{task.task_order}</span>
+                                                  <div>
+                                                    <h4 className="font-black text-slate-800 text-sm leading-tight mb-1">{task.task_name}</h4>
+                                                    {contractorName ? (
+                                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-100"><HardHat size={12} /> {contractorName ? `${String(contractorName).split(' ')[0]} ${contractorPhone ? `(${contractorPhone})` : ''}` : 'ยังไม่ระบุ'}</span>
+                                                    ) : (
+                                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded-md"><Users size={12} /> ยังไม่ระบุช่าง</span>
+                                                    )}
+                                                  </div>
+                                              </div>
+                                              <div className={`shrink-0 px-2.5 py-1 rounded-xl text-xs font-black ${tProgress === 100 ? 'bg-emerald-100 text-emerald-700' : tProgress > 0 ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>
+                                                  {tProgress}%
+                                              </div>
+                                            </div>
+
+                                            {/* ข้อมูลวันที่: แผนงาน vs ทำจริง */}
+                                            <div className="grid grid-cols-2 gap-3 mb-5">
+                                              <div className="bg-slate-50 rounded-xl p-3 border border-slate-100 relative overflow-hidden">
+                                                  <div className="absolute top-0 left-0 w-1 h-full bg-slate-300"></div>
+                                                  <span className="text-[9px] font-black uppercase text-slate-500 block mb-1.5 flex items-center gap-1"><Calendar size={10}/> แผนงาน</span>
+                                                  <div className="text-[10px] font-bold text-slate-700 space-y-0.5">
+                                                    <p>เริ่ม: <span className="text-slate-900">{plan.planned_start ? new Date(plan.planned_start).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</span></p>
+                                                    <p>จบ: <span className="text-slate-900">{plan.planned_end ? new Date(plan.planned_end).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</span></p>
+                                                  </div>
+                                                  <div className="text-[10px] font-black text-pink-500 mt-2 bg-pink-50 inline-block px-1.5 py-0.5 rounded">{durationText}</div>
+                                              </div>
+                                              <div className="bg-blue-50/50 rounded-xl p-3 border border-blue-100/50 relative overflow-hidden">
+                                                  <div className="absolute top-0 left-0 w-1 h-full bg-blue-400"></div>
+                                                  <span className="text-[9px] font-black uppercase text-blue-500 block mb-1.5 flex items-center gap-1"><Activity size={10}/> ทำจริง</span>
+                                                  <div className="text-[10px] font-bold text-blue-800 space-y-0.5">
+                                                    <p>เริ่ม: <span className="text-blue-900">{dates?.start ? new Date(dates.start).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</span></p>
+                                                    <p>จบ: <span className="text-blue-900">{dates?.end ? new Date(dates.end).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</span></p>
+                                                  </div>
+                                                  <div className="text-[10px] font-black text-blue-600 mt-2 bg-blue-100/50 inline-block px-1.5 py-0.5 rounded">{actualDurationText}</div>
+                                              </div>
+                                            </div>
+
+                                            {/* Progress Bar */}
+                                            <div className="mb-5">
+                                              <div className="flex justify-between items-end mb-1.5">
+                                              <span className="text-[10px] font-black text-slate-500">ความคืบหน้างวดงาน</span>
+                                              {latestUpdatesMap[`${selectedPlot.id}-${task.id}`] && new Date(latestUpdatesMap[`${selectedPlot.id}-${task.id}`].created_at).toLocaleDateString('en-CA') === new Date().toLocaleDateString('en-CA') && (
+                                             <div className="absolute top-1.5 right-1.5 bg-orange-100 text-orange-600 p-1 rounded-full shadow-sm" title="มีการอัปเดตใหม่วันนี้!">
+                                                <Pickaxe size={12} className="animate-bounce" />
+                                             </div>
+                                              )}
+                                              </div>
+                                              <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden border border-slate-200">
+                                                  <div className={`h-full rounded-full transition-all duration-1000 ${tProgress === 100 ? 'bg-gradient-to-r from-emerald-400 to-emerald-500' : 'bg-gradient-to-r from-blue-500 to-indigo-500'}`} style={{ width: `${tProgress}%` }}></div>
+                                              </div>
+                                            </div>
+
+                                            {/* ปุ่มกด Action */}
+                                            <div className="flex gap-2">
+                                              {(currentUserRole === 'Project Planner' || currentUserRole === 'Admin' || currentUserRole === 'Owner' || currentUserRole === 'Procurement') && (
+                                                  <button onClick={(e) => { e.stopPropagation(); setAssignModal({ isOpen: true, task: task, name: contractorName, phone: contractorPhone }); }} className="flex-[1] py-3 bg-white border-2 border-slate-200 text-slate-600 text-[11px] font-black rounded-xl hover:bg-slate-50 hover:border-slate-300 active:scale-95 transition-all flex flex-col items-center justify-center gap-1 shadow-sm">
+                                                    <UserCog size={16} className={contractorName ? 'text-amber-500' : 'text-slate-400'} /> {contractorName ? 'เปลี่ยนช่าง' : 'เลือกช่าง'}
+                                                  </button>
+                                              )}
+                                              <button onClick={(e) => { e.stopPropagation(); openTaskProgress(); }} className={`flex-[2] py-3 ${tProgress === 100 ? 'bg-emerald-600 hover:bg-emerald-500 border-emerald-700' : 'bg-slate-800 hover:bg-slate-700 border-slate-900'} text-white text-[11px] sm:text-xs font-black rounded-xl active:scale-95 transition-all flex flex-col items-center justify-center gap-1 shadow-md border-b-4 active:border-b-0 active:translate-y-[4px]`}>
+                                                  <Camera size={16} className={tProgress === 100 ? 'text-emerald-100' : 'text-blue-300'} /> {tProgress === 100 ? 'ดูประวัติ / แจ้งซ่อม' : 'อัปเดตความคืบหน้า'}
+                                              </button>
+                                            </div>
+                                        </td>
+                                      </tr>
+                                  )}
+
+                                  {/* 💻 2. โซน PC: ตาราง Gantt Chart (ซ่อนในมือถือ โชว์เฉพาะใน PC) */}
+                                  <tr className={`group hover:bg-slate-50/80 transition-colors bg-white cursor-pointer ${isMobileLayout ? 'hidden' : 'table-row'}`} onClick={(e: any) => { 
+                                      const target = e.target as HTMLElement; 
+                                      if (target) { 
+                                        if (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'BUTTON') return; 
+                                        if (typeof target.closest === 'function' && (target.closest('button') || target.closest('select') || target.closest('input'))) return; 
+                                      } 
+                                      openTaskProgress(); 
+                                  }}>
                                 {/* 🌟 2. [ฉบับแก้ไข] บีบความสูงแถวฝั่งซ้าย ล็อก Task Name 2 บรรทัด และล็อกคอลัมน์ให้อยู่กับที่ 🌟 */}
                                 {/* 🌟 ปรับขยายความสูงแถว เพื่อไม่ให้เบอร์โทรโดนทับ (มือถือ 90px / คอม 100px) */}
                                  <td className={`p-2 sm:p-3 border-b border-slate-200 ${isMobileLayout ? 'h-[90px] w-[220px] min-w-[220px] max-w-[220px] z-[45]' : 'h-[100px] w-[280px] min-w-[280px] max-w-[280px] z-20'} flex flex-col justify-between bg-white sticky left-0 shadow-[4px_0_10px_-4px_rgba(0,0,0,0.1)]`}>
@@ -2884,6 +3049,7 @@ const handleSendDefect = async () => {
                                        </div>
                                      </td>
                                </tr>
+                               </React.Fragment>
                              )
                            })}
                          </tbody>
