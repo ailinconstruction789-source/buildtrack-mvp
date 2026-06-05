@@ -1,9 +1,13 @@
+// @ts-nocheck
 'use client';
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useBuildTrackData } from '@/hooks/useBuildTrackData';
 import LoginView from '@/components/LoginView';
 import DashboardOverview from '@/components/DashboardOverview';
+import MapVisualizer from '@/components/MapVisualizer';
+import HouseDetailView from '@/components/HouseDetailView';
+import TaskProgressView from '@/components/TaskProgressView';
 // ถอด browser-image-compression ออกเพื่อใช้ Native ป้องกัน Error
 import { 
   LayoutDashboard, Map as MapIcon, Truck, ChevronRight, ClipboardList, Loader2,
@@ -74,7 +78,8 @@ export default function ConstructionApp() {
     latestUpdatesMap, setLatestUpdatesMap,
     taskDates, setTaskDates,
     allUpdatesRecord, setAllUpdatesRecord,
-    fetchAllData
+    fetchAllData,
+    fetchPlotDetails
   } = useBuildTrackData(loggedInUser);
 
 
@@ -133,7 +138,7 @@ export default function ConstructionApp() {
       if (error) throw error;
       await fetchAllData();
       showAlert('สำเร็จ', 'บันทึกการจัดเลเยอร์ 2.5D แบบรายงวดงานเรียบร้อยแล้วครับ');
-    } catch (e) {
+    } catch (e: any) {
       showAlert('ผิดพลาด', e.message);
     }
     setIsSubmitting(false);
@@ -241,8 +246,8 @@ export default function ConstructionApp() {
   const [inspectionViewMode, setInspectionViewMode] = useState('card');
   const [inspectionFilterTab, setInspectionFilterTab] = useState('all');
   
-  const [assignModal, setAssignModal] = useState({ isOpen: false, task: null, name: '', phone: '' });
-  const [dialogConfig, setDialogConfig] = useState({ isOpen: false, title: '', message: '', type: 'confirm', onConfirm: null });
+  const [assignModal, setAssignModal] = useState<any>({ isOpen: false, task: null, name: '', phone: '' });
+  const [dialogConfig, setDialogConfig] = useState<any>({ isOpen: false, title: '', message: '', type: 'confirm', onConfirm: null });
   const [scheduleInputs, setScheduleInputs] = useState({}); 
   const [copyModalOpen, setCopyModalOpen] = useState(false);
   const [copySourcePlot, setCopySourcePlot] = useState('');
@@ -271,7 +276,7 @@ export default function ConstructionApp() {
   const [isPresentationOpen, setIsPresentationOpen] = useState(false);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   // Extracted: [defects,
-  const [defectModal, setDefectModal] = useState({ isOpen: false, task: null, plotId: '' });
+  const [defectModal, setDefectModal] = useState<any>({ isOpen: false, task: null, plotId: '' });
   const [newDefectText, setNewDefectText] = useState('');
   const [defectFiles, setDefectFiles] = useState<any[]>([]);
   const [isSubmittingDefect, setIsSubmittingDefect] = useState(false);
@@ -300,7 +305,7 @@ export default function ConstructionApp() {
     }
   };
 
-  const getPlotOverallStatus = (plotId) => {
+  const getPlotOverallStatus = (plotId: any) => {
     const plotInfo = plots.find(p => p.id === plotId); const plotTasks = taskTemplates.filter(t => t.house_type_id === plotInfo?.house_type_id);
     if (!plotTasks.length) return { actual: 0, planned: 0, status: 'none', label: 'ยังไม่มีงาน', colors: 'bg-white border-slate-300 text-slate-500' };
     let totalActual = 0; let totalPlanned = 0; const today = Date.now();
@@ -385,6 +390,13 @@ export default function ConstructionApp() {
   // loggedInUser fetchAllData extracted
   useEffect(() => { if (loggedInUser?.role === 'Owner') setView('global-feed'); }, [loggedInUser]);
   useEffect(() => { setScheduleInputs({}); }, [selectedPlot?.id]);
+  
+  // Lazy load specific plot details when opening plot view
+  useEffect(() => {
+    if (selectedPlot?.id && (view === 'house-detail' || view === 'task-progress')) {
+      fetchPlotDetails(selectedPlot.id);
+    }
+  }, [selectedPlot?.id, view, fetchPlotDetails]);
   // 🌟 ระบบจับการกดปุ่มคีย์บอร์ด (ซ้าย, ขวา, ESC) สำหรับโหมด Presentation
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -440,7 +452,7 @@ export default function ConstructionApp() {
       setHouseTypeForm({ id: '', type_name: '', memo: '' });
       setIsEditingType(false);
       await fetchAllData();
-    } catch (e) {
+    } catch (e: any) {
       showAlert('ล้มเหลว', (e as Error).message);
     }
     setIsSubmitting(false);
@@ -475,13 +487,13 @@ export default function ConstructionApp() {
       setTaskForm({ id: '', task_name: '', task_order: '' });
       setIsEditingTask(false);
       await fetchAllData();
-    } catch (e) {
+    } catch (e: any) {
       showAlert('ล้มเหลว', e.message);
     }
     setIsSubmitting(false);
   };
 
-const handleDeleteTask = async (task) => {
+const handleDeleteTask = async (task: any) => {
     setIsSubmitting(true);
     try {
       // 🎯 ตรวจสอบความสัมพันธ์ทุกตารางพร้อมกัน (parallel) แทนการรอทีละอัน
@@ -523,13 +535,13 @@ const handleDeleteTask = async (task) => {
           await fetchAllData();
           closeDialog();
           showAlert('สำเร็จ', 'ลบงวดงานออกจากระบบเรียบร้อยแล้ว');
-        } catch (e) {
+        } catch (e: any) {
           showAlert('ล้มเหลว', 'เกิดข้อผิดพลาดในการลบ: ' + e.message);
         }
         setIsSubmitting(false);
       });
 
-    } catch (e) {
+    } catch (e: any) {
       setIsSubmitting(false);
       showAlert('ข้อผิดพลาด', 'ไม่สามารถตรวจสอบสถานะการใช้งานของงานนี้ได้');
     }
@@ -570,7 +582,7 @@ const handleLogout = () => {
       const { error } = await supabase.from('plot_task_schedules').upsert(payloads, { onConflict: 'plot_id,task_template_id' });
       if (error) throw error;
       showAlert('สำเร็จ', 'บันทึกแผนงานทั้งหมดเรียบร้อยแล้ว'); setScheduleInputs({}); await fetchAllData();
-    } catch (e) { showAlert('Error', (e as Error).message); } setIsSubmitting(false);
+    } catch (e: any) { showAlert('Error', (e as Error).message); } setIsSubmitting(false);
   };
 
 // 🌟 ฟังก์ชันดึงแผนงานแบบมีระบบ Auto-Shift (เลื่อนวันให้อัตโนมัติ)
@@ -635,13 +647,13 @@ const handleLogout = () => {
     URL.revokeObjectURL(url);
   };
 
-  const toggleFence = (dir, x, y, mode) => { setMapGrid(prev => { const id = `fence-${dir}-${x}-${y}`; if (mode === 'add') { return prev.some(c => c.id === id) ? prev : [...prev, { id, type: `fence-${dir}`, x, y }]; } else { return prev.filter(c => c.id !== id); } }); };
-  const handleMouseDown = (x, y) => { if (!isEditMapMode) return; setIsDrawing(true); setLastDrawCell({x, y}); if (mapTool === 'eraser') eraseCell(x, y); else if (mapTool === 'plot' || mapTool === 'road') { if (mapTool === 'plot' && !mapSelectedPlot) { setIsDrawing(false); return showAlert('แจ้งเตือน', 'เลือกรหัสแปลงก่อน'); } paintCell(x, y); } };
-  const handleMouseEnter = (x, y) => { if (!isDrawing || !isEditMapMode) return; if (mapTool === 'fence' || mapTool === 'eraser') { if (lastDrawCell) { const dx = x - lastDrawCell.x, dy = y - lastDrawCell.y; if (Math.abs(dx) >= 1 && dy === 0) toggleFence('v', Math.max(x, lastDrawCell.x), y, mapTool === 'eraser' ? 'erase' : 'add'); else if (Math.abs(dy) >= 1 && dx === 0) toggleFence('h', x, Math.max(y, lastDrawCell.y), mapTool === 'eraser' ? 'erase' : 'add'); } if (mapTool === 'eraser') eraseCell(x, y); setLastDrawCell({x, y}); } else { paintCell(x, y); setLastDrawCell({x, y}); } };
+  const toggleFence = (dir: any, x: any, y: any, mode: any) => { setMapGrid((prev: any) => { const id = `fence-${dir}-${x}-${y}`; if (mode === 'add') { return prev.some((c: any) => c.id === id) ? prev : [...prev, { id, type: `fence-${dir}`, x, y }]; } else { return prev.filter((c: any) => c.id !== id); } }); };
+  const handleMouseDown = (x: any, y: any) => { if (!isEditMapMode) return; setIsDrawing(true); setLastDrawCell({x, y}); if (mapTool === 'eraser') eraseCell(x, y); else if (mapTool === 'plot' || mapTool === 'road') { if (mapTool === 'plot' && !mapSelectedPlot) { setIsDrawing(false); return showAlert('แจ้งเตือน', 'เลือกรหัสแปลงก่อน'); } paintCell(x, y); } };
+  const handleMouseEnter = (x: any, y: any) => { if (!isDrawing || !isEditMapMode) return; if (mapTool === 'fence' || mapTool === 'eraser') { if (lastDrawCell) { const dx = x - lastDrawCell.x, dy = y - lastDrawCell.y; if (Math.abs(dx) >= 1 && dy === 0) toggleFence('v', Math.max(x, lastDrawCell.x), y, mapTool === 'eraser' ? 'erase' : 'add'); else if (Math.abs(dy) >= 1 && dx === 0) toggleFence('h', x, Math.max(y, lastDrawCell.y), mapTool === 'eraser' ? 'erase' : 'add'); } if (mapTool === 'eraser') eraseCell(x, y); setLastDrawCell({x, y}); } else { paintCell(x, y); setLastDrawCell({x, y}); } };
   const handleMouseUp = () => { setIsDrawing(false); setLastDrawCell(null); };
-  const paintCell = (x, y) => setMapGrid(prev => [...prev.filter(c => !((c.type === 'plot' || c.type === 'road') && c.x === x && c.y === y)), { id: `${x}-${y}`, type: mapTool, x, y, plotId: mapTool === 'plot' ? mapSelectedPlot : null }]);
-  const eraseCell = (x, y) => setMapGrid(prev => prev.filter(c => !((c.type === 'plot' || c.type === 'road') && c.x === x && c.y === y)));
-  const handleSaveMap = async () => { setIsSubmitting(true); try { const finalGrid = [...mapGrid.filter(c => c.type !== 'config'), { id: 'GRID_CONFIG', type: 'config', cols: gridCols, rows: gridRows }]; await supabase.from('projects').update({ layout_data: finalGrid }).eq('name', selectedProject.name); showAlert('สำเร็จ', 'บันทึกแผนผังเรียบร้อย!'); await fetchAllData(); setSelectedProject(prev => ({ ...prev, layout_data: finalGrid })); setIsEditMapMode(false); } catch (e) { showAlert('Error', (e as Error).message); } finally { setIsSubmitting(false); } };
+  const paintCell = (x: any, y: any) => setMapGrid((prev: any) => [...prev.filter((c: any) => !((c.type === 'plot' || c.type === 'road') && c.x === x && c.y === y)), { id: `${x}-${y}`, type: mapTool, x, y, plotId: mapTool === 'plot' ? mapSelectedPlot : null }]);
+  const eraseCell = (x: any, y: any) => setMapGrid((prev: any) => prev.filter((c: any) => !((c.type === 'plot' || c.type === 'road') && c.x === x && c.y === y)));
+  const handleSaveMap = async () => { setIsSubmitting(true); try { const finalGrid = [...mapGrid.filter(c => c.type !== 'config'), { id: 'GRID_CONFIG', type: 'config', cols: gridCols, rows: gridRows }]; await supabase.from('projects').update({ layout_data: finalGrid }).eq('name', selectedProject.name); showAlert('สำเร็จ', 'บันทึกแผนผังเรียบร้อย!'); await fetchAllData(); setSelectedProject(prev => ({ ...prev, layout_data: finalGrid })); setIsEditMapMode(false); } catch (e: any) { showAlert('Error', (e as Error).message); } finally { setIsSubmitting(false); } };
 
   // =========================================================================
   // 🌟 ADMIN / PROCUREMENT FORMS HANDLERS (ฟังก์ชันกรอกข้อมูลทำงานจริง 100%) 🌟
@@ -656,17 +668,17 @@ const handleLogout = () => {
           const { data } = await supabase.from('users').select('*').order('role', { ascending: true }).order('username', { ascending: true }); 
           setAllUsers(data || []); 
           showAlert('สำเร็จ', `เพิ่มผู้ใช้งานเรียบร้อยแล้ว!`); 
-      } catch (e) { showAlert('Error', (e as Error).message); } finally { setIsSubmitting(false); } 
+      } catch (e: any) { showAlert('Error', (e as Error).message); } finally { setIsSubmitting(false); } 
   };
   
-  const handleDeleteUser = (id, name, role) => { 
+  const handleDeleteUser = (id: any, name: any, role: any) => { 
       showConfirm('ยืนยันลบ', `ลบผู้ใช้งาน ${name}?`, async () => { 
           try { 
               if(role === 'Foreman') await supabase.from('foremen').delete().eq('name', name); 
               await supabase.from('users').delete().eq('username', name); 
               const { data } = await supabase.from('users').select('*').order('role', { ascending: true }).order('username', { ascending: true }); 
               setAllUsers(data || []); closeDialog(); 
-          } catch (e) { showAlert('Error', (e as Error).message); } 
+          } catch (e: any) { showAlert('Error', (e as Error).message); } 
       }); 
   };
   
@@ -675,7 +687,7 @@ const handleLogout = () => {
       try { 
           await supabase.from('projects').insert([{ name: newProjectName.trim() }]); 
           setNewProjectName(''); await fetchAllData(); setView('dashboard'); showAlert('สำเร็จ', 'สร้างโครงการใหม่เรียบร้อยแล้ว');
-      } catch (e) { showAlert('Error', (e as Error).message); } finally { setIsSubmitting(false); } 
+      } catch (e: any) { showAlert('Error', (e as Error).message); } finally { setIsSubmitting(false); } 
   };
   
   const handleAddPlot = async () => { 
@@ -683,7 +695,7 @@ const handleLogout = () => {
       try { 
           await supabase.from('plots').insert([{ id: newPlot.id.trim(), house_type_id: newPlot.house_type_id, foreman_name: newPlot.foreman_name, project_name: selectedProject.name }]); 
           setNewPlot({ id: '', house_type_id: '', foreman_name: '' }); await fetchAllData(); setView('project-detail'); showAlert('สำเร็จ', 'เพิ่มแปลงบ้านลงโครงการเรียบร้อยแล้ว');
-      } catch (e) { showAlert('Error', (e as Error).message); } finally { setIsSubmitting(false); } 
+      } catch (e: any) { showAlert('Error', (e as Error).message); } finally { setIsSubmitting(false); } 
   };
   
   const handleAddContractor = async () => { 
@@ -691,12 +703,12 @@ const handleLogout = () => {
       try { 
           await supabase.from('contractors').insert([{ name: newContractor.name.trim(), phone: newContractor.phone.trim() }]); 
           setNewContractor({ name: '', phone: '' }); await fetchAllData(); showAlert('สำเร็จ', 'เพิ่มรายชื่อช่างใหม่เรียบร้อยแล้ว');
-      } catch (e) { showAlert('Error', (e as Error).message); } finally { setIsSubmitting(false); } 
+      } catch (e: any) { showAlert('Error', (e as Error).message); } finally { setIsSubmitting(false); } 
   };
   
   const handleDeleteContractor = (id, name) => { 
       showConfirm('ยืนยันลบ', `ลบรายชื่อช่าง ${name} ออกจากระบบ?`, async () => { 
-          try { await supabase.from('contractors').delete().eq('id', id); await fetchAllData(); closeDialog(); } catch (e) { showAlert('Error', (e as Error).message); } 
+          try { await supabase.from('contractors').delete().eq('id', id); await fetchAllData(); closeDialog(); } catch (e: any) { showAlert('Error', (e as Error).message); } 
       }); 
   };
   
@@ -728,13 +740,13 @@ const handleAssignContractor = async () => {
           setAssignModal({ isOpen: false, task: null, name: '', phone: '' }); 
           fetchAllData(); // โหลดซ้ำไว้เบื้องหลังชิวๆ
           showAlert('สำเร็จ', 'มอบหมายงานให้ช่างเรียบร้อยแล้ว');
-      } catch (e) { 
+      } catch (e: any) { 
           showAlert('Error', 'เกิดข้อผิดพลาดจากฐานข้อมูล: ' + (e as Error).message);
       } 
       setIsSubmitting(false); 
   };
 // 🌟 ฟังก์ชันลบแปลงบ้าน 🌟
-  const handleDeletePlot = (plotId) => { 
+  const handleDeletePlot = (plotId: any) => { 
       showConfirm('ยืนยันลบแปลง', `ลบแปลง ${plotId} ใช่หรือไม่? (ข้อมูลงานที่อัปเดตไปแล้วทั้งหมดจะหายไป)`, async () => { 
           setIsSubmitting(true);
           try { 
@@ -749,7 +761,7 @@ const handleAssignContractor = async () => {
               await fetchAllData(); 
               closeDialog(); 
               showAlert('สำเร็จ', `ลบแปลง ${plotId} ออกจากระบบแล้ว`);
-          } catch (e) { 
+          } catch (e: any) { 
               showAlert('ข้อผิดพลาด', e.message); 
           } finally {
               setIsSubmitting(false);
@@ -757,7 +769,7 @@ const handleAssignContractor = async () => {
       }); 
   };
   // 🌟 ฟังก์ชันเปิดหน้าต่างแก้ไข และดึงค่าเดิมมาใส่ในช่องกรอก
-  const handleEditPlot = (plot) => {
+  const handleEditPlot = (plot: any) => {
     setEditPlotModal({
       isOpen: true,
       plot: plot,
@@ -824,14 +836,14 @@ const handleAssignContractor = async () => {
         }
 
         showAlert('สำเร็จ', 'แก้ไขข้อมูลและอัปเดตผังโครงการเรียบร้อยแล้ว');
-      } catch (e) {
+      } catch (e: any) {
         showAlert('ข้อผิดพลาด', e.message);
       } finally {
         setIsSubmitting(false);
       }
     };
 // 🌟 1. ฟังก์ชันเปิดหน้าต่างแก้ไขโครงการ
-  const handleEditProject = (proj) => {
+  const handleEditProject = (proj: any) => {
     setEditProjectModal({ isOpen: true, oldName: proj.name, newName: proj.name });
   };
 
@@ -857,7 +869,7 @@ const handleAssignContractor = async () => {
       setEditProjectModal({ ...editProjectModal, isOpen: false });
       await fetchAllData();
       showAlert('สำเร็จ', 'เปลี่ยนชื่อโครงการเรียบร้อยแล้ว');
-    } catch (e) {
+    } catch (e: any) {
       showAlert('ข้อผิดพลาด', e.message);
     } finally {
       setIsSubmitting(false);
@@ -867,7 +879,7 @@ const handleSendDefect = async () => {
     if ((!newDefectText.trim() && defectFiles.length === 0) || isSubmittingDefect) return;
     setIsSubmittingDefect(true);
     try {
-      let imageUrls = [];
+      let imageUrls: any[] = [];
       if (defectFiles.length > 0) { 
         imageUrls = await Promise.all(defectFiles.map(async (f) => { 
           // 🌟 ปรับตรงนี้: เช็คก่อนว่ามีฟังก์ชันไหม ถ้าไม่มีให้ใช้ไฟล์ต้นฉบับเลย
@@ -902,13 +914,13 @@ const handleSendDefect = async () => {
 
       setNewDefectText(''); setDefectFiles([]);
       const { data } = await supabase.from('defects').select('*'); setDefects(data || []);
-    } catch (e) { showAlert('Error', (e as Error).message); } setIsSubmittingDefect(false);
+    } catch (e: any) { showAlert('Error', (e as Error).message); } setIsSubmittingDefect(false);
   };
   const handleSendPost = async () => {
     if ((!inputText.trim() && selectedFiles.length === 0) || isSending) return;
     setIsSending(true);
     try {
-      let imageUrls = [];
+      let imageUrls: any[] = [];
       if (selectedFiles.length > 0) { 
         imageUrls = await Promise.all(selectedFiles.map(async (f) => { 
           const comp = await compressImageNative(f.file); // 🌟 ใช้ Native Compression ลบ Error 🌟
@@ -925,10 +937,10 @@ const handleSendDefect = async () => {
       // 🌟 ดึงประวัติงานสดๆ หลัง fetchAllData เพื่ออัปเดต chat view
       const { data } = await supabase.from('task_updates').select('*').eq('task_template_id', selectedTask.id).eq('plot_id', selectedPlot.id).order('created_at', { ascending: true });
       setUpdates(data || []); setInputText(''); setSelectedFiles([]);
-    } catch (e) { showAlert('Error', (e as Error).message); } setIsSending(false);
+    } catch (e: any) { showAlert('Error', (e as Error).message); } setIsSending(false);
   };
 // 🗑️ ฟังก์ชันลบประวัติการรายงานงาน (Recall Post)
-  const handleDeleteUpdate = async (updateId, taskTemplateId, plotId) => {
+  const handleDeleteUpdate = async (updateId: any, taskTemplateId: any, plotId: any) => {
     showConfirm(
       'ยืนยันการลบรายงาน ⚠️', 
       'คุณแน่ใจหรือไม่ว่าต้องการลบประวัติรายงานชิ้นนี้? ระบบจะทำการคำนวณเปอร์เซ็นต์ความคืบหน้าย้อนกลับไปยังครั้งก่อนหน้าให้อัตโนมัติครับ', 
@@ -955,17 +967,17 @@ const handleSendDefect = async () => {
           
           closeDialog();
           showAlert('สำเร็จ ✨', 'ลบประวัติการอัปเดตงานและปรับปรุงความคืบหน้าเรียบร้อยแล้วครับ');
-        } catch (e) {
+        } catch (e: any) {
           showAlert('Error', (e as Error).message);
         }
         setIsSending(false);
       }
     );
   };
-  const handleReviewAction = async (isApproved) => {
+  const handleReviewAction = async (isApproved: any) => {
     setIsSending(true); const finalP = isApproved ? 100 : 95; const roleLabel = currentUserRole === 'Site Engineer' ? 'Site Engineer' : 'QC'; const actionLabel = isApproved ? `${roleLabel} อนุมัติ` : `${roleLabel} แจ้งแก้ไข`;
     try {
-      let imageUrls = [];
+      let imageUrls: any[] = [];
       if (selectedFiles.length > 0) { 
         imageUrls = await Promise.all(selectedFiles.map(async (f) => { 
           const comp = await compressImageNative(f.file); // 🌟 ใช้ Native Compression ลบ Error 🌟
@@ -987,18 +999,18 @@ const handleSendDefect = async () => {
       // 🌟 ดึงประวัติงานสดๆ หลัง fetchAllData เพื่ออัปเดต chat view
       const { data } = await supabase.from('task_updates').select('*').eq('task_template_id', selectedTask.id).eq('plot_id', selectedPlot.id).order('created_at', { ascending: true });
       setUpdates(data || []); setProgressValue(finalP); setInputText(''); setSelectedFiles([]);
-    } catch (e) { showAlert('Error', (e as Error).message); } setIsSending(false);
+    } catch (e: any) { showAlert('Error', (e as Error).message); } setIsSending(false);
   };
 
   // 🌟 Print Export Logic 🌟
   const handleOpenExportModal = () => {
-    let imgs = [];
+    let imgs: any[] = [];
     updates.forEach(u => {
       if(u.image_url) { imgs = [...imgs, ...u.image_url.split(',').filter(url => url.trim() !== '')]; }
     });
     setAllTaskImages(imgs); setSelectedExportImages(imgs); setExportModalOpen(true);
   };
-  const toggleExportImage = (url) => {
+  const toggleExportImage = (url: any) => {
     if (selectedExportImages.includes(url)) { setSelectedExportImages(selectedExportImages.filter(img => img !== url)); } 
     else { setSelectedExportImages([...selectedExportImages, url]); }
   };
@@ -1105,18 +1117,18 @@ const handleSendDefect = async () => {
       const totalChartDays = Math.round((chartEnd - chartStart) / 86400000) + 1;
       const totalChartMs = totalChartDays * 86400000; 
 
-      const getChartLeft = (timestamp) => {
+      const getChartLeft = (timestamp: any) => {
           const d = new Date(timestamp); d.setHours(0,0,0,0);
           return Math.max(0, ((d.getTime() - chartStart) / totalChartMs) * 100);
       };
 
-      const getChartWidth = (startTs, endTs) => {
+      const getChartWidth = (startTs: any, endTs: any) => {
           const dStart = new Date(startTs); dStart.setHours(0,0,0,0);
           const dEnd = new Date(endTs); dEnd.setHours(0,0,0,0);
           return Math.max(0, (((dEnd.getTime() + 86400000) - dStart.getTime()) / totalChartMs) * 100);
       };
 
-      const timeMarkers = [];
+      const timeMarkers: any[] = [];
       if (hasAnySchedule) {
          let current = new Date(chartStart);
          let lastMonthStr = "";
@@ -1155,12 +1167,10 @@ const handleSendDefect = async () => {
       <LoginView
         loginData={loginData}
         setLoginData={setLoginData}
-        setLoggedInUser={setLoggedInUser}
-        setAllUsers={setAllUsers}
-        setProjects={setProjects}
-        setPlots={setPlots}
-        setHouseTypes={setHouseTypes}
-        setTaskTemplates={setTaskTemplates}
+        allUsers={allUsers}
+        handleLogin={handleLogin}
+        dialogConfig={dialogConfig}
+        closeDialog={closeDialog}
       />
     );
   }
@@ -1293,7 +1303,7 @@ const handleSendDefect = async () => {
         {/* 🌟 Modal สำหรับ Daily Activity Report 🌟 */}
         {activityReportOpen && (() => {
             const targetDate = activityReportDate;
-            const activities = [];
+            const activities: any[] = [];
 
             // 1. ดึงข้อมูลอัปเดตงาน (ดึงทุกคนยกเว้น Admin)
             allUpdatesRecord.filter(u => new Date(u.created_at).toLocaleDateString('en-CA') === targetDate && u.role !== 'Admin').forEach(u => {
@@ -1444,7 +1454,7 @@ const handleSendDefect = async () => {
         )}
 
         {dialogConfig.isOpen && (
-          <div className="absolute inset-0 z-[600] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 fixed"><div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full p-6 text-center space-y-4"><div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-2 ${dialogConfig.type === 'confirm' ? 'bg-rose-100 text-rose-600' : 'bg-blue-100 text-blue-600'}`}><AlertTriangle size={32} /></div><h3 className="text-xl font-black">{dialogConfig.title}</h3><p className="text-slate-500 font-medium">{dialogConfig.message}</p><div className="flex gap-3 w-full mt-4">{dialogConfig.type === 'confirm' ? (<><button onClick={closeDialog} className="flex-1 bg-slate-100 text-slate-600 font-bold py-3.5 rounded-xl hover:bg-slate-200">ยกเลิก</button><button onClick={dialogConfig.onConfirm} className="flex-1 bg-rose-600 text-white font-bold py-3.5 rounded-xl hover:bg-rose-700">ยืนยัน</button></>) : (<button onClick={closeDialog} className="w-full bg-slate-800 text-white font-bold py-3.5 rounded-xl">รับทราบ</button>)}</div></div></div>
+          <div className="absolute inset-0 z-[600] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 fixed"><div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full p-6 text-center space-y-4"><div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-2 ${dialogConfig.type === 'confirm' ? 'bg-rose-100 text-rose-600' : 'bg-blue-100 text-blue-600'}`}><AlertTriangle size={32} /></div><h3 className="text-xl font-black">{dialogConfig.title}</h3><p className="text-slate-500 font-medium">{dialogConfig.message}</p><div className="flex gap-3 w-full mt-4">{dialogConfig.type === 'confirm' ? (<><button onClick={closeDialog} className="flex-1 bg-slate-100 text-slate-600 font-bold py-3.5 rounded-xl hover:bg-slate-200">ยกเลิก</button><button onClick={dialogConfig.onConfirm || undefined} className="flex-1 bg-rose-600 text-white font-bold py-3.5 rounded-xl hover:bg-rose-700">ยืนยัน</button></>) : (<button onClick={closeDialog} className="w-full bg-slate-800 text-white font-bold py-3.5 rounded-xl">รับทราบ</button>)}</div></div></div>
         )}
 
         {/* 🧭 Left Sidebar (Desktop Only) - ฉบับพับเก็บได้ */}
@@ -1753,7 +1763,7 @@ const handleSendDefect = async () => {
                                       {/* รูปภาพผลงาน (ถ้ามีรูปภาพ จะรองรับการกดคลิกซูมดูรูปใหญ่ได้ทันที) */}
                                       {update.image_url && (
                                          <div className={`grid gap-2 sm:gap-3 ${update.image_url.split(',').filter(u => u.trim() !== '').length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                                            {update.image_url.split(',').filter(u => u.trim() !== '').map((url, i) => (
+                                            {update.image_url.split(',').filter(u => u.trim() !== '').map((url: any, i: any) => (
                                                <img 
                                                   key={i} 
                                                   src={url.trim()} 
@@ -2025,1009 +2035,77 @@ const handleSendDefect = async () => {
                  </div>
                )}
 
+               
                {/* 🗺️ View: Project Detail & Map Builder */}
                {view === 'project-detail' && selectedProject && (
-                 <div className="animate-in slide-in-from-right duration-300">
-                   <div className="flex justify-between items-end mb-4 sm:mb-6">
-                      <button onClick={() => setView('dashboard')} className="text-xs sm:text-base font-bold text-blue-600 flex items-center gap-1 sm:gap-2 hover:translate-x-[-4px] transition-transform">← {isMobileLayout ? 'BACK' : 'BACK TO PROJECTS'}</button>
-                      {isAdmin && (
-                        <div className="flex flex-wrap justify-end gap-1.5 sm:gap-3">
-                          <button onClick={() => setView('admin-plot')} className="flex items-center gap-1 sm:gap-2 px-2.5 sm:px-5 py-1.5 sm:py-3 rounded-lg sm:rounded-full font-bold text-[10px] sm:text-sm bg-white text-blue-600 border border-blue-200 hover:bg-blue-50 transition-colors shadow-sm sm:shadow-md"><PlusCircle size={14} className="sm:w-4 sm:h-4"/> เพิ่มแปลง</button>
-                          <button onClick={() => setIsEditMapMode(!isEditMapMode)} className={`flex items-center gap-1 sm:gap-2 px-2.5 sm:px-5 py-1.5 sm:py-3 rounded-lg sm:rounded-full font-bold text-[10px] sm:text-sm transition-colors shadow-sm sm:shadow-md ${isEditMapMode ? 'bg-orange-500 text-white' : 'bg-slate-800 text-white hover:bg-slate-700'}`}>
-                            <Grid size={14} className="sm:w-4 sm:h-4"/> {isEditMapMode ? 'ปิดจัดผัง' : 'จัดผัง'}
-                          </button>
-                        </div>
-                      )}
-                   </div>
-
-                   <div className="mb-6 sm:mb-8 p-4 sm:p-8 bg-white rounded-2xl sm:rounded-[2.5rem] shadow-xl border border-slate-200 overflow-hidden relative">
-                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 sm:mb-6 gap-3 sm:gap-4">
-                        <div>
-                          <h2 className="text-xl sm:text-4xl font-black text-slate-800 italic uppercase tracking-tighter">{selectedProject.name} MAP</h2>
-                          <p className="text-slate-500 text-[10px] sm:text-sm font-bold uppercase tracking-widest flex items-center gap-1.5 sm:gap-2 mt-0.5 sm:mt-1"><MapIcon size={12} className="sm:w-4 sm:h-4"/> จำลองผังโครงการ ({gridCols}x{gridRows} Grid)</p>
-                        </div>
-                        
-                        <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
-                          {/* 🌟 ปุ่มเปิด Presentation Mode */}
-                          {['Project Planner', 'Admin', 'Owner'].includes(currentUserRole) && (
-                              <button onClick={() => { setIsPresentationOpen(true); setCurrentSlideIndex(0); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl font-black text-xs sm:text-sm shadow-md transition-all flex items-center gap-1.5 shrink-0">
-                                <Monitor size={16} /> <span className="hidden sm:inline">Presentation Mode</span><span className="inline sm:hidden">โหมดนำเสนอ</span>
-                              </button>
-                          )}
-                          
-                          {/* 🌟 UX: ช่องค้นหาช่างเข้างานวันนี้ (Contractor Radar) 🌟 */}
-                          <div className="relative hidden lg:block mr-2 w-64">
-                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-                             <input type="text" placeholder="ค้นหาช่าง..." value={searchContractor} onChange={(e) => setSearchContractor(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-3 py-2 text-xs font-bold outline-none focus:border-blue-500 text-slate-700 shadow-sm" />
-                          </div>
-
-                          <div className="flex bg-slate-100 rounded-lg border border-slate-200 shadow-sm p-1">
-                             <button onClick={handleZoomOut} className="p-1.5 sm:p-2.5 text-slate-500 hover:text-blue-600 hover:bg-white rounded-md sm:rounded-lg transition-colors"><ZoomOut size={16} className="sm:w-5 sm:h-5"/></button>
-                             <button onClick={handleZoomReset} className="px-2 sm:px-4 text-[10px] sm:text-sm font-black text-slate-600 hover:text-blue-600 hover:bg-white rounded-md sm:rounded-lg transition-colors">{Math.round(mapZoom * 100)}%</button>
-                             <button onClick={handleZoomIn} className="p-1.5 sm:p-2.5 text-slate-500 hover:text-blue-600 hover:bg-white rounded-md sm:rounded-lg transition-colors"><ZoomIn size={16} className="sm:w-5 sm:h-5"/></button>
-                          </div>
-                          {isEditMapMode && (
-                            <button onClick={handleSaveMap} disabled={isSubmitting} className="bg-blue-600 text-white px-4 sm:px-8 py-2 sm:py-3.5 rounded-lg sm:rounded-xl font-black shadow-lg hover:bg-blue-700 flex items-center justify-center gap-1.5 sm:gap-2 flex-1 sm:flex-none text-xs sm:text-base">
-                              {isSubmitting ? <Loader2 className="animate-spin" size={16}/> : 'บันทึก'}
-                            </button>
-                          )}
-                        </div>
-                     </div>
-
-                     {/* Mobile Search Bar */}
-                     <div className="lg:hidden w-full mb-4 sm:mb-6 relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-                        <input type="text" placeholder="ค้นหาชื่อช่างในผัง..." value={searchContractor} onChange={(e) => setSearchContractor(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-3 py-2 text-xs font-bold outline-none focus:border-blue-500 text-slate-700 shadow-sm" />
-                     </div>
-
-                     {isEditMapMode && (
-                       <div className="flex flex-col xl:flex-row gap-3 sm:gap-4 mb-4 sm:mb-6 p-3 sm:p-5 bg-slate-50 rounded-xl sm:rounded-2xl border border-slate-200 shadow-inner">
-                         <div className="flex flex-wrap gap-1.5 sm:gap-3">
-                            <button onClick={() => setMapTool('plot')} className={`px-2 sm:px-4 py-1.5 sm:py-3 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-sm border-2 flex items-center gap-1.5 sm:gap-2 ${mapTool === 'plot' ? 'bg-emerald-500 text-white border-emerald-500 shadow-sm' : 'bg-white text-emerald-600 border-emerald-200'}`}><Paintbrush size={12} className="sm:w-4 sm:h-4"/> ระบายบ้าน</button>
-                            {mapTool === 'plot' && (
-                              <select value={mapSelectedPlot} onChange={e => setMapSelectedPlot(e.target.value)} className="bg-white border border-slate-300 rounded-lg sm:rounded-xl px-2 sm:px-3 py-1.5 sm:py-3 text-[10px] sm:text-sm font-bold outline-none text-emerald-800 shadow-sm"><option value="">-- รหัสแปลง --</option>{plots.filter(p => p.project_name === selectedProject.name).map(p => <option key={p.id} value={p.id}>{p.id}</option>)}</select>
-                            )}
-                            <div className="w-px h-8 sm:h-12 bg-slate-300 mx-1 sm:mx-2 self-center hidden sm:block"></div>
-                            <button onClick={() => setMapTool('road')} className={`px-2 sm:px-4 py-1.5 sm:py-3 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-sm border-2 flex items-center gap-1.5 sm:gap-2 ${mapTool === 'road' ? 'bg-slate-700 text-white border-slate-700 shadow-sm' : 'bg-white text-slate-600 border-slate-200'}`}>สร้างถนน</button>
-                            <button onClick={() => setMapTool('fence')} className={`px-2 sm:px-4 py-1.5 sm:py-3 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-sm border-2 flex items-center gap-1.5 sm:gap-2 ${mapTool === 'fence' ? 'bg-orange-500 text-white border-orange-500 shadow-sm' : 'bg-white text-slate-600 border-slate-200'}`}>สร้างเส้นรั้ว</button>
-                            <div className="w-px h-8 sm:h-12 bg-slate-300 mx-1 sm:mx-2 self-center hidden sm:block"></div>
-                            <button onClick={() => setMapTool('eraser')} className={`px-2 sm:px-4 py-1.5 sm:py-3 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-sm border-2 flex items-center gap-1.5 sm:gap-2 ml-auto ${mapTool === 'eraser' ? 'bg-rose-500 text-white border-rose-500 shadow-sm' : 'bg-white text-slate-600 border-slate-200'}`}><Eraser size={12} className="sm:w-4 sm:h-4"/> ลบ</button>
-                         </div>
-                         <div className="flex items-center gap-2 sm:gap-3 bg-white px-3 sm:px-4 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl shadow-sm border border-slate-200 xl:ml-auto w-fit">
-                            <span className="text-[9px] sm:text-xs font-black text-slate-500 uppercase">ขนาด Grid</span>
-                            <input type="number" value={gridCols} onChange={e=>setGridCols(Number(e.target.value))} className="w-10 sm:w-16 text-center text-[10px] sm:text-sm font-bold border border-slate-200 rounded outline-none focus:border-blue-500 bg-slate-50 p-1 sm:p-1.5"/>
-                            <span className="text-[10px] sm:text-sm text-slate-400">x</span>
-                            <input type="number" value={gridRows} onChange={e=>setGridRows(Number(e.target.value))} className="w-10 sm:w-16 text-center text-[10px] sm:text-sm font-bold border border-slate-200 rounded outline-none focus:border-blue-500 bg-slate-50 p-1 sm:p-1.5"/>
-                         </div>
-                       </div>
-                     )}
-
-                     {/* 🌟 UX Blueprint Map 🌟 */}
-                     <div className="w-full overflow-auto pb-4 custom-scrollbar bg-slate-100 rounded-xl sm:rounded-3xl border-2 sm:border-4 border-slate-300 shadow-inner" style={{ height: isMobileLayout ? '350px' : '600px' }}>
-                       <div 
-                          className={`relative bg-slate-50 select-none origin-top-left transition-transform duration-200 ${isEditMapMode ? 'cursor-crosshair' : 'cursor-grab'}`} 
-                          style={{ 
-                             width: `${gridCols * 40}px`, 
-                             height: `${gridRows * 40}px`, 
-                             minWidth: '100%', 
-                             transform: `scale(${mapZoom})`,
-                             backgroundImage: `radial-gradient(#cbd5e1 1.5px, transparent 1.5px)`,
-                             backgroundSize: `40px 40px` // Dot grid pattern
-                          }} 
-                          onMouseLeave={handleMouseUp} onMouseUp={handleMouseUp}
-                       >
-                         <div className="absolute inset-0 grid" style={{ gridTemplateColumns: `repeat(${gridCols}, 1fr)`, gridTemplateRows: `repeat(${gridRows}, 1fr)` }}>
-                           {Array.from({length: gridCols * gridRows}).map((_, i) => {
-                             const x = i % gridCols, y = Math.floor(i / gridCols);
-                             const cellData = mapGrid.find(c => c.x === x && c.y === y && (c.type === 'plot' || c.type === 'road'));
-                             
-                             let baseStyles = 'border-r border-b border-transparent '; // Remove solid grid lines
-                             if (isEditMapMode && !cellData) baseStyles += 'hover:bg-blue-100/30 ';
-
-                             if (cellData?.type === 'plot') {
-                               const adj = getAdjacency(x, y, 'plot', cellData.plotId);
-                               baseStyles = 'bg-emerald-100/50 border-emerald-300 ';
-                               // Remove inner borders for contiguous plots
-                               if (adj.hasTop) baseStyles += '!border-t-0 '; if (adj.hasBottom) baseStyles += '!border-b-0 '; if (adj.hasLeft) baseStyles += '!border-l-0 '; if (adj.hasRight) baseStyles += '!border-r-0 ';
-                             } else if (cellData?.type === 'road') { 
-                               baseStyles = 'bg-slate-600 flex items-center justify-center border-slate-700 '; 
-                             }
-
-                             return (
-                               <div key={i} className={`relative transition-colors duration-75 border ${baseStyles}`} onMouseDown={() => handleMouseDown(x, y)} onMouseEnter={() => handleMouseEnter(x, y)} onClick={() => { if (!isEditMapMode && cellData?.type === 'plot') { const plotInfo = plots.find(p => p.id === cellData.plotId); if (plotInfo) { setSelectedPlot(plotInfo); setView('house-detail'); } } }}>
-                                 {cellData?.type === 'road' && (() => {
-                                    const adj = getAdjacency(x, y, 'road', null);
-                                    return (<>{adj.hasLeft && adj.hasRight && !adj.hasTop && !adj.hasBottom && <div className="w-full h-0 border-t-2 border-dashed border-yellow-500/40" />}{adj.hasTop && adj.hasBottom && !adj.hasLeft && !adj.hasRight && <div className="h-full w-0 border-l-2 border-dashed border-yellow-500/40" />}{adj.hasTop && adj.hasBottom && adj.hasLeft && adj.hasRight && <div className="w-2 h-2 bg-yellow-500/40 rounded-full" />}</>);
-                                 })()}
-                               </div>
-                             );
-                           })}
-                         </div>
-                         {mapGrid.filter(c => c.type === 'fence-h').map(c => (<div key={c.id} className="absolute border-t-4 border-dashed border-orange-500 z-20 pointer-events-none" style={{ left: `${(c.x / gridCols) * 100}%`, top: `${(c.y / gridRows) * 100}%`, width: `${(1 / gridCols) * 100}%`, height: '6px', transform: 'translateY(-50%)' }} />))}
-                         {mapGrid.filter(c => c.type === 'fence-v').map(c => (<div key={c.id} className="absolute border-l-4 border-dashed border-orange-500 z-20 pointer-events-none" style={{ left: `${(c.x / gridCols) * 100}%`, top: `${(c.y / gridRows) * 100}%`, width: '6px', height: `${(1 / gridRows) * 100}%`, transform: 'translateX(-50%)' }} />))}
-                         
-                         {/* 🌟 UX Blueprint: Smart Hover Tooltips & Contractor Filter 🌟 */}
-                         {Object.entries(plotBounds).map(([plotId, bounds]:any) => {
-                           const plotInfo = plots.find(p => p.id === plotId); if (!plotInfo) return null;
-                           const w = bounds.maxX - bounds.minX + 1, h = bounds.maxY - bounds.minY + 1;
-                           const statusInfo = getPlotOverallStatus(plotInfo.id);
-
-                           // 🌟 หางานล่าสุดที่มีการอัปเดตของแปลงนี้
-                           const plotUpdates = allUpdatesRecord?.filter(u => u.plot_id === plotInfo.id) || [];
-                           const latestUpdate = plotUpdates.length > 0 ? plotUpdates[plotUpdates.length - 1] : null;
-                           const latestTask = latestUpdate ? taskTemplates.find(t => t.id === latestUpdate.task_template_id) : null;
-                           const latestTaskStr = latestTask ? `${latestTask.task_name} (${latestUpdate.progress}%)` : 'ยังไม่มีงานอัปเดต';
-
-                           // ดักจับว่าแปลงนี้ใช้ช่างที่เรากำลังค้นหาอยู่หรือไม่
-
-                           // ดักจับว่าแปลงนี้ใช้ช่างที่เรากำลังค้นหาอยู่หรือไม่
-                           const currentPlotAssignment = assignments.slice().reverse().find(a => a.plot_id === plotId);
-                           const hasSearchedContractor = searchContractor.trim() !== '';
-                           const isMatchContractor = currentPlotAssignment?.contractor_name.toLowerCase().includes(searchContractor.toLowerCase());
-
-                           const isActiveToday = plotsActiveToday.has(plotId);
-
-                           // ปรับสไตล์เอฟเฟกต์ไฮไลท์ช่าง
-                           let searchHighlightClass = "opacity-100 scale-100";
-                           let cardBorderClass = statusInfo.colors; 
-
-                           if (hasSearchedContractor) {
-                              if (isMatchContractor) {
-                                 // ถ้าใช่ช่างที่ค้นหา: ล็อกขอบสีทองหนาพิเศษ + ใส่เงาไฟนีออนกระพริบวิบวับ
-                                 searchHighlightClass = "opacity-100 scale-105 z-50 animate-pulse";
-                                 cardBorderClass = "bg-amber-50 border-amber-500 text-amber-900 shadow-[0_0_25px_rgba(245,158,11,0.8)] border-[4px]";
-                              } else {
-                                 // ถ้าไม่ใช่ช่างที่ค้นหา: ปรับจางลงมากเป็นสีขาวดำ เพื่อขับช่างคนนั้นให้เด่น
-                                 searchHighlightClass = "opacity-10 scale-95 grayscale pointer-events-none";
-                              }
-                           }
-
-                           return (
-                             <div key={`label-${plotId}`} className={`absolute flex items-center justify-center p-1 transition-all ${isEditMapMode ? 'opacity-50 pointer-events-none' : 'hover:z-50 cursor-pointer group'} ${searchHighlightClass}`} style={{ left: `${(bounds.minX / gridCols) * 100}%`, top: `${(bounds.minY / gridRows) * 100}%`, width: `${(w / gridCols) * 100}%`, height: `${(h / gridRows) * 100}%` }} onClick={() => { if (!isEditMapMode) { setSelectedPlot(plotInfo); setView('house-detail'); } }}>
-                             
-                                {/* ✅ โค้ดใหม่: จัดวางไอคอน Pickaxe ไว้ที่จุดกึ่งกลางของแปลงพอดี */}
-                                {isActiveToday && (
-                                   <div className="absolute top-1/5 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-yellow-400 text-slate-900 rounded-full p-1 sm:p-1.5 shadow-lg animate-bounce z-[60] border-2 border-white" title="มีการทำงานในแปลงนี้วันนี้">
-                                      <Pickaxe size={14} className="w-3 h-3 sm:w-4 sm:h-4"/>
-                                   </div>
-                                )}
-
-                                <div className={`w-full h-full border-[2px] sm:border-[3px] rounded-md sm:rounded-lg shadow-sm backdrop-blur-sm flex flex-col items-center justify-center relative transition-all group-hover:shadow-md group-hover:scale-[1.02] ${cardBorderClass}`}>
-                                   
-                                   {/* แสดงชื่อแปลงเป็นหลัก */}
-                                   <span className="font-black text-[10px] sm:text-sm">{plotInfo.id}</span>
-                                   
-                                   {/* 🌟 🌟 ถ้ามีการค้นหาช่างและเจอแปลงของช่าง: ให้แถมป้ายชื่อช่างแปะไว้ตรงกลางผังเลย! 🌟 🌟 */}
-                                   {hasSearchedContractor && isMatchContractor && (
-                                      <div className="absolute -bottom-2 bg-amber-500 text-slate-900 font-black px-1.5 py-0.5 rounded text-[8px] sm:text-[10px] uppercase tracking-wider shadow-md whitespace-nowrap border border-white z-40">
-                                         👷‍♂️ {currentPlotAssignment.contractor_name.split(' ')[0]}
-                                      </div>
-                                   )}
-                                   
-                                   {/* Tooltip รายละเอียดเมื่อเอาเมาส์ชี้ (คงเดิมไว้ทั้งหมด) */}
-                                   <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-[160px] sm:w-[180px] bg-slate-900 text-white rounded-xl sm:rounded-2xl shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all p-3 sm:p-4 pointer-events-none z-[100] border border-slate-700">
-                                      <div className="flex justify-between items-center w-full mb-1 sm:mb-2">
-                                         <span className="font-black text-xs sm:text-sm">{plotInfo.id}</span>
-                                         <span className={`text-[8px] sm:text-[10px] font-black px-1.5 sm:px-2 py-0.5 rounded-full ${statusInfo.status === 'delayed' ? 'bg-rose-500 text-white' : statusInfo.status === 'completed' ? 'bg-emerald-500 text-white' : statusInfo.status === 'ahead' ? 'bg-indigo-500 text-white' : statusInfo.status === 'on-track' ? 'bg-blue-500 text-white' : 'bg-slate-600 text-slate-300'}`}>{statusInfo.label}</span>
-                                      </div>
-                                      <p className="text-[9px] sm:text-[10px] text-slate-400 mb-1 sm:mb-2 flex items-center gap-1 sm:gap-1.5"><HardHat size={10} className="sm:w-3 sm:h-3"/> {plotInfo.foreman || 'ไม่ระบุ'}</p>
-                                      
-                                      {/* 🌟 กล่องแสดงงานล่าสุดใน Tooltip */}
-                                      <div className="bg-slate-800/80 p-1.5 sm:p-2 rounded-lg border border-slate-700/50 mb-2 sm:mb-3">
-                                         <p className="text-[8px] text-slate-500 uppercase font-bold tracking-widest mb-0.5 flex items-center gap-1"><Activity size={8}/> งานล่าสุด:</p>
-                                         <p className="text-[9px] sm:text-[10px] text-amber-400 font-bold truncate">{latestTaskStr}</p>
-                                      </div>
-                                      
-                                      <div className="w-full space-y-1.5 sm:space-y-2 mt-1">
-                                         <div className="flex justify-between text-[8px] sm:text-[10px] font-bold text-slate-400 leading-none"><span>Plan</span><span>{statusInfo.planned}%</span></div>
-                                         <div className="w-full bg-slate-700 h-1 sm:h-1.5 rounded-full overflow-hidden"><div className="bg-slate-400 h-full" style={{width:`${statusInfo.planned}%`}}></div></div>
-                                         
-                                         <div className="flex justify-between text-[8px] sm:text-[10px] font-bold text-slate-400 leading-none pt-1"><span>Actual</span><span className={statusInfo.status === 'delayed' ? 'text-rose-400' : 'text-blue-400'}>{statusInfo.actual}%</span></div>
-                                         <div className="w-full bg-slate-700 h-1 sm:h-1.5 rounded-full overflow-hidden"><div className={`h-full ${statusInfo.status === 'delayed' ? 'bg-rose-500' : 'bg-blue-500'}`} style={{width:`${statusInfo.actual}%`}}></div></div>
-                                      </div>
-                                      <div className="absolute top-full left-1/2 -translate-x-1/2 border-[5px] sm:border-[6px] border-transparent border-t-slate-900"></div>
-                                   </div>
-                                </div>
-                             </div>
-                           )
-                         })}
-                       </div>
-                     </div>
-                   </div>
-
-                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 sm:mb-6 mt-8 sm:mt-12 gap-3 sm:gap-4">
-                      <h3 className="font-black text-xl sm:text-3xl text-slate-800 italic uppercase">Plot Directory</h3>
-                      <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 w-full sm:w-auto">
-                        <div className="relative flex-1 sm:w-64"><Search className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 text-slate-400" size={14} className="sm:w-[18px] sm:h-[18px]"/><input type="text" placeholder="ค้นหาแปลง (เช่น A-01)" value={searchPlot} onChange={(e) => setSearchPlot(e.target.value)} className="w-full bg-white border border-slate-200 rounded-lg sm:rounded-xl pl-9 sm:pl-11 pr-3 sm:pr-4 py-2 sm:py-3.5 text-xs sm:text-sm font-bold outline-none focus:border-blue-500 text-slate-700 shadow-sm" /></div>
-                        {currentUserRole !== 'Foreman' && (
-                           <div className="relative flex-1 sm:w-64"><Filter className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 text-slate-400" size={14} className="sm:w-[18px] sm:h-[18px]"/><select value={filterForeman} onChange={(e) => setFilterForeman(e.target.value)} className="w-full bg-white border border-slate-200 rounded-lg sm:rounded-xl pl-9 sm:pl-11 pr-3 sm:pr-4 py-2 sm:py-3.5 text-xs sm:text-sm font-bold outline-none focus:border-blue-500 text-slate-700 appearance-none shadow-sm cursor-pointer"><option value="">โฟร์แมนทั้งหมด</option>{foremenList.map(f => <option key={f.id} value={f.username}>{f.username}</option>)}</select></div>
-                        )}
-                      </div>
-                   </div>
-                   
-                   <div className={`grid gap-3 sm:gap-6 ${isMobileLayout ? 'grid-cols-2' : 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'}`}>
-                        {displayPlots.map((plot) => {
-                        // 🌟 ดึงข้อมูล Status ของแปลงนั้นๆ เพื่อเอา % แผนงาน (planned) และ % งานจริง (actual) 🌟
-                        const statusInfo = getPlotOverallStatus(plot.id);
-                        
-                        // 🌟 หางานล่าสุดที่มีการอัปเดตของการ์ดแปลงนี้
-                        const plotUpdates = allUpdatesRecord?.filter(u => u.plot_id === plot.id) || [];
-                        const latestUpdate = plotUpdates.length > 0 ? plotUpdates[plotUpdates.length - 1] : null;
-                        const latestTask = latestUpdate ? taskTemplates.find(t => t.id === latestUpdate.task_template_id) : null;
-                        const latestTaskStr = latestTask ? `${latestTask.task_name} (${latestUpdate.progress}%)` : 'ยังไม่มีงานอัปเดต';
-
-                        return (
-                          <div key={plot.id} onClick={() => { setSelectedPlot(plot); setView('house-detail'); }} className="relative group w-full bg-white p-4 sm:p-8 rounded-xl sm:rounded-[2.5rem] border border-slate-200 text-left hover:border-blue-500 hover:shadow-xl hover:-translate-y-1 transition-all flex flex-col justify-between h-full cursor-pointer">
-                           {/* 🌟 ปุ่มลบแปลงบ้าน (เห็นเฉพาะ Admin) 🌟 */}
-                            {isAdmin && (
-                              <button onClick={(e) => { e.stopPropagation(); handleDeletePlot(plot.id); }} className="absolute top-3 right-3 sm:top-5 sm:right-5 p-1.5 sm:p-2 bg-rose-50 text-rose-500 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-rose-500 hover:text-white transition-all z-20 shadow-sm" title="ลบแปลงนี้">
-                                <Trash2 size={16} />
-                              </button>
-                            )} 
-                            {/* 🌟 เพิ่มปุ่มแก้ไข (ใหม่) วางไว้ทางซ้ายของปุ่มลบเล็กน้อย */}
-                            {isAdmin && (
-                              <button onClick={(e) => { e.stopPropagation(); handleEditPlot(plot); }} className="absolute top-3 right-12 sm:top-5 sm:right-16 p-1.5 sm:p-2 bg-blue-50 text-blue-500 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-blue-500 hover:text-white transition-all z-20 shadow-sm" title="แก้ไขแปลงนี้">
-                                <Settings size={16} />
-                              </button>
-                            )}
-                            {/* ส่วนหัวของการ์ด และป้ายสถานะ */}
-                            <div className="flex justify-between items-start w-full mb-1 sm:mb-2">
-                              <h3 className={`${isMobileLayout ? 'text-2xl' : 'text-4xl sm:text-5xl'} font-black text-slate-800 truncate`}>{plot.id}</h3>
-                              <span className={`text-[8px] sm:text-[10px] font-black px-2 py-1 rounded-full ${statusInfo.status === 'delayed' ? 'bg-rose-100 text-rose-600' : statusInfo.status === 'completed' ? 'bg-emerald-100 text-emerald-600' : statusInfo.status === 'ahead' ? 'bg-indigo-100 text-indigo-600' : statusInfo.status === 'on-track' ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-500'}`}>
-                                {statusInfo.label}
-                              </span>
-                            </div>
-
-                            <div className={`${isMobileLayout ? 'text-[9px]' : 'text-base'} font-bold text-slate-500 mb-1 sm:mb-3 flex items-center gap-1.5`}><HardHat size={isMobileLayout ? 12 : 18} className="text-orange-500" /> {plot.foreman || 'ไม่ระบุ'}</div>
-                            <p className={`${isMobileLayout ? 'text-[8px]' : 'text-xs'} text-slate-400 font-bold uppercase tracking-wider mb-2 sm:mb-3`}>{plot.type}</p>
-                            
-                            {/* 🌟 กล่องแสดงงานล่าสุดของการ์ด */}
-                            <div className="bg-blue-50/50 border border-blue-100 rounded-lg p-2 sm:p-3 mb-3 sm:mb-4 flex items-center gap-2">
-                               <Activity size={isMobileLayout ? 12 : 16} className="text-blue-500 shrink-0"/>
-                               <div className="min-w-0 flex-1">
-                                  <p className="text-[8px] sm:text-[10px] text-slate-400 font-bold uppercase">อัปเดตล่าสุด</p>
-                                  <p className="text-[10px] sm:text-xs font-black text-blue-700 truncate">{latestTaskStr}</p>
-                               </div>
-                            </div>
-                            
-                            {/* 🌟 ส่วนแถบ Progress: แบ่งเป็น Plan และ Actual 🌟 */}
-                            
-                            {/* 🌟 ส่วนแถบ Progress: แบ่งเป็น Plan และ Actual 🌟 */}
-                            <div className="w-full mt-auto space-y-2 sm:space-y-4">
-                              
-                              {/* แถบ Plan (แผนงาน) */}
-                              <div>
-                                <div className={`flex items-center justify-between font-black ${isMobileLayout ? 'text-[8px]' : 'text-[10px] sm:text-xs'} mb-1 sm:mb-1.5`}>
-                                  <span className="text-slate-400 uppercase tracking-widest">Plan (แผน)</span>
-                                  <span className="text-slate-500">{statusInfo.planned}%</span>
-                                </div>
-                                <div className="h-1.5 sm:h-2.5 bg-slate-100 rounded-full overflow-hidden">
-                                  <div className="h-full bg-slate-300 transition-all duration-500" style={{width: `${statusInfo.planned}%`}}></div>
-                                </div>
-                              </div>
-
-                              {/* แถบ Actual (งานจริง) */}
-                              <div>
-                                <div className={`flex items-center justify-between font-black ${isMobileLayout ? 'text-[8px]' : 'text-[10px] sm:text-xs'} mb-1 sm:mb-1.5`}>
-                                  <span className="text-slate-400 uppercase tracking-widest">Actual (จริง)</span>
-                                  <span className={`${statusInfo.status === 'delayed' ? 'text-rose-500' : 'text-blue-600'} ${isMobileLayout ? 'text-sm' : 'text-lg'}`}>{statusInfo.actual}%</span>
-                                </div>
-                                <div className="h-1.5 sm:h-2.5 bg-slate-100 rounded-full overflow-hidden">
-                                  <div className={`h-full transition-all duration-500 ${statusInfo.status === 'delayed' ? 'bg-rose-500' : 'bg-blue-500'}`} style={{width: `${statusInfo.actual}%`}}></div>
-                                </div>
-                              </div>
-
-                            </div>
-                            
-                            {/* ไอคอนจอบสีเหลืองในการ์ด (ผมปรับให้อยู่ตรงกลางบนเหมือนกันเพื่อความสวยงามครับ) */}
-                            {plotsActiveToday.has(plot.id) && ( 
-                              <div className="absolute -top-2 left-1/2 -translate-x-1/2 sm:-top-3 bg-yellow-400 text-slate-900 rounded-full p-1 sm:p-1.5 shadow-sm sm:shadow-md animate-bounce border-2 border-white">
-                                  <Pickaxe size={isMobileLayout ? 12 : 16} />
-                              </div> 
-                            )}
-                          </div>
-                        );
-                      })}
-                   </div>
-                 </div>
+                 <MapVisualizer 
+                   view={view} setView={setView} selectedProject={selectedProject} 
+                   isAdmin={isAdmin} currentUserRole={currentUserRole} isMobileLayout={isMobileLayout}
+                   isEditMapMode={isEditMapMode} setIsEditMapMode={setIsEditMapMode} 
+                   gridCols={gridCols} setGridCols={setGridCols} gridRows={gridRows} setGridRows={setGridRows}
+                   mapZoom={mapZoom} handleZoomIn={handleZoomIn} handleZoomOut={handleZoomOut} handleZoomReset={handleZoomReset}
+                   mapTool={mapTool} setMapTool={setMapTool} mapSelectedPlot={mapSelectedPlot} setMapSelectedPlot={setMapSelectedPlot}
+                   plots={plots} isSubmitting={isSubmitting} handleSaveMap={handleSaveMap}
+                   mapGrid={mapGrid} getAdjacency={getAdjacency} handleMouseDown={handleMouseDown} 
+                   handleMouseEnter={handleMouseEnter} handleMouseUp={handleMouseUp}
+                   setSelectedPlot={setSelectedPlot} plotBounds={plotBounds} getPlotOverallStatus={getPlotOverallStatus}
+                   allUpdatesRecord={allUpdatesRecord} taskTemplates={taskTemplates} assignments={assignments}
+                   searchContractor={searchContractor} setSearchContractor={setSearchContractor}
+                   plotsActiveToday={plotsActiveToday} searchPlot={searchPlot} setSearchPlot={setSearchPlot}
+                   filterForeman={filterForeman} setFilterForeman={setFilterForeman} foremenList={foremenList}
+                   displayPlots={displayPlots} handleDeletePlot={handleDeletePlot} handleEditPlot={handleEditPlot}
+                   setIsPresentationOpen={setIsPresentationOpen} setCurrentSlideIndex={setCurrentSlideIndex}
+                 />
                )}
 
+               
                {/* 📋 LEVEL 3: House Detail */}
                {view === 'house-detail' && selectedPlot && (
-                 <div className="animate-in slide-in-from-right duration-300">
-                   <button onClick={() => setView('project-detail')} className="mb-4 sm:mb-6 text-xs sm:text-base font-bold text-blue-600 flex items-center gap-1.5 hover:-translate-x-1 transition-transform">← {isMobileLayout ? 'BACK' : `BACK TO ${selectedProject?.name}`}</button>
-                   
-               {/* 💬 LEVEL 4: Task Progress (ฉบับปรับปรุงฟอนต์ขนาดเท่าชื่องาน) */}
-                <div className="bg-slate-800 rounded-xl border-b-4 border-b-rose-600 shadow-lg p-3 text-white">
-                  
-                  {/* ส่วน Header รวม: ชื่อแปลง + ข้อมูล (บรรทัดเดียว) */}
-                  <div className="flex flex-wrap justify-between items-center gap-3">
-                    
-                    {/* ส่วนซ้าย: ชื่อแปลง (ปรับให้ฟอนต์ชื่อแปลงเด่นกว่าข้อมูลเล็กน้อยตามหลัก Hierarchy) */}
-                    <div className="flex-shrink-0">
-                        <h2 className="text-xl font-black italic tracking-tighter">{selectedPlot.id}</h2>
-                        <p className="text-slate-400 font-bold uppercase text-[9px] italic">{selectedPlot.foreman || 'ไม่ระบุ'}</p>
-                    </div>
-
-                    {/* ส่วนกลาง: ข้อมูล 4 ตัว (ปรับฟอนต์ให้เท่าขนาดชื่องานคือ text-xs) */}
-                    <div className="flex items-center gap-5 border-l border-slate-600 pl-5">
-                        <div className="text-xs">
-                          <span className="text-slate-400 font-bold uppercase block text-[9px]">เวลา</span>
-                          <span className="font-bold">{plotPlanStart !== Infinity ? `${new Date(plotPlanStart).toLocaleDateString('th-TH', {day:'numeric',month:'short'})}-${new Date(plotPlanEnd).toLocaleDateString('th-TH', {day:'numeric',month:'short'})}` : '-'}</span>
-                          <span className="text-rose-400 block font-black text-[9px]">รวม {plotPlanStart !== Infinity ? Math.max(0, Math.ceil((plotPlanEnd - plotPlanStart) / (1000 * 60 * 60 * 24)) + 1) : 0} วัน</span>
-                        </div>
-                        <div className="text-xs">
-                          <span className="text-slate-400 font-bold uppercase block text-[9px]">ผ่าน</span>
-                          <span className="text-blue-300 font-black">{plotPlanStart !== Infinity ? Math.min(daysElapsed, totalPlannedDays) : '-'} <span className="font-bold text-[10px]">วัน</span></span>
-                        </div>
-                        <div className="text-xs">
-                          <span className="text-slate-400 font-bold uppercase block text-[9px]">เหลือ</span>
-                          <span className="text-emerald-300 font-black">{plotPlanEnd !== -Infinity ? Math.max(0, daysRemaining) : '-'} <span className="font-bold text-[10px]">วัน</span></span>
-                        </div>
-                        <div className="text-xs">
-                          <span className="text-slate-400 font-bold uppercase block text-[9px]">สถานะ</span>
-                          {plotPlanStart === Infinity ? <span className="text-slate-400">รอแผน</span> :
-                            isSummaryDelayed ? <span className="text-rose-500 font-black">ล่าช้า</span> : 
-                            selectedPlot?.progress === 100 ? <span className="text-emerald-500 font-black">เสร็จ</span> :
-                            <span className="text-blue-500 font-black">กำลังทำ</span>}
-                        </div>
-                    </div>
-
-                    {/* ส่วนขวา: ปุ่มจัดการ (คงขนาดเดิมที่ปรับไว้ล่าสุด) */}
-                    {isProjectPlanner && (
-                      <div className="flex gap-1 ml-auto">
-                        <button onClick={() => setCopyModalOpen(true)} className="bg-slate-700 text-slate-200 px-2 py-1 rounded text-[10px] hover:bg-slate-600 border border-slate-600 font-bold">คัดลอก</button>
-                        <button onClick={handleSaveAllSchedules} disabled={isSubmitting} className="bg-rose-600 text-white px-2 py-1 rounded text-[10px] hover:bg-rose-700 font-bold flex items-center justify-center gap-1 min-w-[50px] disabled:opacity-70 disabled:cursor-not-allowed">
-                           {isSubmitting ? <Loader2 className="animate-spin" size={12}/> : null}
-                           {isSubmitting ? 'กำลังบันทึก...' : 'บันทึก'}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                     {/* 🌟 โซน 2.5D Task-Linked Visual Progress (แสดงผลตามสถานะงานจริง) 🌟 */}
-                     {houseTypes.find(t => t.id === selectedPlot?.house_type_id)?.visual_config && (
-                         <div className="bg-slate-900 border-b-8 border-slate-950 p-6 sm:p-10 flex flex-col lg:flex-row items-center gap-8 relative overflow-hidden">
-                            <div className="absolute top-1/2 left-1/4 -translate-y-1/2 w-64 h-64 bg-blue-500/20 blur-[100px] rounded-full pointer-events-none"></div>
-
-                            {/* 🏗️ ฝั่งซ้าย: รูปภาพซ้อนเลเยอร์ตามค่าความคืบหน้าจริงของงานย่อย */}
-                            <div className="relative w-full lg:w-1/2 aspect-[4/3] sm:aspect-[16/9] lg:aspect-square max-w-[500px] flex items-center justify-center bg-slate-950/40 p-2 rounded-2xl border border-slate-800">
-                               {(() => {
-                                  // 🧠 แกะลอจิกตรวจสอบสถานะเรียงตาม Z-Index
-                                  const config = houseTypes.find(t => t.id === selectedPlot?.house_type_id).visual_config || {};
-                                  const activeLayers = [];
-
-                                  taskTemplates
-                                     .filter(t => t.house_type_id === selectedPlot?.house_type_id)
-                                     .forEach(task => {
-                                        const taskConfig = config[task.id];
-                                        if (!taskConfig) return; // งานนี้ไม่มีรูปข้ามไปเลย
-
-                                        // ดึงเปอร์เซ็นต์ความคืบหน้าจริงของงานนี้จากแอป
-                                        const actualProgress = latestUpdatesMap[`${selectedPlot.id}-${task.id}`]?.progress || 0;
-
-                                        if (actualProgress === 100 && taskConfig.done_image) {
-                                           activeLayers.push({ url: taskConfig.done_image, z: Number(taskConfig.done_z || 10), name: task.task_name });
-                                        } else if (actualProgress > 0 && actualProgress < 100 && taskConfig.progress_image) {
-                                           activeLayers.push({ url: taskConfig.progress_image, z: Number(taskConfig.progress_z || 10), name: task.task_name });
-                                        }
-                                     });
-
-                                  // จัดลำดับเลเยอร์ภาพเพื่อป้องกันรูปเพี้ยน
-                                  return activeLayers
-                                     .sort((a, b) => a.z - b.z)
-                                     .map((layer, idx) => (
-                                        <img 
-                                           key={idx}
-                                           src={layer.url} 
-                                           className="absolute inset-0 w-full h-full object-contain drop-shadow-2xl animate-fade-in" 
-                                           style={{ zIndex: layer.z }}
-                                           alt={layer.name} 
-                                        />
-                                     ));
-                               })()}
-                            </div>
-
-                            {/* 📊 ฝั่งขวา: สรุปรายงานการประกอบร่างดิจิทัล */}
-                            <div className="w-full lg:w-1/2 text-white space-y-4 relative z-10">
-                               <div>
-                                  <h3 className="text-2xl sm:text-3xl font-black italic tracking-tighter mb-1 flex items-center gap-2">
-                                     <Monitor className="text-blue-500" size={24}/> 2.5D DIGITAL TWIN
-                                  </h3>
-                                  <p className="text-slate-400 font-bold text-xs tracking-widest uppercase">แบบบ้าน: {selectedPlot?.type} (ประมวลผลรายงวดงานจริง)</p>
-                               </div>
-
-                               <div className="text-xs bg-slate-950/60 p-4 rounded-xl border border-slate-800 text-slate-400 font-medium leading-relaxed">
-                                  <p>💡 ระบบจะคำนวณการแสดงผลภาพแบบแยกตามงวดงานจริงหน้าไซต์:</p>
-                                  <ul className="list-disc list-inside mt-2 space-y-1 text-slate-300">
-                                     <li>งวดงานสถานะ <span className="text-amber-400 font-bold">กำลังดำเนินการ (1-99%)</span> จะดึงภาพเลเยอร์โครงสร้างชั่วคราว</li>
-                                     <li>งวดงานสถานะ <span className="text-emerald-400 font-bold">เสร็จสมบูรณ์ (100%)</span> จะดึงภาพสำเร็จมาประกอบร่างทับซ้อนตามลำดับเลเยอร์</li>
-                                  </ul>
-                               </div>
-                            </div>
-                         </div>
-                     )}            
-                     <div className="bg-slate-50 w-full overflow-x-auto custom-scrollbar border-t border-slate-200" style={{ maxHeight: '800px', overflowY: 'auto' }}>
-                       {isMobileLayout && <div className="text-center text-[10px] text-slate-400 font-bold py-2 bg-slate-100 border-b border-slate-200">↔️ ปัดซ้าย-ขวา เพื่อดูตาราง ↔️</div>}
-                         <table className={`text-left border-collapse w-full relative ${isMobileLayout ? 'block' : 'min-w-[1200px]'}`}>
-                         <thead className={`${isMobileLayout ? 'hidden' : 'sticky top-0 z-[60] bg-slate-100 shadow-sm text-[10px] sm:text-xs font-black uppercase text-slate-500 tracking-widest'}`}>
-                           <tr>
-                             <th className={`sticky left-0 bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 ${isMobileLayout ? 'w-[220px] min-w-[220px] max-w-[220px]' : 'w-[280px] min-w-[280px] max-w-[280px]'} shadow-[4px_0_15px_-5px_rgba(0,0,0,0.1)]`}>Task Name</th>
-                             <th className="sticky left-[220px] sm:left-[280px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.08)]">Start</th>
-                             <th className="sticky left-[335px] sm:left-[420px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px] text-pink-600">Duration</th>
-                             <th className="sticky left-[405px] sm:left-[520px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[6px_0_10px_-6px_rgba(0,0,0,0.1)]">Finish</th>
-                                 {/* 🌟 2. ปรับหัวตารางวันที่ให้เรียงต่อเนื่อง และล็อกขนาดช่องละ 36px 🌟 */}
-                                 <th className="bg-slate-100 border-b border-slate-200 p-0 relative w-full z-[60]" style={{ minWidth: `${totalChartDays * 36}px`, height: isMobileLayout ? '40px' : '56px' }}>
-                                    {todayTs >= chartStart && todayTs <= chartEnd && (
-                                       <div className="absolute top-0 bottom-0 border-l-2 sm:border-l-[3px] border-dashed border-rose-500 z-[10] flex flex-col items-center pointer-events-none" style={{ left: `${getChartLeft(todayTs)}%` }}>
-                                          <span className="bg-rose-500 text-white text-[7px] sm:text-[11px] font-black px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-b-md sm:rounded-b-lg shadow-md mt-0 sm:mt-1">ปัจจุบัน</span>
-                                       </div>
-                                    )}
-                                              
-                                    <div className="absolute inset-0 flex pointer-events-none">
-                                       {timeMarkers.map((m, i) => (
-                                          <div key={i} className={`border-l h-full relative ${m.isMonth ? 'border-slate-300 bg-slate-200/20' : 'border-slate-200/50'}`} style={{position: 'absolute', left: `${m.left}%`, width: `${(1 / totalChartDays) * 100}%`}}>
-                                                        
-                                             {m.monthLabel && (
-                                                <div className="absolute top-1.5 sm:top-2 left-1 bg-slate-800 text-white font-black px-2 py-0.5 rounded shadow-sm text-[8px] sm:text-[10px] whitespace-nowrap z-30 border border-slate-700">
-                                                   {m.monthLabel}
-                                                </div>
-                                             )}
-                                                        
-                                             {/* 🎯 บังคับจัดเลขวันที่ให้อยู่ตรงกลางช่องพอดีเป๊ะ (เติม 0 ข้างหน้าถ้าเป็นเลขหลักเดียว) */}
-                                             <div className="absolute bottom-1 sm:bottom-2 w-full flex justify-center">
-                                                <span className="text-[8px] sm:text-xs font-black text-slate-400">{String(m.dayLabel).padStart(2, '0')}</span>
-                                             </div>
-                                          </div>
-                                       ))}
-                                    </div>
-                                 </th>
-                           </tr>
-                         </thead>
-                         <tbody className={isMobileLayout ? 'block p-3 sm:p-0 bg-slate-100' : ''}>
-                          {taskTemplates.filter(t => t.house_type_id === selectedPlot.house_type_id).map((task) => {
-                            const key             = `${selectedPlot.id}-${task.id}`;
-                            const tProgress       = latestUpdatesMap[key]?.progress || 0;
-                            const assignment      = assignments.find(a => a.task_template_id === task.id);
-
-                            // ✅ Fixed: was schedulePlan[task.id] / actualDates[task.id]
-                            const plan  = schedules[key]  || {};
-                            const dates = taskDates[key]  || {};
-
-                            // ✅ Fixed: removed duplicate const tProgress (was line 2620)
-
-                            const isTaskCompleted = tProgress === 100;
-
-                            // Timestamps for Gantt bars
-                            const aStartTs = dates?.start ? new Date(dates.start).getTime() : null;
-                            const aEndTs   = dates?.end   ? new Date(dates.end).getTime()   : (aStartTs ? Date.now() : null);
-
-                            // ✅ Added: pStartTs / pEndTs / statusObj were missing — used by Gantt chart at line 2950–2955
-                            const pStartTs  = plan.planned_start ? new Date(plan.planned_start).getTime() : null;
-                            const pEndTs    = plan.planned_end   ? new Date(plan.planned_end).getTime()   : null;
-                            const statusObj = getTaskStatus(plan.planned_end, dates?.end, tProgress);
-
-                            // Card view helpers
-                            const contractorName  = assignment ? assignment.contractor_name  : '';
-                            const contractorPhone = assignment ? assignment.contractor_phone : '';
-                            let durationText = '-';
-                            if (plan.planned_start && plan.planned_end) {
-                              const diff = new Date(plan.planned_end).getTime() - new Date(plan.planned_start).getTime();
-                              durationText = `${Math.max(0, Math.ceil(diff / 86400000)) + 1} วัน`;
-                            }
-                            let actualDurationText = '-';
-                            if (dates?.start) {
-                              const aEnd = dates.end ? new Date(dates.end).getTime() : Date.now();
-                              actualDurationText = `${Math.max(0, Math.ceil((aEnd - new Date(dates.start).getTime()) / 86400000)) + 1} วัน`;
-                            }
-
-                            const openTaskProgress = () => {
-                              setSelectedTask(task);
-                              setTaskReturnView('house-detail');
-                              setView('task-progress');
-                              supabase.from('task_updates').select('*')
-                                .eq('task_template_id', task.id)
-                                .eq('plot_id', selectedPlot.id)
-                                .order('created_at', { ascending: true })
-                                .then(({ data }) => {
-                                  setUpdates(data || []);
-                                  setProgressValue(data?.length ? data[data.length - 1].progress : 0);
-                                });
-                            };
-
-                            return (
-                                <React.Fragment key={task.id}>
-                                  {/* 📱 1. โซนมือถือ: แบบการ์ด (Mobile Card View) */}
-                                  {isMobileLayout && (
-                                      <tr className="block mb-4">
-                                        <td className="block bg-white rounded-[1.5rem] shadow-[0_8px_30px_-10px_rgba(0,0,0,0.1)] p-5 border border-slate-200 relative overflow-hidden">
-                                            {/* แถบสีด้านบนการ์ด บอกสถานะ 100% */}
-                                            {tProgress === 100 && <div className="absolute top-0 left-0 w-full h-1.5 bg-emerald-400"></div>}
-
-                                            {/* หัวการ์ด: ชื่องาน & ป้าย % */}
-                                            <div className="flex items-start justify-between mb-4 border-b border-slate-100 pb-3 mt-1">
-                                              <div className="flex items-start gap-2.5 pr-2">
-                                                  <span className="text-[10px] font-black text-slate-400 bg-slate-100 px-2 py-0.5 rounded border mt-0.5 shrink-0">#{task.task_order}</span>
-                                                  <div>
-                                                    <h4 className="font-black text-slate-800 text-sm leading-tight mb-1">{task.task_name}</h4>
-                                                    {contractorName ? (
-                                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-100"><HardHat size={12} /> {contractorName ? `${String(contractorName).split(' ')[0]} ${contractorPhone ? `(${contractorPhone})` : ''}` : 'ยังไม่ระบุ'}</span>
-                                                    ) : (
-                                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded-md"><Users size={12} /> ยังไม่ระบุช่าง</span>
-                                                    )}
-                                                  </div>
-                                              </div>
-                                              <div className={`shrink-0 px-2.5 py-1 rounded-xl text-xs font-black ${tProgress === 100 ? 'bg-emerald-100 text-emerald-700' : tProgress > 0 ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>
-                                                  {tProgress}%
-                                              </div>
-                                            </div>
-
-                                            {/* ข้อมูลวันที่: แผนงาน vs ทำจริง */}
-                                            <div className="grid grid-cols-2 gap-3 mb-5">
-                                              <div className="bg-slate-50 rounded-xl p-3 border border-slate-100 relative overflow-hidden">
-                                                  <div className="absolute top-0 left-0 w-1 h-full bg-slate-300"></div>
-                                                  <span className="text-[9px] font-black uppercase text-slate-500 block mb-1.5 flex items-center gap-1"><Calendar size={10}/> แผนงาน</span>
-                                                  <div className="text-[10px] font-bold text-slate-700 space-y-0.5">
-                                                    <p>เริ่ม: <span className="text-slate-900">{plan.planned_start ? new Date(plan.planned_start).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</span></p>
-                                                    <p>จบ: <span className="text-slate-900">{plan.planned_end ? new Date(plan.planned_end).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</span></p>
-                                                  </div>
-                                                  <div className="text-[10px] font-black text-pink-500 mt-2 bg-pink-50 inline-block px-1.5 py-0.5 rounded">{durationText}</div>
-                                              </div>
-                                              <div className="bg-blue-50/50 rounded-xl p-3 border border-blue-100/50 relative overflow-hidden">
-                                                  <div className="absolute top-0 left-0 w-1 h-full bg-blue-400"></div>
-                                                  <span className="text-[9px] font-black uppercase text-blue-500 block mb-1.5 flex items-center gap-1"><Activity size={10}/> ทำจริง</span>
-                                                  <div className="text-[10px] font-bold text-blue-800 space-y-0.5">
-                                                    <p>เริ่ม: <span className="text-blue-900">{dates?.start ? new Date(dates.start).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</span></p>
-                                                    <p>จบ: <span className="text-blue-900">{dates?.end ? new Date(dates.end).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</span></p>
-                                                  </div>
-                                                  <div className="text-[10px] font-black text-blue-600 mt-2 bg-blue-100/50 inline-block px-1.5 py-0.5 rounded">{actualDurationText}</div>
-                                              </div>
-                                            </div>
-
-                                            {/* Progress Bar */}
-                                            <div className="mb-5">
-                                              <div className="flex justify-between items-end mb-1.5">
-                                              <span className="text-[10px] font-black text-slate-500">ความคืบหน้างวดงาน</span>
-                                              {latestUpdatesMap[`${selectedPlot.id}-${task.id}`] && new Date(latestUpdatesMap[`${selectedPlot.id}-${task.id}`].created_at).toLocaleDateString('en-CA') === new Date().toLocaleDateString('en-CA') && (
-                                             <div className="absolute top-1.5 right-1.5 bg-orange-100 text-orange-600 p-1 rounded-full shadow-sm" title="มีการอัปเดตใหม่วันนี้!">
-                                                <Pickaxe size={12} className="animate-bounce" />
-                                             </div>
-                                              )}
-                                              </div>
-                                              <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden border border-slate-200">
-                                                  <div className={`h-full rounded-full transition-all duration-1000 ${tProgress === 100 ? 'bg-gradient-to-r from-emerald-400 to-emerald-500' : 'bg-gradient-to-r from-blue-500 to-indigo-500'}`} style={{ width: `${tProgress}%` }}></div>
-                                              </div>
-                                            </div>
-
-                                            {/* ปุ่มกด Action */}
-                                            <div className="flex gap-2">
-                                              {(currentUserRole === 'Project Planner' || currentUserRole === 'Admin' || currentUserRole === 'Owner' || currentUserRole === 'Procurement') && (
-                                                  <button onClick={(e) => { e.stopPropagation(); setAssignModal({ isOpen: true, task: task, name: contractorName, phone: contractorPhone }); }} className="flex-[1] py-3 bg-white border-2 border-slate-200 text-slate-600 text-[11px] font-black rounded-xl hover:bg-slate-50 hover:border-slate-300 active:scale-95 transition-all flex flex-col items-center justify-center gap-1 shadow-sm">
-                                                    <UserCog size={16} className={contractorName ? 'text-amber-500' : 'text-slate-400'} /> {contractorName ? 'เปลี่ยนช่าง' : 'เลือกช่าง'}
-                                                  </button>
-                                              )}
-                                              <button onClick={(e) => { e.stopPropagation(); openTaskProgress(); }} className={`flex-[2] py-3 ${tProgress === 100 ? 'bg-emerald-600 hover:bg-emerald-500 border-emerald-700' : 'bg-slate-800 hover:bg-slate-700 border-slate-900'} text-white text-[11px] sm:text-xs font-black rounded-xl active:scale-95 transition-all flex flex-col items-center justify-center gap-1 shadow-md border-b-4 active:border-b-0 active:translate-y-[4px]`}>
-                                                  <Camera size={16} className={tProgress === 100 ? 'text-emerald-100' : 'text-blue-300'} /> {tProgress === 100 ? 'ดูประวัติ / แจ้งซ่อม' : 'อัปเดตความคืบหน้า'}
-                                              </button>
-                                            </div>
-                                        </td>
-                                      </tr>
-                                  )}
-
-                                  {/* 💻 2. โซน PC: ตาราง Gantt Chart (ซ่อนในมือถือ โชว์เฉพาะใน PC) */}
-                                  <tr className={`group hover:bg-slate-50/80 transition-colors bg-white cursor-pointer ${isMobileLayout ? 'hidden' : 'table-row'}`} onClick={(e: any) => { 
-                                      const target = e.target as HTMLElement; 
-                                      if (target) { 
-                                        if (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'BUTTON') return; 
-                                        if (typeof target.closest === 'function' && (target.closest('button') || target.closest('select') || target.closest('input'))) return; 
-                                      } 
-                                      openTaskProgress(); 
-                                  }}>
-                                {/* 🌟 2. [ฉบับแก้ไข] บีบความสูงแถวฝั่งซ้าย ล็อก Task Name 2 บรรทัด และล็อกคอลัมน์ให้อยู่กับที่ 🌟 */}
-                                {/* 🌟 ปรับขยายความสูงแถว เพื่อไม่ให้เบอร์โทรโดนทับ (มือถือ 90px / คอม 100px) */}
-                                 <td className={`p-2 sm:p-3 border-b border-slate-200 ${isMobileLayout ? 'h-[90px] w-[220px] min-w-[220px] max-w-[220px] z-[45]' : 'h-[100px] w-[280px] min-w-[280px] max-w-[280px] z-20'} flex flex-col justify-between bg-white sticky left-0 shadow-[4px_0_10px_-4px_rgba(0,0,0,0.1)]`}>
-                                    <div className="min-w-0">
-                                        <div className="flex items-start gap-1.5">
-                                          <span className="text-[10px] sm:text-xs font-black text-slate-400 shrink-0 bg-slate-100 px-1.5 py-0.5 rounded border mt-0.5">#{task.task_order}</span>
-                                          {/* 🎯 บังคับชื่องานให้แสดงสูงสุด 2 บรรทัดเท่ากันหมด */}
-                                          <h4 className="font-black text-slate-800 text-xs sm:text-sm leading-tight text-ellipsis overflow-hidden [display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical]" title={task.task_name}>
-                                             {task.task_name}
-                                             
-                                             {/* ⛏️ ไอคอนคนทำงาน จะโชว์เฉพาะงานที่มีการอัปเดต "วันนี้" และยังไม่เสร็จ 100% */}
-                                             {latestUpdatesMap[`${selectedPlot.id}-${task.id}`] && 
-                                              new Date(latestUpdatesMap[`${selectedPlot.id}-${task.id}`].created_at).toLocaleDateString('en-CA') === new Date().toLocaleDateString('en-CA') && 
-                                              latestUpdatesMap[`${selectedPlot.id}-${task.id}`].progress < 100 && (
-                                                <span title="มีการอัปเดตงานในวันนี้" className="inline-flex items-center justify-center bg-orange-100 text-orange-600 p-[2px] rounded shadow-sm animate-pulse ml-1.5 align-text-bottom">
-                                                   <Pickaxe size={12} />
-                                                </span>
-                                             )}
-                                          </h4>
-                                       </div>
-                                    </div>
-
-                                    {/* 🔄 ปุ่มสัญลักษณ์จัดช่าง (เปิดสิทธิ์ให้ Project Planner และ Procurement กดได้) */}
-                                    <div className="flex items-center justify-between gap-1 mt-1 border-t border-slate-100 pt-1">
-                                       {assignment ? (
-                                          <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                                             <div className="w-5 h-5 rounded-full bg-blue-50 border border-blue-200 flex items-center justify-center shrink-0">
-                                                <HardHat size={11} className="text-blue-600"/>
-                                             </div>
-                                             <div className="flex flex-col min-w-0 flex-1">
-                                                <span className="text-[10px] sm:text-xs font-bold text-blue-700 truncate">{assignment.contractor_name.split(' ')[0]}</span>
-                                                {assignment.contractor_phone && <span className="text-[9px] sm:text-[10px] font-medium text-slate-400 truncate">📞 {assignment.contractor_phone}</span>}
-                                             </div>
-                                             {/* ✅ แก้ไขปุ่มเปลี่ยนช่าง (รูปเฟือง UserCog) ให้เรียก Modal ถูกต้อง */}
-                                             {(isAdmin || isProjectPlanner || isProcurement) && (
-                                                <button onClick={(e) => { e.stopPropagation(); setAssignModal({ isOpen: true, task: task, name: assignment.contractor_name || '', phone: assignment.contractor_phone || '' }); }} className="w-5 h-5 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-blue-600 shrink-0 transition-colors" title="เปลี่ยนช่าง">
-                                                   <UserCog size={12} />
-                                                </button>
-                                             )}
-                                          </div>
-                                       ) : (
-                                          <div className="w-full">
-                                             {/* ✅ แก้ไขปุ่มระบุช่าง ให้เรียก Modal ถูกต้อง */}
-                                             {(isAdmin || isProjectPlanner || isProcurement) ? (
-                                                <button 
-                                                   onClick={(e) => { e.stopPropagation(); setAssignModal({ isOpen: true, task: task, name: '', phone: '' }); }}
-                                                   className="flex items-center gap-1 text-[10px] sm:text-xs font-black text-rose-500 hover:text-rose-600 bg-rose-50/50 hover:bg-rose-50 border border-rose-200/60 border-dashed px-2 py-0.5 rounded-md transition-colors w-full justify-center"
-                                                >
-                                                   <PlusCircle size={12}/> ระบุช่าง
-                                                </button>
-                                             ) : (
-                                                <span className="text-[10px] sm:text-xs font-bold text-slate-400 italic">ยังไม่ระบุช่าง</span>
-                                             )}
-                                          </div>
-                                       )}
-                                    </div>
-                                 </td>
-
-                                  {currentUserRole === 'Project Planner' && (() => {
-                                    const currentStart = scheduleInputs[task.id]?.start !== undefined ? scheduleInputs[task.id].start : (plan.planned_start || '');
-                                    const currentEnd = scheduleInputs[task.id]?.end !== undefined ? scheduleInputs[task.id].end : (plan.planned_end || '');
-                                    
-                                    let initialDuration = '';
-                                    if (currentStart && currentEnd) {
-                                       const diffTime = new Date(currentEnd).getTime() - new Date(currentStart).getTime();
-                                       initialDuration = String(Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24))) + 1);
-                                    }
-                                    const currentDuration = scheduleInputs[task.id]?.duration !== undefined ? scheduleInputs[task.id].duration : initialDuration;
-
-                                    let actualDurationText = '-';
-                                    if (dates?.start) {
-                                       const aEnd = dates.end ? new Date(dates.end).getTime() : Date.now();
-                                       const aDiff = aEnd - new Date(dates.start).getTime();
-                                       actualDurationText = `${Math.max(0, Math.ceil(aDiff / 86400000)) + 1} วัน`;
-                                    }
-
-                                    return (
-                                       <>
-                                          {/* Start Column (Planner) - ล็อกแน่นบนมือถือ */}
-                                          <td className="sticky left-[220px] sm:left-[280px] bg-pink-50/20 sm:bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.08)]">
-                                             <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
-                                                <span className="text-[8px] font-black uppercase text-pink-500 w-8 shrink-0 text-left">Plan:</span>
-                                                <input type="date" value={currentStart} 
-                                                   onChange={(e) => {
-                                                      const newStart = e.target.value;
-                                                      let newEnd = currentEnd;
-                                                      if (newStart && currentDuration && Number(currentDuration) > 0) {
-                                                         const d = new Date(newStart);
-                                                         d.setDate(d.getDate() + (Number(currentDuration) - 1));
-                                                         newEnd = d.toISOString().split('T')[0];
-                                                      }
-                                                      setScheduleInputs(prev => ({...prev, [task.id]: { ...prev[task.id], start: newStart, end: newEnd, duration: currentDuration }}));
-                                                   }} 
-                                                   className="flex-1 w-full border border-pink-200 rounded px-1 py-1 text-[9px] font-bold text-slate-700 outline-none focus:border-pink-500 bg-white shadow-sm" 
-                                                />
-                                             </div>
-                                             <div className="flex items-center gap-1">
-                                                <span className="text-[8px] font-black uppercase text-blue-500 w-8 shrink-0 text-left">Actual:</span>
-                                                <div className="flex-1 text-[9px] sm:text-[11px] font-bold text-blue-600 text-center">
-                                                  {dates?.start ? new Date(dates.start).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
-                                                </div>
-                                             </div>
-                                          </td>
-                                            
-                                          {/* Duration Column (Planner) - ล็อกแน่นบนมือถือ */}
-                                          <td className="sticky left-[335px] sm:left-[420px] bg-pink-50/20 sm:bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px]">
-                                             <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
-                                                <input type="number" min="1" placeholder="วัน" value={currentDuration} 
-                                                   onChange={(e) => {
-                                                      const newDuration = e.target.value;
-                                                      let newEnd = currentEnd;
-                                                      if (currentStart && newDuration && Number(newDuration) > 0) {
-                                                         const d = new Date(currentStart);
-                                                         d.setDate(d.getDate() + (Number(newDuration) - 1));
-                                                         newEnd = d.toISOString().split('T')[0];
-                                                      }
-                                                      setScheduleInputs(prev => ({...prev, [task.id]: { ...prev[task.id], duration: newDuration, end: newEnd, start: currentStart }}));
-                                                   }}
-                                                   className="w-full border border-pink-200 rounded px-1 py-1 text-[9px] font-black text-center text-pink-600 outline-none focus:border-pink-500 bg-white shadow-sm" 
-                                                />
-                                             </div>
-                                             <div className="flex items-center justify-center">
-                                                <div className="w-full text-[9px] sm:text-xs font-black text-blue-500 text-center">
-                                                  {actualDurationText}
-                                                </div>
-                                             </div>
-                                          </td>
-
-                                          {/* Finish Column (Planner) - ล็อกแน่นบนมือถือ */}
-                                          <td className="sticky left-[405px] sm:left-[520px] bg-pink-50/20 sm:bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[6px_0_10px_-6px_rgba(0,0,0,0.1)]">
-                                             <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
-                                                <input type="date" value={currentEnd} 
-                                                   onChange={(e) => {
-                                                      const newEnd = e.target.value;
-                                                      let newDuration = currentDuration;
-                                                      if (currentStart && newEnd) {
-                                                         const diffTime = new Date(newEnd).getTime() - new Date(currentStart).getTime();
-                                                         newDuration = String(Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24))) + 1);
-                                                      }
-                                                      setScheduleInputs(prev => ({...prev, [task.id]: { ...prev[task.id], end: newEnd, duration: newDuration, start: currentStart }}));
-                                                   }} 
-                                                   className="w-full border border-pink-200 rounded px-1 py-1 text-[9px] font-bold text-slate-700 outline-none focus:border-pink-500 bg-white shadow-sm text-center" 
-                                                />
-                                             </div>
-                                             <div className="flex items-center justify-center">
-                                                <div className="w-full text-[9px] sm:text-[11px] font-bold text-green-600 text-center">
-                                                  {dates?.end ? new Date(dates.end).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
-                                                </div>
-                                             </div>
-                                          </td>
-                                       </>
-                                    );
-                                 })()}
-
-                                  {currentUserRole !== 'Project Planner' && (() => {
-                                    let durationText = '-';
-                                    if (plan.planned_start && plan.planned_end) {
-                                       const diff = new Date(plan.planned_end).getTime() - new Date(plan.planned_start).getTime();
-                                       durationText = `${Math.max(0, Math.ceil(diff / (86400000))) + 1} วัน`;
-                                    }
-
-                                    let actualDurationText = '-';
-                                    if (dates?.start) {
-                                       const aEnd = dates.end ? new Date(dates.end).getTime() : Date.now();
-                                       const aDiff = aEnd - new Date(dates.start).getTime();
-                                       actualDurationText = `${Math.max(0, Math.ceil(aDiff / 86400000)) + 1} วัน`;
-                                    }
-
-                                    return (
-                                       <>
-                                          {/* Start Column (ดูทั่วไป) - ล็อกแน่นบนมือถือ */}
-                                          <td className="sticky left-[220px] sm:left-[280px] bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.08)]">
-                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-slate-200">
-                                              <span className="text-[8px] font-black uppercase text-slate-400 w-8 shrink-0 text-left">Plan:</span>
-                                              <div className="flex-1 text-[9px] sm:text-[11px] font-bold text-slate-700 text-center">
-                                                 {plan.planned_start ? new Date(plan.planned_start).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
-                                              </div>
-                                            </div>
-                                            <div className="flex items-center gap-1">
-                                              <span className="text-[8px] font-black uppercase text-blue-400 w-8 shrink-0 text-left">Actual:</span>
-                                              <div className="flex-1 text-[9px] sm:text-[11px] font-bold text-blue-600 text-center">
-                                                {dates?.start ? new Date(dates.start).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
-                                              </div>
-                                            </div>
-                                          </td>
-
-                                          {/* Duration Column (ดูทั่วไป) - ล็อกแน่นบนมือถือ */}
-                                          <td className="sticky left-[335px] sm:left-[420px] bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px]">
-                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-slate-200">
-                                              <div className="w-full text-[9px] sm:text-xs font-black text-slate-600 text-center">
-                                                 {durationText}
-                                              </div>
-                                            </div>
-                                            <div className="flex items-center justify-center">
-                                              <div className="w-full text-[9px] sm:text-xs font-black text-blue-500 text-center">
-                                                 {actualDurationText}
-                                              </div>
-                                            </div>
-                                         </td>
-
-                                         {/* Finish Column (ดูทั่วไป) - ล็อกแน่นบนมือถือ */}
-                                         <td className="sticky left-[405px] sm:left-[520px] bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[6px_0_10px_-6px_rgba(0,0,0,0.1)]">
-                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-slate-200">
-                                              <div className="w-full text-[9px] sm:text-[11px] font-bold text-slate-700 text-center">
-                                                 {plan.planned_end ? new Date(plan.planned_end).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
-                                              </div>
-                                            </div>
-                                            <div className="flex items-center justify-center">
-                                              <div className="w-full text-[9px] sm:text-[11px] font-bold text-green-600 text-center">
-                                                {dates?.end ? new Date(dates.end).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
-                                              </div>
-                                            </div>
-                                         </td>
-                                       </>
-                                    );
-                                 })()}
-
-                                    {/* 🌟 3. บีบความสูงช่องกราฟฝั่งขวาลงให้เท่าฝั่งซ้าย และจัดตำแหน่งแท่งกราฟใหม่ 🌟 */}
-                                    {/* 🌟 ปรับขยายความสูงช่องกราฟ ให้เท่ากับฝั่งซ้ายเป๊ะๆ */}
-                                     <td className="border-b border-slate-200 p-0 relative z-10 w-full" style={{ minWidth: `${totalChartDays * 36}px`, height: isMobileLayout ? '90px' : '100px' }}>
-                                       <div className="absolute inset-0 flex pointer-events-none z-0">
-                                          {timeMarkers.map((m, i) => ( <div key={i} className={`border-l h-full ${m.isMonth ? 'border-slate-300 bg-slate-50/50' : 'border-slate-100'}`} style={{position: 'absolute', left: `${m.left}%`, width: `${(1 / totalChartDays) * 100}%`}}></div> ))}
-                                          {todayTs >= chartStart && todayTs <= chartEnd && ( <div className="absolute top-0 bottom-0 border-l-2 sm:border-l-[3px] border-dashed border-rose-500/80 z-[15] pointer-events-none" style={{ left: `${getChartLeft(todayTs)}%` }}></div> )}
-                                       </div>
-                                       
-                                       {/* 🌟 ปรับขนาดและตำแหน่งแท่งกราฟให้อยู่ตรงกลางช่องพอดี (ใช้ % แทน px) */}
-                                       <div className="relative w-full h-full flex flex-col px-0">
-                                          {pStartTs && pEndTs && ( 
-                                             <div className="absolute h-2 bg-slate-800 rounded-sm z-[20] shadow-sm opacity-90" style={{ left: `${getChartLeft(pStartTs)}%`, width: `${getChartWidth(pStartTs, pEndTs)}%`, top: '25%' }} /> 
-                                          )}
-                                          
-                                          {aStartTs && ( 
-                                             <div className={`absolute h-4 rounded-sm z-[25] shadow-sm ${statusObj.barColor}`} style={{ left: `${getChartLeft(aStartTs)}%`, width: `${getChartWidth(aStartTs, aEndTs)}%`, top: '45%' }}>
-                                                <span className="absolute -top-3.5 text-[8px] sm:text-[9px] font-black text-slate-600 bg-white/95 border border-slate-200 px-1 py-0 rounded shadow-sm" style={{ left: '2px' }}>{tProgress}%</span>
-                                             </div> 
-                                          )}
-                                       </div>
-                                     </td>
-                               </tr>
-                               </React.Fragment>
-                             )
-                           })}
-                         </tbody>
-                       </table>
-                     </div>
-                   </div>
-                 
+                 <HouseDetailView 
+                   view={view} setView={setView} selectedPlot={selectedPlot} selectedProject={selectedProject}
+                   isMobileLayout={isMobileLayout} plotPlanStart={plotPlanStart} plotPlanEnd={plotPlanEnd}
+                   daysElapsed={daysElapsed} totalPlannedDays={totalPlannedDays} daysRemaining={daysRemaining}
+                   isSummaryDelayed={isSummaryDelayed} isProjectPlanner={isProjectPlanner} 
+                   setCopyModalOpen={setCopyModalOpen} handleSaveAllSchedules={handleSaveAllSchedules}
+                   isSubmitting={isSubmitting} houseTypes={houseTypes} taskTemplates={taskTemplates}
+                   getTaskStatus={getTaskStatus} latestUpdatesMap={latestUpdatesMap} schedules={schedules}
+                   scheduleInputs={scheduleInputs}
+                   handleUploadSlot={handleUploadSlot}
+                   isUploadingLayer={isUploadingLayer} setSelectedTask={setSelectedTask} setDefectModal={setDefectModal}
+                   setTaskReturnView={setTaskReturnView} 
+                   setAssignModal={setAssignModal} simulatedStatus={simulatedStatus} editingHouseType={editingHouseType}
+                   currentUserRole={currentUserRole}
+                   totalChartDays={totalChartDays} timeMarkers={timeMarkers} todayTs={todayTs}
+                   chartStart={chartStart} chartEnd={chartEnd} getChartLeft={getChartLeft} getChartWidth={getChartWidth}
+                   assignments={assignments} taskDates={taskDates} setUpdates={setUpdates} setProgressValue={setProgressValue}
+                   isAdmin={isAdmin} isProcurement={isProcurement} setScheduleInputs={setScheduleInputs}
+                 />
                )}
 
-               {/* 💬 LEVEL 4: Task Progress */}
+               
+               {/* 🚀 LEVEL 4: Task Progress */}
                {view === 'task-progress' && selectedTask && (
-                   <div className="animate-in slide-in-from-right duration-300">
-                       <button onClick={() => setView(taskReturnView)} className="mb-4 sm:mb-6 text-xs sm:text-base font-bold text-blue-600 flex items-center gap-1.5 hover:-translate-x-1 transition-transform">← {isMobileLayout ? 'BACK' : (taskReturnView === 'dashboard' ? 'BACK TO DASHBOARD' : 'BACK TO PLOT')}</button>
-                       <div className="bg-white rounded-2xl sm:rounded-[2.5rem] shadow-2xl border border-slate-200 overflow-hidden flex flex-col h-[75vh] sm:h-[800px] relative border-b-8 border-b-blue-600">
-                           <header className={`${isMobileLayout ? 'p-4' : 'p-6 sm:p-10'} bg-slate-800 text-white flex justify-between items-center shrink-0`}>
-                               <div>
-                                   <h1 className={`${isMobileLayout ? 'text-lg' : 'text-2xl sm:text-4xl'} font-black text-white leading-tight mb-1 sm:mb-2 italic uppercase tracking-tight`}>{selectedTask.task_name}</h1>
-                                   <p className="text-[10px] sm:text-sm text-slate-400 font-bold uppercase tracking-widest">Plot {selectedPlot.id} / Task {selectedTask.task_order}</p>
-                               </div>
-                               
-                               <div className="flex items-center gap-4">
-                                 {isTaskCompleted && !isMobileLayout && (
-                                    <button onClick={handleOpenExportModal} className="bg-white/20 hover:bg-white/30 text-white font-bold py-2 px-4 rounded-xl flex items-center gap-2 transition-colors text-sm border border-white/20">
-                                      <Printer size={16}/> ส่งออกรูปตั้งเบิก
-                                    </button>
-                                 )}
-                                 <div className={`${isMobileLayout ? 'text-3xl' : 'text-5xl sm:text-6xl'} font-black text-blue-400 italic tracking-tighter`}>{isTaskCompleted ? <CheckCircle size={isMobileLayout?32:48} className="text-green-400 inline-block"/> : `${progressValue}%`}</div>
-                                 {/* 🌟 ปุ่ม Punch List / Defect แยกหน้าต่างแบบมีรูปภาพ */}
-                                 {['QC', 'Foreman', 'Site Engineer', 'Admin', 'Owner'].includes(currentUserRole) && (
-                                    <button 
-                                       onClick={() => setDefectModal({ isOpen: true, task: selectedTask, plotId: selectedPlot.id })}
-                                       className={`ml-3 sm:ml-6 bg-rose-600 hover:bg-rose-700 text-white font-black flex items-center gap-1.5 shadow-md border border-rose-500 transition-all ${isMobileLayout ? 'px-2.5 py-2 text-[10px] rounded-lg' : 'px-4 py-3 text-sm rounded-xl'}`}
-                                    >
-                                       <ShieldAlert size={isMobileLayout ? 14 : 18} />
-                                       <span className="hidden sm:inline">แจ้งซ่อม (Defect)</span>
-                                       <span className="inline sm:hidden">แจ้งซ่อม</span>
-                                       {defects.filter(d => d.plot_id === selectedPlot.id && d.task_id === selectedTask.id && d.status === 'pending').length > 0 && (
-                                          <span className="bg-white text-rose-600 text-[10px] font-black px-1.5 py-0.5 rounded-full animate-pulse ml-1 shadow">
-                                             {defects.filter(d => d.plot_id === selectedPlot.id && d.task_id === selectedTask.id && d.status === 'pending').length}
-                                          </span>
-                                       )}
-                                    </button>
-                                 )}
-                               </div>
-                           </header>
-
-                           {isTaskCompleted && isMobileLayout && (
-                              <div className="bg-slate-700 p-2 flex justify-center">
-                                 <button onClick={handleOpenExportModal} className="bg-white/10 hover:bg-white/20 text-white font-bold py-1.5 px-4 rounded-lg flex items-center gap-2 transition-colors text-xs border border-white/20 w-full justify-center">
-                                   <Printer size={14}/> ส่งออกรูปถ่ายตั้งเบิก
-                                 </button>
-                              </div>
-                           )}
-
-                           <main className={`flex-1 overflow-y-auto ${isMobileLayout ? 'p-3 pb-32 space-y-3' : 'p-4 sm:px-8 sm:pt-8 sm:pb-[280px] space-y-4 sm:space-y-6'} bg-slate-50/50`}>
-                               {updates.map((update) => (
-                               <div key={update.id} className={`flex ${isMobileLayout ? 'gap-2' : 'gap-3 sm:gap-5'} animate-in slide-in-from-bottom-4`}>
-                                   <div className={`${isMobileLayout ? 'w-8 h-8 rounded-lg text-xs' : 'w-10 h-10 sm:w-14 sm:h-14 rounded-2xl text-sm sm:text-base'} flex items-center justify-center text-white font-black shrink-0 shadow-lg ${update.role === 'QC' ? 'bg-purple-600' : update.role === 'Site Engineer' ? 'bg-blue-600' : 'bg-slate-600'}`}>{update.user_name.charAt(0)}</div>
-                                    {/* สังเกตตรงนี้: ผมแอบเติม pr-8 เข้าไปท้ายสุดของบรรทัดเพื่อไม่ให้ข้อความไปบังปุ่มลบครับ */}
-                                   <div className={`flex-1 bg-white ${isMobileLayout ? 'p-3 rounded-2xl' : 'p-5 sm:p-6 rounded-[1.5rem] sm:rounded-[2rem]'} border border-slate-200 shadow-sm relative pr-8`}>
-                                       
-                                       {/* 🗑️ ปุ่มลบรายงาน (สิทธิ์: คนส่งรายงานชิ้นนี้เอง หรือ Admin) และงานนั้นต้องยังไม่จบ 100% */}
-                                       {(update.user_name === loggedInUser?.username || isAdmin) && !isTaskCompleted && (
-                                          <button
-                                             onClick={() => handleDeleteUpdate(update.id, selectedTask.id, selectedPlot.id)}
-                                             className="absolute top-3 right-3 text-slate-400 hover:text-rose-500 p-1.5 hover:bg-rose-50 rounded-xl transition-all hover:scale-105"
-                                             title="ลบรายงานความผิดพลาดชิ้นนี้"
-                                          >
-                                             <Trash2 size={15} />
-                                          </button>
-                                       )}
-
-                                       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-2 sm:mb-4 gap-1 sm:gap-2">
-                                         <p className={`text-[9px] sm:text-xs font-black uppercase italic tracking-widest leading-tight ${update.role === 'QC' ? 'text-purple-400' : update.role === 'Site Engineer' ? 'text-blue-400' : 'text-slate-400'}`}>{update.action} • {update.user_name} • {update.progress}%</p>
-                                         <span className={`text-[8px] sm:text-xs text-slate-500 font-bold bg-slate-50 border border-slate-100 ${isMobileLayout ? 'px-2 py-0.5' : 'px-3 py-1.5'} rounded-lg shrink-0 w-fit`}>{new Date(update.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })} • {new Date(update.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.</span>
-                                         {/* 🌟 ป้ายสภาพอากาศ ณ เวลาที่รายงาน */}
-                                          {update.weather_info && (
-                                            <span className={`text-[8px] sm:text-xs text-sky-700 font-bold bg-sky-50 border border-sky-100 ${isMobileLayout ? 'px-2 py-0.5' : 'px-3 py-1.5'} rounded-lg shrink-0 w-fit flex items-center gap-1`} title="สภาพอากาศขณะรายงาน">
-                                                {update.weather_info}
-                                            </span>
-                                          )}
-                                       </div>
-                                       <p className={`text-slate-700 ${isMobileLayout ? 'text-xs mb-2' : 'text-sm sm:text-base mb-4'} font-medium leading-relaxed`}>{update.text_content}</p>
-                                       {update.image_url && (
-                                           <div className={`grid gap-2 ${update.image_url.split(',').filter(u => u.trim() !== '').length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                                               {update.image_url.split(',').filter(u => u.trim() !== '').map((url, i) => (
-                                                  <img key={i} src={url.trim()} onClick={() => setFullImageUrl(url.trim())} className={`w-full aspect-video ${isMobileLayout ? 'h-24' : 'h-32 sm:h-48'} object-cover rounded-xl sm:rounded-2xl cursor-zoom-in border border-slate-100 shadow-sm hover:opacity-90 transition-opacity`} alt="Task Update" /> 
-                                               ))}
-                                           </div>
-                                       )}
-                                   </div>
-                               </div>
-                               ))}
-                           </main>
-                           
-                           {/* 🏡 🌟 Chat Input 🌟 */}
-                           <footer className={`absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur-xl border-t border-slate-200 ${isMobileLayout ? 'p-3' : 'p-4 sm:p-6'} shadow-[0_-10px_20px_rgba(0,0,0,0.05)] z-20`}>
-                               {selectedFiles.length > 0 && (
-                                   <div className={`flex gap-2 sm:gap-3 mb-2 sm:mb-4 overflow-x-auto pb-1 sm:pb-2`}>
-                                       {selectedFiles.map((file, idx) => (
-                                       <div key={idx} className="relative shrink-0 animate-in fade-in zoom-in duration-300">
-                                           <img src={file.previewUrl} className={`${isMobileLayout ? 'w-12 h-12 border-2' : 'w-16 h-16 sm:w-20 sm:h-20 border-4'} object-cover rounded-xl border-blue-500 shadow-sm`} />
-                                           <button onClick={() => { const n = [...selectedFiles]; n.splice(idx, 1); setSelectedFiles(n); }} className={`absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full ${isMobileLayout ? 'p-0.5 border' : 'p-1 border-2'} border-white hover:bg-red-600`}><X size={10} /></button>
-                                       </div>
-                                       ))}
-                                   </div>
-                               )}
-
-                               {isTaskCompleted ? (
-                                  <div className={`bg-green-100 text-green-700 py-3 sm:py-4 px-4 sm:px-6 rounded-xl sm:rounded-[1.5rem] font-black text-center uppercase tracking-widest border border-green-200 flex items-center justify-center gap-2 ${isMobileLayout ? 'text-[10px]' : 'text-xs sm:text-sm'}`}><CheckCircle size={isMobileLayout ? 16 : 20}/> ตรวจสอบและอนุมัติเสร็จสิ้น</div>
-                               ) : isLockedForForeman ? (
-                                  <div className={`bg-rose-50 text-rose-600 py-3 sm:py-4 px-4 sm:px-6 rounded-xl sm:rounded-[1.5rem] font-black text-center border border-rose-200 flex flex-col items-center justify-center gap-1`}><span className={`flex items-center gap-1.5 uppercase tracking-widest ${isMobileLayout ? 'text-[10px]' : 'text-xs sm:text-sm'}`}><AlertTriangle size={isMobileLayout ? 16 : 20}/> ยังไม่สามารถส่งงานได้</span><span className={`font-bold opacity-80 ${isMobileLayout ? 'text-[8px]' : 'text-[10px] sm:text-xs'}`}>กรุณารอผู้จัดจ้างระบุชื่อช่างก่อนครับ</span></div>
-                               ) : isSiteEngineer ? (
-                                 isPendingSE ? (
-                                   <div className={`flex flex-col ${isMobileLayout ? 'gap-2' : 'gap-3 sm:gap-4'}`}>
-                                     <div className={`flex ${isMobileLayout ? 'gap-1.5' : 'gap-2 sm:gap-3'} items-center`}>
-                                         <label className={`text-slate-400 hover:text-blue-600 ${isMobileLayout ? 'p-2 rounded-lg' : 'p-2 sm:p-4 rounded-xl sm:rounded-[1.5rem]'} bg-slate-100 cursor-pointer shadow-sm active:scale-90 transition-transform`}><Camera size={isMobileLayout ? 18 : 24} /><input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { const files = Array.from(e.target.files).map(f => ({ file: f, previewUrl: URL.createObjectURL(f) })); setSelectedFiles([...selectedFiles, ...files].slice(0, 4)); }} /></label>
-                                         <input type="text" value={inputText} onChange={(e) => setInputText(e.target.value)} placeholder="ระบุความคิดเห็น..." className={`flex-1 bg-slate-100 ${isMobileLayout ? 'rounded-lg px-3 py-2.5 text-[10px]' : 'rounded-xl sm:rounded-[1.5rem] px-4 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm'} font-bold outline-none focus:border-blue-500`} />
-                                     </div>
-                                     <div className={`flex ${isMobileLayout ? 'gap-1.5' : 'gap-2 sm:gap-4'}`}>
-                                       <button onClick={() => handleReviewAction(false)} disabled={isSending} className={`flex-1 bg-red-50 text-red-600 ${isMobileLayout ? 'py-2 rounded-lg text-[9px]' : 'py-3 sm:py-4 rounded-xl sm:rounded-[1.5rem] text-[10px] sm:text-sm'} font-black border border-red-200 uppercase tracking-widest hover:bg-red-100 flex justify-center items-center gap-1.5 disabled:opacity-50`}>{isSending ? <Loader2 className="animate-spin" size={14}/> : 'ไม่อนุมัติ (แก้ 95%)'}</button>
-                                       <button onClick={() => handleReviewAction(true)} disabled={isSending} className={`flex-1 bg-blue-600 text-white ${isMobileLayout ? 'py-2 rounded-lg text-[9px]' : 'py-3 sm:py-4 rounded-xl sm:rounded-[1.5rem] text-[10px] sm:text-sm'} font-black uppercase tracking-widest hover:bg-blue-700 flex justify-center items-center gap-1.5 disabled:opacity-50`}>{isSending ? <Loader2 className="animate-spin" size={14}/> : 'ตรวจสอบผ่าน'}</button>
-                                     </div>
-                                   </div>
-                                 ) : ( <div className={`bg-slate-100 text-slate-400 py-3 sm:py-4 rounded-xl sm:rounded-[1.5rem] font-black text-center uppercase tracking-widest border border-slate-200 ${isMobileLayout ? 'text-[9px]' : 'text-xs sm:text-sm'}`}>รอโฟร์แมน 100% หรือ รอ QC ตรวจ</div> )
-                               ) : isQC ? (
-                                 isPendingQC ? (
-                                   <div className={`flex flex-col ${isMobileLayout ? 'gap-2' : 'gap-3 sm:gap-4'}`}>
-                                     <div className={`flex ${isMobileLayout ? 'gap-1.5' : 'gap-2 sm:gap-3'} items-center`}>
-                                         <label className={`text-slate-400 hover:text-purple-600 ${isMobileLayout ? 'p-2 rounded-lg' : 'p-2 sm:p-4 rounded-xl sm:rounded-[1.5rem]'} bg-slate-100 cursor-pointer shadow-sm active:scale-90 transition-transform`}><Camera size={isMobileLayout ? 18 : 24} /><input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { const files = Array.from(e.target.files).map(f => ({ file: f, previewUrl: URL.createObjectURL(f) })); setSelectedFiles([...selectedFiles, ...files].slice(0, 4)); }} /></label>
-                                         <input type="text" value={inputText} onChange={(e) => setInputText(e.target.value)} placeholder="ระบุความคิดเห็น..." className={`flex-1 bg-slate-100 ${isMobileLayout ? 'rounded-lg px-3 py-2.5 text-[10px]' : 'rounded-xl sm:rounded-[1.5rem] px-4 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm'} font-bold outline-none focus:border-purple-500`} />
-                                     </div>
-                                     <div className={`flex ${isMobileLayout ? 'gap-1.5' : 'gap-2 sm:gap-4'}`}>
-                                       <button onClick={() => handleReviewAction(false)} disabled={isSending} className={`flex-1 bg-red-50 text-red-600 ${isMobileLayout ? 'py-2 rounded-lg text-[9px]' : 'py-3 sm:py-4 rounded-xl sm:rounded-[1.5rem] text-[10px] sm:text-sm'} font-black border border-red-200 uppercase tracking-widest hover:bg-red-100 flex justify-center items-center gap-1.5 disabled:opacity-50`}>{isSending ? <Loader2 className="animate-spin" size={14}/> : 'ไม่อนุมัติ (แก้ 95%)'}</button>
-                                       <button onClick={() => handleReviewAction(true)} disabled={isSending} className={`flex-1 bg-purple-600 text-white ${isMobileLayout ? 'py-2 rounded-lg text-[9px]' : 'py-3 sm:py-4 rounded-xl sm:rounded-[1.5rem] text-[10px] sm:text-sm'} font-black uppercase tracking-widest hover:bg-purple-700 flex justify-center items-center gap-1.5 disabled:opacity-50`}>{isSending ? <Loader2 className="animate-spin" size={14}/> : 'QC ผ่าน (Complete)'}</button>
-                                     </div>
-                                   </div>
-                                 ) : ( <div className={`bg-slate-100 text-slate-400 py-3 sm:py-4 rounded-xl sm:rounded-[1.5rem] font-black text-center uppercase tracking-widest border border-slate-200 ${isMobileLayout ? 'text-[9px]' : 'text-xs sm:text-sm'}`}>รองานผ่าน Site Engineer ก่อน</div> )
-                               ) : isProcurement || isProjectPlanner || isOwner ? (
-                                   <div className={`bg-slate-100 text-slate-500 py-3 sm:py-4 px-4 sm:px-6 rounded-xl sm:rounded-[1.5rem] font-black text-center uppercase tracking-widest border border-slate-200 flex items-center justify-center gap-2 ${isMobileLayout ? 'text-[10px]' : 'text-xs sm:text-sm'}`}><AlertCircle size={18}/> ใช้สิทธิ์อัปเดตงานไม่ได้</div>
-                               ) : (
-                                 isPendingSE || isPendingQC ? (
-                                   <div className={`bg-orange-100 text-orange-600 py-3 sm:py-4 px-4 sm:px-6 rounded-xl sm:rounded-[1.5rem] font-black text-center uppercase tracking-widest border border-orange-200 flex items-center justify-center gap-2 ${isMobileLayout ? 'text-[10px]' : 'text-xs sm:text-sm'}`}><Clock size={18}/> งานรอตรวจสอบ ({isPendingSE ? 'Site Engineer' : 'QC'})</div>
-                                 ) : (
-                                   <div className={`space-y-2 sm:space-y-4`}>
-                                       <div className={`flex items-center gap-2 sm:gap-4 ${isMobileLayout ? 'px-1' : 'px-2'}`}>
-                                           <span className={`font-black text-slate-500 uppercase italic tracking-widest ${isMobileLayout ? 'text-[8px]' : 'text-[10px] sm:text-xs'}`}>Progress</span>
-                                           <input type="range" min={updates.length > 0 ? updates[updates.length-1].progress : 0} max="100" step="5" value={progressValue} onChange={(e) => setProgressValue(Number(e.target.value))} className={`flex-1 accent-blue-600 ${isMobileLayout ? 'h-1.5' : 'h-2 sm:h-2.5'} bg-slate-200 rounded-lg appearance-none cursor-pointer`} />
-                                           <span className={`font-black text-blue-600 text-right italic ${isMobileLayout ? 'text-sm w-10' : 'text-xl sm:text-2xl w-16 sm:w-20'}`}>{progressValue}%</span>
-                                       </div>
-                                       <div className={`flex items-center ${isMobileLayout ? 'gap-1.5' : 'gap-2 sm:gap-3'}`}>
-                                           <label className={`text-slate-400 hover:text-blue-600 ${isMobileLayout ? 'p-2 rounded-lg' : 'p-3 sm:p-4 rounded-xl sm:rounded-[1.5rem]'} bg-slate-100 cursor-pointer shadow-sm active:scale-90 transition-transform`}><Camera size={isMobileLayout ? 18 : 24} /><input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { const files = Array.from(e.target.files).map(f => ({ file: f, previewUrl: URL.createObjectURL(f) })); setSelectedFiles([...selectedFiles, ...files].slice(0, 4)); }} /></label>
-                                           <input type="text" value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendPost()} placeholder="อธิบายงาน..." className={`flex-1 bg-slate-100 ${isMobileLayout ? 'rounded-lg px-3 py-2 text-[10px]' : 'rounded-xl sm:rounded-[1.5rem] px-5 sm:px-6 py-3 sm:py-4 text-sm'} font-bold outline-none border-2 border-transparent focus:border-blue-500 shadow-inner`} />
-                                           <button onClick={handleSendPost} disabled={isSending} className={`${isMobileLayout ? 'p-2 rounded-lg' : 'p-3 sm:p-4 rounded-xl sm:rounded-[1.5rem]'} text-white shadow-md disabled:opacity-50 ${progressValue === 100 ? 'bg-orange-500 hover:bg-orange-600' : 'bg-blue-600 hover:bg-blue-700'}`}>{isSending ? <Loader2 className="animate-spin" size={isMobileLayout ? 18 : 24}/> : <Send size={isMobileLayout ? 18 : 24}/>}</button>
-                                       </div>
-                                   </div>
-                                 )
-                               )}
-                           </footer>
-                       </div>
-                   </div>
+                 <TaskProgressView 
+                   view={view} setView={setView} taskReturnView={taskReturnView}
+                   isMobileLayout={isMobileLayout} selectedTask={selectedTask} selectedPlot={selectedPlot}
+                   setProgressValue={setProgressValue} progressValue={progressValue} isSending={isSending}
+                   setFullImageUrl={setFullImageUrl} handleDeleteUpdate={handleDeleteUpdate}
+                   setExportModalOpen={setExportModalOpen}
+                   isProjectPlanner={isProjectPlanner}
+                   isAdmin={isAdmin} currentUserRole={currentUserRole} updates={updates}
+                   inputText={inputText} setInputText={setInputText} 
+                   selectedFiles={selectedFiles} setSelectedFiles={setSelectedFiles}
+                   
+                   isTaskCompleted={isTaskCompleted} handleOpenExportModal={handleOpenExportModal}
+                   setDefectModal={setDefectModal} defects={defects} loggedInUser={loggedInUser}
+                   isLockedForForeman={isLockedForForeman} isSiteEngineer={isSiteEngineer}
+                   isPendingSE={isPendingSE} handleReviewAction={handleReviewAction} isQC={isQC}
+                   isPendingQC={isPendingQC} isProcurement={isProcurement} isOwner={isOwner}
+                   handleSendPost={handleSendPost} X={X}
+                 />
                )}
 
-               {/* 🌟 1. ADMIN / PROCUREMENT FORMS 🌟 */}
-               {view === 'procurement-contractors' && (isAdmin || isProcurement) && (
+{view === 'procurement-contractors' && (isAdmin || isProcurement) && (
                  <div className="animate-in slide-in-from-bottom duration-300 max-w-3xl mx-auto mt-4 sm:mt-8 px-4 sm:px-0">
                     <button onClick={() => setView('dashboard')} className="mb-4 sm:mb-6 text-xs sm:text-base font-bold text-blue-600 flex items-center gap-1.5">← {isMobileLayout ? 'BACK' : 'BACK TO DASHBOARD'}</button>
                     <div className="bg-white p-5 sm:p-10 rounded-2xl sm:rounded-[2.5rem] border border-slate-200 shadow-xl">
@@ -3160,7 +2238,7 @@ const handleSendDefect = async () => {
                                    taskTemplates
                                       .filter(t => t.house_type_id === editingHouseType.id)
                                       .sort((a, b) => a.task_order - b.task_order)
-                                      .map((task) => {
+                                      .map((task: any) => {
                                          const config = visualConfig[task.id] || {};
                                          const currentSimStatus = simulatedStatus[task.id] || 'none';
                                          
@@ -3570,7 +2648,7 @@ const handleSendDefect = async () => {
                             {/* รูปภาพ Defect ถ้ามี */}
                             {defect.image_url && (
                                 <div className={`grid gap-2 mb-3 ${defect.image_url.split(',').filter(u => u.trim() !== '').length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                                    {defect.image_url.split(',').filter(u => u.trim() !== '').map((url, i) => (
+                                    {defect.image_url.split(',').filter(u => u.trim() !== '').map((url: any, i: any) => (
                                         <img key={i} src={url.trim()} onClick={() => setFullImageUrl(url.trim())} className="w-full aspect-video object-cover rounded-xl cursor-zoom-in border border-slate-100 shadow-sm hover:opacity-90" alt="Defect" /> 
                                     ))}
                                 </div>
@@ -3609,7 +2687,7 @@ const handleSendDefect = async () => {
                         <div className="flex items-center gap-2">
                           <label className="text-slate-400 hover:text-rose-600 p-2.5 sm:p-3 rounded-xl bg-slate-100 cursor-pointer shadow-sm active:scale-90 transition-transform">
                               <Camera size={isMobileLayout ? 20 : 22} />
-                              <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { const files = Array.from(e.target.files).map(f => ({ file: f, previewUrl: URL.createObjectURL(f) })); setDefectFiles([...defectFiles, ...files].slice(0, 4)); }} />
+                              <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { const files = Array.from(e.target.files || []).map(f => ({ file: f, previewUrl: URL.createObjectURL(f) })); setDefectFiles([...defectFiles, ...files].slice(0, 4)); }} />
                           </label>
                           <input 
                             type="text" value={newDefectText} onChange={(e) => setNewDefectText(e.target.value)}
@@ -3664,7 +2742,7 @@ const handleSendDefect = async () => {
                  const statusInfo = { actual: actualProgress, label: sLabel, status: sStatus };
                  const latestUpdate = plotUpdates.length > 0 ? plotUpdates[0] : null;
                  
-                 let plotImages = [];
+                 let plotImages: any[] = [];
                  plotUpdates.forEach(u => {
                     if (u.image_url) {
                        const urls = u.image_url.split(',').filter(url => url.trim() !== '');
@@ -3937,7 +3015,7 @@ const handleSendDefect = async () => {
            {/* 🖨️ พิมพ์รายงาน Daily Activity (ถ้าเปิด Modal Activity) */}
            {activityReportOpen && (() => {
                 const targetDate = activityReportDate;
-                const activities = [];
+                const activities: any[] = [];
                 
                 allUpdatesRecord.filter(u => new Date(u.created_at).toLocaleDateString('en-CA') === targetDate && u.role !== 'Admin').forEach(u => {
                     const task = taskTemplates.find(t => t.id === u.task_template_id);

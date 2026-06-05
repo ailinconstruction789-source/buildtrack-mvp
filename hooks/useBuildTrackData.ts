@@ -23,19 +23,6 @@ export function useBuildTrackData(loggedInUser: any) {
   const [taskDates, setTaskDates] = useState<any>({});
   const [allUpdatesRecord, setAllUpdatesRecord] = useState<any[]>([]);
 
-  const fetchWithoutLimit = async (tableName: string, orderByCol: string | null = null) => {
-    const allData: any[] = [];
-    for (let i = 0; i < 50; i++) {
-        let query = supabase.from(tableName).select('*').range(i * 1000, ((i + 1) * 1000) - 1);
-        if (orderByCol) query = query.order(orderByCol, { ascending: true });
-        const { data, error } = await query;
-        if (error) { console.error(`fetchWithoutLimit error on ${tableName}:`, error); break; }
-        if (data && data.length > 0) allData.push(...data);
-        if (!data || data.length < 1000) break;
-    }
-    return allData;
-  };
-
   const fetchAllData = useCallback(async () => {
     if (!loggedInUser) return;
     
@@ -49,73 +36,68 @@ export function useBuildTrackData(loggedInUser: any) {
         { data: plotsData },
         { data: contData },
         { data: notifData },
-        allUpdates,
-        assignData,
-        scheduleData,
-        defectsData,
+        { data: plotProgressData },
+        { data: projectProgressData },
+        { data: assignData },
+        { data: recentUpdates }
       ] = await Promise.all([
         supabase.from('projects').select('*').order('created_at', { ascending: true }),
         supabase.from('house_types').select('*'),
         supabase.from('task_templates').select('*').order('task_order', { ascending: true }),
         supabase.from('plots').select('*, house_types(type_name)').order('created_at', { ascending: true }),
         supabase.from('contractors').select('*'),
-        supabase.from('notifications').select('*').order('created_at', { ascending: false }),
-        fetchWithoutLimit('task_updates', 'created_at'),
-        fetchWithoutLimit('plot_task_assignments'),
-        fetchWithoutLimit('plot_task_schedules'),
-        fetchWithoutLimit('defects'),
+        // Only fetch relevant notifications at the DB layer
+        supabase.from('notifications')
+          .select('*')
+          .or(`target_user.eq.${loggedInUser.username},target_role.eq.${loggedInUser.role}`)
+          .order('created_at', { ascending: false }),
+        supabase.from('vw_plot_progress').select('*'),
+        supabase.from('vw_project_progress').select('*'),
+        supabase.from('plot_task_assignments').select('*'), // This is small enough without a loop (1 row per task per plot)
+        supabase.from('task_updates').select('*').order('created_at', { ascending: false }).limit(200) // For global feed
       ]);
 
-      setDefects(defectsData || []);
-
-      if (notifData && loggedInUser) {
-        setNotifications(notifData.filter((n: any) => n.target_user === loggedInUser.username || n.target_role === loggedInUser.role));
-      }
-      
+      setNotifications(notifData || []);
       setAssignments(assignData || []); 
       setContractors(contData || []); 
-      setAllUpdatesRecord(allUpdates || []);
-
-      const schedMap: any = {}; 
-      scheduleData?.forEach((s: any) => { schedMap[`${s.plot_id}-${s.task_template_id}`] = s; }); 
-      setSchedules(schedMap);
+      setAllUpdatesRecord(recentUpdates || []);
       
       const latestUpdates: any = {}; 
       const tDates: any = {}; 
       
-      allUpdates?.forEach((upd: any) => { 
-        const key = `${upd.plot_id}-${upd.task_template_id}`; 
-        latestUpdates[key] = upd; 
-        if (!tDates[key]) tDates[key] = { start: upd.created_at, end: null };
-        if (new Date(upd.created_at) < new Date(tDates[key].start)) tDates[key].start = upd.created_at;
-        if (upd.action === 'QC อนุมัติผ่าน' || upd.action === 'QC อนุมัติ') tDates[key].end = upd.created_at;
+      // We populate latestUpdatesMap and taskDates from the new DB columns in plot_task_assignments
+      // instead of looping through all task_updates.
+      assignData?.forEach((assign: any) => { 
+        const key = `${assign.plot_id}-${assign.task_template_id}`; 
+        latestUpdates[key] = {
+           plot_id: assign.plot_id,
+           task_template_id: assign.task_template_id,
+           progress: assign.current_progress || 0,
+        }; 
+        tDates[key] = { start: assign.actual_start_date, end: assign.actual_end_date };
       });
       
       setLatestUpdatesMap(latestUpdates); 
       setTaskDates(tDates);
 
       const formattedPlots = plotsData?.map((plot: any) => {
-        const plotTasks = tasks?.filter((t: any) => t.house_type_id === plot.house_type_id) || []; 
-        let sumProgress = 0;
-        plotTasks.forEach((task: any) => sumProgress += (latestUpdates[`${plot.id}-${task.id}`]?.progress || 0));
+        const progressRecord = plotProgressData?.find((p: any) => p.plot_id === plot.id);
         return { 
           ...plot, 
           type: plot.house_types?.type_name || 'ไม่ระบุแบบ', 
           foreman: plot.foreman_name, 
-          progress: plotTasks.length > 0 ? Math.round(sumProgress / plotTasks.length) : 0 
+          progress: progressRecord ? Number(progressRecord.overall_progress) : 0 
         };
       });
 
       const formattedProjects = projs?.map((proj: any) => {
-        const projectPlots = formattedPlots?.filter((p: any) => p.project_name === proj.name) || []; 
-        let totalPlotProgress = 0; 
-        projectPlots.forEach((p: any) => totalPlotProgress += p.progress);
+        const progressRecord = projectProgressData?.find((p: any) => p.project_name === proj.name);
         const uniqueMigrated = Array.from(new Map((proj.layout_data || []).map((item: any) => [item.id, item])).values());
         return { 
           name: proj.name, 
           layout_data: uniqueMigrated, 
-          plotCount: projectPlots.length, 
-          progress: projectPlots.length > 0 ? Math.round(totalPlotProgress / projectPlots.length) : 0 
+          plotCount: progressRecord ? Number(progressRecord.plot_count) : 0, 
+          progress: progressRecord ? Number(progressRecord.project_progress) : 0 
         };
       });
 
@@ -130,6 +112,64 @@ export function useBuildTrackData(loggedInUser: any) {
       setLoading(false); 
     }
   }, [loggedInUser]);
+
+  // Atomic fetch function for lazy loading heavy specific plot data
+  const fetchPlotDetails = useCallback(async (plotId: string) => {
+    try {
+      const [
+        { data: schedulesData },
+        { data: updatesData },
+        { data: defectsData }
+      ] = await Promise.all([
+        supabase.from('plot_task_schedules').select('*').eq('plot_id', plotId),
+        supabase.from('task_updates').select('*').eq('plot_id', plotId).order('created_at', { ascending: true }),
+        supabase.from('defects').select('*').eq('plot_id', plotId)
+      ]);
+
+      setSchedules((prev: any) => {
+        const newSched = { ...prev };
+        schedulesData?.forEach((s: any) => { newSched[`${s.plot_id}-${s.task_template_id}`] = s; });
+        return newSched;
+      });
+
+      setDefects((prev: any) => {
+        const existingWithoutCurrentPlot = prev.filter((d: any) => d.plot_id !== plotId);
+        return [...existingWithoutCurrentPlot, ...(defectsData || [])];
+      });
+
+      // Update latestUpdatesMap so action fields are populated for QC logic if viewed
+      if (updatesData && updatesData.length > 0) {
+        setLatestUpdatesMap((prev: any) => {
+           const newUpdates = { ...prev };
+           updatesData.forEach((upd: any) => {
+              newUpdates[`${upd.plot_id}-${upd.task_template_id}`] = upd;
+           });
+           return newUpdates;
+        });
+        
+        // Also merge into allUpdatesRecord so history is available for this plot
+        setAllUpdatesRecord((prev: any) => {
+           const existing = prev.filter((u: any) => u.plot_id !== plotId);
+           return [...existing, ...updatesData];
+        });
+      }
+    } catch (error) {
+      console.error(`Error fetching details for plot ${plotId}:`, error);
+    }
+  }, []);
+
+  const fetchUsers = useCallback(async () => {
+    try {
+      const { data } = await supabase.from('users').select('*').order('role', { ascending: true }).order('username', { ascending: true });
+      if (data) setAllUsers(data);
+    } catch (error) {
+      console.error('Error fetching users:', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchUsers();
+  }, [fetchUsers]);
 
   useEffect(() => {
     if (loggedInUser) fetchAllData();
@@ -150,6 +190,7 @@ export function useBuildTrackData(loggedInUser: any) {
     latestUpdatesMap, setLatestUpdatesMap,
     taskDates, setTaskDates,
     allUpdatesRecord, setAllUpdatesRecord,
-    fetchAllData
+    fetchAllData,
+    fetchPlotDetails
   };
 }
