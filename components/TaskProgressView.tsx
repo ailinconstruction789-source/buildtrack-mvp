@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 import React, { useEffect } from 'react';
 import { 
   AlertCircle, AlertTriangle, Camera, CheckCircle, Clock, Loader2, Printer, Send, ShieldAlert, Trash2, X
@@ -145,8 +145,8 @@ export default function TaskProgressView(props: TaskProgressViewProps) {
                                        </div>
                                        <p className={`text-slate-700 ${isMobileLayout ? 'text-xs mb-2' : 'text-sm sm:text-base mb-4'} font-medium leading-relaxed`}>{update.text_content}</p>
                                        {update.image_url && (
-                                           <div className={`grid gap-2 ${update.image_url.split(',').filter(u => u.trim() !== '').length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                                               {update.image_url.split(',').filter(u => u.trim() !== '').map((url: any, i: any) => (
+                                            <div className={`grid gap-2 ${update.image_url.split(',').filter((u: string) => u.trim() !== '').length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                                               {update.image_url.split(',').filter((u: string) => u.trim() !== '').map((url: any, i: any) => (
                                                   <img key={i} src={url.trim()} onClick={() => setFullImageUrl(url.trim())} className={`w-full aspect-video ${isMobileLayout ? 'h-24' : 'h-32 sm:h-48'} object-cover rounded-xl sm:rounded-2xl cursor-zoom-in border border-slate-100 shadow-sm hover:opacity-90 transition-opacity`} alt="Task Update" /> 
                                                ))}
                                            </div>

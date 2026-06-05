@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 'use client';
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
@@ -95,16 +95,16 @@ export default function ConstructionApp() {
   // Extracted: [houseTypes,
   // Extracted: [taskTemplates,
   // Extracted: [loading,
-  const [editPlotModal, setEditPlotModal] = useState({ isOpen: false, plot: null, id: '', house_type_id: '', foreman_name: '' });
+  const [editPlotModal, setEditPlotModal] = useState<any>({ isOpen: false, plot: null, id: '', house_type_id: '', foreman_name: '' });
   const [editProjectModal, setEditProjectModal] = useState({ isOpen: false, oldName: '', newName: '' });
 // 🌟 State สำหรับระบบ 2.5D แบบเจาะจงรายงวดงาน (0-99% และ 100%)
   const [editingHouseType, setEditingHouseType] = useState<any>(null);
-  const [visualConfig, setVisualConfig] = useState({}); // เก็บค่าแบบ Map { [taskId]: { progress_image, progress_z, done_image, done_z } }
+  const [visualConfig, setVisualConfig] = useState<Record<string, any>>({}); // เก็บค่าแบบ Map { [taskId]: { progress_image, progress_z, done_image, done_z } }
   const [isUploadingLayer, setIsUploadingLayer] = useState(false);
-  const [simulatedStatus, setSimulatedStatus] = useState({}); // 🎮 สำหรับกล่องลองเล่นพรีวิวในหน้าตั้งค่า { [taskId]: 'none' | 'progress' | 'done' }
+  const [simulatedStatus, setSimulatedStatus] = useState<Record<string, any>>({}); // 🎮 สำหรับกล่องลองเล่นพรีวิวในหน้าตั้งค่า { [taskId]: 'none' | 'progress' | 'done' }
 
   // ฟังก์ชันอัปโหลดรูปเฉพาะช่อง
-  const handleUploadSlot = async (taskId, type, file) => {
+  const handleUploadSlot = async (taskId: string, type: string, file: File | undefined | null) => {
     if (!file || !editingHouseType) return;
     setIsUploadingLayer(true);
     try {
@@ -121,7 +121,7 @@ export default function ConstructionApp() {
           [`${type}_z`]: prev[taskId]?.[`${type}_z`] || 10 // ค่าเริ่มต้น Z-index เป็น 10
         }
       }));
-    } catch (err) {
+    } catch (err: any) {
       showAlert('อัปโหลดล้มเหลว', err.message);
     }
     setIsUploadingLayer(false);
@@ -248,7 +248,7 @@ export default function ConstructionApp() {
   
   const [assignModal, setAssignModal] = useState<any>({ isOpen: false, task: null, name: '', phone: '' });
   const [dialogConfig, setDialogConfig] = useState<any>({ isOpen: false, title: '', message: '', type: 'confirm', onConfirm: null });
-  const [scheduleInputs, setScheduleInputs] = useState({}); 
+  const [scheduleInputs, setScheduleInputs] = useState<Record<string, any>>({}); 
   const [copyModalOpen, setCopyModalOpen] = useState(false);
   const [copySourcePlot, setCopySourcePlot] = useState('');
   const [copyStartDate, setCopyStartDate] = useState('');
@@ -284,15 +284,15 @@ export default function ConstructionApp() {
   // ==========================================
   // 2. HELPER FUNCTIONS
   // ==========================================
-  const showConfirm = (title, message, onConfirmAction) => setDialogConfig({ isOpen: true, title, message, type: 'confirm', onConfirm: onConfirmAction });
-  const showAlert = (title, message) => setDialogConfig({ isOpen: true, title, message, type: 'alert', onConfirm: null });
+  const showConfirm = (title: string, message: string, onConfirmAction: any) => setDialogConfig({ isOpen: true, title, message, type: 'confirm', onConfirm: onConfirmAction });
+  const showAlert = (title: string, message: string) => setDialogConfig({ isOpen: true, title, message, type: 'alert', onConfirm: null });
   const closeDialog = () => setDialogConfig({ ...dialogConfig, isOpen: false });
 
   const handleZoomIn = () => setMapZoom(prev => Math.min(prev + 0.2, 2.5));
   const handleZoomOut = () => setMapZoom(prev => Math.max(prev - 0.2, 0.5));
   const handleZoomReset = () => setMapZoom(1);
 
-  const getTaskStatus = (plannedEnd, actualEnd, progress) => {
+  const getTaskStatus = (plannedEnd: any, actualEnd: any, progress: number) => {
     if (!plannedEnd) return { label: 'ยังไม่มีแผน', color: 'text-slate-500 bg-slate-100 border-slate-300', barColor: 'bg-slate-300', code: 'none' };
     const pEnd = new Date(plannedEnd).getTime(); const aEnd = actualEnd ? new Date(actualEnd).getTime() : Date.now(); const diffDays = Math.floor((aEnd - pEnd) / (1000 * 60 * 60 * 24)); 
     if (progress === 100) {
@@ -323,7 +323,7 @@ export default function ConstructionApp() {
     return { actual: actualAvg, planned: plannedAvg, status: 'on-track', label: 'ตามแผน', colors: 'bg-blue-100/90 border-blue-500 text-blue-800' };
   };
 
-  const getAdjacency = (x, y, type, plotId) => ({ hasTop: mapGrid.some(c => c.x === x && c.y === y - 1 && c.type === type && (type !== 'plot' || c.plotId === plotId)), hasBottom: mapGrid.some(c => c.x === x && c.y === y + 1 && c.type === type && (type !== 'plot' || c.plotId === plotId)), hasLeft: mapGrid.some(c => c.x === x - 1 && c.y === y && c.type === type && (type !== 'plot' || c.plotId === plotId)), hasRight: mapGrid.some(c => c.x === x + 1 && c.y === y && c.type === type && (type !== 'plot' || c.plotId === plotId)) });
+  const getAdjacency = (x: number, y: number, type: string, plotId: string | null) => ({ hasTop: mapGrid.some(c => c.x === x && c.y === y - 1 && c.type === type && (type !== 'plot' || c.plotId === plotId)), hasBottom: mapGrid.some(c => c.x === x && c.y === y + 1 && c.type === type && (type !== 'plot' || c.plotId === plotId)), hasLeft: mapGrid.some(c => c.x === x - 1 && c.y === y && c.type === type && (type !== 'plot' || c.plotId === plotId)), hasRight: mapGrid.some(c => c.x === x + 1 && c.y === y && c.type === type && (type !== 'plot' || c.plotId === plotId)) });
 
   // ==========================================
   // 3. API FETCHING & EFFECTS
@@ -399,7 +399,7 @@ export default function ConstructionApp() {
   }, [selectedPlot?.id, view, fetchPlotDetails]);
   // 🌟 ระบบจับการกดปุ่มคีย์บอร์ด (ซ้าย, ขวา, ESC) สำหรับโหมด Presentation
   useEffect(() => {
-    const handleKeyDown = (e) => {
+    const handleKeyDown = (e: any) => {
       if (!isPresentationOpen) return;
       if (e.key === 'ArrowRight') setCurrentSlideIndex(prev => Math.min(prev + 1, plots.length - 1));
       if (e.key === 'ArrowLeft') setCurrentSlideIndex(prev => Math.max(prev - 1, 0));
@@ -564,7 +564,7 @@ const handleLogout = () => {
     });
   };
   
-  const handleNotifClick = async (notif) => { 
+  const handleNotifClick = async (notif: any) => { 
     if (!notif.is_read) { await supabase.from('notifications').update({ is_read: true }).eq('id', notif.id); await fetchAllData(); } 
     setShowNotifs(false); 
     const pInfo = plots.find(p => p.id === notif.plot_id); const pProject = projects.find(pj => pj.name === pInfo?.project_name); const tInfo = taskTemplates.find(t => t.id === notif.task_template_id); 
@@ -574,7 +574,7 @@ const handleLogout = () => {
   const handleSaveAllSchedules = async () => {
     setIsSubmitting(true);
     try {
-      const payloads = []; Object.keys(scheduleInputs).forEach(taskId => { const plan = scheduleInputs[taskId]; if (plan.start && plan.end) { payloads.push({ plot_id: selectedPlot.id, task_template_id: taskId, planned_start: plan.start, planned_end: plan.end }); } });
+      const payloads: any[] = []; Object.keys(scheduleInputs).forEach(taskId => { const plan = scheduleInputs[taskId]; if (plan.start && plan.end) { payloads.push({ plot_id: selectedPlot.id, task_template_id: taskId, planned_start: plan.start, planned_end: plan.end }); } });
       if (payloads.length === 0) { setIsSubmitting(false); return showAlert('แจ้งเตือน', 'ไม่มีการแก้ไขข้อมูล หรือกรอกวันที่ไม่ครบครับ'); }
       // 🌟 ตรวจสอบวันที่ทุกรายการก่อน ก่อนที่จะแตะ Database 🌟
       for (const p of payloads) { if (new Date(p.planned_end) < new Date(p.planned_start)) throw new Error('วันสิ้นสุดต้องอยู่หลังวันเริ่มงานครับ'); }
@@ -587,7 +587,7 @@ const handleLogout = () => {
 
 // 🌟 ฟังก์ชันดึงแผนงานแบบมีระบบ Auto-Shift (เลื่อนวันให้อัตโนมัติ)
   const handleConfirmCopy = () => {
-    const newInputs = { ...scheduleInputs };
+    const newInputs: any = { ...scheduleInputs };
     // ดึงงานทั้งหมดและจัดเรียงตามลำดับ (1, 2, 3...)
     const sourceTasks = taskTemplates.filter(t => t.house_type_id === selectedPlot.house_type_id).sort((a,b) => a.task_order - b.task_order); 
     let hasData = false;
@@ -653,7 +653,7 @@ const handleLogout = () => {
   const handleMouseUp = () => { setIsDrawing(false); setLastDrawCell(null); };
   const paintCell = (x: any, y: any) => setMapGrid((prev: any) => [...prev.filter((c: any) => !((c.type === 'plot' || c.type === 'road') && c.x === x && c.y === y)), { id: `${x}-${y}`, type: mapTool, x, y, plotId: mapTool === 'plot' ? mapSelectedPlot : null }]);
   const eraseCell = (x: any, y: any) => setMapGrid((prev: any) => prev.filter((c: any) => !((c.type === 'plot' || c.type === 'road') && c.x === x && c.y === y)));
-  const handleSaveMap = async () => { setIsSubmitting(true); try { const finalGrid = [...mapGrid.filter(c => c.type !== 'config'), { id: 'GRID_CONFIG', type: 'config', cols: gridCols, rows: gridRows }]; await supabase.from('projects').update({ layout_data: finalGrid }).eq('name', selectedProject.name); showAlert('สำเร็จ', 'บันทึกแผนผังเรียบร้อย!'); await fetchAllData(); setSelectedProject(prev => ({ ...prev, layout_data: finalGrid })); setIsEditMapMode(false); } catch (e: any) { showAlert('Error', (e as Error).message); } finally { setIsSubmitting(false); } };
+  const handleSaveMap = async () => { setIsSubmitting(true); try { const finalGrid = [...mapGrid.filter(c => c.type !== 'config'), { id: 'GRID_CONFIG', type: 'config', cols: gridCols, rows: gridRows }]; await supabase.from('projects').update({ layout_data: finalGrid }).eq('name', selectedProject.name); showAlert('สำเร็จ', 'บันทึกแผนผังเรียบร้อย!'); await fetchAllData(); setSelectedProject((prev: any) => ({ ...prev, layout_data: finalGrid })); setIsEditMapMode(false); } catch (e: any) { showAlert('Error', (e as Error).message); } finally { setIsSubmitting(false); } };
 
   // =========================================================================
   // 🌟 ADMIN / PROCUREMENT FORMS HANDLERS (ฟังก์ชันกรอกข้อมูลทำงานจริง 100%) 🌟
@@ -706,7 +706,7 @@ const handleLogout = () => {
       } catch (e: any) { showAlert('Error', (e as Error).message); } finally { setIsSubmitting(false); } 
   };
   
-  const handleDeleteContractor = (id, name) => { 
+  const handleDeleteContractor = (id: any, name: any) => { 
       showConfirm('ยืนยันลบ', `ลบรายชื่อช่าง ${name} ออกจากระบบ?`, async () => { 
           try { await supabase.from('contractors').delete().eq('id', id); await fetchAllData(); closeDialog(); } catch (e: any) { showAlert('Error', (e as Error).message); } 
       }); 
@@ -784,7 +784,7 @@ const handleAssignContractor = async () => {
       if (!editPlotModal.id.trim() || !editPlotModal.house_type_id) return showAlert('แจ้งเตือน', 'กรุณากรอกข้อมูลให้ครบถ้วน');
       setIsSubmitting(true);
       
-      const oldId = editPlotModal.plot.id; // ชื่อเดิม (เช่น A-01)
+      const oldId = editPlotModal.plot?.id; // ชื่อเดิม (เช่น A-01)
       const newId = editPlotModal.id.trim(); // ชื่อใหม่ (เช่น A-02)
 
       try {
@@ -801,7 +801,7 @@ const handleAssignContractor = async () => {
 
         // 2. 🌟 สำคัญ: อัปเดตชื่อใน "ข้อมูลผังโครงการ" (layout_data) เพื่อไม่ให้ชื่อในแผนที่หาย
         if (selectedProject && selectedProject.layout_data) {
-          const updatedLayout = selectedProject.layout_data.map(cell => {
+          const updatedLayout = selectedProject.layout_data.map((cell: any) => {
             if (cell.type === 'plot' && cell.plotId === oldId) {
               return { ...cell, plotId: newId }; // เปลี่ยน ID ในช่องนั้นๆ เป็นชื่อใหม่
             }
@@ -831,7 +831,7 @@ const handleAssignContractor = async () => {
           
           // 🌟 🌟 เพิ่ม 3 บรรทัดนี้ เพื่อสั่งให้หน้าจอวาดผังใหม่ตามชื่อที่แก้ทันที! 🌟 🌟
           if (updatedProj && updatedProj.layout_data) {
-              setMapGrid(updatedProj.layout_data.filter(c => c.type !== 'config'));
+              setMapGrid(updatedProj.layout_data.filter((c: any) => c.type !== 'config'));
           }
         }
 
@@ -933,6 +933,22 @@ const handleSendDefect = async () => {
       const actionLabel = progressValue === 100 ? 'ส่งงาน 100%' : 'อัปเดตงาน';
       const { error } = await supabase.from('task_updates').insert([{ plot_id: selectedPlot.id, task_template_id: selectedTask.id, user_name: loggedInUser.username, role: currentUserRole, action: actionLabel, text_content: inputText || actionLabel, progress: progressValue, image_url: imageUrls.join(','),weather_info: weatherInfo ? `${weatherInfo.currentDetails.icon} ${weatherInfo.currentDetails.text} (${weatherInfo.currentTemp}°C)` : null }]);
       if (error) throw error;
+
+      // 🌟 Restore original logic: Update Actual Start and Finish 🌟
+      const currentAssignment = assignments.find((a: any) => a.plot_id === selectedPlot.id && a.task_template_id === selectedTask.id);
+      const updatePayload: any = { current_progress: progressValue };
+      if (progressValue > 0 && (!currentAssignment || !currentAssignment.actual_start_date)) {
+         updatePayload.actual_start_date = new Date().toISOString();
+      }
+      if (progressValue === 100) {
+         updatePayload.actual_end_date = new Date().toISOString();
+      }
+      await supabase.from('plot_task_assignments').upsert({
+         plot_id: selectedPlot.id,
+         task_template_id: selectedTask.id,
+         ...updatePayload
+      }, { onConflict: 'plot_id,task_template_id' });
+
       await fetchAllData();
       // 🌟 ดึงประวัติงานสดๆ หลัง fetchAllData เพื่ออัปเดต chat view
       const { data } = await supabase.from('task_updates').select('*').eq('task_template_id', selectedTask.id).eq('plot_id', selectedPlot.id).order('created_at', { ascending: true });
@@ -995,6 +1011,22 @@ const handleSendDefect = async () => {
          else if (currentUserRole === 'QC') { notifPayload.push({ plot_id: selectedPlot.id, task_template_id: selectedTask.id, message: `ตีกลับงานโดย QC: ${selectedTask.task_name}`, target_user: selectedPlot.foreman, target_role: 'Foreman' }); notifPayload.push({ plot_id: selectedPlot.id, task_template_id: selectedTask.id, message: `QC ตีกลับงานที่อนุมัติแล้ว: ${selectedTask.task_name}`, target_user: null, target_role: 'Site Engineer' }); }
          if (notifPayload.length > 0) await supabase.from('notifications').insert(notifPayload);
       }
+
+      // 🌟 Restore original logic: Update Actual Start and Finish for QC Review 🌟
+      const revAssignment = assignments.find((a: any) => a.plot_id === selectedPlot.id && a.task_template_id === selectedTask.id);
+      const revPayload: any = { current_progress: finalP };
+      if (finalP > 0 && (!revAssignment || !revAssignment.actual_start_date)) {
+         revPayload.actual_start_date = new Date().toISOString();
+      }
+      if (finalP === 100) {
+         revPayload.actual_end_date = new Date().toISOString();
+      }
+      await supabase.from('plot_task_assignments').upsert({
+         plot_id: selectedPlot.id,
+         task_template_id: selectedTask.id,
+         ...revPayload
+      }, { onConflict: 'plot_id,task_template_id' });
+
       await fetchAllData();
       // 🌟 ดึงประวัติงานสดๆ หลัง fetchAllData เพื่ออัปเดต chat view
       const { data } = await supabase.from('task_updates').select('*').eq('task_template_id', selectedTask.id).eq('plot_id', selectedPlot.id).order('created_at', { ascending: true });
@@ -1006,7 +1038,7 @@ const handleSendDefect = async () => {
   const handleOpenExportModal = () => {
     let imgs: any[] = [];
     updates.forEach(u => {
-      if(u.image_url) { imgs = [...imgs, ...u.image_url.split(',').filter(url => url.trim() !== '')]; }
+      if(u.image_url) { imgs = [...imgs, ...u.image_url.split(',').filter((url: string) => url.trim() !== '')]; }
     });
     setAllTaskImages(imgs); setSelectedExportImages(imgs); setExportModalOpen(true);
   };
@@ -1073,7 +1105,7 @@ const handleSendDefect = async () => {
   const currentAssignment = assignments.slice().reverse().find(a => String(a.plot_id) === String(selectedPlot?.id) && String(a.task_template_id) === String(selectedTask?.id));
   const isLockedForForeman = isForeman && !currentAssignment;
 
-  const plotBounds = {};
+  const plotBounds: { [key: string]: any } = {};
   mapGrid.filter(c => c.type === 'plot').forEach(c => {
     if (!plotBounds[c.plotId]) plotBounds[c.plotId] = { minX: c.x, maxX: c.x, minY: c.y, maxY: c.y };
     else { plotBounds[c.plotId].minX = Math.min(plotBounds[c.plotId].minX, c.x); plotBounds[c.plotId].maxX = Math.max(plotBounds[c.plotId].maxX, c.x); plotBounds[c.plotId].minY = Math.min(plotBounds[c.plotId].minY, c.y); plotBounds[c.plotId].maxY = Math.max(plotBounds[c.plotId].maxY, c.y); }
@@ -1214,7 +1246,7 @@ const handleSendDefect = async () => {
                             setAssignModal({...assignModal, name: val, phone: c?.phone || '', showDropdown: true});
                           }}
                           onFocus={() => setAssignModal({...assignModal, showDropdown: true})}
-                          onBlur={() => setTimeout(() => setAssignModal(prev => ({...prev, showDropdown: false})), 200)}
+                          onBlur={() => setTimeout(() => setAssignModal((prev: any) => ({...prev, showDropdown: false})), 200)}
                           placeholder="พิมพ์ชื่อช่างเพื่อค้นหา..."
                           className="w-full px-3 py-3 font-bold outline-none text-slate-700 bg-transparent text-sm placeholder:text-slate-400"
                         />
@@ -1762,8 +1794,8 @@ const handleSendDefect = async () => {
 
                                       {/* รูปภาพผลงาน (ถ้ามีรูปภาพ จะรองรับการกดคลิกซูมดูรูปใหญ่ได้ทันที) */}
                                       {update.image_url && (
-                                         <div className={`grid gap-2 sm:gap-3 ${update.image_url.split(',').filter(u => u.trim() !== '').length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                                            {update.image_url.split(',').filter(u => u.trim() !== '').map((url: any, i: any) => (
+                                         <div className={`grid gap-2 sm:gap-3 ${update.image_url.split(',').filter((u: string) => u.trim() !== '').length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                                            {update.image_url.split(',').filter((u: string) => u.trim() !== '').map((url: any, i: any) => (
                                                <img 
                                                   key={i} 
                                                   src={url.trim()} 
@@ -1970,7 +2002,7 @@ const handleSendDefect = async () => {
                                 });
 
                                 if (filteredDefects.length === 0) {
-                                   return <tr><td colSpan="7" className="text-center p-12 text-slate-400 font-bold text-sm sm:text-base">ไม่มีรายการแจ้งซ่อมในระบบระบบย่อยนี้ 🎉</td></tr>;
+                                   return <tr><td colSpan={7} className="text-center p-12 text-slate-400 font-bold text-sm sm:text-base">ไม่มีรายการแจ้งซ่อมในระบบระบบย่อยนี้ 🎉</td></tr>;
                                 }
 
                                 return filteredDefects
@@ -2070,7 +2102,7 @@ const handleSendDefect = async () => {
                    isSubmitting={isSubmitting} houseTypes={houseTypes} taskTemplates={taskTemplates}
                    getTaskStatus={getTaskStatus} latestUpdatesMap={latestUpdatesMap} schedules={schedules}
                    scheduleInputs={scheduleInputs}
-                   handleUploadSlot={handleUploadSlot}
+
                    isUploadingLayer={isUploadingLayer} setSelectedTask={setSelectedTask} setDefectModal={setDefectModal}
                    setTaskReturnView={setTaskReturnView} 
                    setAssignModal={setAssignModal} simulatedStatus={simulatedStatus} editingHouseType={editingHouseType}
@@ -2092,7 +2124,7 @@ const handleSendDefect = async () => {
                    setFullImageUrl={setFullImageUrl} handleDeleteUpdate={handleDeleteUpdate}
                    setExportModalOpen={setExportModalOpen}
                    isProjectPlanner={isProjectPlanner}
-                   isAdmin={isAdmin} currentUserRole={currentUserRole} updates={updates}
+                   isAdmin={isAdmin} currentUserRole={currentUserRole} updates={updates} setUpdates={setUpdates}
                    inputText={inputText} setInputText={setInputText} 
                    selectedFiles={selectedFiles} setSelectedFiles={setSelectedFiles}
                    
@@ -2101,7 +2133,7 @@ const handleSendDefect = async () => {
                    isLockedForForeman={isLockedForForeman} isSiteEngineer={isSiteEngineer}
                    isPendingSE={isPendingSE} handleReviewAction={handleReviewAction} isQC={isQC}
                    isPendingQC={isPendingQC} isProcurement={isProcurement} isOwner={isOwner}
-                   handleSendPost={handleSendPost} X={X}
+                   handleSendPost={handleSendPost}
                  />
                )}
 
@@ -2647,8 +2679,8 @@ const handleSendDefect = async () => {
                             
                             {/* รูปภาพ Defect ถ้ามี */}
                             {defect.image_url && (
-                                <div className={`grid gap-2 mb-3 ${defect.image_url.split(',').filter(u => u.trim() !== '').length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                                    {defect.image_url.split(',').filter(u => u.trim() !== '').map((url: any, i: any) => (
+                                <div className={`grid gap-2 mb-3 ${defect.image_url.split(',').filter((u: string) => u.trim() !== '').length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                                    {defect.image_url.split(',').filter((u: string) => u.trim() !== '').map((url: any, i: any) => (
                                         <img key={i} src={url.trim()} onClick={() => setFullImageUrl(url.trim())} className="w-full aspect-video object-cover rounded-xl cursor-zoom-in border border-slate-100 shadow-sm hover:opacity-90" alt="Defect" /> 
                                     ))}
                                 </div>
@@ -2745,7 +2777,7 @@ const handleSendDefect = async () => {
                  let plotImages: any[] = [];
                  plotUpdates.forEach(u => {
                     if (u.image_url) {
-                       const urls = u.image_url.split(',').filter(url => url.trim() !== '');
+                       const urls = u.image_url.split(',').filter((url: string) => url.trim() !== '');
                        
                       // 🌟 ระบบค้นหาช่างฉบับปรับปรุงใหม่ ดึงชื่อช่างตรงตามงวดงานจริง 100%
                        let contractorName = 'ช่างประจำแปลง';
@@ -2773,7 +2805,7 @@ const handleSendDefect = async () => {
                           }
                        }
 
-                       urls.forEach(url => { 
+                       urls.forEach((url: string) => { 
                           if (plotImages.length < 4) {
                              plotImages.push({ 
                                 url: url.trim(), 

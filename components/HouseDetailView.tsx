@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 import React from 'react';
 import { supabase } from '@/lib/supabase';
 import { 
@@ -27,13 +27,12 @@ interface HouseDetailViewProps {
   latestUpdatesMap: any;
   schedules: any;
   scheduleInputs: any;
-  handleUploadSlot: (typeId: string, taskId: string, type: string, e: any) => void;
   isUploadingLayer: boolean;
   setSelectedTask: (t: any) => void;
   setDefectModal: (o: any) => void;
   setTaskReturnView: (v: string) => void;
   setAssignModal: (o: any) => void;
-  simulatedStatus: string;
+  simulatedStatus: any;
   editingHouseType: any;
   currentUserRole: string;
   totalChartDays: number;
@@ -59,7 +58,7 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
     isSummaryDelayed, isProjectPlanner, setCopyModalOpen, handleSaveAllSchedules,
     isSubmitting, houseTypes, taskTemplates, getTaskStatus, latestUpdatesMap,
     schedules, scheduleInputs, 
-    handleUploadSlot, isUploadingLayer, setSelectedTask, setDefectModal,
+    isUploadingLayer, setSelectedTask, setDefectModal,
     setTaskReturnView, setAssignModal,
     simulatedStatus, editingHouseType, currentUserRole,
     totalChartDays, timeMarkers, todayTs, chartStart, chartEnd,
@@ -225,14 +224,13 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                          <tbody className={isMobileLayout ? 'block p-3 sm:p-0 bg-slate-100' : ''}>
                           {taskTemplates.filter(t => t.house_type_id === selectedPlot.house_type_id).map((task) => {
                             const key             = `${selectedPlot.id}-${task.id}`;
-                            const tProgress       = latestUpdatesMap[key]?.progress || 0;
-                            const assignment      = assignments.find(a => a.task_template_id === task.id);
+                                    const isUpdatedToday = latestUpdatesMap[key]?.updated_at && new Date(latestUpdatesMap[key].updated_at).toDateString() === new Date().toDateString();
+                                    const assignment      = assignments.find(a => a.task_template_id === task.id && a.plot_id === selectedPlot.id);
 
                             // ✅ Fixed: was schedulePlan[task.id] / actualDates[task.id]
                             const plan  = schedules[key]  || {};
                             const dates = taskDates[key]  || {};
-
-                            // ✅ Fixed: removed duplicate const tProgress (was line 2620)
+                            const tProgress = latestUpdatesMap[key]?.progress || 0;
 
                             const isTaskCompleted = tProgress === 100;
 
@@ -464,7 +462,7 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                                          d.setDate(d.getDate() + (Number(currentDuration) - 1));
                                                          newEnd = d.toISOString().split('T')[0];
                                                       }
-                                                      setScheduleInputs(prev => ({...prev, [task.id]: { ...prev[task.id], start: newStart, end: newEnd, duration: currentDuration }}));
+                                                      setScheduleInputs((prev: any) => ({...prev, [task.id]: { ...prev[task.id], start: newStart, end: newEnd, duration: currentDuration }}));
                                                    }} 
                                                    className="flex-1 w-full border border-pink-200 rounded px-1 py-1 text-[9px] font-bold text-slate-700 outline-none focus:border-pink-500 bg-white shadow-sm" 
                                                 />
@@ -489,7 +487,7 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                                          d.setDate(d.getDate() + (Number(newDuration) - 1));
                                                          newEnd = d.toISOString().split('T')[0];
                                                       }
-                                                      setScheduleInputs(prev => ({...prev, [task.id]: { ...prev[task.id], duration: newDuration, end: newEnd, start: currentStart }}));
+                                                      setScheduleInputs((prev: any) => ({...prev, [task.id]: { ...prev[task.id], duration: newDuration, end: newEnd, start: currentStart }}));
                                                    }}
                                                    className="w-full border border-pink-200 rounded px-1 py-1 text-[9px] font-black text-center text-pink-600 outline-none focus:border-pink-500 bg-white shadow-sm" 
                                                 />
@@ -512,7 +510,7 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                                          const diffTime = new Date(newEnd).getTime() - new Date(currentStart).getTime();
                                                          newDuration = String(Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24))) + 1);
                                                       }
-                                                      setScheduleInputs(prev => ({...prev, [task.id]: { ...prev[task.id], end: newEnd, duration: newDuration, start: currentStart }}));
+                                                      setScheduleInputs((prev: any) => ({...prev, [task.id]: { ...prev[task.id], end: newEnd, duration: newDuration, start: currentStart }}));
                                                    }} 
                                                    className="w-full border border-pink-200 rounded px-1 py-1 text-[9px] font-bold text-slate-700 outline-none focus:border-pink-500 bg-white shadow-sm text-center" 
                                                 />
@@ -605,7 +603,7 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                           )}
                                           
                                           {aStartTs && ( 
-                                             <div className={`absolute h-4 rounded-sm z-[25] shadow-sm ${statusObj.barColor}`} style={{ left: `${getChartLeft(aStartTs)}%`, width: `${getChartWidth(aStartTs, aEndTs)}%`, top: '45%' }}>
+                                             <div className={`absolute h-4 rounded-sm z-[25] shadow-sm ${statusObj.barColor}`} style={{ left: `${getChartLeft(aStartTs)}%`, width: `${getChartWidth(aStartTs, aEndTs as number)}%`, top: '45%' }}>
                                                 <span className="absolute -top-3.5 text-[8px] sm:text-[9px] font-black text-slate-600 bg-white/95 border border-slate-200 px-1 py-0 rounded shadow-sm" style={{ left: '2px' }}>{tProgress}%</span>
                                              </div> 
                                           )}

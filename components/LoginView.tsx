@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 import React from 'react';
 import { LayoutDashboard, AlertTriangle } from 'lucide-react';
 

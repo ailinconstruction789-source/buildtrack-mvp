@@ -23,6 +23,22 @@ export function useBuildTrackData(loggedInUser: any) {
   const [taskDates, setTaskDates] = useState<any>({});
   const [allUpdatesRecord, setAllUpdatesRecord] = useState<any[]>([]);
 
+  const fetchWithoutLimit = async (table: string) => {
+    let allData: any[] = [];
+    let from = 0; let to = 999;
+    let hasMore = true;
+    while (hasMore) {
+      const { data, error } = await supabase.from(table).select('*').range(from, to);
+      if (error) break;
+      if (data && data.length > 0) {
+        allData = [...allData, ...data];
+        from += 1000; to += 1000;
+        if (data.length < 1000) hasMore = false;
+      } else { hasMore = false; }
+    }
+    return allData;
+  };
+
   const fetchAllData = useCallback(async () => {
     if (!loggedInUser) return;
     
@@ -38,7 +54,8 @@ export function useBuildTrackData(loggedInUser: any) {
         { data: notifData },
         { data: plotProgressData },
         { data: projectProgressData },
-        { data: assignData },
+        assignData,
+        schedulesData,
         { data: recentUpdates }
       ] = await Promise.all([
         supabase.from('projects').select('*').order('created_at', { ascending: true }),
@@ -53,7 +70,8 @@ export function useBuildTrackData(loggedInUser: any) {
           .order('created_at', { ascending: false }),
         supabase.from('vw_plot_progress').select('*'),
         supabase.from('vw_project_progress').select('*'),
-        supabase.from('plot_task_assignments').select('*'), // This is small enough without a loop (1 row per task per plot)
+        fetchWithoutLimit('plot_task_assignments'),
+        fetchWithoutLimit('plot_task_schedules'),
         supabase.from('task_updates').select('*').order('created_at', { ascending: false }).limit(200) // For global feed
       ]);
 
@@ -64,6 +82,10 @@ export function useBuildTrackData(loggedInUser: any) {
       
       const latestUpdates: any = {}; 
       const tDates: any = {}; 
+      const newSched: any = {};
+
+      schedulesData?.forEach((s: any) => { newSched[`${s.plot_id}-${s.task_template_id}`] = s; });
+      setSchedules(newSched);
       
       // We populate latestUpdatesMap and taskDates from the new DB columns in plot_task_assignments
       // instead of looping through all task_updates.
