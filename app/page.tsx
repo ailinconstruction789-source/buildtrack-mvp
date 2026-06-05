@@ -1,6 +1,9 @@
 'use client';
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useBuildTrackData } from '@/hooks/useBuildTrackData';
+import LoginView from '@/components/LoginView';
+import DashboardOverview from '@/components/DashboardOverview';
 // ถอด browser-image-compression ออกเพื่อใช้ Native ป้องกัน Error
 import { 
   LayoutDashboard, Map as MapIcon, Truck, ChevronRight, ClipboardList, Loader2,
@@ -52,26 +55,45 @@ export default function ConstructionApp() {
   // ==========================================
   // 1. STATES
   // ==========================================
-  const [allUsers, setAllUsers] = useState<any[]>([]);
+  // Extracted: [allUsers,
   const [loggedInUser, setLoggedInUser] = useState<any>(null);
   const [loginData, setLoginData] = useState({ username: '', pin: '' });
+
+  const {
+    loading, setLoading,
+    projects, setProjects,
+    houseTypes, setHouseTypes,
+    taskTemplates, setTaskTemplates,
+    plots, setPlots,
+    contractors, setContractors,
+    allUsers, setAllUsers,
+    assignments, setAssignments,
+    schedules, setSchedules,
+    defects, setDefects,
+    notifications, setNotifications,
+    latestUpdatesMap, setLatestUpdatesMap,
+    taskDates, setTaskDates,
+    allUpdatesRecord, setAllUpdatesRecord,
+    fetchAllData
+  } = useBuildTrackData(loggedInUser);
+
 
   const [view, setView] = useState('dashboard'); 
   const [taskReturnView, setTaskReturnView] = useState('house-detail');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [selectedProject, setSelectedProject] = useState(null);
-  const [selectedPlot, setSelectedPlot] = useState(null);
-  const [selectedTask, setSelectedTask] = useState(null);
+  const [selectedProject, setSelectedProject] = useState<any>(null);
+  const [selectedPlot, setSelectedPlot] = useState<any>(null);
+  const [selectedTask, setSelectedTask] = useState<any>(null);
   
-  const [projects, setProjects] = useState([]);
-  const [plots, setPlots] = useState([]);
-  const [houseTypes, setHouseTypes] = useState([]);
-  const [taskTemplates, setTaskTemplates] = useState([]);
-  const [loading, setLoading] = useState(false);
+  // Extracted: [projects,
+  // Extracted: [plots,
+  // Extracted: [houseTypes,
+  // Extracted: [taskTemplates,
+  // Extracted: [loading,
   const [editPlotModal, setEditPlotModal] = useState({ isOpen: false, plot: null, id: '', house_type_id: '', foreman_name: '' });
   const [editProjectModal, setEditProjectModal] = useState({ isOpen: false, oldName: '', newName: '' });
 // 🌟 State สำหรับระบบ 2.5D แบบเจาะจงรายงวดงาน (0-99% และ 100%)
-  const [editingHouseType, setEditingHouseType] = useState(null);
+  const [editingHouseType, setEditingHouseType] = useState<any>(null);
   const [visualConfig, setVisualConfig] = useState({}); // เก็บค่าแบบ Map { [taskId]: { progress_image, progress_z, done_image, done_z } }
   const [isUploadingLayer, setIsUploadingLayer] = useState(false);
   const [simulatedStatus, setSimulatedStatus] = useState({}); // 🎮 สำหรับกล่องลองเล่นพรีวิวในหน้าตั้งค่า { [taskId]: 'none' | 'progress' | 'done' }
@@ -117,19 +139,19 @@ export default function ConstructionApp() {
     setIsSubmitting(false);
   };
   
-  const [updates, setUpdates] = useState([]); 
-  const [allUpdatesRecord, setAllUpdatesRecord] = useState([]); 
-  const [latestUpdatesMap, setLatestUpdatesMap] = useState({});
-  const [taskDates, setTaskDates] = useState({}); 
-  const [assignments, setAssignments] = useState([]); 
-  const [schedules, setSchedules] = useState({}); 
+  const [updates, setUpdates] = useState<any[]>([]); 
+  // Extracted: [allUpdatesRecord, 
+  // Extracted: [latestUpdatesMap,
+  // Extracted: [taskDates, 
+  // Extracted: [assignments, 
+  // Extracted: [schedules, 
 
-  const [notifications, setNotifications] = useState([]);
+  // Extracted: [notifications,
   const [showNotifs, setShowNotifs] = useState(false);
-  const [contractors, setContractors] = useState([]);
+  // Extracted: [contractors,
   
   const [inputText, setInputText] = useState('');
-  const [currentWeather, setCurrentWeather] = useState(null);
+  const [currentWeather, setCurrentWeather] = useState<any>(null);
 
 // 🌤️ Weather Widget 2.0 States
   const [weatherInfo, setWeatherInfo] = useState<any>(null);
@@ -203,8 +225,8 @@ export default function ConstructionApp() {
   }, []);
   const [progressValue, setProgressValue] = useState(0); 
   const [isSending, setIsSending] = useState(false);
-  const [selectedFiles, setSelectedFiles] = useState([]); 
-  const [fullImageUrl, setFullImageUrl] = useState(null);
+  const [selectedFiles, setSelectedFiles] = useState<any[]>([]); 
+  const [fullImageUrl, setFullImageUrl] = useState<any>(null);
   
   const [newProjectName, setNewProjectName] = useState('');
   const [newPlot, setNewPlot] = useState({ id: '', house_type_id: '', foreman_name: '' });
@@ -236,22 +258,22 @@ export default function ConstructionApp() {
   const [gridRows, setGridRows] = useState(24);
   const [mapZoom, setMapZoom] = useState(1); 
   const [isEditMapMode, setIsEditMapMode] = useState(false);
-  const [mapGrid, setMapGrid] = useState([]); 
+  const [mapGrid, setMapGrid] = useState<any[]>([]); 
   const [mapTool, setMapTool] = useState('plot'); 
   const [mapSelectedPlot, setMapSelectedPlot] = useState('');
   const [isDrawing, setIsDrawing] = useState(false);
-  const [lastDrawCell, setLastDrawCell] = useState(null);
+  const [lastDrawCell, setLastDrawCell] = useState<any>(null);
 
   // 🌟 Print Export States 🌟
   const [exportModalOpen, setExportModalOpen] = useState(false);
-  const [allTaskImages, setAllTaskImages] = useState([]);
-  const [selectedExportImages, setSelectedExportImages] = useState([]);
+  const [allTaskImages, setAllTaskImages] = useState<any[]>([]);
+  const [selectedExportImages, setSelectedExportImages] = useState<any[]>([]);
   const [isPresentationOpen, setIsPresentationOpen] = useState(false);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
-  const [defects, setDefects] = useState([]);
+  // Extracted: [defects,
   const [defectModal, setDefectModal] = useState({ isOpen: false, task: null, plotId: '' });
   const [newDefectText, setNewDefectText] = useState('');
-  const [defectFiles, setDefectFiles] = useState([]);
+  const [defectFiles, setDefectFiles] = useState<any[]>([]);
   const [isSubmittingDefect, setIsSubmittingDefect] = useState(false);
 
   // ==========================================
@@ -301,87 +323,15 @@ export default function ConstructionApp() {
   // ==========================================
   // 3. API FETCHING & EFFECTS
   // ==========================================
-  const fetchAllData = async () => {
-    try {
-      setLoading(true);
+  // fetchAllData extracted to hook
 
-      // 🌟 ฟังก์ชันพิเศษ "ทะลุลิมิต 1000 แถว" ของ Supabase 🌟
-      // ใช้ push(...data) แทน spread เพื่อหลีกเลี่ยง O(n²) memory allocation
-      const fetchWithoutLimit = async (tableName, orderByCol = null) => {
-          const allData: any[] = [];
-          for (let i = 0; i < 50; i++) {
-              let query = supabase.from(tableName).select('*').range(i * 1000, ((i + 1) * 1000) - 1);
-              if (orderByCol) query = query.order(orderByCol, { ascending: true });
-              const { data, error } = await query;
-              if (error) { console.error(`fetchWithoutLimit error on ${tableName}:`, error); break; }
-              if (data && data.length > 0) allData.push(...data);
-              if (!data || data.length < 1000) break;
-          }
-          return allData;
-      };
-
-      // 🌟 รัน query ทั้งหมดพร้อมกัน (parallel) แทนการรอทีละอัน 🌟
-      const [
-        { data: projs },
-        { data: types },
-        { data: tasks },
-        { data: plotsData },
-        { data: contData },
-        { data: notifData },
-        allUpdates,
-        assignData,
-        scheduleData,
-        defectsData,
-      ] = await Promise.all([
-        supabase.from('projects').select('*').order('created_at', { ascending: true }),
-        supabase.from('house_types').select('*'),
-        supabase.from('task_templates').select('*').order('task_order', { ascending: true }),
-        supabase.from('plots').select('*, house_types(type_name)').order('created_at', { ascending: true }),
-        supabase.from('contractors').select('*'),
-        supabase.from('notifications').select('*').order('created_at', { ascending: false }),
-        fetchWithoutLimit('task_updates', 'created_at'),
-        fetchWithoutLimit('plot_task_assignments'),
-        fetchWithoutLimit('plot_task_schedules'),
-        fetchWithoutLimit('defects'),
-      ]);
-
-      setDefects(defectsData || []);
-
-      if (notifData && loggedInUser) setNotifications(notifData.filter(n => n.target_user === loggedInUser.username || n.target_role === loggedInUser.role));
-      setAssignments(assignData || []); setContractors(contData || []); setAllUpdatesRecord(allUpdates || []);
-
-      const schedMap = {}; scheduleData?.forEach(s => { schedMap[`${s.plot_id}-${s.task_template_id}`] = s; }); setSchedules(schedMap);
-      const latestUpdates = {}; const tDates = {}; 
-      allUpdates?.forEach(upd => { 
-        const key = `${upd.plot_id}-${upd.task_template_id}`; latestUpdates[key] = upd; 
-        if (!tDates[key]) tDates[key] = { start: upd.created_at, end: null };
-        if (new Date(upd.created_at) < new Date(tDates[key].start)) tDates[key].start = upd.created_at;
-        if (upd.action === 'QC อนุมัติผ่าน' || upd.action === 'QC อนุมัติ') tDates[key].end = upd.created_at;
-      });
-      setLatestUpdatesMap(latestUpdates); setTaskDates(tDates);
-
-      const formattedPlots = plotsData?.map(plot => {
-        const plotTasks = tasks.filter(t => t.house_type_id === plot.house_type_id); let sumProgress = 0;
-        plotTasks.forEach(task => sumProgress += (latestUpdates[`${plot.id}-${task.id}`]?.progress || 0));
-        return { ...plot, type: plot.house_types?.type_name || 'ไม่ระบุแบบ', foreman: plot.foreman_name, progress: plotTasks.length > 0 ? Math.round(sumProgress / plotTasks.length) : 0 };
-      });
-
-      const formattedProjects = projs?.map(proj => {
-        const projectPlots = formattedPlots?.filter(p => p.project_name === proj.name) || []; let totalPlotProgress = 0; projectPlots.forEach(p => totalPlotProgress += p.progress);
-        const uniqueMigrated = Array.from(new Map((proj.layout_data || []).map(item => [item.id, item])).values());
-        return { name: proj.name, layout_data: uniqueMigrated, plotCount: projectPlots.length, progress: projectPlots.length > 0 ? Math.round(totalPlotProgress / projectPlots.length) : 0 };
-      });
-
-      setHouseTypes(types || []); setTaskTemplates(tasks || []); setPlots(formattedPlots || []); setProjects(formattedProjects || []); 
-    } catch (error) { console.error('Error fetching data:', error); } finally { setLoading(false); }
-  };
 
   useEffect(() => {
     const checkMobile = () => setIsRealMobile(window.innerWidth < 768);
     checkMobile(); window.addEventListener('resize', checkMobile); return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  useEffect(() => { const fetchUsers = async () => { try { const { data } = await supabase.from('users').select('*').order('role', { ascending: true }).order('username', { ascending: true }); setAllUsers(data || []); } catch (err) { console.error(err); } }; fetchUsers(); }, []);
+  // fetchUsers extracted to hook
   // 🌟 ระบบจำการล็อกอิน และตรวจจับเวลาหมดอายุ (ตั้งไว้ 60 นาที)
   useEffect(() => {
     const TIMEOUT_MS = 60 * 60 * 1000; // 60 นาที (ถ้าอยากได้ 120 นาที เปลี่ยนเลข 60 เป็น 120)
@@ -432,7 +382,7 @@ export default function ConstructionApp() {
     };
   }, []);
  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (loggedInUser) fetchAllData(); }, [loggedInUser]);
+  // loggedInUser fetchAllData extracted
   useEffect(() => { if (loggedInUser?.role === 'Owner') setView('global-feed'); }, [loggedInUser]);
   useEffect(() => { setScheduleInputs({}); }, [selectedPlot?.id]);
   // 🌟 ระบบจับการกดปุ่มคีย์บอร์ด (ซ้าย, ขวา, ESC) สำหรับโหมด Presentation
@@ -1202,33 +1152,16 @@ const handleSendDefect = async () => {
   // ==========================================
   if (!loggedInUser) {
     return (
-      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4">
-        {dialogConfig.isOpen && (
-          <div className="fixed inset-0 z-[500] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full p-6 text-center space-y-4"><div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-2"><AlertTriangle size={32} /></div><h3 className="text-xl font-black">{dialogConfig.title}</h3><p className="text-slate-500 font-medium">{dialogConfig.message}</p><button onClick={closeDialog} className="w-full bg-slate-800 text-white font-bold py-3.5 rounded-xl">รับทราบ</button></div>
-          </div>
-        )}
-        <div className="bg-white p-6 sm:p-12 rounded-[2.5rem] shadow-2xl w-full max-w-md border border-slate-100 relative overflow-hidden">
-          <div className="absolute -top-20 -right-20 w-40 h-40 bg-blue-500 rounded-full blur-3xl opacity-20 pointer-events-none"></div>
-          <div className="absolute -bottom-20 -left-20 w-40 h-40 bg-emerald-500 rounded-full blur-3xl opacity-20 pointer-events-none"></div>
-          
-          <div className="flex justify-center mb-6 relative z-10"><div className="bg-blue-50 p-4 rounded-3xl"><LayoutDashboard className="text-blue-600" size={48} /></div></div>
-          <h1 className="text-4xl font-black text-slate-800 italic uppercase tracking-tighter mb-2 text-center relative z-10">BuildTrack</h1>
-          <p className="text-center text-slate-400 font-bold text-sm mb-8 tracking-widest relative z-10">PROJECT MANAGEMENT SYSTEM</p>
-          
-          <div className="space-y-4 sm:space-y-5 relative z-10">
-            <div>
-               <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1 mb-1 block">Username</label>
-               <select value={loginData.username} onChange={e => setLoginData({...loginData, username: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-5 py-4 font-bold outline-none focus:border-blue-500 focus:bg-white transition-colors text-slate-700 appearance-none"><option value="" disabled>-- เลือกชื่อของคุณ --</option>{allUsers.map(u => <option key={u.id} value={u.username}>{u.username} ({u.role})</option>)}</select>
-            </div>
-            <div>
-               <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1 mb-1 block">PIN Code</label>
-               <input type="password" maxLength={4} value={loginData.pin} onChange={e => setLoginData({...loginData, pin: e.target.value.replace(/[^0-9]/g, '')})} onKeyDown={(e) => e.key === 'Enter' && handleLogin()} placeholder="••••" className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-5 py-4 font-black text-center tracking-[1em] outline-none focus:border-blue-500 focus:bg-white transition-colors text-2xl text-slate-700" />
-            </div>
-            <button onClick={handleLogin} disabled={!loginData.username || loginData.pin.length !== 4} className="w-full bg-slate-900 text-white font-black py-4 rounded-2xl shadow-xl hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed mt-4">Sign In</button>
-          </div>
-        </div>
-      </div>
+      <LoginView
+        loginData={loginData}
+        setLoginData={setLoginData}
+        setLoggedInUser={setLoggedInUser}
+        setAllUsers={setAllUsers}
+        setProjects={setProjects}
+        setPlots={setPlots}
+        setHouseTypes={setHouseTypes}
+        setTaskTemplates={setTaskTemplates}
+      />
     );
   }
 
@@ -1841,164 +1774,44 @@ const handleSendDefect = async () => {
                  </div>
                )}
                {/* 🏢 View: Dashboard */}
-               {view === 'dashboard' && (
-                  <div className="animate-in fade-in zoom-in-95 duration-500">
-                      {(isSiteEngineer || isQC || isAdmin || isOwner) && (
-                      <div className="mb-6 sm:mb-12 mt-8 ">
-                      <div className="flex flex-col md:flex-row md:justify-between md:items-end mb-3 sm:mb-6 gap-3">
-                      <h2 className="font-black text-xl sm:text-3xl text-slate-800 italic uppercase tracking-tighter">Projects Overview</h2>
-                      {isMobileLayout && (
-                         <div className="flex flex-wrap gap-2 shrink-0 w-full">
-                           {isProcurement && (<button onClick={() => setView('procurement-contractors')} className="flex-1 items-center justify-center gap-1.5 bg-emerald-600 text-white px-3 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex"><Wrench size={14} /> ช่าง</button>)}
-                           {isAdmin && (
-                             <>
-                               <button onClick={() => setView('admin-users')} className="flex-1 items-center justify-center gap-1.5 bg-white text-rose-600 border border-rose-200 px-2 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex whitespace-nowrap"><Users size={14} /> ผู้ใช้</button>
-                               <button onClick={() => setView('admin-project')} className="flex-1 items-center justify-center gap-1.5 bg-slate-800 text-white px-2 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex whitespace-nowrap"><PlusCircle size={14} /> โครงการ</button>
-                               <button onClick={() => setView('admin-house-types')} className="flex-1 items-center justify-center gap-1.5 bg-rose-50 text-rose-600 border border-rose-200 px-2 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex whitespace-nowrap"><Building size={14} /> แบบบ้าน</button>
-                               <button onClick={() => setView('admin-tasks')} className="flex-1 items-center justify-center gap-1.5 bg-rose-50 text-rose-600 border border-rose-200 px-2 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex whitespace-nowrap"><ClipboardList size={14} /> งวดงาน</button>
-                               <button onClick={() => setView('admin-visualizer')} className="flex-1 items-center justify-center gap-1.5 bg-rose-50 text-rose-600 border border-rose-200 px-2 py-2.5 rounded-lg font-bold text-[10px] shadow-sm flex whitespace-nowrap"><Monitor size={14} /> 2.5D</button>
-                             </>
-                           )}
-                         </div>
-                      )}
-                    </div>
-                    
-                    <div className={`grid gap-3 sm:gap-6 ${isMobileLayout ? 'grid-cols-1' : 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'}`}>
-                      {projects.map((proj) => (
-                        <div key={proj.name} onClick={() => { 
-                            const conf = proj.layout_data?.find(c => c.type === 'config');
-                            setGridCols(conf?.cols || 40); setGridRows(conf?.rows || 24); setMapZoom(1);
-                            setSelectedProject(proj); setMapGrid(proj.layout_data?.filter(c => c.type !== 'config') || []); setIsEditMapMode(false); setView('project-detail'); 
-                        }} className="bg-white w-full p-5 sm:p-8 rounded-2xl sm:rounded-[2rem] border border-slate-200 text-left hover:border-blue-500 hover:shadow-2xl hover:-translate-y-1 transition-all group relative overflow-hidden cursor-pointer">
-                          
-                          {/* 🌟 ปุ่มแก้ไขชื่อโครงการ (แสดงเฉพาะ Admin) */}
-                          {isAdmin && (
-                            <button onClick={(e) => { e.stopPropagation(); handleEditProject(proj); }} className="absolute top-4 right-4 p-2 bg-slate-100 text-slate-500 rounded-xl opacity-0 group-hover:opacity-100 hover:bg-blue-600 hover:text-white transition-all z-20 shadow-sm" title="แก้ไขชื่อโครงการ">
-                              <Settings size={20} />
-                            </button>
-                          )}
-
-                          <Building size={isMobileLayout ? 60 : 100} className="absolute -right-4 -bottom-4 sm:-right-6 sm:-bottom-6 text-slate-50 group-hover:text-blue-50 transition-colors rotate-12" />
-                          <h3 className="text-xl sm:text-3xl font-black text-slate-800 mb-1 sm:mb-2 relative z-10 w-full truncate text-left">{proj.name}</h3>
-                          <Building size={isMobileLayout ? 60 : 100} className="absolute -right-4 -bottom-4 sm:-right-6 sm:-bottom-6 text-slate-50 group-hover:text-blue-50 transition-colors rotate-12" />
-                          <h3 className="text-xl sm:text-3xl font-black text-slate-800 mb-1 sm:mb-2 relative z-10 w-full truncate text-left">{proj.name}</h3>
-                          <p className="text-[10px] sm:text-sm text-slate-400 font-bold uppercase tracking-wider mb-4 sm:mb-8 relative z-10 flex items-center gap-1.5">
-                            <MapIcon size={12} className="sm:w-4 sm:h-4"/> {isForeman ? `งานของคุณ ${plots.filter(p => p.project_name === proj.name && p.foreman === loggedInUser.username).length} แปลง` : `รวมทั้งหมด ${proj.plotCount} แปลง`}
-                          </p>
-                          <div className="h-2 sm:h-3 bg-slate-100 rounded-full overflow-hidden relative z-10 mt-4 sm:mt-6"><div className="h-full bg-blue-600 transition-all duration-1000" style={{width: `${proj.progress}%`}}></div></div>
-                        </div>
-                      ))}
-                    </div>
-                      {/* 🌟 ส่วนหัว: โซนแท็บเมนูและปุ่มเปลี่ยนมุมมอง */}
-                        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3 mb-4 sm:mb-6">
-                          <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6">
-                             <h2 className="font-black text-lg sm:text-2xl text-slate-800 italic uppercase tracking-tighter flex items-center gap-2"><ClipboardList className={isQC ? 'text-purple-600' : 'text-blue-600'} size={20}/> Inspection Queue <span className="bg-slate-800 text-white text-[10px] px-2 py-0.5 rounded-full">{inspectionQueue.length}</span></h2>
-                             
-                             {/* 🌟 1. TABS คัดงานด่วน */}
-                             <div className="flex bg-slate-200/60 p-1 rounded-xl w-fit border border-slate-200/80">
-                                <button onClick={() => setInspectionFilterTab('all')} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${inspectionFilterTab === 'all' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-700'}`}>ทั้งหมด</button>
-                                <button onClick={() => setInspectionFilterTab('urgent')} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${inspectionFilterTab === 'urgent' ? 'bg-rose-500 shadow-sm text-white' : 'text-slate-500 hover:text-rose-600'}`}><AlertTriangle size={14}/> ด่วน <span className={`${inspectionFilterTab === 'urgent' ? 'bg-white/20 text-white' : 'bg-rose-100 text-rose-600'} px-1.5 py-0.5 rounded-md text-[10px] leading-none`}>{inspectionQueue.filter(q => (Date.now() - q.time) > 172800000).length}</span></button>
-                             </div>
-                          </div>
-                          
-                          <div className="flex items-center gap-2 w-full xl:w-auto">
-                             {/* 🌟 2. View Mode Toggle (ปุ่มเปลี่ยนสลับ Card / List) */}
-                             <div className="flex bg-slate-200/60 p-1 rounded-xl shrink-0 border border-slate-200/80">
-                                <button onClick={() => setInspectionViewMode('card')} className={`p-1.5 sm:p-2 rounded-lg transition-all ${inspectionViewMode === 'card' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-400 hover:text-blue-500'}`} title="มุมมองการ์ด"><Grid size={16}/></button>
-                                <button onClick={() => setInspectionViewMode('list')} className={`p-1.5 sm:p-2 rounded-lg transition-all ${inspectionViewMode === 'list' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-400 hover:text-blue-500'}`} title="มุมมองตาราง"><ClipboardList size={16}/></button>
-                             </div>
-                             
-                             {/* เรียงลำดับ (ของเดิม) */}
-                             <div className="flex bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden text-[10px] sm:text-xs font-bold flex-1 xl:flex-none"><button onClick={() => setInspectionSort('time')} className={`flex-1 xl:flex-none px-3 sm:px-4 py-2 flex justify-center items-center gap-1.5 ${inspectionSort === 'time' ? 'bg-slate-100 text-slate-800' : 'text-slate-400'}`}><Clock size={14}/> ล่าสุด</button><button onClick={() => setInspectionSort('plot')} className={`flex-1 xl:flex-none px-3 sm:px-4 py-2 flex justify-center items-center gap-1.5 border-l border-slate-200 ${inspectionSort === 'plot' ? 'bg-slate-100 text-slate-800' : 'text-slate-400'}`}><SortAsc size={14}/> รหัสแปลง</button></div>
-                          </div>
-                        </div>
-
-                        {/* 🌟 พื้นที่แสดงผลคิวงาน */}
-                        {inspectionQueue.filter(q => inspectionFilterTab === 'all' || (inspectionFilterTab === 'urgent' && (Date.now() - q.time) > 172800000)).length === 0 ? ( 
-                          <div className="bg-white rounded-2xl sm:rounded-[2rem] border border-dashed border-slate-300 p-8 sm:p-16 text-center flex flex-col items-center justify-center gap-3 sm:gap-4">
-                             <div className="w-16 h-16 sm:w-20 sm:h-20 bg-slate-50 rounded-full flex items-center justify-center"><CheckCircle size={32} className="text-emerald-400 opacity-50"/></div>
-                             <p className="text-slate-400 font-bold italic text-sm sm:text-xl">ไม่มีงานรอตรวจสอบในหมวดหมู่นี้</p>
-                          </div> 
-                        ) : (
-                          <div className="max-h-[50vh] sm:max-h-[600px] overflow-y-auto custom-scrollbar pr-1 sm:pr-3 pb-2">
-                            <div className={`${inspectionViewMode === 'card' ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4' : 'flex flex-col gap-2'}`}>
-                              {inspectionQueue.filter(q => inspectionFilterTab === 'all' || (inspectionFilterTab === 'urgent' && (Date.now() - q.time) > 172800000)).map(q => {
-                                const isUrgent = (Date.now() - q.time) > 172800000;
-                                const relatedProject = projects.find(p => p.name === q.project_name); const relatedPlot = plots.find(p => p.id === q.plot_id); const relatedTask = taskTemplates.find(t => t.id === q.task_template_id);
-                                
-                                const clickAction = () => { setSelectedProject(relatedProject); setSelectedPlot(relatedPlot); setSelectedTask(relatedTask); setTaskReturnView('dashboard'); setView('task-progress'); supabase.from('task_updates').select('*').eq('task_template_id', q.task_template_id).eq('plot_id', q.plot_id).order('created_at', { ascending: true }).then(({data}) => { setUpdates(data || []); setProgressValue(data?.length ? data[data.length-1].progress : 0); }); };
-
-                                {/* 🌟 Layout แบบ List View (ตารางแนวนอน) */}
-                                if (inspectionViewMode === 'list') {
-                                   return (
-                                     <button key={`${q.plot_id}-${q.task_template_id}`} onClick={clickAction} className={`bg-white p-3 sm:p-4 rounded-xl sm:rounded-2xl border ${isUrgent ? 'border-rose-400 bg-rose-50/50' : 'border-slate-200'} shadow-sm hover:border-blue-500 hover:shadow-md transition-all text-left flex flex-col sm:flex-row sm:items-center justify-between gap-3 group`}>
-                                        <div className="flex items-center gap-3 sm:gap-4 flex-1 overflow-hidden">
-                                           <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-xl flex flex-col items-center justify-center shrink-0 shadow-inner ${q.statusFor === 'QC' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
-                                              <span className="text-[10px] sm:text-xs font-black uppercase">รอ {q.statusFor}</span>
-                                           </div>
-                                           <div className="flex-1 min-w-0">
-                                              <div className="flex items-center gap-2 mb-1">
-                                                 <h4 className="font-black text-slate-800 text-lg sm:text-xl truncate">{q.plot_id}</h4>
-                                                 {isUrgent && <span className="bg-rose-500 text-white text-[9px] sm:text-[10px] font-black px-1.5 py-0.5 rounded flex items-center gap-1 animate-pulse shadow-sm"><AlertTriangle size={10}/> ค้างตรวจนาน</span>}
-                                              </div>
-                                              <p className="text-xs sm:text-sm font-bold text-slate-600 truncate">{q.task_name}</p>
-                                           </div>
-                                        </div>
-                                        <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-center gap-2 shrink-0 border-t sm:border-t-0 sm:border-l border-slate-100 pt-2 sm:pt-0 sm:pl-4">
-                                           <p className="text-[10px] sm:text-xs text-slate-400 font-bold flex items-center gap-1"><HardHat size={12}/> {q.foreman}</p>
-                                           <span className={`text-[10px] sm:text-xs font-black ${isUrgent ? 'text-rose-600' : 'text-slate-400'}`}><Clock size={12} className="inline mr-1"/> {new Date(q.time).toLocaleDateString('th-TH', {month:'short', day:'numeric'})} {new Date(q.time).toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'})}</span>
-                                        </div>
-                                     </button>
-                                   )
-                                }
-
-                                {/* 🌟 Layout แบบ Card View (การ์ดสี่เหลี่ยมของเดิม แต่อัปเกรด) */}
-                                return (
-                                  <button key={`${q.plot_id}-${q.task_template_id}`} onClick={clickAction} className={`bg-white p-4 sm:p-5 rounded-2xl sm:rounded-[1.5rem] border ${isUrgent ? 'border-rose-400 bg-rose-50/50' : 'border-slate-200'} shadow-sm hover:border-blue-500 hover:shadow-lg hover:-translate-y-1 transition-all text-left group relative overflow-hidden`}>
-                                     {isUrgent && <div className="absolute top-0 left-0 w-full h-1.5 bg-rose-500"></div>}
-                                     <div className="flex justify-between items-start mb-3 mt-1 sm:mt-0">
-                                        <span className={`text-[9px] sm:text-xs font-black uppercase tracking-widest px-2.5 py-1 rounded-md text-white shadow-sm ${q.statusFor === 'QC' ? 'bg-purple-600' : 'bg-blue-600'}`}>รอ {q.statusFor}</span>
-                                        <span className={`text-[9px] sm:text-[10px] font-black flex items-center gap-1 px-2 py-1 rounded-md ${isUrgent ? 'bg-rose-100 text-rose-600 animate-pulse' : 'bg-slate-100 text-slate-500'}`}><Clock size={10}/> {new Date(q.time).toLocaleDateString('th-TH',{day:'numeric', month:'short'})} {new Date(q.time).toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'})}</span>
-                                     </div>
-                                     <div className="flex items-center gap-2 mb-1.5">
-                                        <h4 className="font-black text-slate-800 text-2xl">{q.plot_id}</h4>
-                                        {isUrgent && <AlertTriangle size={16} className="text-rose-500 animate-pulse"/>}
-                                     </div>
-                                     <p className="text-xs sm:text-sm font-bold text-slate-600 line-clamp-2 my-1.5 min-h-[32px] sm:min-h-[40px]">{q.task_name}</p>
-                                     <p className="text-[10px] sm:text-xs text-slate-400 flex items-center gap-1.5 mt-3 pt-3 border-t border-slate-200/60"><HardHat size={14} className="text-slate-300"/> {q.foreman}</p>
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-
-                      <div className="mb-6 sm:mb-12">
-                       <h2 className="font-black text-xl sm:text-3xl text-slate-800 italic uppercase tracking-tighter mb-4 sm:mb-6">Executive Summary</h2>
-                       <div className={`grid gap-3 sm:gap-6 ${isMobileLayout ? 'grid-cols-2' : 'grid-cols-4'}`}>
-                          <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-slate-200 shadow-sm flex flex-col justify-center items-center sm:items-start text-center sm:text-left h-28 sm:h-auto">
-                            <div className="flex items-center gap-1.5 sm:gap-3 text-slate-500 mb-1 sm:mb-4"><FolderOpen size={16} className="sm:w-5 sm:h-5 hidden sm:block"/><span className="text-[10px] sm:text-sm font-black uppercase tracking-wide truncate">Total Projects</span></div>
-                            <div className="text-2xl sm:text-5xl font-black text-slate-800">{projects.length}</div>
-                          </div>
-                          <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-slate-200 shadow-sm flex flex-col justify-center items-center sm:items-start text-center sm:text-left h-28 sm:h-auto">
-                            <div className="flex items-center gap-1.5 sm:gap-3 text-blue-500 mb-1 sm:mb-4"><Activity size={16} className="sm:w-5 sm:h-5 hidden sm:block"/><span className="text-[10px] sm:text-sm font-black uppercase tracking-wide truncate">Active Plots</span></div>
-                            <div className="text-2xl sm:text-5xl font-black text-blue-600">{activePlotsCount}</div>
-                          </div>
-                          <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-slate-200 shadow-sm flex flex-col justify-center items-center sm:items-start text-center sm:text-left h-28 sm:h-auto">
-                            <div className="flex items-center gap-1.5 sm:gap-3 text-emerald-500 mb-1 sm:mb-4"><CheckCircle size={16} className="sm:w-5 sm:h-5 hidden sm:block"/><span className="text-[10px] sm:text-sm font-black uppercase tracking-wide truncate">Completed</span></div>
-                            <div className="text-2xl sm:text-5xl font-black text-emerald-600">{completedPlotsCount}</div>
-                          </div>
-                          <div className={`p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border shadow-sm flex flex-col justify-center items-center sm:items-start text-center sm:text-left h-28 sm:h-auto ${delayedPlotsCount > 0 ? 'bg-rose-50 border-rose-200' : 'bg-white border-slate-200'}`}>
-                            <div className={`flex items-center gap-1.5 sm:gap-3 mb-1 sm:mb-4 ${delayedPlotsCount > 0 ? 'text-rose-500' : 'text-slate-400'}`}><AlertCircle size={16} className="sm:w-5 sm:h-5 hidden sm:block"/><span className="text-[10px] sm:text-sm font-black uppercase tracking-wide truncate">Delayed</span></div>
-                            <div className={`text-2xl sm:text-5xl font-black ${delayedPlotsCount > 0 ? 'text-rose-600' : 'text-slate-300'}`}>{delayedPlotsCount}</div>
-                          </div>
-                       </div>
-                    </div>
-                  </div>
-               )}
+               <DashboardOverview 
+                  view={view}
+                  setView={setView}
+                  isSiteEngineer={isSiteEngineer}
+                  isQC={isQC}
+                  isAdmin={isAdmin}
+                  isOwner={isOwner}
+                  isForeman={isForeman}
+                  isProcurement={isProcurement}
+                  isProjectPlanner={isProjectPlanner}
+                  isMobileLayout={isMobileLayout}
+                  projects={projects}
+                  plots={plots}
+                  taskTemplates={taskTemplates}
+                  loggedInUser={loggedInUser}
+                  inspectionQueue={inspectionQueue}
+                  inspectionFilterTab={inspectionFilterTab}
+                  setInspectionFilterTab={setInspectionFilterTab}
+                  inspectionViewMode={inspectionViewMode}
+                  setInspectionViewMode={setInspectionViewMode}
+                  inspectionSort={inspectionSort}
+                  setInspectionSort={setInspectionSort}
+                  activePlotsCount={activePlotsCount}
+                  completedPlotsCount={completedPlotsCount}
+                  delayedPlotsCount={delayedPlotsCount}
+                  setSelectedProject={setSelectedProject}
+                  setSelectedPlot={setSelectedPlot}
+                  setSelectedTask={setSelectedTask}
+                  setTaskReturnView={setTaskReturnView}
+                  setUpdates={setUpdates}
+                  setProgressValue={setProgressValue}
+                  setMapGrid={setMapGrid}
+                  setIsEditMapMode={setIsEditMapMode}
+                  setGridCols={setGridCols}
+                  setGridRows={setGridRows}
+                  setMapZoom={setMapZoom}
+                  handleEditProject={handleEditProject}
+               />
 
                {/* 📊 🌟 View: Reports & Analytics 🌟 */}
                {view === 'reports' && (
