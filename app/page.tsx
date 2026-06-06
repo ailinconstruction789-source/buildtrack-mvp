@@ -2587,14 +2587,6 @@ const handleSendDefect = async () => {
                        <span className="text-[9px] font-black mt-1">รายงาน</span>
                     </button>
                  )}
-                 {/* 🌟 ปุ่มออกจากระบบบนมือถือ (เพิ่มใหม่ตามสั่ง) 🌟 */}
-                    <button 
-                      onClick={handleLogout} 
-                      className="flex flex-col items-center justify-center flex-1 py-2 font-bold text-[10px] text-rose-500 hover:text-rose-700 transition-colors"
-                    >
-                      <LogOut size={20} className="text-rose-500" />
-                      ออกระบบ
-                    </button>
                  {(isAdmin || isProcurement) && (
                     <button onClick={() => setView('procurement-contractors')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${view === 'procurement-contractors' ? 'text-emerald-600' : 'text-slate-400 hover:text-slate-600'}`}>
                        <Wrench size={20} className={view === 'procurement-contractors' ? 'fill-emerald-100' : ''}/>
@@ -2766,8 +2758,14 @@ const handleSendDefect = async () => {
                  const currentPlot = plots[currentSlideIndex];
                  
                  // 🌟 คำนวณความคืบหน้าและสถานะ (แก้บั๊ก getPlotStatus)
-                 const plotUpdates = allUpdatesRecord.filter(u => u.plot_id === currentPlot.id).sort((a,b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-                 const actualProgress = plotUpdates.length > 0 ? Math.max(...plotUpdates.map(u => Number(u.progress) || 0)) : 0;
+                 const allPlotUpdates = allUpdatesRecord.filter((u: any) => u.plot_id === currentPlot.id).sort((a: any,b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+                 const sevenDaysAgo = new Date();
+                 sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+                 sevenDaysAgo.setHours(0, 0, 0, 0);
+                 const plotUpdates = allPlotUpdates.filter((u: any) => new Date(u.created_at).getTime() >= sevenDaysAgo.getTime());
+                 
+                 // เปอร์เซ็นต์เสร็จของบ้านแต่ละหลัง
+                 const actualProgress = currentPlot.overall_progress || (allPlotUpdates.length > 0 ? Math.max(...allPlotUpdates.map((u: any) => Number(u.progress) || 0)) : 0);
                  let sLabel = 'รอดำเนินการ'; let sStatus = 'pending';
                  if (actualProgress >= 100) { sLabel = 'เสร็จสมบูรณ์'; sStatus = 'completed'; }
                  else if (actualProgress > 0) { sLabel = 'กำลังดำเนินการ'; sStatus = 'on-track'; }
@@ -2806,22 +2804,23 @@ const handleSendDefect = async () => {
                        }
 
                        urls.forEach((url: string) => { 
-                          if (plotImages.length < 4) {
                              plotImages.push({ 
                                 url: url.trim(), 
                                 date: u.created_at, 
                                 action: u.action || 'อัปเดตสถานะงาน',
-                                contractor: contractorName
+                                contractor: contractorName,
+                                progress: u.progress
                              }); 
-                          }
                        });
                     }
                  });
 
-                 // 🌟 จัดกลุ่มรูปภาพตามชื่องาน (Action) เพื่อให้แสดงกรอบแยกงานอย่างถูกต้อง
-                 const groupedImages = plotImages.reduce((acc, img) => {
-                    if (!acc[img.action]) acc[img.action] = { contractor: img.contractor, images: [] };
-                    acc[img.action].images.push(img);
+                 // 🌟 จัดกลุ่มรูปภาพตามชื่องาน (Action) เพื่อให้แสดงกรอบแยกงานอย่างถูกต้อง (ลิมิตกลุ่มละ 4 รูป)
+                 const groupedImages = plotImages.reduce((acc: any, img: any) => {
+                    if (!acc[img.action]) acc[img.action] = { contractor: img.contractor, progress: img.progress, images: [] };
+                    if (acc[img.action].images.length < 4) {
+                       acc[img.action].images.push(img);
+                    }
                     return acc;
                  }, {});
                  
@@ -2841,8 +2840,57 @@ const handleSendDefect = async () => {
                              </div>
                           </div>
                           <div className="flex items-center gap-3 sm:gap-6">
-                             <span className="text-slate-400 font-bold text-sm bg-slate-800 px-3 py-1.5 rounded-lg">สไลด์ {currentSlideIndex + 1} / {plots.length}</span>
-                             <button onClick={() => setIsPresentationOpen(false)} className="bg-rose-500 hover:bg-rose-600 p-2 sm:px-4 sm:py-2 rounded-xl text-white font-bold transition flex items-center gap-2 shadow-sm">
+                             {/* 🌟 ฟังก์ชันค้นหาและข้ามแปลง (Jump to Plot) */}
+                             <div className="flex items-center gap-1.5 sm:gap-2 bg-slate-800 px-2 sm:px-3 py-1.5 rounded-lg border border-slate-700">
+                               <Search size={16} className="text-slate-400 shrink-0" />
+                               <input 
+                                 id="presentation-plot-search"
+                                 type="text" 
+                                 list="plot-search-list-top"
+                                 placeholder="ค้นหาแปลง..." 
+                                 className="bg-transparent border-none text-white text-xs sm:text-sm font-bold outline-none placeholder:text-slate-500 w-20 sm:w-32 focus:ring-0 p-0"
+                                 onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                       const val = (e.target as HTMLInputElement).value.trim();
+                                       if(!val) return;
+                                       const idx = plots.findIndex((p: any) => p.id.toLowerCase() === val.toLowerCase());
+                                       if(idx !== -1) {
+                                          setCurrentSlideIndex(idx);
+                                          (e.target as HTMLInputElement).value = ''; // clear after jumping
+                                          (e.target as HTMLInputElement).blur(); // remove focus
+                                       } else {
+                                          alert('ไม่พบข้อมูลแปลง: ' + val);
+                                       }
+                                    }
+                                 }}
+                               />
+                               <button 
+                                 className="bg-indigo-500 hover:bg-indigo-400 text-white text-[10px] sm:text-xs font-bold px-2 sm:px-3 py-1 rounded transition-colors"
+                                 onClick={() => {
+                                    const input = document.getElementById('presentation-plot-search') as HTMLInputElement;
+                                    if (input) {
+                                       const val = input.value.trim();
+                                       if(!val) return;
+                                       const idx = plots.findIndex((p: any) => p.id.toLowerCase() === val.toLowerCase());
+                                       if(idx !== -1) {
+                                          setCurrentSlideIndex(idx);
+                                          input.value = ''; 
+                                          input.blur(); 
+                                       } else {
+                                          alert('ไม่พบข้อมูลแปลง: ' + val);
+                                       }
+                                    }
+                                 }}
+                               >
+                                 ไป
+                               </button>
+                               <datalist id="plot-search-list-top">
+                                 {plots.map((p: any) => <option key={p.id} value={p.id} />)}
+                               </datalist>
+                             </div>
+                             <span className="hidden sm:inline-block text-slate-400 font-bold text-sm bg-slate-800 px-3 py-1.5 rounded-lg shrink-0">สไลด์ {currentSlideIndex + 1} / {plots.length}</span>
+                             <span className="sm:hidden text-slate-400 font-bold text-xs shrink-0">{currentSlideIndex + 1}/{plots.length}</span>
+                             <button onClick={() => setIsPresentationOpen(false)} className="bg-rose-500 hover:bg-rose-600 p-2 sm:px-4 sm:py-2 rounded-xl text-white font-bold transition flex items-center gap-2 shadow-sm shrink-0">
                                 <X size={20} /> <span className="hidden sm:inline">ปิด (Esc)</span>
                              </button>
                           </div>
@@ -2871,9 +2919,15 @@ const handleSendDefect = async () => {
                                             {statusInfo.label}
                                          </div>
                                       </div>
-                                      <div className="text-right">
-                                         <p className="text-xs sm:text-sm font-bold text-slate-400 uppercase tracking-widest mb-1">ความคืบหน้า</p>
-                                         <div className="text-5xl sm:text-6xl font-black text-blue-600 tracking-tighter">{statusInfo.actual}%</div>
+                                      <div className="flex gap-4 sm:gap-8 text-right">
+                                         <div>
+                                            <p className="text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">แผน (Plan)</p>
+                                            <div className="text-3xl sm:text-4xl font-black text-slate-400 tracking-tighter">{currentPlot.plan_progress || 0}%</div>
+                                         </div>
+                                         <div>
+                                            <p className="text-xs sm:text-sm font-bold text-slate-400 uppercase tracking-widest mb-1">ทำจริง (Actual)</p>
+                                            <div className="text-5xl sm:text-6xl font-black text-blue-600 tracking-tighter">{statusInfo.actual}%</div>
+                                         </div>
                                       </div>
                                    </div>
                                    
@@ -2895,28 +2949,84 @@ const handleSendDefect = async () => {
                                          {plotUpdates.length > 0 ? (
                                             <div className="space-y-3 max-h-[35vh] overflow-y-auto pr-1 custom-scrollbar">
                                                {/* หา Uniq Task Name ที่มีการอัปเดตในสัปดาห์นี้ */}
-                                               {Array.from(new Set(plotUpdates.map(u => u.action))).map((taskAction, tIdx) => {
-                                                  // ดึงข้อมูลอัปเดตล่าสุดของงานนี้
-                                                  const specificTaskUpdates = plotUpdates.filter(u => u.action === taskAction);
+                                               {Array.from(new Set(plotUpdates.map((u: any) => u.action))).map((taskAction: any, tIdx) => {
+                                                  const specificTaskUpdates = plotUpdates.filter((u: any) => u.action === taskAction);
                                                   const latestTaskUpdate = specificTaskUpdates[0];
+                                                  const taskProgress = Number(latestTaskUpdate.progress) || 0;
                                                   
-                                                  // ค้นหาช่างที่ถูกมอบหมายในงานย่อยชิ้นนี้
                                                   const matchedAssign = assignments.slice().reverse().find(a => a.plot_id === currentPlot.id && a.task_name === taskAction);
                                                   const contractorName = matchedAssign ? matchedAssign.contractor_name : 'ยังไม่มอบหมายช่าง';
+                                                  
+                                                  let delayStatusStr = 'ไม่มีข้อมูลแผน';
+                                                  let delayColor = 'text-slate-500 bg-slate-50';
+                                                  
+                                                  const planStart = matchedAssign?.start_date ? new Date(matchedAssign.start_date).toLocaleDateString('th-TH') : '-';
+                                                  const planEnd = matchedAssign?.end_date ? new Date(matchedAssign.end_date).toLocaleDateString('th-TH') : '-';
+                                                  const actualStart = matchedAssign?.actual_start_date ? new Date(matchedAssign.actual_start_date).toLocaleDateString('th-TH') : '-';
+                                                  const actualEnd = matchedAssign?.actual_end_date ? new Date(matchedAssign.actual_end_date).toLocaleDateString('th-TH') : '-';
+
+                                                  if (matchedAssign?.end_date) {
+                                                      const pEnd = new Date(matchedAssign.end_date);
+                                                      pEnd.setHours(0,0,0,0);
+                                                      
+                                                      let dateToCompare = new Date();
+                                                      dateToCompare.setHours(0,0,0,0);
+                                                      
+                                                      if (taskProgress >= 100 && matchedAssign?.actual_end_date) {
+                                                          dateToCompare = new Date(matchedAssign.actual_end_date);
+                                                          dateToCompare.setHours(0,0,0,0);
+                                                      }
+
+                                                      const daysDiff = Math.ceil((dateToCompare.getTime() - pEnd.getTime()) / (1000 * 3600 * 24));
+                                                      
+                                                      if (daysDiff > 0) {
+                                                          delayStatusStr = `ช้ากว่าแผน ${daysDiff} วัน`;
+                                                          delayColor = 'text-rose-600 bg-rose-50 border-rose-200';
+                                                      } else if (daysDiff < 0) {
+                                                          delayStatusStr = `เร็วกว่าแผน ${Math.abs(daysDiff)} วัน`;
+                                                          delayColor = 'text-emerald-600 bg-emerald-50 border-emerald-200';
+                                                      } else {
+                                                          delayStatusStr = 'ตามแผน';
+                                                          delayColor = 'text-blue-600 bg-blue-50 border-blue-200';
+                                                      }
+                                                  }
 
                                                   return (
-                                                     <div key={tIdx} className="bg-white border border-slate-200 p-3.5 rounded-xl shadow-sm hover:border-indigo-200 transition-colors">
-                                                        <div className="flex justify-between items-start gap-2 mb-1.5">
-                                                           <span className="font-black text-slate-800 text-sm sm:text-base">{taskAction}</span>
-                                                           <span className="bg-blue-50 text-blue-600 text-xs font-black px-2 py-0.5 rounded-md">{latestTaskUpdate.progress}%</span>
+                                                     <div key={tIdx} className="bg-white border border-slate-200 p-3.5 sm:p-4 rounded-xl shadow-sm hover:border-indigo-200 transition-colors">
+                                                        <div className="flex justify-between items-start gap-2 mb-2">
+                                                           <span className="font-black text-slate-800 text-sm sm:text-base leading-tight">{taskAction}</span>
+                                                           <span className="text-blue-600 text-lg font-black shrink-0">{taskProgress}%</span>
                                                         </div>
                                                         
-                                                        <div className="text-xs font-medium text-slate-500 mb-2 bg-slate-50 py-1 px-2 rounded-md w-fit flex items-center gap-1">
-                                                           <HardHat size={12} className="text-amber-500" /> 
-                                                           <span>ช่างผู้รับผิดชอบ: <strong className="text-slate-700 font-bold">{contractorName}</strong></span>
+                                                        {/* หลอดความสำเร็จ */}
+                                                        <div className="w-full bg-slate-100 rounded-full h-2.5 mb-3 overflow-hidden shadow-inner">
+                                                          <div className="bg-indigo-500 h-2.5 rounded-full transition-all duration-500" style={{ width: `${taskProgress}%` }}></div>
                                                         </div>
 
-                                                        <p className="text-xs text-slate-600 italic pl-2 border-l-2 border-indigo-400 font-medium leading-relaxed bg-indigo-50/20 py-1 rounded-r-md">
+                                                        {/* ข้อมูลช่าง และ สถานะความล่าช้า */}
+                                                        <div className="flex flex-wrap items-center gap-2 mb-3">
+                                                            <div className="text-[10px] sm:text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 py-1 px-2 rounded-md flex items-center gap-1.5 shrink-0">
+                                                               <HardHat size={12} className="text-amber-500" /> 
+                                                               {contractorName}
+                                                            </div>
+                                                            <div className={`text-[10px] sm:text-xs font-bold border py-1 px-2 rounded-md shrink-0 ${delayColor}`}>
+                                                               {delayStatusStr}
+                                                            </div>
+                                                        </div>
+
+                                                        {/* ข้อมูลวันที่ */}
+                                                        <div className="grid grid-cols-2 gap-2 text-[10px] sm:text-xs bg-slate-50 p-2 rounded-lg border border-slate-100">
+                                                            <div>
+                                                               <p className="text-slate-400 font-bold mb-0.5">วันที่ตามแผน (Plan)</p>
+                                                               <p className="font-black text-slate-600">{planStart} - {planEnd}</p>
+                                                            </div>
+                                                            <div>
+                                                               <p className="text-slate-400 font-bold mb-0.5">วันที่ทำจริง (Actual)</p>
+                                                               <p className="font-black text-indigo-700">{actualStart} - {actualEnd}</p>
+                                                            </div>
+                                                        </div>
+
+                                                        <p className="text-xs text-slate-600 italic pl-2 border-l-2 border-indigo-400 font-medium leading-relaxed bg-indigo-50/20 py-1 rounded-r-md mt-3">
                                                            "{latestTaskUpdate.text_content}"
                                                         </p>
                                                         <p className="text-[10px] text-slate-400 font-bold mt-1.5 text-right">
@@ -2963,6 +3073,7 @@ const handleSendDefect = async () => {
                                                   <div className="flex items-center gap-1 bg-amber-200/50 px-2 py-0.5 rounded-md border border-amber-300/60 text-slate-800">
                                                      <Activity size={12} className="text-indigo-600 animate-pulse"/>
                                                      <span>งาน: <strong className="font-black">{action}</strong></span>
+                                                     {data.progress !== undefined && <span className="ml-1 bg-white text-indigo-700 px-1.5 py-0.5 rounded text-[10px] font-black">{data.progress}%</span>}
                                                   </div>
                                                   <div className="flex items-center gap-1 bg-white px-2 py-0.5 rounded-md border border-slate-200 text-amber-700">
                                                      <HardHat size={12} className="text-amber-500"/>
