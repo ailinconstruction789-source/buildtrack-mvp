@@ -1,0 +1,18 @@
+$content = Get-Content -Raw app/page.tsx
+
+$bad_code = "                      <div className=`"flex gap-4 sm:gap-8 text-right`">`r`n                         <div>`r`n                            <p className=`"text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest mb-1`">แผน (Plan)</p>`r`n                            <div className=`"text-3xl sm:text-4xl font-black text-slate-400 tracking-tighter`">{statusInfo.planned}%</div>`r`n                         </div>`r`n                         <div>`r`n                            <p className=`"text-xs sm:text-sm font-bold text-slate-400 uppercase tracking-widest mb-1`">ทำจริง (Actual)</p>`r`n                            <div className=`"text-5xl sm:text-6xl font-black text-blue-600 tracking-tighter`">{statusInfo.actual}%</div>`r`n                         </div>`r`n                      </div>`r`n"
+$content = $content.Replace($bad_code, "")
+
+$bad_code2 = "                      <div className=`"flex gap-4 sm:gap-8 text-right`">`n                         <div>`n                            <p className=`"text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest mb-1`">แผน (Plan)</p>`n                            <div className=`"text-3xl sm:text-4xl font-black text-slate-400 tracking-tighter`">{statusInfo.planned}%</div>`n                         </div>`n                         <div>`n                            <p className=`"text-xs sm:text-sm font-bold text-slate-400 uppercase tracking-widest mb-1`">ทำจริง (Actual)</p>`n                            <div className=`"text-5xl sm:text-6xl font-black text-blue-600 tracking-tighter`">{statusInfo.actual}%</div>`n                         </div>`n                      </div>`n"
+$content = $content.Replace($bad_code2, "")
+
+$target_code = "                                         <div>`r`n                                            <p className=`"text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest mb-1`">แผน (Plan)</p>`r`n                                            <div className=`"text-3xl sm:text-4xl font-black text-slate-400 tracking-tighter`">{currentPlot.plan_progress || 0}%</div>`r`n                                         </div>"
+$replacement = "                                         <div>`r`n                                            <p className=`"text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest mb-1`">แผน (Plan)</p>`r`n                                            <div className=`"text-3xl sm:text-4xl font-black text-slate-400 tracking-tighter`">{statusInfo.planned}%</div>`r`n                                         </div>"
+$content = $content.Replace($target_code, $replacement)
+
+$target_code2 = "                                         <div>`n                                            <p className=`"text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest mb-1`">แผน (Plan)</p>`n                                            <div className=`"text-3xl sm:text-4xl font-black text-slate-400 tracking-tighter`">{currentPlot.plan_progress || 0}%</div>`n                                         </div>"
+$replacement2 = "                                         <div>`n                                            <p className=`"text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest mb-1`">แผน (Plan)</p>`n                                            <div className=`"text-3xl sm:text-4xl font-black text-slate-400 tracking-tighter`">{statusInfo.planned}%</div>`n                                         </div>"
+$content = $content.Replace($target_code2, $replacement2)
+
+Set-Content -Path app/page.tsx -Value $content
+Write-Host "Replaced successfully"
