@@ -49,10 +49,6 @@ interface HouseDetailViewProps {
   isAdmin: boolean;
   isProcurement: boolean;
   setScheduleInputs: (v: any) => void;
-  allUpdatesRecord: any[];
-  handleTogglePlotCustomer: (plotId: any, currentStatus: boolean) => void;
-  handleTogglePlotCompleted: (plotId: any, currentStatus: boolean, actualProgress: number) => void;
-  getPlotOverallStatus: (plotId: any) => any;
 }
 
 export default function HouseDetailView(props: HouseDetailViewProps) {
@@ -68,8 +64,7 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
     totalChartDays, timeMarkers, todayTs, chartStart, chartEnd,
     getChartLeft, getChartWidth, assignments, taskDates,
     setUpdates, setProgressValue, isAdmin, isProcurement,
-    setScheduleInputs, allUpdatesRecord,
-    handleTogglePlotCustomer, handleTogglePlotCompleted, getPlotOverallStatus
+    setScheduleInputs
   } = props;
 
   return (
@@ -86,13 +81,8 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                   <div className="flex flex-wrap justify-between items-center gap-3">
                     
                     {/* ส่วนซ้าย: ชื่อแปลง (ปรับให้ฟอนต์ชื่อแปลงเด่นกว่าข้อมูลเล็กน้อยตามหลัก Hierarchy) */}
-                    <div className="flex-shrink-0 flex flex-col gap-1">
-                        <div className="flex items-center gap-2">
-                           <h2 className="text-xl font-bold italic tracking-tighter">{selectedPlot.id}</h2>
-                           {/* 🌟 ป้ายสถานะสำหรับบ้านเสร็จ และมีลูกค้า 🌟 */}
-                           {selectedPlot.is_completed && <span className="bg-emerald-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow-sm" title="สร้างเสร็จพร้อมโอน">🔑</span>}
-                           {selectedPlot.has_customer && <span className="bg-blue-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow-sm" title="มีลูกค้าจองแล้ว">👤</span>}
-                        </div>
+                    <div className="flex-shrink-0">
+                        <h2 className="text-xl font-black italic tracking-tighter">{selectedPlot.id}</h2>
                         <p className="text-slate-400 font-bold uppercase text-[9px] italic">{selectedPlot.foreman || 'ไม่ระบุ'}</p>
                     </div>
 
@@ -101,57 +91,35 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                         <div className="text-xs">
                           <span className="text-slate-400 font-bold uppercase block text-[9px]">เวลา</span>
                           <span className="font-bold">{plotPlanStart !== Infinity ? `${new Date(plotPlanStart).toLocaleDateString('th-TH', {day:'numeric',month:'short'})}-${new Date(plotPlanEnd).toLocaleDateString('th-TH', {day:'numeric',month:'short'})}` : '-'}</span>
-                          <span className="text-rose-400 block font-bold text-[9px]">รวม {plotPlanStart !== Infinity ? Math.max(0, Math.ceil((plotPlanEnd - plotPlanStart) / (1000 * 60 * 60 * 24)) + 1) : 0} วัน</span>
+                          <span className="text-rose-400 block font-black text-[9px]">รวม {plotPlanStart !== Infinity ? Math.max(0, Math.ceil((plotPlanEnd - plotPlanStart) / (1000 * 60 * 60 * 24)) + 1) : 0} วัน</span>
                         </div>
                         <div className="text-xs">
                           <span className="text-slate-400 font-bold uppercase block text-[9px]">ผ่าน</span>
-                          <span className="text-blue-300 font-bold">{plotPlanStart !== Infinity ? Math.min(daysElapsed, totalPlannedDays) : '-'} <span className="font-bold text-[10px]">วัน</span></span>
+                          <span className="text-blue-300 font-black">{plotPlanStart !== Infinity ? Math.min(daysElapsed, totalPlannedDays) : '-'} <span className="font-bold text-[10px]">วัน</span></span>
                         </div>
                         <div className="text-xs">
                           <span className="text-slate-400 font-bold uppercase block text-[9px]">เหลือ</span>
-                          <span className="text-emerald-300 font-bold">{plotPlanEnd !== -Infinity ? Math.max(0, daysRemaining) : '-'} <span className="font-bold text-[10px]">วัน</span></span>
+                          <span className="text-emerald-300 font-black">{plotPlanEnd !== -Infinity ? Math.max(0, daysRemaining) : '-'} <span className="font-bold text-[10px]">วัน</span></span>
                         </div>
                         <div className="text-xs">
                           <span className="text-slate-400 font-bold uppercase block text-[9px]">สถานะ</span>
                           {plotPlanStart === Infinity ? <span className="text-slate-400">รอแผน</span> :
-                            isSummaryDelayed ? <span className="text-rose-500 font-bold">ล่าช้า</span> : 
-                            selectedPlot?.progress === 100 ? <span className="text-emerald-500 font-bold">เสร็จ</span> :
-                            <span className="text-blue-500 font-bold">กำลังทำ</span>}
+                            isSummaryDelayed ? <span className="text-rose-500 font-black">ล่าช้า</span> : 
+                            selectedPlot?.progress === 100 ? <span className="text-emerald-500 font-black">เสร็จ</span> :
+                            <span className="text-blue-500 font-black">กำลังทำ</span>}
                         </div>
                     </div>
 
-                    {/* ส่วนขวา: ปุ่มจัดการ */}
-                    <div className="flex flex-col sm:flex-row gap-2 ml-auto items-end sm:items-center">
-                      {isAdmin && (
-                        <div className="flex gap-1.5">
-                          <button 
-                            onClick={() => handleTogglePlotCustomer(selectedPlot.id, selectedPlot.has_customer)} 
-                            className={`px-2.5 py-1.5 rounded text-[10px] sm:text-xs font-bold border transition-all flex items-center gap-1 shadow-sm ${selectedPlot.has_customer ? 'bg-blue-600 border-blue-500 text-white shadow-[0_0_10px_rgba(37,99,235,0.4)]' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:text-white'}`}
-                          >
-                            <UserCog size={14} /> {selectedPlot.has_customer ? 'จองแล้ว' : 'ระบุลูกค้า'}
-                          </button>
-                          <button 
-                            onClick={() => {
-                              const statusInfo = getPlotOverallStatus(selectedPlot.id);
-                              handleTogglePlotCompleted(selectedPlot.id, selectedPlot.is_completed, statusInfo.actual);
-                            }} 
-                            className={`px-2.5 py-1.5 rounded text-[10px] sm:text-xs font-bold border transition-all flex items-center gap-1 shadow-sm ${selectedPlot.is_completed ? 'bg-emerald-600 border-emerald-500 text-white shadow-[0_0_10px_rgba(5,150,105,0.4)]' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-emerald-900/50 hover:text-emerald-400 hover:border-emerald-700'}`}
-                          >
-                            🔑 {selectedPlot.is_completed ? 'บ้านเสร็จแล้ว' : 'พร้อมโอน'}
-                          </button>
-                        </div>
-                      )}
-                      
-                      {isProjectPlanner && (
-                        <div className="flex gap-1">
-                          <button onClick={() => setCopyModalOpen(true)} className="bg-slate-700 text-slate-200 px-2 py-1 rounded text-[10px] hover:bg-slate-600 border border-slate-600 font-bold">คัดลอก</button>
-                          <button onClick={handleSaveAllSchedules} disabled={isSubmitting} className="bg-rose-600 text-white px-2 py-1 rounded text-[10px] hover:bg-rose-700 font-bold flex items-center justify-center gap-1 min-w-[50px] disabled:opacity-70 disabled:cursor-not-allowed">
-                             {isSubmitting ? <Loader2 className="animate-spin" size={12}/> : null}
-                             {isSubmitting ? 'กำลังบันทึก...' : 'บันทึก'}
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                    {/* ส่วนขวา: ปุ่มจัดการ (คงขนาดเดิมที่ปรับไว้ล่าสุด) */}
+                    {isProjectPlanner && (
+                      <div className="flex gap-1 ml-auto">
+                        <button onClick={() => setCopyModalOpen(true)} className="bg-slate-700 text-slate-200 px-2 py-1 rounded text-[10px] hover:bg-slate-600 border border-slate-600 font-bold">คัดลอก</button>
+                        <button onClick={handleSaveAllSchedules} disabled={isSubmitting} className="bg-rose-600 text-white px-2 py-1 rounded text-[10px] hover:bg-rose-700 font-bold flex items-center justify-center gap-1 min-w-[50px] disabled:opacity-70 disabled:cursor-not-allowed">
+                           {isSubmitting ? <Loader2 className="animate-spin" size={12}/> : null}
+                           {isSubmitting ? 'กำลังบันทึก...' : 'บันทึก'}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
                      {/* 🌟 โซน 2.5D Task-Linked Visual Progress (แสดงผลตามสถานะงานจริง) 🌟 */}
@@ -200,7 +168,7 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                             {/* 📊 ฝั่งขวา: สรุปรายงานการประกอบร่างดิจิทัล */}
                             <div className="w-full lg:w-1/2 text-white space-y-4 relative z-10">
                                <div>
-                                  <h3 className="text-2xl sm:text-3xl font-bold italic tracking-tighter mb-1 flex items-center gap-2">
+                                  <h3 className="text-2xl sm:text-3xl font-black italic tracking-tighter mb-1 flex items-center gap-2">
                                      <Monitor className="text-blue-500" size={24}/> 2.5D DIGITAL TWIN
                                   </h3>
                                   <p className="text-slate-400 font-bold text-xs tracking-widest uppercase">แบบบ้าน: {selectedPlot?.type} (ประมวลผลรายงวดงานจริง)</p>
@@ -216,36 +184,36 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                             </div>
                          </div>
                      )}            
-                     <div className="bg-[#f5f5f7] w-full overflow-x-auto custom-scrollbar border-t border-black/5" style={{ maxHeight: '800px', overflowY: 'auto' }}>
-                       {isMobileLayout && <div className="text-center text-[10px] text-slate-400 font-bold py-2 bg-[#f5f5f7] border-b border-black/5">↔️ ปัดซ้าย-ขวา เพื่อดูตาราง ↔️</div>}
+                     <div className="bg-slate-50 w-full overflow-x-auto custom-scrollbar border-t border-slate-200" style={{ maxHeight: '800px', overflowY: 'auto' }}>
+                       {isMobileLayout && <div className="text-center text-[10px] text-slate-400 font-bold py-2 bg-slate-100 border-b border-slate-200">↔️ ปัดซ้าย-ขวา เพื่อดูตาราง ↔️</div>}
                          <table className={`text-left border-collapse w-full relative ${isMobileLayout ? 'block' : 'min-w-[1200px]'}`}>
-                         <thead className={`${isMobileLayout ? 'hidden' : 'sticky top-0 z-[60] bg-[#f5f5f7] shadow-sm text-[10px] sm:text-xs font-bold uppercase text-[#86868b] tracking-widest'}`}>
+                         <thead className={`${isMobileLayout ? 'hidden' : 'sticky top-0 z-[60] bg-slate-100 shadow-sm text-[10px] sm:text-xs font-black uppercase text-slate-500 tracking-widest'}`}>
                            <tr>
-                             <th className={`sticky left-0 bg-[#f5f5f7] z-[65] border-b border-r border-black/5 p-3 sm:p-5 ${isMobileLayout ? 'w-[220px] min-w-[220px] max-w-[220px]' : 'w-[280px] min-w-[280px] max-w-[280px]'} shadow-[4px_0_15px_-5px_rgba(0,0,0,0.1)]`}>Task Name</th>
-                             <th className="sticky left-[220px] sm:left-[280px] bg-[#f5f5f7] z-[65] border-b border-r border-black/5 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.08)]">Start</th>
-                             <th className="sticky left-[335px] sm:left-[420px] bg-[#f5f5f7] z-[65] border-b border-r border-black/5 p-3 sm:p-5 text-center w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px] text-pink-600">Duration</th>
-                             <th className="sticky left-[405px] sm:left-[520px] bg-[#f5f5f7] z-[65] border-b border-r border-black/5 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[6px_0_10px_-6px_rgba(0,0,0,0.1)]">Finish</th>
+                             <th className={`sticky left-0 bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 ${isMobileLayout ? 'w-[220px] min-w-[220px] max-w-[220px]' : 'w-[280px] min-w-[280px] max-w-[280px]'} shadow-[4px_0_15px_-5px_rgba(0,0,0,0.1)]`}>Task Name</th>
+                             <th className="sticky left-[220px] sm:left-[280px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.08)]">Start</th>
+                             <th className="sticky left-[335px] sm:left-[420px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px] text-pink-600">Duration</th>
+                             <th className="sticky left-[405px] sm:left-[520px] bg-slate-100 z-[65] border-b border-r border-slate-200 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[6px_0_10px_-6px_rgba(0,0,0,0.1)]">Finish</th>
                                  {/* 🌟 2. ปรับหัวตารางวันที่ให้เรียงต่อเนื่อง และล็อกขนาดช่องละ 36px 🌟 */}
-                                 <th className="bg-[#f5f5f7] border-b border-black/5 p-0 relative w-full z-[60]" style={{ minWidth: `${totalChartDays * 36}px`, height: isMobileLayout ? '40px' : '56px' }}>
+                                 <th className="bg-slate-100 border-b border-slate-200 p-0 relative w-full z-[60]" style={{ minWidth: `${totalChartDays * 36}px`, height: isMobileLayout ? '40px' : '56px' }}>
                                     {todayTs >= chartStart && todayTs <= chartEnd && (
                                        <div className="absolute top-0 bottom-0 border-l-2 sm:border-l-[3px] border-dashed border-rose-500 z-[10] flex flex-col items-center pointer-events-none" style={{ left: `${getChartLeft(todayTs)}%` }}>
-                                          <span className="bg-rose-500 text-white text-[7px] sm:text-[11px] font-bold px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-b-md sm:rounded-b-lg shadow-md mt-0 sm:mt-1">ปัจจุบัน</span>
+                                          <span className="bg-rose-500 text-white text-[7px] sm:text-[11px] font-black px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-b-md sm:rounded-b-lg shadow-md mt-0 sm:mt-1">ปัจจุบัน</span>
                                        </div>
                                     )}
                                               
                                     <div className="absolute inset-0 flex pointer-events-none">
                                        {timeMarkers.map((m: any, i: any) => (
-                                          <div key={i} className={`border-l h-full relative ${m.isMonth ? 'border-black/10 bg-slate-200/20' : 'border-black/5/50'}`} style={{position: 'absolute', left: `${m.left}%`, width: `${(1 / totalChartDays) * 100}%`}}>
+                                          <div key={i} className={`border-l h-full relative ${m.isMonth ? 'border-slate-300 bg-slate-200/20' : 'border-slate-200/50'}`} style={{position: 'absolute', left: `${m.left}%`, width: `${(1 / totalChartDays) * 100}%`}}>
                                                         
                                              {m.monthLabel && (
-                                                <div className="absolute top-1.5 sm:top-2 left-1 bg-slate-800 text-white font-bold px-2 py-0.5 rounded shadow-sm text-[8px] sm:text-[10px] whitespace-nowrap z-30 border border-slate-700">
+                                                <div className="absolute top-1.5 sm:top-2 left-1 bg-slate-800 text-white font-black px-2 py-0.5 rounded shadow-sm text-[8px] sm:text-[10px] whitespace-nowrap z-30 border border-slate-700">
                                                    {m.monthLabel}
                                                 </div>
                                              )}
                                                         
                                              {/* 🎯 บังคับจัดเลขวันที่ให้อยู่ตรงกลางช่องพอดีเป๊ะ (เติม 0 ข้างหน้าถ้าเป็นเลขหลักเดียว) */}
                                              <div className="absolute bottom-1 sm:bottom-2 w-full flex justify-center">
-                                                <span className="text-[8px] sm:text-xs font-bold text-slate-400">{String(m.dayLabel).padStart(2, '0')}</span>
+                                                <span className="text-[8px] sm:text-xs font-black text-slate-400">{String(m.dayLabel).padStart(2, '0')}</span>
                                              </div>
                                           </div>
                                        ))}
@@ -253,7 +221,7 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                  </th>
                            </tr>
                          </thead>
-                         <tbody className={isMobileLayout ? 'block p-3 sm:p-0 bg-[#f5f5f7]' : ''}>
+                         <tbody className={isMobileLayout ? 'block p-3 sm:p-0 bg-slate-100' : ''}>
                           {taskTemplates.filter(t => t.house_type_id === selectedPlot.house_type_id).map((task) => {
                             const key             = `${selectedPlot.id}-${task.id}`;
                                     const isUpdatedToday = latestUpdatesMap[key]?.updated_at && new Date(latestUpdatesMap[key].updated_at).toDateString() === new Date().toDateString();
@@ -274,9 +242,6 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                             const pStartTs  = plan.planned_start ? new Date(plan.planned_start).getTime() : null;
                             const pEndTs    = plan.planned_end   ? new Date(plan.planned_end).getTime()   : null;
                             const statusObj = getTaskStatus(plan.planned_end, dates?.end, tProgress);
-
-                            // Realtime Pickaxe Logic
-                            const hasUpdateToday = allUpdatesRecord.some((u: any) => u.plot_id === selectedPlot.id && u.task_template_id === task.id && new Date(u.created_at).toLocaleDateString('en-CA') === new Date().toLocaleDateString('en-CA'));
 
                             // Card view helpers
                             const contractorName  = assignment ? assignment.contractor_name  : '';
@@ -303,25 +268,25 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                   {/* 📱 1. โซนมือถือ: แบบการ์ด (Mobile Card View) */}
                                   {isMobileLayout && (
                                       <tr className="block mb-4">
-                                        <td className="block bg-white rounded-[1.5rem] shadow-[0_8px_30px_-10px_rgba(0,0,0,0.1)] p-5 border border-black/5 relative overflow-hidden">
+                                        <td className="block bg-white rounded-[1.5rem] shadow-[0_8px_30px_-10px_rgba(0,0,0,0.1)] p-5 border border-slate-200 relative overflow-hidden">
                                             {/* แถบสีด้านบนการ์ด บอกสถานะ 100% */}
                                             {tProgress === 100 && <div className="absolute top-0 left-0 w-full h-1.5 bg-emerald-400"></div>}
 
                                             {/* หัวการ์ด: ชื่องาน & ป้าย % */}
                                             <div className="flex items-start justify-between mb-4 border-b border-slate-100 pb-3 mt-1">
                                               <div className="flex items-start gap-2.5 pr-2">
-                                                  <span className="text-[10px] font-bold text-slate-400 bg-[#f5f5f7] px-2 py-0.5 rounded border mt-0.5 shrink-0">#{task.task_order}</span>
+                                                  <span className="text-[10px] font-black text-slate-400 bg-slate-100 px-2 py-0.5 rounded border mt-0.5 shrink-0">#{task.task_order}</span>
                                                   <div>
-                                                    <h4 className="font-bold text-[#1d1d1f] text-sm leading-tight mb-1">{task.task_name}</h4>
+                                                    <h4 className="font-black text-slate-800 text-sm leading-tight mb-1">{task.task_name}</h4>
                                                     {contractorName ? (
                                                         <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-100"><HardHat size={12} /> {contractorName ? `${String(contractorName).split(' ')[0]} ${contractorPhone ? `(${contractorPhone})` : ''}` : 'ยังไม่ระบุ'}</span>
                                                     ) : (
-                                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-400 bg-[#f5f5f7] px-2 py-0.5 rounded-md"><Users size={12} /> ยังไม่ระบุช่าง</span>
+                                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded-md"><Users size={12} /> ยังไม่ระบุช่าง</span>
                                                     )}
                                                   </div>
                                               </div>
                                               <div className="flex flex-col items-end gap-1 shrink-0">
-                                                <div className={`px-2.5 py-1 rounded-xl text-xs font-bold ${tProgress === 100 ? 'bg-emerald-100 text-emerald-700' : tProgress > 0 ? 'bg-blue-100 text-blue-700' : 'bg-[#f5f5f7] text-[#86868b]'}`}>
+                                                <div className={`px-2.5 py-1 rounded-xl text-xs font-black ${tProgress === 100 ? 'bg-emerald-100 text-emerald-700' : tProgress > 0 ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>
                                                     {tProgress}%
                                                 </div>
                                                 <div className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${statusObj.color}`}>
@@ -332,37 +297,37 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
 
                                             {/* ข้อมูลวันที่: แผนงาน vs ทำจริง */}
                                             <div className="grid grid-cols-2 gap-3 mb-5">
-                                              <div className="bg-[#f5f5f7] rounded-xl p-3 border border-slate-100 relative overflow-hidden">
+                                              <div className="bg-slate-50 rounded-xl p-3 border border-slate-100 relative overflow-hidden">
                                                   <div className="absolute top-0 left-0 w-1 h-full bg-slate-300"></div>
-                                                  <span className="text-[9px] font-bold uppercase text-[#86868b] block mb-1.5 flex items-center gap-1"><Calendar size={10}/> แผนงาน</span>
-                                                  <div className="text-[10px] font-bold text-[#1d1d1f] space-y-0.5">
+                                                  <span className="text-[9px] font-black uppercase text-slate-500 block mb-1.5 flex items-center gap-1"><Calendar size={10}/> แผนงาน</span>
+                                                  <div className="text-[10px] font-bold text-slate-700 space-y-0.5">
                                                     <p>เริ่ม: <span className="text-slate-900">{plan.planned_start ? new Date(plan.planned_start).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</span></p>
                                                     <p>จบ: <span className="text-slate-900">{plan.planned_end ? new Date(plan.planned_end).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</span></p>
                                                   </div>
-                                                  <div className="text-[10px] font-bold text-pink-500 mt-2 bg-pink-50 inline-block px-1.5 py-0.5 rounded">{durationText}</div>
+                                                  <div className="text-[10px] font-black text-pink-500 mt-2 bg-pink-50 inline-block px-1.5 py-0.5 rounded">{durationText}</div>
                                               </div>
                                               <div className="bg-blue-50/50 rounded-xl p-3 border border-blue-100/50 relative overflow-hidden">
                                                   <div className="absolute top-0 left-0 w-1 h-full bg-blue-400"></div>
-                                                  <span className="text-[9px] font-bold uppercase text-blue-500 block mb-1.5 flex items-center gap-1"><Activity size={10}/> ทำจริง</span>
+                                                  <span className="text-[9px] font-black uppercase text-blue-500 block mb-1.5 flex items-center gap-1"><Activity size={10}/> ทำจริง</span>
                                                   <div className="text-[10px] font-bold text-blue-800 space-y-0.5">
                                                     <p>เริ่ม: <span className="text-blue-900">{dates?.start ? new Date(dates.start).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</span></p>
                                                     <p>จบ: <span className="text-blue-900">{dates?.end ? new Date(dates.end).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</span></p>
                                                   </div>
-                                                  <div className="text-[10px] font-bold text-blue-600 mt-2 bg-blue-100/50 inline-block px-1.5 py-0.5 rounded">{actualDurationText}</div>
+                                                  <div className="text-[10px] font-black text-blue-600 mt-2 bg-blue-100/50 inline-block px-1.5 py-0.5 rounded">{actualDurationText}</div>
                                               </div>
                                             </div>
 
                                             {/* Progress Bar */}
                                             <div className="mb-5">
                                               <div className="flex justify-between items-end mb-1.5">
-                                              <span className="text-[10px] font-bold text-[#86868b]">ความคืบหน้างวดงาน</span>
-                                              {hasUpdateToday && (
+                                              <span className="text-[10px] font-black text-slate-500">ความคืบหน้างวดงาน</span>
+                                              {latestUpdatesMap[`${selectedPlot.id}-${task.id}`] && new Date(latestUpdatesMap[`${selectedPlot.id}-${task.id}`].created_at).toLocaleDateString('en-CA') === new Date().toLocaleDateString('en-CA') && (
                                              <div className="absolute top-1.5 right-1.5 bg-orange-100 text-orange-600 p-1 rounded-full shadow-sm" title="มีการอัปเดตใหม่วันนี้!">
                                                 <Pickaxe size={12} className="animate-bounce" />
                                              </div>
                                               )}
                                               </div>
-                                              <div className="w-full bg-[#f5f5f7] rounded-full h-3 overflow-hidden border border-black/5">
+                                              <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden border border-slate-200">
                                                   <div className={`h-full rounded-full transition-all duration-1000 ${tProgress === 100 ? 'bg-gradient-to-r from-emerald-400 to-emerald-500' : 'bg-gradient-to-r from-blue-500 to-indigo-500'}`} style={{ width: `${tProgress}%` }}></div>
                                               </div>
                                             </div>
@@ -370,11 +335,11 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                             {/* ปุ่มกด Action */}
                                             <div className="flex gap-2">
                                               {(currentUserRole === 'Project Planner' || currentUserRole === 'Admin' || currentUserRole === 'Owner' || currentUserRole === 'Procurement') && (
-                                                  <button onClick={(e) => { e.stopPropagation(); setAssignModal({ isOpen: true, task: task, name: contractorName, phone: contractorPhone }); }} className="flex-[1] py-3 bg-white border-2 border-black/5 text-[#86868b] text-[11px] font-bold rounded-xl hover:bg-[#f5f5f7] hover:border-black/10 active:scale-95 transition-all flex flex-col items-center justify-center gap-1 shadow-sm">
+                                                  <button onClick={(e) => { e.stopPropagation(); setAssignModal({ isOpen: true, task: task, name: contractorName, phone: contractorPhone }); }} className="flex-[1] py-3 bg-white border-2 border-slate-200 text-slate-600 text-[11px] font-black rounded-xl hover:bg-slate-50 hover:border-slate-300 active:scale-95 transition-all flex flex-col items-center justify-center gap-1 shadow-sm">
                                                     <UserCog size={16} className={contractorName ? 'text-amber-500' : 'text-slate-400'} /> {contractorName ? 'เปลี่ยนช่าง' : 'เลือกช่าง'}
                                                   </button>
                                               )}
-                                              <button onClick={(e) => { e.stopPropagation(); openTaskProgress(); }} className={`flex-[2] py-3 ${tProgress === 100 ? 'bg-emerald-600 hover:bg-emerald-500 border-emerald-700' : 'bg-slate-800 hover:bg-slate-700 border-slate-900'} text-white text-[11px] sm:text-xs font-bold rounded-xl active:scale-95 transition-all flex flex-col items-center justify-center gap-1 shadow-md border-b-4 active:border-b-0 active:translate-y-[4px]`}>
+                                              <button onClick={(e) => { e.stopPropagation(); openTaskProgress(); }} className={`flex-[2] py-3 ${tProgress === 100 ? 'bg-emerald-600 hover:bg-emerald-500 border-emerald-700' : 'bg-slate-800 hover:bg-slate-700 border-slate-900'} text-white text-[11px] sm:text-xs font-black rounded-xl active:scale-95 transition-all flex flex-col items-center justify-center gap-1 shadow-md border-b-4 active:border-b-0 active:translate-y-[4px]`}>
                                                   <Camera size={16} className={tProgress === 100 ? 'text-emerald-100' : 'text-blue-300'} /> {tProgress === 100 ? 'ดูประวัติ / แจ้งซ่อม' : 'อัปเดตความคืบหน้า'}
                                               </button>
                                             </div>
@@ -393,16 +358,18 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                   }}>
                                 {/* 🌟 2. [ฉบับแก้ไข] บีบความสูงแถวฝั่งซ้าย ล็อก Task Name 2 บรรทัด และล็อกคอลัมน์ให้อยู่กับที่ 🌟 */}
                                 {/* 🌟 ปรับขยายความสูงแถว เพื่อไม่ให้เบอร์โทรโดนทับ (มือถือ 90px / คอม 100px) */}
-                                 <td className={`p-2 sm:p-3 border-b border-black/5 ${isMobileLayout ? 'h-[110px] w-[220px] min-w-[220px] max-w-[220px] z-[45]' : 'h-[120px] w-[280px] min-w-[280px] max-w-[280px] z-20'} flex flex-col justify-between bg-white sticky left-0 shadow-[4px_0_10px_-4px_rgba(0,0,0,0.1)]`}>
+                                 <td className={`p-2 sm:p-3 border-b border-slate-200 ${isMobileLayout ? 'h-[90px] w-[220px] min-w-[220px] max-w-[220px] z-[45]' : 'h-[100px] w-[280px] min-w-[280px] max-w-[280px] z-20'} flex flex-col justify-between bg-white sticky left-0 shadow-[4px_0_10px_-4px_rgba(0,0,0,0.1)]`}>
                                     <div className="min-w-0">
                                         <div className="flex items-start gap-1.5">
-                                          <span className="text-[10px] sm:text-xs font-bold text-slate-400 shrink-0 bg-[#f5f5f7] px-1.5 py-0.5 rounded border mt-0.5">#{task.task_order}</span>
+                                          <span className="text-[10px] sm:text-xs font-black text-slate-400 shrink-0 bg-slate-100 px-1.5 py-0.5 rounded border mt-0.5">#{task.task_order}</span>
                                           {/* 🎯 บังคับชื่องานให้แสดงสูงสุด 2 บรรทัดเท่ากันหมด */}
-                                          <h4 className="font-bold text-[#1d1d1f] text-xs sm:text-sm leading-tight text-ellipsis overflow-hidden [display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical]" title={task.task_name}>
+                                          <h4 className="font-black text-slate-800 text-xs sm:text-sm leading-tight text-ellipsis overflow-hidden [display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical]" title={task.task_name}>
                                              {task.task_name}
                                              
-                                             {/* ⛏️ ไอคอนคนทำงาน จะโชว์เฉพาะงานที่มีการอัปเดต "วันนี้" (รวมถึงงานที่เสร็จ 100% วันนี้ด้วย) */}
-                                             {hasUpdateToday && (
+                                             {/* ⛏️ ไอคอนคนทำงาน จะโชว์เฉพาะงานที่มีการอัปเดต "วันนี้" และยังไม่เสร็จ 100% */}
+                                             {latestUpdatesMap[`${selectedPlot.id}-${task.id}`] && 
+                                              new Date(latestUpdatesMap[`${selectedPlot.id}-${task.id}`].created_at).toLocaleDateString('en-CA') === new Date().toLocaleDateString('en-CA') && 
+                                              latestUpdatesMap[`${selectedPlot.id}-${task.id}`].progress < 100 && (
                                                 <span title="มีการอัปเดตงานในวันนี้" className="inline-flex items-center justify-center bg-orange-100 text-orange-600 p-[2px] rounded shadow-sm animate-pulse ml-1.5 align-text-bottom">
                                                    <Pickaxe size={12} />
                                                 </span>
@@ -425,7 +392,7 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                                </div>
                                                {/* ✅ แก้ไขปุ่มเปลี่ยนช่าง (รูปเฟือง UserCog) ให้เรียก Modal ถูกต้อง */}
                                                {(isAdmin || isProjectPlanner || isProcurement) && (
-                                                  <button onClick={(e) => { e.stopPropagation(); setAssignModal({ isOpen: true, task: task, name: assignment.contractor_name || '', phone: assignment.contractor_phone || '' }); }} className="w-5 h-5 rounded-full hover:bg-[#f5f5f7] flex items-center justify-center text-slate-400 hover:text-blue-600 shrink-0 transition-colors" title="เปลี่ยนช่าง">
+                                                  <button onClick={(e) => { e.stopPropagation(); setAssignModal({ isOpen: true, task: task, name: assignment.contractor_name || '', phone: assignment.contractor_phone || '' }); }} className="w-5 h-5 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-blue-600 shrink-0 transition-colors" title="เปลี่ยนช่าง">
                                                      <UserCog size={12} />
                                                   </button>
                                                )}
@@ -436,7 +403,7 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                                {(isAdmin || isProjectPlanner || isProcurement) ? (
                                                   <button 
                                                      onClick={(e) => { e.stopPropagation(); setAssignModal({ isOpen: true, task: task, name: '', phone: '' }); }}
-                                                     className="flex items-center gap-1 text-[10px] sm:text-xs font-bold text-rose-500 hover:text-rose-600 bg-rose-50/50 hover:bg-rose-50 border border-rose-200/60 border-dashed px-2 py-0.5 rounded-md transition-colors w-full justify-center"
+                                                     className="flex items-center gap-1 text-[10px] sm:text-xs font-black text-rose-500 hover:text-rose-600 bg-rose-50/50 hover:bg-rose-50 border border-rose-200/60 border-dashed px-2 py-0.5 rounded-md transition-colors w-full justify-center"
                                                   >
                                                      <PlusCircle size={12}/> ระบุช่าง
                                                   </button>
@@ -450,10 +417,10 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                        {/* 🌟 แสดงเปอร์เซ็นต์งาน + สถานะล่าช้า/เร็วกว่าแผน */}
                                        <div className="flex items-center justify-between">
                                           <div className="flex items-center gap-1.5 flex-1 pr-2">
-                                             <div className="w-full bg-[#f5f5f7] rounded-full h-1.5 max-w-[80px]">
+                                             <div className="w-full bg-slate-100 rounded-full h-1.5 max-w-[80px]">
                                                 <div className={`h-full rounded-full transition-all duration-1000 ${tProgress === 100 ? 'bg-gradient-to-r from-emerald-400 to-emerald-500' : 'bg-gradient-to-r from-blue-500 to-indigo-500'}`} style={{ width: `${tProgress}%` }}></div>
                                              </div>
-                                             <span className="text-[9px] sm:text-[10px] font-bold text-[#86868b]">{tProgress}%</span>
+                                             <span className="text-[9px] sm:text-[10px] font-black text-slate-600">{tProgress}%</span>
                                           </div>
                                           <span className={`text-[8px] sm:text-[9px] font-bold px-1.5 py-0.5 rounded border whitespace-nowrap ${statusObj.color}`}>
                                              {statusObj.label}
@@ -483,9 +450,9 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                     return (
                                        <>
                                           {/* Start Column (Planner) - ล็อกแน่นบนมือถือ */}
-                                          <td className="sticky left-[220px] sm:left-[280px] bg-pink-50/20 sm:bg-white z-[40] border-b border-r border-black/5 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.08)]">
+                                          <td className="sticky left-[220px] sm:left-[280px] bg-pink-50/20 sm:bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.08)]">
                                              <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
-                                                <span className="text-[8px] font-bold uppercase text-pink-500 w-8 shrink-0 text-left">Plan:</span>
+                                                <span className="text-[8px] font-black uppercase text-pink-500 w-8 shrink-0 text-left">Plan:</span>
                                                 <input type="date" value={currentStart} 
                                                    onChange={(e) => {
                                                       const newStart = e.target.value;
@@ -497,11 +464,11 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                                       }
                                                       setScheduleInputs((prev: any) => ({...prev, [task.id]: { ...prev[task.id], start: newStart, end: newEnd, duration: currentDuration }}));
                                                    }} 
-                                                   className="flex-1 w-full border border-pink-200 rounded px-1 py-1 text-[9px] font-bold text-[#1d1d1f] outline-none focus:border-pink-500 bg-white shadow-sm" 
+                                                   className="flex-1 w-full border border-pink-200 rounded px-1 py-1 text-[9px] font-bold text-slate-700 outline-none focus:border-pink-500 bg-white shadow-sm" 
                                                 />
                                              </div>
                                              <div className="flex items-center gap-1">
-                                                <span className="text-[8px] font-bold uppercase text-blue-500 w-8 shrink-0 text-left">Actual:</span>
+                                                <span className="text-[8px] font-black uppercase text-blue-500 w-8 shrink-0 text-left">Actual:</span>
                                                 <div className="flex-1 text-[9px] sm:text-[11px] font-bold text-blue-600 text-center">
                                                   {dates?.start ? new Date(dates.start).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
                                                 </div>
@@ -509,7 +476,7 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                           </td>
                                             
                                           {/* Duration Column (Planner) - ล็อกแน่นบนมือถือ */}
-                                          <td className="sticky left-[335px] sm:left-[420px] bg-pink-50/20 sm:bg-white z-[40] border-b border-r border-black/5 p-1.5 sm:p-2 align-middle w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px]">
+                                          <td className="sticky left-[335px] sm:left-[420px] bg-pink-50/20 sm:bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px]">
                                              <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
                                                 <input type="number" min="1" placeholder="วัน" value={currentDuration} 
                                                    onChange={(e) => {
@@ -522,18 +489,18 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                                       }
                                                       setScheduleInputs((prev: any) => ({...prev, [task.id]: { ...prev[task.id], duration: newDuration, end: newEnd, start: currentStart }}));
                                                    }}
-                                                   className="w-full border border-pink-200 rounded px-1 py-1 text-[9px] font-bold text-center text-pink-600 outline-none focus:border-pink-500 bg-white shadow-sm" 
+                                                   className="w-full border border-pink-200 rounded px-1 py-1 text-[9px] font-black text-center text-pink-600 outline-none focus:border-pink-500 bg-white shadow-sm" 
                                                 />
                                              </div>
                                              <div className="flex items-center justify-center">
-                                                <div className="w-full text-[9px] sm:text-xs font-bold text-blue-500 text-center">
+                                                <div className="w-full text-[9px] sm:text-xs font-black text-blue-500 text-center">
                                                   {actualDurationText}
                                                 </div>
                                              </div>
                                           </td>
 
                                           {/* Finish Column (Planner) - ล็อกแน่นบนมือถือ */}
-                                          <td className="sticky left-[405px] sm:left-[520px] bg-pink-50/20 sm:bg-white z-[40] border-b border-r border-black/5 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[6px_0_10px_-6px_rgba(0,0,0,0.1)]">
+                                          <td className="sticky left-[405px] sm:left-[520px] bg-pink-50/20 sm:bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[6px_0_10px_-6px_rgba(0,0,0,0.1)]">
                                              <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-pink-300">
                                                 <input type="date" value={currentEnd} 
                                                    onChange={(e) => {
@@ -545,7 +512,7 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                                       }
                                                       setScheduleInputs((prev: any) => ({...prev, [task.id]: { ...prev[task.id], end: newEnd, duration: newDuration, start: currentStart }}));
                                                    }} 
-                                                   className="w-full border border-pink-200 rounded px-1 py-1 text-[9px] font-bold text-[#1d1d1f] outline-none focus:border-pink-500 bg-white shadow-sm text-center" 
+                                                   className="w-full border border-pink-200 rounded px-1 py-1 text-[9px] font-bold text-slate-700 outline-none focus:border-pink-500 bg-white shadow-sm text-center" 
                                                 />
                                              </div>
                                              <div className="flex items-center justify-center">
@@ -575,15 +542,15 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                     return (
                                        <>
                                           {/* Start Column (ดูทั่วไป) - ล็อกแน่นบนมือถือ */}
-                                          <td className="sticky left-[220px] sm:left-[280px] bg-white z-[40] border-b border-r border-black/5 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.08)]">
-                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-black/5">
-                                              <span className="text-[8px] font-bold uppercase text-slate-400 w-8 shrink-0 text-left">Plan:</span>
-                                              <div className="flex-1 text-[9px] sm:text-[11px] font-bold text-[#1d1d1f] text-center">
+                                          <td className="sticky left-[220px] sm:left-[280px] bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.08)]">
+                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-slate-200">
+                                              <span className="text-[8px] font-black uppercase text-slate-400 w-8 shrink-0 text-left">Plan:</span>
+                                              <div className="flex-1 text-[9px] sm:text-[11px] font-bold text-slate-700 text-center">
                                                  {plan.planned_start ? new Date(plan.planned_start).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
                                               </div>
                                             </div>
                                             <div className="flex items-center gap-1">
-                                              <span className="text-[8px] font-bold uppercase text-blue-400 w-8 shrink-0 text-left">Actual:</span>
+                                              <span className="text-[8px] font-black uppercase text-blue-400 w-8 shrink-0 text-left">Actual:</span>
                                               <div className="flex-1 text-[9px] sm:text-[11px] font-bold text-blue-600 text-center">
                                                 {dates?.start ? new Date(dates.start).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
                                               </div>
@@ -591,23 +558,23 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                           </td>
 
                                           {/* Duration Column (ดูทั่วไป) - ล็อกแน่นบนมือถือ */}
-                                          <td className="sticky left-[335px] sm:left-[420px] bg-white z-[40] border-b border-r border-black/5 p-1.5 sm:p-2 align-middle w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px]">
-                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-black/5">
-                                              <div className="w-full text-[9px] sm:text-xs font-bold text-[#86868b] text-center">
+                                          <td className="sticky left-[335px] sm:left-[420px] bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px]">
+                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-slate-200">
+                                              <div className="w-full text-[9px] sm:text-xs font-black text-slate-600 text-center">
                                                  {durationText}
                                               </div>
                                             </div>
                                             <div className="flex items-center justify-center">
-                                              <div className="w-full text-[9px] sm:text-xs font-bold text-blue-500 text-center">
+                                              <div className="w-full text-[9px] sm:text-xs font-black text-blue-500 text-center">
                                                  {actualDurationText}
                                               </div>
                                             </div>
                                          </td>
 
                                          {/* Finish Column (ดูทั่วไป) - ล็อกแน่นบนมือถือ */}
-                                         <td className="sticky left-[405px] sm:left-[520px] bg-white z-[40] border-b border-r border-black/5 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[6px_0_10px_-6px_rgba(0,0,0,0.1)]">
-                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-black/5">
-                                              <div className="w-full text-[9px] sm:text-[11px] font-bold text-[#1d1d1f] text-center">
+                                         <td className="sticky left-[405px] sm:left-[520px] bg-white z-[40] border-b border-r border-slate-200 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[6px_0_10px_-6px_rgba(0,0,0,0.1)]">
+                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-slate-200">
+                                              <div className="w-full text-[9px] sm:text-[11px] font-bold text-slate-700 text-center">
                                                  {plan.planned_end ? new Date(plan.planned_end).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
                                               </div>
                                             </div>
@@ -623,9 +590,9 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
 
                                     {/* 🌟 3. บีบความสูงช่องกราฟฝั่งขวาลงให้เท่าฝั่งซ้าย และจัดตำแหน่งแท่งกราฟใหม่ 🌟 */}
                                     {/* 🌟 ปรับขยายความสูงช่องกราฟ ให้เท่ากับฝั่งซ้ายเป๊ะๆ */}
-                                     <td className="border-b border-black/5 p-0 relative z-10 w-full" style={{ minWidth: `${totalChartDays * 36}px`, height: isMobileLayout ? '90px' : '100px' }}>
+                                     <td className="border-b border-slate-200 p-0 relative z-10 w-full" style={{ minWidth: `${totalChartDays * 36}px`, height: isMobileLayout ? '90px' : '100px' }}>
                                        <div className="absolute inset-0 flex pointer-events-none z-0">
-                                          {timeMarkers.map((m: any, i: any) => ( <div key={i} className={`border-l h-full ${m.isMonth ? 'border-black/10 bg-slate-50/50' : 'border-slate-100'}`} style={{position: 'absolute', left: `${m.left}%`, width: `${(1 / totalChartDays) * 100}%`}}></div> ))}
+                                          {timeMarkers.map((m: any, i: any) => ( <div key={i} className={`border-l h-full ${m.isMonth ? 'border-slate-300 bg-slate-50/50' : 'border-slate-100'}`} style={{position: 'absolute', left: `${m.left}%`, width: `${(1 / totalChartDays) * 100}%`}}></div> ))}
                                           {todayTs >= chartStart && todayTs <= chartEnd && ( <div className="absolute top-0 bottom-0 border-l-2 sm:border-l-[3px] border-dashed border-rose-500/80 z-[15] pointer-events-none" style={{ left: `${getChartLeft(todayTs)}%` }}></div> )}
                                        </div>
                                        
@@ -637,7 +604,7 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                           
                                           {aStartTs && ( 
                                              <div className={`absolute h-4 rounded-sm z-[25] shadow-sm ${statusObj.barColor}`} style={{ left: `${getChartLeft(aStartTs)}%`, width: `${getChartWidth(aStartTs, aEndTs as number)}%`, top: '45%' }}>
-                                                <span className="absolute -top-3.5 text-[8px] sm:text-[9px] font-bold text-[#86868b] bg-white/95 border border-black/5 px-1 py-0 rounded shadow-sm" style={{ left: '2px' }}>{tProgress}%</span>
+                                                <span className="absolute -top-3.5 text-[8px] sm:text-[9px] font-black text-slate-600 bg-white/95 border border-slate-200 px-1 py-0 rounded shadow-sm" style={{ left: '2px' }}>{tProgress}%</span>
                                              </div> 
                                           )}
                                        </div>

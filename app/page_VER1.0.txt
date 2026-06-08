@@ -8,7 +8,6 @@ import DashboardOverview from '@/components/DashboardOverview';
 import MapVisualizer from '@/components/MapVisualizer';
 import HouseDetailView from '@/components/HouseDetailView';
 import TaskProgressView from '@/components/TaskProgressView';
-import OwnerAnalyticsDashboard from '@/components/OwnerAnalyticsDashboard';
 // ถอด browser-image-compression ออกเพื่อใช้ Native ป้องกัน Error
 import {
   LayoutDashboard, Map as MapIcon, Truck, ChevronRight, ClipboardList, Loader2,
@@ -80,14 +79,13 @@ export default function ConstructionApp() {
     taskDates, setTaskDates,
     allUpdatesRecord, setAllUpdatesRecord,
     fetchAllData,
-    fetchPlotDetails,
-    fetchOwnerAnalyticsData
+    fetchPlotDetails
   } = useBuildTrackData(loggedInUser);
 
 
   const [view, setView] = useState('dashboard');
   const [taskReturnView, setTaskReturnView] = useState('house-detail');
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [selectedProject, setSelectedProject] = useState<any>(null);
   const [selectedPlot, setSelectedPlot] = useState<any>(null);
   const [selectedTask, setSelectedTask] = useState<any>(null);
@@ -99,8 +97,6 @@ export default function ConstructionApp() {
   // Extracted: [loading,
   const [editPlotModal, setEditPlotModal] = useState<any>({ isOpen: false, plot: null, id: '', house_type_id: '', foreman_name: '' });
   const [editProjectModal, setEditProjectModal] = useState({ isOpen: false, oldName: '', newName: '' });
-  const [confirmDialog, setConfirmDialog] = useState<any>({ isOpen: false, title: '', message: '', onConfirm: null, isDestructive: true });
-  const [errorDialog, setErrorDialog] = useState<any>({ isOpen: false, title: '', message: '' });
   // 🌟 State สำหรับระบบ 2.5D แบบเจาะจงรายงวดงาน (0-99% และ 100%)
   const [editingHouseType, setEditingHouseType] = useState<any>(null);
   const [visualConfig, setVisualConfig] = useState<Record<string, any>>({}); // เก็บค่าแบบ Map { [taskId]: { progress_image, progress_z, done_image, done_z } }
@@ -252,23 +248,6 @@ export default function ConstructionApp() {
 
   const [assignModal, setAssignModal] = useState<any>({ isOpen: false, task: null, name: '', phone: '' });
   const [dialogConfig, setDialogConfig] = useState<any>({ isOpen: false, title: '', message: '', type: 'confirm', onConfirm: null });
-
-  // 🌟 Infinite Scroll State สำหรับ Live Feed 🌟
-  const [visibleFeedCount, setVisibleFeedCount] = useState(50);
-
-  // 🌟 Defect Tracking State 🌟
-  const [defectFilterStatus, setDefectFilterStatus] = useState('pending');
-  const [defectSearchText, setDefectSearchText] = useState('');
-  const [defectFilterMy, setDefectFilterMy] = useState(true);  const feedObserverRef = React.useRef<IntersectionObserver | null>(null);
-  const observerTargetRef = useCallback((node: HTMLDivElement | null) => {
-    if (feedObserverRef.current) feedObserverRef.current.disconnect();
-    if (node) {
-      feedObserverRef.current = new IntersectionObserver((entries) => {
-        if (entries[0].isIntersecting) setVisibleFeedCount((prev) => prev + 50);
-      }, { threshold: 0.1 });
-      feedObserverRef.current.observe(node);
-    }
-  }, []);
   const [scheduleInputs, setScheduleInputs] = useState<Record<string, any>>({});
   const [copyModalOpen, setCopyModalOpen] = useState(false);
   const [copySourcePlot, setCopySourcePlot] = useState('');
@@ -358,27 +337,22 @@ export default function ConstructionApp() {
     checkMobile(); window.addEventListener('resize', checkMobile); return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
+  // fetchUsers extracted to hook
   // 🌟 ระบบจำการล็อกอิน และตรวจจับเวลาหมดอายุ (ตั้งไว้ 60 นาที)
   useEffect(() => {
-    const TIMEOUT_MS = 60 * 60 * 1000;
-    
-    // 🛡️ เช็ค Session จาก Supabase Auth โดยตรง
-    const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      const lastActive = localStorage.getItem('buildtrack_last_active');
-      
-      if (session && lastActive) {
-        if (Date.now() - parseInt(lastActive) < TIMEOUT_MS) {
-          setLoggedInUser(session.user.user_metadata);
-          localStorage.setItem('buildtrack_last_active', Date.now().toString());
-        } else {
-          await supabase.auth.signOut();
-          setLoggedInUser(null);
-          localStorage.removeItem('buildtrack_last_active');
-        }
+    const TIMEOUT_MS = 60 * 60 * 1000; // 60 นาที (ถ้าอยากได้ 120 นาที เปลี่ยนเลข 60 เป็น 120)
+    const savedUser = localStorage.getItem('buildtrack_user');
+    const lastActive = localStorage.getItem('buildtrack_last_active');
+
+    if (savedUser && lastActive) {
+      if (Date.now() - parseInt(lastActive) < TIMEOUT_MS) {
+        setLoggedInUser(JSON.parse(savedUser));
+        localStorage.setItem('buildtrack_last_active', Date.now().toString());
+      } else {
+        localStorage.removeItem('buildtrack_user');
+        localStorage.removeItem('buildtrack_last_active');
       }
-    };
-    checkSession();
+    }
 
     const updateActivity = () => {
       if (localStorage.getItem('buildtrack_user')) {
@@ -395,11 +369,11 @@ export default function ConstructionApp() {
     window.addEventListener('click', updateActivity);
     window.addEventListener('touchstart', updateActivity);
 
-    const interval = setInterval(async () => {
+    const interval = setInterval(() => {
       const lastAct = localStorage.getItem('buildtrack_last_active');
       if (lastAct && (Date.now() - parseInt(lastAct) > TIMEOUT_MS)) {
-        await supabase.auth.signOut();
         setLoggedInUser(null);
+        localStorage.removeItem('buildtrack_user');
         localStorage.removeItem('buildtrack_last_active');
         alert('เซสชันหมดอายุเนื่องจากไม่ได้ใช้งานเกิน 60 นาที กรุณาล็อกอินใหม่ครับ 🔒');
       }
@@ -424,16 +398,6 @@ export default function ConstructionApp() {
       fetchPlotDetails(selectedPlot.id);
     }
   }, [selectedPlot?.id, view, fetchPlotDetails]);
-
-  // 🌟 Lazy load Owner Analytics when opening reports
-  useEffect(() => {
-    const isRoleAdmin = loggedInUser?.role?.toLowerCase() === 'admin';
-    const isRoleOwner = loggedInUser?.role?.toLowerCase() === 'owner';
-    if (view === 'reports' && (isRoleAdmin || isRoleOwner)) {
-      fetchOwnerAnalyticsData();
-    }
-  }, [view, loggedInUser?.role, fetchOwnerAnalyticsData]);
-
   // 🌟 ระบบจับการกดปุ่มคีย์บอร์ด (ซ้าย, ขวา, ESC) สำหรับโหมด Presentation
   useEffect(() => {
     const handleKeyDown = (e: any) => {
@@ -449,31 +413,16 @@ export default function ConstructionApp() {
   // ==========================================
   // 4. HANDLERS
   // ==========================================
-  const [isLoggingIn, setIsLoggingIn] = useState(false);
-
-  const handleLogin = async () => {
-    if (!loginData.username || !loginData.pin) return;
-    setIsLoggingIn(true);
-    try {
-      // 🛡️ เข้าสู่ระบบอย่างปลอดภัยผ่าน Supabase Auth
-      const email = `${loginData.username.toLowerCase().replace(/\s/g, '')}@buildtrack.local`;
-      const password = `${loginData.pin}BT!`;
-
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      
-      if (error) {
-        setIsLoggingIn(false);
-        return showAlert('ล้มเหลว', `เข้าสู่ระบบไม่ได้: ${error.message} (Email: ${email})`);
-      }
-
-      // ดึงข้อมูล User (username, role) ที่เก็บไว้ใน metadata ตอน Migrate
-      const userMeta = data.user.user_metadata;
-      setLoggedInUser(userMeta);
+  const handleLogin = () => {
+    const user = allUsers.find(u => u.username === loginData.username && u.pin === loginData.pin);
+    if (user) {
+      setLoggedInUser(user);
+      // 🌟 บันทึกผู้ใช้โดยไม่เก็บ PIN ใน localStorage เพื่อความปลอดภัย
+      const { pin, ...safeUser } = user;
+      localStorage.setItem('buildtrack_user', JSON.stringify(safeUser));
       localStorage.setItem('buildtrack_last_active', Date.now().toString());
-    } catch (e: any) {
-      showAlert('Error', e.message);
-    } finally {
-      setIsLoggingIn(false);
+    } else {
+      showAlert('ล้มเหลว', 'ชื่อผู้ใช้หรือ PIN ไม่ถูกต้อง');
     }
   };
   // 🌟 ฟังก์ชันเพิ่ม/แก้ไขแบบบ้าน พร้อมระบบอัปเดตชื่ออัตโนมัติป้องกันลิงก์พัง
@@ -599,11 +548,9 @@ export default function ConstructionApp() {
     }
   };
   const handleLogout = () => {
-    showConfirm('ยืนยันการออกจากระบบ', 'คุณแน่ใจหรือไม่ว่าต้องการออกจากระบบ?', async () => {
-      // 🛡️ ออกจากระบบผ่าน Supabase Auth
-      await supabase.auth.signOut();
-      
+    showConfirm('ยืนยันการออกจากระบบ', 'คุณแน่ใจหรือไม่ว่าต้องการออกจากระบบ?', () => {
       // 🌟 ล้างความจำในเบราว์เซอร์ทิ้ง
+      localStorage.removeItem('buildtrack_user');
       localStorage.removeItem('buildtrack_last_active');
 
       setLoggedInUser(null);
@@ -737,8 +684,7 @@ export default function ConstructionApp() {
   };
 
   const handleAddProject = async () => {
-    if (!newProjectName.trim()) return showAlert('แจ้งเตือน', 'กรุณาระบุชื่อโครงการก่อนบันทึก'); 
-    setIsSubmitting(true);
+    if (!newProjectName.trim()) return; setIsSubmitting(true);
     try {
       await supabase.from('projects').insert([{ name: newProjectName.trim() }]);
       setNewProjectName(''); await fetchAllData(); setView('dashboard'); showAlert('สำเร็จ', 'สร้างโครงการใหม่เรียบร้อยแล้ว');
@@ -823,37 +769,6 @@ export default function ConstructionApp() {
       }
     });
   };
-
-  // 🌟 ฟังก์ชันจัดการสถานะลูกค้าและบ้านเสร็จ
-  const handleTogglePlotCustomer = async (plotId: any, currentStatus: boolean) => {
-    setIsSubmitting(true);
-    try {
-      const { error } = await supabase.from('plots').update({ has_customer: !currentStatus }).eq('id', plotId);
-      if (error) throw error;
-      await fetchAllData();
-      showAlert('สำเร็จ', !currentStatus ? `กำหนดให้แปลง ${plotId} มีลูกค้าแล้ว 👤` : `ยกเลิกสถานะลูกค้าของแปลง ${plotId} แล้ว`);
-    } catch (e: any) { showAlert('ข้อผิดพลาด', e.message); }
-    setIsSubmitting(false);
-  };
-
-  const handleTogglePlotCompleted = async (plotId: any, currentStatus: boolean, actualProgress: number) => {
-    if (!currentStatus && actualProgress < 90) {
-      return showAlert('ไม่อนุญาต ❌', 'ผลรวมความคืบหน้า (Actual) ต้องถึง 90% ขึ้นไป จึงจะสามารถมาร์คว่าสร้างเสร็จพร้อมโอนได้ครับ');
-    }
-    
-    showConfirm('ยืนยันสถานะ', currentStatus ? `ยกเลิกสถานะ "สร้างเสร็จ" ของแปลง ${plotId}?` : `ยืนยันว่าบ้านแปลง ${plotId} สร้างเสร็จพร้อมโอน (90%+) ใช่หรือไม่?`, async () => {
-      setIsSubmitting(true);
-      try {
-        const { error } = await supabase.from('plots').update({ is_completed: !currentStatus }).eq('id', plotId);
-        if (error) throw error;
-        await fetchAllData();
-        closeDialog();
-        showAlert('สำเร็จ', !currentStatus ? `แปลง ${plotId} สร้างเสร็จพร้อมโอนแล้ว! 🔑` : `ยกเลิกสถานะบ้านเสร็จของแปลง ${plotId} แล้ว`);
-      } catch (e: any) { showAlert('ข้อผิดพลาด', e.message); }
-      setIsSubmitting(false);
-    });
-  };
-
   // 🌟 ฟังก์ชันเปิดหน้าต่างแก้ไข และดึงค่าเดิมมาใส่ในช่องกรอก
   const handleEditPlot = (plot: any) => {
     setEditPlotModal({
@@ -1026,7 +941,7 @@ export default function ConstructionApp() {
       if (progressValue > 0 && (!currentAssignment || !currentAssignment.actual_start_date)) {
         updatePayload.actual_start_date = new Date().toISOString();
       }
-      if (progressValue === 100 && (!currentAssignment || !currentAssignment.actual_end_date)) {
+      if (progressValue === 100) {
         updatePayload.actual_end_date = new Date().toISOString();
       }
       await supabase.from('plot_task_assignments').upsert({
@@ -1104,25 +1019,14 @@ export default function ConstructionApp() {
       if (finalP > 0 && (!revAssignment || !revAssignment.actual_start_date)) {
         revPayload.actual_start_date = new Date().toISOString();
       }
-      if (finalP === 100 && (!revAssignment || !revAssignment.actual_end_date)) {
+      if (finalP === 100) {
         revPayload.actual_end_date = new Date().toISOString();
-      } else if (finalP < 100) {
-        revPayload.actual_end_date = null;
       }
       await supabase.from('plot_task_assignments').upsert({
         plot_id: selectedPlot.id,
         task_template_id: selectedTask.id,
         ...revPayload
       }, { onConflict: 'plot_id,task_template_id' });
-
-      // 🌟 อัปเดตสถานะ Defect เป็น resolved และบันทึกเวลา 🌟
-      if (isApproved) {
-        await supabase.from('defects')
-          .update({ status: 'resolved', resolved_at: new Date().toISOString() })
-          .eq('plot_id', selectedPlot.id)
-          .eq('task_template_id', selectedTask.id)
-          .eq('status', 'pending');
-      }
 
       await fetchAllData();
       // 🌟 ดึงประวัติงานสดๆ หลัง fetchAllData เพื่ออัปเดต chat view
@@ -1305,7 +1209,7 @@ export default function ConstructionApp() {
   }
 
   return (
-    <div className={`min-h-screen font-sans text-[#1d1d1f] transition-all duration-500 ${isMobilePreview ? 'bg-slate-900 flex items-center justify-center py-4 sm:py-10' : 'bg-[#f5f5f7]'}`}>
+    <div className={`min-h-screen font-sans text-slate-900 transition-all duration-500 ${isMobilePreview ? 'bg-slate-900 flex items-center justify-center py-4 sm:py-10' : 'bg-slate-50'}`}>
 
       {/* 🖨️ CSS สำหรับการพิมพ์หน้ากระดาษ A4 🖨️ */}
       <style dangerouslySetInnerHTML={{
@@ -1321,7 +1225,7 @@ export default function ConstructionApp() {
 
         {/* Modals & Dialogs */}
         {assignModal.isOpen && (
-          <div className="absolute inset-0 z-[600] bg-black/40 backdrop-blur-xl flex items-center justify-center p-4 fixed transition-all">
+          <div className="absolute inset-0 z-[600] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 fixed">
             <div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full p-6 space-y-5 animate-in zoom-in-95 duration-200">
               <div><h3 className="text-xl font-black text-slate-800 italic uppercase">Assign Contractor</h3><p className="text-sm text-slate-500 font-bold tracking-widest">{selectedPlot?.id} - {assignModal.task?.task_name}</p></div>
               <div className="space-y-4">
@@ -1373,7 +1277,7 @@ export default function ConstructionApp() {
                     </div>
                   )}
                 </div>
-                <div><label className="block text-sm font-black text-slate-500 mb-1 uppercase tracking-widest">เบอร์โทรศัพท์ (อัตโนมัติ)</label><input type="text" value={assignModal.phone} readOnly className="w-full bg-black/5 border-none rounded-2xl px-5 py-4 font-medium text-[#86868b] cursor-not-allowed" /></div>
+                <div><label className="block text-sm font-black text-slate-500 mb-1 uppercase tracking-widest">เบอร์โทรศัพท์ (อัตโนมัติ)</label><input type="text" value={assignModal.phone} readOnly className="w-full bg-slate-100 border border-slate-200 rounded-xl px-4 py-3 font-bold text-slate-500 cursor-not-allowed" /></div>
               </div>
               <div className="flex gap-3 w-full mt-2">
                 <button onClick={() => setAssignModal({ isOpen: false, task: null, name: '', phone: '' })} className="flex-1 bg-slate-100 text-slate-600 font-bold py-3.5 rounded-xl hover:bg-slate-200">ยกเลิก</button>
@@ -1385,7 +1289,7 @@ export default function ConstructionApp() {
 
         {/* 🌟 Modal สำหรับ Export รูปตั้งเบิก 🌟 */}
         {exportModalOpen && (
-          <div className="absolute inset-0 z-[600] bg-black/40 backdrop-blur-xl flex items-center justify-center p-4 fixed transition-all">
+          <div className="absolute inset-0 z-[600] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 fixed">
             <div className="bg-white rounded-[2rem] shadow-2xl max-w-3xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
               <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                 <div>
@@ -1453,7 +1357,7 @@ export default function ConstructionApp() {
           activities.sort((a, b) => b.time - a.time);
 
           return (
-            <div className="absolute inset-0 z-[800] bg-black/40 backdrop-blur-xl flex items-center justify-center p-4 fixed transition-all">
+            <div className="absolute inset-0 z-[800] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 fixed">
               <div className="bg-white rounded-[2rem] shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
                 <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                   <div>
@@ -1520,7 +1424,7 @@ export default function ConstructionApp() {
           );
         })()}
         {copyModalOpen && (
-          <div className="absolute inset-0 z-[600] bg-black/40 backdrop-blur-xl flex items-center justify-center p-4 fixed transition-all">
+          <div className="absolute inset-0 z-[600] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 fixed">
             <div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full p-6 space-y-5 animate-in zoom-in-95 duration-200">
               <div><h3 className="text-xl font-black text-slate-800 italic uppercase flex items-center gap-2"><Copy className="text-blue-600" /> Copy Schedule</h3><p className="text-sm text-slate-500 font-bold tracking-widest mt-1">คัดลอกแผนงานจากแปลงต้นแบบ</p></div>
               <div className="space-y-4">
@@ -1584,20 +1488,20 @@ export default function ConstructionApp() {
         )}
 
         {dialogConfig.isOpen && (
-          <div className="absolute inset-0 z-[600] bg-black/40 backdrop-blur-xl flex items-center justify-center p-4 fixed transition-all"><div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full p-6 text-center space-y-4"><div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-2 ${dialogConfig.type === 'confirm' ? 'bg-rose-100 text-rose-600' : 'bg-blue-100 text-blue-600'}`}><AlertTriangle size={32} /></div><h3 className="text-xl font-black">{dialogConfig.title}</h3><p className="text-slate-500 font-medium">{dialogConfig.message}</p><div className="flex gap-3 w-full mt-4">{dialogConfig.type === 'confirm' ? (<><button onClick={closeDialog} className="flex-1 bg-slate-100 text-slate-600 font-bold py-3.5 rounded-xl hover:bg-slate-200">ยกเลิก</button><button onClick={dialogConfig.onConfirm || undefined} className="flex-1 bg-rose-600 text-white font-bold py-3.5 rounded-xl hover:bg-rose-700">ยืนยัน</button></>) : (<button onClick={closeDialog} className="w-full bg-slate-800 text-white font-bold py-3.5 rounded-xl">รับทราบ</button>)}</div></div></div>
+          <div className="absolute inset-0 z-[600] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 fixed"><div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full p-6 text-center space-y-4"><div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-2 ${dialogConfig.type === 'confirm' ? 'bg-rose-100 text-rose-600' : 'bg-blue-100 text-blue-600'}`}><AlertTriangle size={32} /></div><h3 className="text-xl font-black">{dialogConfig.title}</h3><p className="text-slate-500 font-medium">{dialogConfig.message}</p><div className="flex gap-3 w-full mt-4">{dialogConfig.type === 'confirm' ? (<><button onClick={closeDialog} className="flex-1 bg-slate-100 text-slate-600 font-bold py-3.5 rounded-xl hover:bg-slate-200">ยกเลิก</button><button onClick={dialogConfig.onConfirm || undefined} className="flex-1 bg-rose-600 text-white font-bold py-3.5 rounded-xl hover:bg-rose-700">ยืนยัน</button></>) : (<button onClick={closeDialog} className="w-full bg-slate-800 text-white font-bold py-3.5 rounded-xl">รับทราบ</button>)}</div></div></div>
         )}
 
         {/* 🧭 Left Sidebar (Desktop Only) - ฉบับพับเก็บได้ */}
         {!isMobileLayout && (
-          <aside className={`bg-slate-900 text-slate-300 flex-col justify-between hidden md:flex shrink-0 shadow-2xl z-[120] transition-all duration-300 relative ${isSidebarCollapsed ? 'w-[88px] sidebar-collapsed' : 'w-72'}`}>
+          <aside className={`bg-slate-900 text-slate-300 flex-col justify-between hidden md:flex shrink-0 shadow-2xl z-50 transition-all duration-300 relative ${isSidebarCollapsed ? 'w-[88px] sidebar-collapsed' : 'w-72'}`}>
 
             {/* 🌟 ปุ่มพับ/กางเมนู (ลูกศร) วางทับเส้นขอบขวา 🌟 */}
             <button
               onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-              className="absolute -right-3.5 top-8 bg-white/95 backdrop-blur-xl text-slate-600 hover:text-slate-900 hover:bg-white rounded-full p-1.5 z-[130] shadow-[0_4px_12px_rgba(0,0,0,0.15)] border border-slate-200/80 transition-all duration-300 hover:scale-110"
+              className="absolute -right-3.5 top-10 bg-slate-800 text-slate-300 hover:text-white rounded-full p-1.5 hover:bg-rose-600 z-[110] shadow-md border border-slate-700 transition-all"
               title={isSidebarCollapsed ? 'กางเมนู' : 'พับเมนู'}
             >
-              <ChevronRight size={18} strokeWidth={2.5} className={`transition-transform duration-300 ${isSidebarCollapsed ? '' : 'rotate-180'}`} />
+              <ChevronRight size={14} className={`transition-transform duration-300 ${isSidebarCollapsed ? '' : 'rotate-180'}`} />
             </button>
 
             {/* 🌟 CSS Trick: ซ่อนข้อความเมนูอัตโนมัติเมื่อพับ 🌟 */}
@@ -1622,11 +1526,9 @@ export default function ConstructionApp() {
                       <button onClick={() => setView('global-feed')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'global-feed' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><ClipboardList size={18} /> Live Feed หน้าไซต์</button>
                     )}
                     <button onClick={() => setView('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'dashboard' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Home size={18} /> Dashboard</button>
+                    Reports
                     {(isAdmin || isProjectPlanner || isQC || isSiteEngineer || isOwner || isForeman) && (
-                      <button onClick={() => setView('reports')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'reports' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><PieChart size={18} /> Reports & Analytics</button>
-                    )}
-                    {(isAdmin || isQC || isSiteEngineer || isOwner || isForeman) && (
-                      <button onClick={() => setView('defects')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'defects' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><ShieldAlert size={18} /> Defect Tracking</button>
+                      <button onClick={() => setView('reports')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'reports' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><PieChart size={18} />  & Analytics</button>
                     )}
                   </nav>
                 </div>
@@ -1824,8 +1726,8 @@ export default function ConstructionApp() {
                         ยังไม่มีประวัติการรายงานงานในระบบย่อยนี้
                       </div>
                     ) : (
-                      <>
-                        {allUpdatesRecord.slice(0, visibleFeedCount).map((update: any) => {
+                      // ดึงประวัติทั้งหมดมากลับด้าน (slice.reverse) เพื่อเอาล่าสุดขึ้นก่อน
+                      allUpdatesRecord.slice().reverse().map((update: any) => {
                         const task = taskTemplates.find(t => t.id === update.task_template_id);
                         const taskName = task ? task.task_name : update.action;
 
@@ -1910,15 +1812,7 @@ export default function ConstructionApp() {
 
                           </div>
                         );
-                      })}
-                      {allUpdatesRecord.length > visibleFeedCount && (
-                        <div ref={observerTargetRef} className="py-6 flex justify-center items-center">
-                          <span className="bg-slate-100 text-slate-500 text-xs font-bold px-4 py-2 rounded-full flex items-center gap-2">
-                            <Loader2 size={14} className="animate-spin" /> กำลังโหลดเพิ่มเติม...
-                          </span>
-                        </div>
-                      )}
-                      </>
+                      })
                     )}
                   </div>
                 </div>
@@ -2073,166 +1967,99 @@ export default function ConstructionApp() {
                       </table>
                     </div>
                   </div>
-
-                  {/* 📊 🌟 Deep Analytics สำหรับ Owner & Admin 🌟 */}
-                  {(isAdmin || isOwner) && (
-                    <OwnerAnalyticsDashboard
-                      projects={projects}
-                      plots={plots}
-                      taskTemplates={taskTemplates}
-                      schedules={schedules}
-                      defects={defects}
-                      allUpdatesRecord={allUpdatesRecord}
-                      foremenList={foremenList}
-                      latestUpdatesMap={latestUpdatesMap}
-                    />
-                  )}
-                </div>
-              )}
-
-              {/* ⚠️ View: Defect Tracking (Full Page) ⚠️ */}
-              {view === 'defects' && (
-                <div className="animate-in slide-in-from-bottom-4 duration-500 max-w-[1400px] mx-auto w-full h-full p-4 sm:p-8">
-                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-6 sm:mb-8 gap-3 sm:gap-4">
-                    <div>
-                      <h2 className="text-2xl sm:text-4xl font-black text-slate-800 italic uppercase tracking-tighter flex items-center gap-3"><ShieldAlert className="text-rose-500" size={32} /> Defect Tracking</h2>
-                      <p className="text-slate-500 text-[10px] sm:text-sm font-bold uppercase tracking-widest mt-0.5 sm:mt-1">ระบบจัดการงานซ่อมแซมและข้อบกพร่อง (Internal)</p>
-                    </div>
-                  </div>
-
-                  <div className="bg-white p-5 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-slate-200 shadow-sm mb-6 flex flex-col sm:flex-row gap-4 items-center justify-between">
-                    <div className="flex w-full sm:w-auto items-center gap-2 flex-wrap">
-                      <div className="relative flex-1 sm:w-64 min-w-[200px]">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input type="text" placeholder="ค้นหาแปลง, อาการ..." value={defectSearchText} onChange={(e) => setDefectSearchText(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm focus:border-blue-500 outline-none" />
-                      </div>
-                      <select value={defectFilterStatus} onChange={(e) => setDefectFilterStatus(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 font-bold text-sm text-slate-700 outline-none focus:border-blue-500 cursor-pointer min-w-[150px]">
-                        <option value="all">สถานะทั้งหมด</option>
-                        <option value="pending">รอแก้ไข (Pending)</option>
-                        <option value="resolved">แก้ไขแล้ว (Resolved)</option>
-                      </select>
-                    </div>
-                    {isForeman && (
-                      <button onClick={() => setDefectFilterMy(!defectFilterMy)} className={`px-4 py-2.5 rounded-xl font-bold text-sm transition-colors border whitespace-nowrap ${defectFilterMy ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}>
-                        {defectFilterMy ? '✓ เฉพาะงานของฉัน' : 'ดูงานทั้งหมด'}
-                      </button>
-                    )}
-                  </div>
-
+                  {/* 🌟 ตารางสรุปสถานะการแจ้งซ่อม (Defect Tracking Summary - ฉบับปรับปรุงตามสั่ง) 🌟 */}
                   <div className="bg-white rounded-2xl sm:rounded-[2rem] border border-slate-200 shadow-md overflow-hidden mb-6">
+                    <div className="p-5 sm:p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                      <h3 className="font-black text-xl sm:text-2xl text-slate-800 flex items-center gap-2.5"><ShieldAlert className="text-rose-500" size={24} /> Defect Tracking Summary</h3>
+                      <span className="bg-rose-100 text-rose-600 text-xs sm:text-sm font-black px-3.5 py-2 rounded-xl shadow-sm">
+                        {isForeman
+                          ? `รอดำเนินการของคุณ: ${defects.filter(d => { const p = plots.find(plot => plot.id === d.plot_id); return d.status === 'pending' && p?.foreman === (loggedInUser?.username || currentUserRole); }).length} รายการ`
+                          : `รอดำเนินการทั้งหมด: ${defects.filter(d => d.status === 'pending').length} รายการ`
+                        }
+                      </span>
+                    </div>
+
                     <div className="overflow-x-auto custom-scrollbar">
                       <table className="w-full text-left border-collapse min-w-[1100px]">
                         <thead className="bg-slate-100 border-b border-slate-200">
                           <tr>
-                            <th className="p-4 pl-6 sm:pl-8 text-xs font-black uppercase text-slate-600 tracking-wider w-32">วันแจ้ง (ค้าง)</th>
+                            <th className="p-4 pl-6 sm:pl-8 text-xs font-black uppercase text-slate-600 tracking-wider w-28">วันที่แจ้ง</th>
                             <th className="p-4 text-xs font-black uppercase text-slate-600 tracking-wider w-24">แปลง</th>
-                            <th className="p-4 text-xs font-black uppercase text-slate-600 tracking-wider min-w-[200px]">งวดงาน (Task)</th>
+                            <th className="p-4 text-xs font-black uppercase text-slate-600 tracking-wider min-w-[250px]">งวดงาน (Task)</th>
                             <th className="p-4 text-xs font-black uppercase text-slate-600 tracking-wider w-40">ผู้แจ้ง (Reporter)</th>
-                            <th className="p-4 text-xs font-black uppercase text-slate-600 tracking-wider">รายละเอียด / รูปภาพ</th>
-                            <th className="p-4 pr-6 sm:pr-8 text-xs font-black uppercase text-slate-600 tracking-wider text-center w-40">จัดการ</th>
+                            <th className="p-4 text-xs font-black uppercase text-slate-600 tracking-wider">รายละเอียด Defect</th>
+                            <th className="p-4 text-xs font-black uppercase text-slate-600 tracking-wider w-40">โฟร์แมน</th>
+                            <th className="p-4 pr-6 sm:pr-8 text-xs font-black uppercase text-slate-600 tracking-wider text-center w-32">สถานะ</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                           {(() => {
-                            let filtered = defects.filter(defect => {
-                              if (defectFilterStatus !== 'all' && defect.status !== defectFilterStatus) return false;
-                              if (defectSearchText) {
-                                const text = defectSearchText.toLowerCase();
-                                if (!defect.plot_id.toLowerCase().includes(text) && !(defect.description || '').toLowerCase().includes(text)) return false;
+                            // 🧠 ลอจิกกรองข้อมูล: ถ้าเป็น Foreman ให้เห็นเฉพาะแปลงที่ตัวเองรับผิดชอบ แต่ถ้าตำแหน่งอื่นให้เห็นครบหมด
+                            const filteredDefects = defects.filter(defect => {
+                              if (isForeman) {
+                                const plotInfo = plots.find(p => p.id === defect.plot_id);
+                                return plotInfo?.foreman === (loggedInUser?.username || currentUserRole);
                               }
-                              if (isForeman && defectFilterMy) {
-                                const p = plots.find(plot => plot.id === defect.plot_id);
-                                if (p?.foreman !== (loggedInUser?.username || currentUserRole)) return false;
-                              }
-                              return true;
+                              return true; // ตำแหน่งอื่นๆ เห็นทั้งหมด
                             });
 
-                            if (filtered.length === 0) {
-                              return <tr><td colSpan={6} className="text-center p-12 text-slate-400 font-bold text-sm sm:text-base"><CheckSquare size={32} className="opacity-30 mx-auto mb-2" /> ไม่มีรายการแจ้งซ่อม</td></tr>;
+                            if (filteredDefects.length === 0) {
+                              return <tr><td colSpan={7} className="text-center p-12 text-slate-400 font-bold text-sm sm:text-base">ไม่มีรายการแจ้งซ่อมในระบบระบบย่อยนี้ 🎉</td></tr>;
                             }
 
-                            // จัดกลุ่มตามแปลง (Group by Plot)
-                            const grouped: Record<string, any[]> = {};
-                            filtered.forEach(d => {
-                              if (!grouped[d.plot_id]) grouped[d.plot_id] = [];
-                              grouped[d.plot_id].push(d);
-                            });
+                            return filteredDefects
+                              .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                              .map((defect, idx) => {
+                                const pInfo = plots.find(p => p.id === defect.plot_id);
+                                const foremanName = pInfo ? pInfo.foreman : 'ไม่ระบุ';
 
-                            return Object.keys(grouped).sort().map(plotId => {
-                              // เรียงจากเก่าสุดไปใหม่สุด (เพื่อให้ค้างนานสุดขึ้นก่อน)
-                              const plotDefects = grouped[plotId].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-                              const plotInfo = plots.find(p => p.id === plotId);
+                                // ดึงชื่องวดงานที่ผูกอยู่กับ defect รายการนี้
+                                const taskInfo = taskTemplates.find(t => t.id === defect.task_id);
+                                const taskName = taskInfo ? taskInfo.task_name : 'งานทั่วไป / ไม่ระบุ';
 
-                              return (
-                                <React.Fragment key={`group-${plotId}`}>
-                                  {/* 🌟 ส่วนหัวแถวแบ่งกลุ่มแปลง (Plot Header) 🌟 */}
-                                  <tr className="bg-slate-800 text-white">
-                                    <td colSpan={6} className="p-3 pl-6 sm:pl-8 font-black text-sm tracking-wider">
-                                      <div className="flex items-center gap-3">
-                                        <Home size={18} className="text-blue-400" /> 
-                                        แปลง: {plotId} 
-                                        <span className="bg-white/20 px-2 py-0.5 rounded text-xs ml-2">ค้าง {plotDefects.filter(d => d.status === 'pending').length} รายการ</span>
-                                        <span className="text-slate-400 text-xs font-medium ml-auto pr-4">โฟร์แมน: {plotInfo?.foreman || 'ไม่ระบุ'}</span>
-                                      </div>
+                                return (
+                                  <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
+                                    {/* วันที่แจ้ง (ปรับขนาดตัวหนังสือให้อ่านง่ายสบายตาเป็น text-sm) */}
+                                    <td className="p-4 pl-6 sm:pl-8 font-bold text-slate-500 text-xs sm:text-sm">{new Date(defect.created_at).toLocaleDateString('th-TH')}</td>
+
+                                    {/* เลขแปลง */}
+                                    <td className="p-4 font-black text-slate-800 text-sm sm:text-base">{defect.plot_id}</td>
+
+                                    {/* 🌟 คอลัมน์ที่เพิ่มใหม่: งวดงาน (Task) */}
+                                    <td className="p-4 font-bold text-slate-700 text-xs sm:text-sm">
+                                      {/* เอา truncate และ max-w-[180px] ออก และเพิ่มการปัดบรรทัดอัตโนมัติ (break-words) */}
+                                      <span className="bg-slate-100 text-slate-700 px-3 py-1.5 rounded-md border border-slate-200 inline-block w-full break-words leading-relaxed" title={taskName}>
+                                        {taskName}
+                                      </span>
+                                    </td>
+
+                                    {/* ผู้แจ้ง */}
+                                    <td className="p-4 font-bold text-slate-600 text-xs sm:text-sm">
+                                      <span className="bg-blue-50 text-blue-700 border border-blue-100 px-2 py-1 rounded-md">{defect.reported_by}</span>
+                                    </td>
+
+                                    {/* รายละเอียด Defect */}
+                                    <td className="p-4 text-xs sm:text-sm text-slate-600 font-medium truncate max-w-[250px]" title={defect.description}>
+                                      {defect.description || 'ดูรูปภาพหลักในระบบ'}
+                                    </td>
+
+                                    {/* โฟร์แมนผู้ดูแล */}
+                                    <td className="p-4 font-bold text-slate-700 text-xs sm:text-sm flex items-center gap-1.5 mt-1">
+                                      <HardHat size={16} className="text-amber-500 shrink-0" /> {foremanName}
+                                    </td>
+
+                                    {/* สถานะ (ล็อกให้อยู่แถวเดียว ไม่แตกบรรทัดด้วย whitespace-nowrap และพรีเมียมขึ้น) */}
+                                    <td className="p-4 pr-6 sm:pr-8 text-center">
+                                      <span className={`font-black px-3.5 py-1.5 rounded-xl text-xs sm:text-sm shadow-sm inline-block whitespace-nowrap border ${defect.status === 'pending'
+                                          ? 'bg-rose-50 border-rose-200 text-rose-600'
+                                          : 'bg-emerald-50 border-emerald-200 text-emerald-600'
+                                        }`}>
+                                        {defect.status === 'pending' ? '🔴 รอแก้ไข' : '🟢 แก้แล้ว'}
+                                      </span>
                                     </td>
                                   </tr>
-                                  {/* รายการ Defect ของแปลงนี้ */}
-                                  {plotDefects.map((defect, idx) => {
-                                    const taskInfo = taskTemplates.find(t => t.id === defect.task_template_id || t.id === defect.task_id);
-                                    const taskName = taskInfo ? taskInfo.task_name : 'ไม่ระบุ';
-                                    const daysAging = Math.floor((new Date().getTime() - new Date(defect.created_at).getTime()) / (1000 * 3600 * 24));
-                                    const imageUrls = defect.image_urls ? defect.image_urls.split(',').filter((u:string)=>u) : [];
-
-                                    return (
-                                      <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
-                                        <td className="p-4 pl-6 sm:pl-8">
-                                          <div className="font-bold text-slate-700 text-xs sm:text-sm">{new Date(defect.created_at).toLocaleDateString('th-TH')}</div>
-                                          {defect.status === 'pending' && <div className={`text-[10px] font-black mt-1 px-2 py-0.5 rounded inline-block ${daysAging > 3 ? 'bg-rose-100 text-rose-600' : 'bg-amber-100 text-amber-700'}`}>ค้าง {daysAging} วัน</div>}
-                                          {defect.status === 'resolved' && defect.resolved_at && <div className="text-[10px] font-bold mt-1 px-2 py-0.5 rounded inline-block bg-emerald-100 text-emerald-700">แก้เมื่อ: {new Date(defect.resolved_at).toLocaleDateString('th-TH')}</div>}
-                                        </td>
-                                        <td className="p-4 font-black text-slate-800 text-sm sm:text-base">{defect.plot_id}</td>
-                                        <td className="p-4 font-bold text-slate-700 text-xs sm:text-sm">
-                                          <span className="bg-slate-100 text-slate-700 px-3 py-1.5 rounded-md border border-slate-200 inline-block w-full break-words leading-relaxed" title={taskName}>{taskName}</span>
-                                        </td>
-                                        <td className="p-4 font-bold text-slate-600 text-xs sm:text-sm">
-                                          <span className="bg-blue-50 text-blue-700 border border-blue-100 px-2 py-1 rounded-md">{defect.reporter_name || defect.reported_by || 'System'}</span>
-                                        </td>
-                                        <td className="p-4 text-xs sm:text-sm text-slate-600 font-medium">
-                                          <p className="truncate max-w-[250px] mb-2">{defect.description || 'ไม่มีรายละเอียด'}</p>
-                                          {imageUrls.length > 0 && (
-                                            <div className="flex gap-2">
-                                              {imageUrls.slice(0,2).map((url:string, i:number) => (
-                                                <img key={i} src={url} onClick={() => setFullImageUrl(url)} className="w-10 h-10 object-cover rounded shadow-sm border border-slate-200 cursor-zoom-in hover:opacity-80" alt="defect" />
-                                              ))}
-                                              {imageUrls.length > 2 && <span className="w-10 h-10 flex items-center justify-center bg-slate-100 rounded text-[10px] font-bold text-slate-500 border border-slate-200">+{imageUrls.length - 2}</span>}
-                                            </div>
-                                          )}
-                                        </td>
-                                        <td className="p-4 pr-6 sm:pr-8 text-center">
-                                          <button 
-                                            onClick={() => {
-                                              const p = plots.find(pl => pl.id === defect.plot_id);
-                                              const t = taskTemplates.find(ta => ta.id === defect.task_template_id || ta.id === defect.task_id);
-                                              if (p) {
-                                                const proj = projects.find(pr => pr.name === p.project_name);
-                                                if (proj) setSelectedProject(proj);
-                                                setSelectedPlot(p);
-                                                if (t) setSelectedTask(t);
-                                                setTaskReturnView('defects'); // 🌟 แก้บัค! เซ็ตให้เวลาย้อนกลับ กลับมาหน้า Defects 🌟
-                                                setView('task-progress'); // 🌟 ไปที่หน้าส่งงาน (Chat) โดยตรง 🌟
-                                              }
-                                            }}
-                                            className="bg-blue-600 hover:bg-blue-700 text-white font-black px-4 py-2.5 rounded-xl text-xs sm:text-sm shadow-md transition-all hover:scale-105 flex items-center justify-center gap-2 mx-auto w-full"
-                                          >
-                                            ลุยงานนี้ <ChevronRight size={16} strokeWidth={3} />
-                                          </button>
-                                        </td>
-                                      </tr>
-                                    );
-                                  })}
-                                </React.Fragment>
-                              );
-                            });
+                                );
+                              });
                           })()}
                         </tbody>
                       </table>
@@ -2284,9 +2111,7 @@ export default function ConstructionApp() {
                   totalChartDays={totalChartDays} timeMarkers={timeMarkers} todayTs={todayTs}
                   chartStart={chartStart} chartEnd={chartEnd} getChartLeft={getChartLeft} getChartWidth={getChartWidth}
                   assignments={assignments} taskDates={taskDates} setUpdates={setUpdates} setProgressValue={setProgressValue}
-                  isAdmin={isAdmin} isProcurement={isProcurement} setScheduleInputs={setScheduleInputs} allUpdatesRecord={allUpdatesRecord}
-                  handleTogglePlotCustomer={handleTogglePlotCustomer} handleTogglePlotCompleted={handleTogglePlotCompleted}
-                  getPlotOverallStatus={getPlotOverallStatus}
+                  isAdmin={isAdmin} isProcurement={isProcurement} setScheduleInputs={setScheduleInputs}
                 />
               )}
 
@@ -2780,7 +2605,7 @@ export default function ConstructionApp() {
         </div>
       </div>
       {editPlotModal.isOpen && (
-        <div className="absolute inset-0 z-[600] bg-black/40 backdrop-blur-xl flex items-center justify-center p-4 fixed transition-all">
+        <div className="absolute inset-0 z-[600] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 fixed">
           <div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full p-6 space-y-5 animate-in zoom-in-95 duration-200">
             <div>
               <h3 className="text-xl font-black text-slate-800 italic uppercase flex items-center gap-2"><Settings className="text-blue-600" /> Edit Plot Info</h3>
@@ -2908,7 +2733,7 @@ export default function ConstructionApp() {
         </div>
       )}
       {editProjectModal.isOpen && (
-        <div className="absolute inset-0 z-[600] bg-black/40 backdrop-blur-xl flex items-center justify-center p-4 fixed transition-all">
+        <div className="absolute inset-0 z-[600] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 fixed">
           <div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full p-6 space-y-5 animate-in zoom-in-95 duration-200">
             <div>
               <h3 className="text-xl font-black text-slate-800 italic uppercase flex items-center gap-2"><Settings className="text-blue-600" /> Edit Project Name</h3>
@@ -3102,10 +2927,10 @@ export default function ConstructionApp() {
               </button>
 
               {/* Presentation Slide Card (16:9) */}
-              <div className="bg-[#f5f5f7] w-full max-w-7xl aspect-[4/3] sm:aspect-[16/9] rounded-2xl sm:rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.5)] flex flex-col sm:flex-row overflow-hidden border border-slate-800/50 max-h-full">
+              <div className="bg-slate-50 w-full max-w-7xl aspect-[4/3] sm:aspect-[16/9] rounded-2xl sm:rounded-[2rem] shadow-2xl flex flex-col sm:flex-row overflow-hidden border border-slate-700 max-h-full">
 
                 {/* Left Panel: Table Summary (60%) */}
-                <div className="w-full sm:w-7/12 bg-white p-6 sm:p-10 flex flex-col justify-between shrink-0 overflow-y-auto custom-scrollbar shadow-[10px_0_20px_rgba(0,0,0,0.03)] z-10">
+                <div className="w-full sm:w-7/12 bg-white p-4 sm:p-6 flex flex-col justify-between border-b sm:border-b-0 sm:border-r border-slate-200 shrink-0 overflow-y-auto custom-scrollbar">
                   <div>
                     {/* Header */}
                     <div className="flex justify-between items-start mb-4 border-b border-slate-100 pb-3">
@@ -3117,11 +2942,11 @@ export default function ConstructionApp() {
                       </div>
                       <div className="flex gap-3 sm:gap-6 text-right">
                         <div>
-                          <p className="text-[9px] sm:text-[10px] font-semibold text-slate-400 uppercase tracking-[0.2em] mb-0.5">P L A N</p>
-                          <div className="text-2xl sm:text-3xl font-black text-slate-300 tracking-tighter">{statusInfo.planned}%</div>
+                          <p className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">แผน (Plan)</p>
+                          <div className="text-2xl sm:text-3xl font-black text-slate-400 tracking-tighter">{statusInfo.planned}%</div>
                         </div>
                         <div>
-                          <p className="text-[10px] sm:text-[11px] font-semibold text-slate-400 uppercase tracking-[0.2em] mb-0.5">A C T U A L</p>
+                          <p className="text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest mb-0.5">ทำจริง (Actual)</p>
                           <div className="text-4xl sm:text-5xl font-black text-blue-600 tracking-tighter">{statusInfo.actual}%</div>
                         </div>
                       </div>
@@ -3140,17 +2965,17 @@ export default function ConstructionApp() {
                       </div>
 
                       {plotUpdates.length > 0 ? (
-                        <div className="overflow-x-auto custom-scrollbar pb-2">
+                        <div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-xl shadow-sm">
                           <table className="w-full text-left border-collapse min-w-[500px]">
                             <thead>
-                              <tr className="border-b border-slate-100">
-                                <th className="p-3 text-[10px] font-semibold text-slate-400 uppercase tracking-wider w-[45%]">Task Name</th>
-                                <th className="p-3 text-[10px] font-semibold text-slate-400 uppercase tracking-wider text-center">Start</th>
-                                <th className="p-3 text-[10px] font-semibold text-rose-500 uppercase tracking-wider text-center">Duration</th>
-                                <th className="p-3 text-[10px] font-semibold text-slate-400 uppercase tracking-wider text-center">Finish</th>
+                              <tr className="bg-slate-50 border-b border-slate-200">
+                                <th className="p-2 sm:p-3 text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-wider w-[40%]">Task Name</th>
+                                <th className="p-2 sm:p-3 text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-wider text-center border-l border-slate-100">Start</th>
+                                <th className="p-2 sm:p-3 text-[9px] sm:text-[10px] font-black text-rose-600 uppercase tracking-wider text-center border-l border-slate-100">Duration</th>
+                                <th className="p-2 sm:p-3 text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-wider text-center border-l border-slate-100">Finish</th>
                               </tr>
                             </thead>
-                            <tbody className="divide-y divide-slate-50 bg-white">
+                            <tbody className="divide-y divide-slate-100 bg-white">
                               {Array.from(new Set(plotUpdates.map((u: any) => u.task_template_id))).map((taskId: any, tIdx) => {
                                 const specificTaskUpdates = plotUpdates.filter((u: any) => u.task_template_id === taskId);
                                 const latestTaskUpdate = specificTaskUpdates[0];
@@ -3209,54 +3034,57 @@ export default function ConstructionApp() {
                                 }
 
                                 return (
-                                  <tr key={tIdx} className="hover:bg-slate-50/50 transition-colors group">
-                                    <td className="p-3 align-middle">
-                                      <div className="flex items-start gap-2 mb-1.5 pr-2">
+                                  <tr key={tIdx} className="hover:bg-slate-50 transition-colors group">
+                                    <td className="p-2 sm:p-3 align-top border-r border-slate-100">
+                                      <div className="flex items-start gap-1.5 mb-1.5">
+                                        <span className="bg-slate-100 text-slate-400 font-black text-[9px] px-1 py-0.5 rounded shrink-0 mt-0.5">#{tIdx + 1}</span>
                                         <span className="font-bold text-slate-800 text-[11px] sm:text-xs leading-tight line-clamp-2">{taskAction}</span>
                                       </div>
-                                      <div className="flex items-center gap-2 mb-2">
-                                        <div className="text-[10px] font-medium text-slate-500 flex items-center gap-1 bg-slate-50 px-1.5 py-0.5 rounded truncate max-w-[150px]">
-                                          <HardHat size={12} /> {contractorName}
+                                      <div className="flex flex-col gap-0.5 ml-5 mb-1.5">
+                                        <div className="text-[9px] sm:text-[10px] font-bold text-blue-600 bg-blue-50/80 px-1 py-0.5 rounded flex items-center gap-1 w-fit">
+                                          <HardHat size={10} /> {contractorName}
                                         </div>
-                                        {contractorPhone && <div className="text-[9px] text-slate-400 font-medium whitespace-nowrap">{contractorPhone}</div>}
+                                        {contractorPhone && <div className="text-[8px] sm:text-[9px] text-slate-500 font-medium px-1">{contractorPhone}</div>}
                                       </div>
-                                      <div className="flex items-center gap-2 pr-6">
-                                        <div className="flex-1 bg-slate-100 rounded-full h-1.5 overflow-hidden">
-                                          <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${taskProgress}%` }}></div>
+                                      <div className="ml-5 flex items-center gap-1.5">
+                                        <div className="flex-1 bg-slate-100 rounded-full h-1 overflow-hidden">
+                                          <div className="bg-indigo-500 h-1 rounded-full" style={{ width: `${taskProgress}%` }}></div>
                                         </div>
-                                        <span className="text-blue-600 text-[10px] font-bold shrink-0 w-8">{taskProgress}%</span>
+                                        <span className="text-indigo-600 text-[9px] sm:text-[10px] font-black shrink-0">{taskProgress}%</span>
                                       </div>
-                                      <div className="mt-2">
-                                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md ${delayColor} shadow-sm border`}>
+                                      <div className="ml-5 mt-1">
+                                        <span className={`text-[8px] sm:text-[9px] font-bold border px-1 py-0.5 rounded ${delayColor}`}>
                                           {delayStatusStr}
                                         </span>
                                       </div>
                                     </td>
                                     
-                                    <td className="p-2 align-middle">
-                                      <div className="flex flex-col justify-center items-center gap-2">
-                                        <div className="flex items-center justify-between w-[90px] gap-1.5">
-                                          <span className="text-[8px] font-bold text-slate-400 tracking-wider">PLAN</span>
-                                          <span className="text-[10px] sm:text-[11px] font-medium text-slate-600 whitespace-nowrap bg-slate-50 px-2 py-0.5 rounded">{planStart}</span>
-                                        </div>
-                                        <div className="flex items-center justify-between w-[90px] gap-1.5">
-                                          <span className="text-[8px] font-bold text-blue-400 tracking-wider">ACTUAL</span>
-                                          <span className="text-[10px] sm:text-[11px] font-bold text-blue-700 whitespace-nowrap bg-blue-50 px-2 py-0.5 rounded">{actualStart}</span>
-                                        </div>
+                                    <td className="p-0 align-top">
+                                      <div className="h-1/2 border-b border-slate-100 flex flex-col justify-center items-center py-1.5 px-1 text-center min-h-[45px] group-hover:bg-slate-50">
+                                        <span className="text-[7px] font-black text-slate-400 bg-slate-100 px-1 rounded mb-0.5">PLAN:</span>
+                                        <span className="text-[10px] sm:text-[11px] font-bold text-slate-700">{planStart}</span>
+                                      </div>
+                                      <div className="h-1/2 flex flex-col justify-center items-center py-1.5 px-1 text-center bg-indigo-50/30 group-hover:bg-indigo-50/50 min-h-[45px]">
+                                        <span className="text-[7px] font-black text-blue-500 bg-blue-100 px-1 rounded mb-0.5">ACTUAL:</span>
+                                        <span className="text-[10px] sm:text-[11px] font-black text-blue-700">{actualStart}</span>
                                       </div>
                                     </td>
 
-                                    <td className="p-2 align-middle">
-                                      <div className="flex flex-col justify-center items-center gap-2">
-                                        <div className="text-[10px] sm:text-[11px] font-medium text-slate-600 whitespace-nowrap bg-slate-50 px-2 py-0.5 rounded w-[60px] text-center">{planDurationStr}</div>
-                                        <div className="text-[10px] sm:text-[11px] font-bold text-blue-700 whitespace-nowrap bg-blue-50 px-2 py-0.5 rounded w-[60px] text-center">{actualDurationStr}</div>
+                                    <td className="p-0 align-top border-x border-slate-100">
+                                      <div className="h-1/2 border-b border-slate-100 flex flex-col justify-center items-center py-1.5 px-1 text-center min-h-[45px] group-hover:bg-slate-50">
+                                        <span className="text-[10px] sm:text-[11px] font-bold text-slate-700">{planDurationStr}</span>
+                                      </div>
+                                      <div className="h-1/2 flex flex-col justify-center items-center py-1.5 px-1 text-center bg-indigo-50/30 group-hover:bg-indigo-50/50 min-h-[45px]">
+                                        <span className="text-[10px] sm:text-[11px] font-black text-blue-700">{actualDurationStr}</span>
                                       </div>
                                     </td>
 
-                                    <td className="p-2 align-middle">
-                                      <div className="flex flex-col justify-center items-center gap-2">
-                                        <div className="text-[10px] sm:text-[11px] font-medium text-slate-600 whitespace-nowrap bg-slate-50 px-2 py-0.5 rounded w-[90px] text-center">{planEnd}</div>
-                                        <div className="text-[10px] sm:text-[11px] font-bold text-blue-700 whitespace-nowrap bg-blue-50 px-2 py-0.5 rounded w-[90px] text-center">{actualEnd}</div>
+                                    <td className="p-0 align-top">
+                                      <div className="h-1/2 border-b border-slate-100 flex flex-col justify-center items-center py-1.5 px-1 text-center min-h-[45px] group-hover:bg-slate-50">
+                                        <span className="text-[10px] sm:text-[11px] font-bold text-slate-700">{planEnd}</span>
+                                      </div>
+                                      <div className="h-1/2 flex flex-col justify-center items-center py-1.5 px-1 text-center bg-indigo-50/30 group-hover:bg-indigo-50/50 min-h-[45px]">
+                                        <span className="text-[10px] sm:text-[11px] font-black text-blue-700">{actualEnd}</span>
                                       </div>
                                     </td>
                                   </tr>
@@ -3283,31 +3111,31 @@ export default function ConstructionApp() {
                 </div>
 
                 {/* Right Panel: Image Gallery (40%) */}
-                <div className="w-full sm:w-5/12 bg-[#f5f5f7] p-6 sm:p-8 flex flex-col relative overflow-y-auto custom-scrollbar">
-                  <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2 text-base sm:text-lg shrink-0 tracking-tight"><Camera className="text-slate-400" /> รูปล่าสุดหน้างาน (Max 6)</h3>
+                <div className="w-full sm:w-5/12 bg-slate-900 p-4 sm:p-6 flex flex-col relative overflow-y-auto custom-scrollbar border-t sm:border-t-0 sm:border-l border-slate-800">
+                  <h3 className="font-black text-white/90 mb-4 flex items-center gap-2 text-base sm:text-lg shrink-0"><Camera className="text-slate-400" /> รูปล่าสุดหน้างาน (Max 6)</h3>
                   {plotImages.length > 0 ? (
                     <div className="flex-1 flex flex-col">
                       <div className="grid grid-cols-2 gap-2 sm:gap-3 auto-rows-max">
                         {plotImages.slice(0, 6).map((img: any, idx: number) => (
-                          <div key={idx} className="relative bg-slate-200 rounded-2xl overflow-hidden aspect-square group shadow-[0_4px_15px_rgba(0,0,0,0.05)] border border-slate-200/50">
+                          <div key={idx} className="relative bg-black rounded-xl overflow-hidden aspect-square group shadow-lg border border-slate-700">
                             <img
                               src={img.url}
                               onClick={() => setFullImageUrl(img.url)}
-                              className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110 cursor-zoom-in"
+                              className="w-full h-full object-cover opacity-80 transition-transform duration-700 group-hover:scale-110 group-hover:opacity-100 cursor-zoom-in"
                               alt={img.action}
                             />
-                            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent p-3 pt-12 pointer-events-none">
-                              <p className="text-white font-semibold text-[10px] drop-shadow-md truncate mb-0.5">📂 {img.action}</p>
-                              <p className="text-white/80 font-medium text-[9px] text-right">{new Date(img.date).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' })}</p>
+                            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-2 sm:p-3 pt-10 pointer-events-none">
+                              <p className="text-white font-black text-[9px] sm:text-[10px] drop-shadow-md truncate mb-0.5 shadow-black">📂 {img.action}</p>
+                              <p className="text-white/60 font-bold text-[8px] sm:text-[9px] text-right">{new Date(img.date).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' })}</p>
                             </div>
                           </div>
                         ))}
                       </div>
                     </div>
                   ) : (
-                    <div className="flex-1 flex flex-col items-center justify-center bg-slate-100 rounded-2xl border border-dashed border-slate-300 min-h-[250px]">
-                      <ImageIcon size={48} className="text-slate-300 mb-3" />
-                      <p className="text-slate-400 font-medium text-xs sm:text-sm">ยังไม่มีรูปถ่ายความคืบหน้า</p>
+                    <div className="flex-1 flex flex-col items-center justify-center bg-slate-800/50 rounded-2xl border border-dashed border-slate-700 min-h-[250px]">
+                      <ImageIcon size={48} className="text-slate-600 mb-3" />
+                      <p className="text-slate-400 font-bold text-xs sm:text-sm">ยังไม่มีรูปถ่ายความคืบหน้า</p>
                     </div>
                   )}
                 </div>

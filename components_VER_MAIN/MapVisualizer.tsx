@@ -86,17 +86,17 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                       )}
                    </div>
 
-                   <div className="mb-6 sm:mb-8 p-4 sm:p-8 bg-white rounded-2xl sm:rounded-[2.5rem] shadow-xl border border-black/5 overflow-hidden relative">
+                   <div className="mb-6 sm:mb-8 p-4 sm:p-8 bg-white rounded-2xl sm:rounded-[2.5rem] shadow-xl border border-slate-200 overflow-hidden relative">
                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 sm:mb-6 gap-3 sm:gap-4">
                         <div>
-                          <h2 className="text-xl sm:text-4xl font-bold text-[#1d1d1f] italic uppercase tracking-tighter">{selectedProject.name} MAP</h2>
-                          <p className="text-[#86868b] text-[10px] sm:text-sm font-bold uppercase tracking-widest flex items-center gap-1.5 sm:gap-2 mt-0.5 sm:mt-1"><MapIcon size={12} className="sm:w-4 sm:h-4"/> จำลองผังโครงการ ({gridCols}x{gridRows} Grid)</p>
+                          <h2 className="text-xl sm:text-4xl font-black text-slate-800 italic uppercase tracking-tighter">{selectedProject.name} MAP</h2>
+                          <p className="text-slate-500 text-[10px] sm:text-sm font-bold uppercase tracking-widest flex items-center gap-1.5 sm:gap-2 mt-0.5 sm:mt-1"><MapIcon size={12} className="sm:w-4 sm:h-4"/> จำลองผังโครงการ ({gridCols}x{gridRows} Grid)</p>
                         </div>
                         
                         <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
                           {/* 🌟 ปุ่มเปิด Presentation Mode */}
                           {['Project Planner', 'Admin', 'Owner'].includes(currentUserRole) && (
-                              <button onClick={() => { setIsPresentationOpen(true); setCurrentSlideIndex(0); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl font-bold text-xs sm:text-sm shadow-md transition-all flex items-center gap-1.5 shrink-0">
+                              <button onClick={() => { setIsPresentationOpen(true); setCurrentSlideIndex(0); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl font-black text-xs sm:text-sm shadow-md transition-all flex items-center gap-1.5 shrink-0">
                                 <Monitor size={16} /> <span className="hidden sm:inline">Presentation Mode</span><span className="inline sm:hidden">โหมดนำเสนอ</span>
                               </button>
                           )}
@@ -104,16 +104,16 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                           {/* 🌟 UX: ช่องค้นหาช่างเข้างานวันนี้ (Contractor Radar) 🌟 */}
                           <div className="relative hidden lg:block mr-2 w-64">
                              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-                             <input type="text" placeholder="ค้นหาช่าง..." value={searchContractor} onChange={(e) => setSearchContractor(e.target.value)} className="w-full bg-[#f5f5f7] border border-black/5 rounded-lg pl-8 pr-3 py-2 text-xs font-bold outline-none focus:border-blue-500 text-[#1d1d1f] shadow-sm" />
+                             <input type="text" placeholder="ค้นหาช่าง..." value={searchContractor} onChange={(e) => setSearchContractor(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-3 py-2 text-xs font-bold outline-none focus:border-blue-500 text-slate-700 shadow-sm" />
                           </div>
 
-                          <div className="flex bg-[#f5f5f7] rounded-lg border border-black/5 shadow-sm p-1">
-                             <button onClick={handleZoomOut} className="p-1.5 sm:p-2.5 text-[#86868b] hover:text-blue-600 hover:bg-white rounded-md sm:rounded-lg transition-colors"><ZoomOut size={16} className="sm:w-5 sm:h-5"/></button>
-                             <button onClick={handleZoomReset} className="px-2 sm:px-4 text-[10px] sm:text-sm font-bold text-[#86868b] hover:text-blue-600 hover:bg-white rounded-md sm:rounded-lg transition-colors">{Math.round(mapZoom * 100)}%</button>
-                             <button onClick={handleZoomIn} className="p-1.5 sm:p-2.5 text-[#86868b] hover:text-blue-600 hover:bg-white rounded-md sm:rounded-lg transition-colors"><ZoomIn size={16} className="sm:w-5 sm:h-5"/></button>
+                          <div className="flex bg-slate-100 rounded-lg border border-slate-200 shadow-sm p-1">
+                             <button onClick={handleZoomOut} className="p-1.5 sm:p-2.5 text-slate-500 hover:text-blue-600 hover:bg-white rounded-md sm:rounded-lg transition-colors"><ZoomOut size={16} className="sm:w-5 sm:h-5"/></button>
+                             <button onClick={handleZoomReset} className="px-2 sm:px-4 text-[10px] sm:text-sm font-black text-slate-600 hover:text-blue-600 hover:bg-white rounded-md sm:rounded-lg transition-colors">{Math.round(mapZoom * 100)}%</button>
+                             <button onClick={handleZoomIn} className="p-1.5 sm:p-2.5 text-slate-500 hover:text-blue-600 hover:bg-white rounded-md sm:rounded-lg transition-colors"><ZoomIn size={16} className="sm:w-5 sm:h-5"/></button>
                           </div>
                           {isEditMapMode && (
-                            <button onClick={handleSaveMap} disabled={isSubmitting} className="bg-blue-600 text-white px-4 sm:px-8 py-2 sm:py-3.5 rounded-lg sm:rounded-xl font-bold shadow-lg hover:bg-blue-700 flex items-center justify-center gap-1.5 sm:gap-2 flex-1 sm:flex-none text-xs sm:text-base">
+                            <button onClick={handleSaveMap} disabled={isSubmitting} className="bg-blue-600 text-white px-4 sm:px-8 py-2 sm:py-3.5 rounded-lg sm:rounded-xl font-black shadow-lg hover:bg-blue-700 flex items-center justify-center gap-1.5 sm:gap-2 flex-1 sm:flex-none text-xs sm:text-base">
                               {isSubmitting ? <Loader2 className="animate-spin" size={16}/> : 'บันทึก'}
                             </button>
                           )}
@@ -123,35 +123,35 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                      {/* Mobile Search Bar */}
                      <div className="lg:hidden w-full mb-4 sm:mb-6 relative">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-                        <input type="text" placeholder="ค้นหาชื่อช่างในผัง..." value={searchContractor} onChange={(e) => setSearchContractor(e.target.value)} className="w-full bg-[#f5f5f7] border border-black/5 rounded-lg pl-8 pr-3 py-2 text-xs font-bold outline-none focus:border-blue-500 text-[#1d1d1f] shadow-sm" />
+                        <input type="text" placeholder="ค้นหาชื่อช่างในผัง..." value={searchContractor} onChange={(e) => setSearchContractor(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-3 py-2 text-xs font-bold outline-none focus:border-blue-500 text-slate-700 shadow-sm" />
                      </div>
 
                      {isEditMapMode && (
-                       <div className="flex flex-col xl:flex-row gap-3 sm:gap-4 mb-4 sm:mb-6 p-3 sm:p-5 bg-[#f5f5f7] rounded-xl sm:rounded-2xl border border-black/5 shadow-inner">
+                       <div className="flex flex-col xl:flex-row gap-3 sm:gap-4 mb-4 sm:mb-6 p-3 sm:p-5 bg-slate-50 rounded-xl sm:rounded-2xl border border-slate-200 shadow-inner">
                          <div className="flex flex-wrap gap-1.5 sm:gap-3">
                             <button onClick={() => setMapTool('plot')} className={`px-2 sm:px-4 py-1.5 sm:py-3 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-sm border-2 flex items-center gap-1.5 sm:gap-2 ${mapTool === 'plot' ? 'bg-emerald-500 text-white border-emerald-500 shadow-sm' : 'bg-white text-emerald-600 border-emerald-200'}`}><Paintbrush size={12} className="sm:w-4 sm:h-4"/> ระบายบ้าน</button>
                             {mapTool === 'plot' && (
-                              <select value={mapSelectedPlot} onChange={e => setMapSelectedPlot(e.target.value)} className="bg-white border border-black/10 rounded-lg sm:rounded-xl px-2 sm:px-3 py-1.5 sm:py-3 text-[10px] sm:text-sm font-bold outline-none text-emerald-800 shadow-sm"><option value="">-- รหัสแปลง --</option>{plots.filter((p: any) => p.project_name === selectedProject.name).map((p: any) => <option key={p.id} value={p.id}>{p.id}</option>)}</select>
+                              <select value={mapSelectedPlot} onChange={e => setMapSelectedPlot(e.target.value)} className="bg-white border border-slate-300 rounded-lg sm:rounded-xl px-2 sm:px-3 py-1.5 sm:py-3 text-[10px] sm:text-sm font-bold outline-none text-emerald-800 shadow-sm"><option value="">-- รหัสแปลง --</option>{plots.filter((p: any) => p.project_name === selectedProject.name).map((p: any) => <option key={p.id} value={p.id}>{p.id}</option>)}</select>
                             )}
                             <div className="w-px h-8 sm:h-12 bg-slate-300 mx-1 sm:mx-2 self-center hidden sm:block"></div>
-                            <button onClick={() => setMapTool('road')} className={`px-2 sm:px-4 py-1.5 sm:py-3 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-sm border-2 flex items-center gap-1.5 sm:gap-2 ${mapTool === 'road' ? 'bg-slate-700 text-white border-slate-700 shadow-sm' : 'bg-white text-[#86868b] border-black/5'}`}>สร้างถนน</button>
-                            <button onClick={() => setMapTool('fence')} className={`px-2 sm:px-4 py-1.5 sm:py-3 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-sm border-2 flex items-center gap-1.5 sm:gap-2 ${mapTool === 'fence' ? 'bg-orange-500 text-white border-orange-500 shadow-sm' : 'bg-white text-[#86868b] border-black/5'}`}>สร้างเส้นรั้ว</button>
+                            <button onClick={() => setMapTool('road')} className={`px-2 sm:px-4 py-1.5 sm:py-3 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-sm border-2 flex items-center gap-1.5 sm:gap-2 ${mapTool === 'road' ? 'bg-slate-700 text-white border-slate-700 shadow-sm' : 'bg-white text-slate-600 border-slate-200'}`}>สร้างถนน</button>
+                            <button onClick={() => setMapTool('fence')} className={`px-2 sm:px-4 py-1.5 sm:py-3 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-sm border-2 flex items-center gap-1.5 sm:gap-2 ${mapTool === 'fence' ? 'bg-orange-500 text-white border-orange-500 shadow-sm' : 'bg-white text-slate-600 border-slate-200'}`}>สร้างเส้นรั้ว</button>
                             <div className="w-px h-8 sm:h-12 bg-slate-300 mx-1 sm:mx-2 self-center hidden sm:block"></div>
-                            <button onClick={() => setMapTool('eraser')} className={`px-2 sm:px-4 py-1.5 sm:py-3 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-sm border-2 flex items-center gap-1.5 sm:gap-2 ml-auto ${mapTool === 'eraser' ? 'bg-rose-500 text-white border-rose-500 shadow-sm' : 'bg-white text-[#86868b] border-black/5'}`}><Eraser size={12} className="sm:w-4 sm:h-4"/> ลบ</button>
+                            <button onClick={() => setMapTool('eraser')} className={`px-2 sm:px-4 py-1.5 sm:py-3 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-sm border-2 flex items-center gap-1.5 sm:gap-2 ml-auto ${mapTool === 'eraser' ? 'bg-rose-500 text-white border-rose-500 shadow-sm' : 'bg-white text-slate-600 border-slate-200'}`}><Eraser size={12} className="sm:w-4 sm:h-4"/> ลบ</button>
                          </div>
-                         <div className="flex items-center gap-2 sm:gap-3 bg-white px-3 sm:px-4 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl shadow-sm border border-black/5 xl:ml-auto w-fit">
-                            <span className="text-[9px] sm:text-xs font-bold text-[#86868b] uppercase">ขนาด Grid</span>
-                            <input type="number" value={gridCols} onChange={e=>setGridCols(Number(e.target.value))} className="w-10 sm:w-16 text-center text-[10px] sm:text-sm font-bold border border-black/5 rounded outline-none focus:border-blue-500 bg-[#f5f5f7] p-1 sm:p-1.5"/>
+                         <div className="flex items-center gap-2 sm:gap-3 bg-white px-3 sm:px-4 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl shadow-sm border border-slate-200 xl:ml-auto w-fit">
+                            <span className="text-[9px] sm:text-xs font-black text-slate-500 uppercase">ขนาด Grid</span>
+                            <input type="number" value={gridCols} onChange={e=>setGridCols(Number(e.target.value))} className="w-10 sm:w-16 text-center text-[10px] sm:text-sm font-bold border border-slate-200 rounded outline-none focus:border-blue-500 bg-slate-50 p-1 sm:p-1.5"/>
                             <span className="text-[10px] sm:text-sm text-slate-400">x</span>
-                            <input type="number" value={gridRows} onChange={e=>setGridRows(Number(e.target.value))} className="w-10 sm:w-16 text-center text-[10px] sm:text-sm font-bold border border-black/5 rounded outline-none focus:border-blue-500 bg-[#f5f5f7] p-1 sm:p-1.5"/>
+                            <input type="number" value={gridRows} onChange={e=>setGridRows(Number(e.target.value))} className="w-10 sm:w-16 text-center text-[10px] sm:text-sm font-bold border border-slate-200 rounded outline-none focus:border-blue-500 bg-slate-50 p-1 sm:p-1.5"/>
                          </div>
                        </div>
                      )}
 
                      {/* 🌟 UX Blueprint Map 🌟 */}
-                     <div className="w-full overflow-auto pb-4 custom-scrollbar bg-[#f5f5f7] rounded-xl sm:rounded-3xl border-2 sm:border-4 border-black/10 shadow-inner" style={{ height: isMobileLayout ? '350px' : '600px' }}>
+                     <div className="w-full overflow-auto pb-4 custom-scrollbar bg-slate-100 rounded-xl sm:rounded-3xl border-2 sm:border-4 border-slate-300 shadow-inner" style={{ height: isMobileLayout ? '350px' : '600px' }}>
                        <div 
-                          className={`relative bg-[#f5f5f7] select-none origin-top-left transition-transform duration-200 ${isEditMapMode ? 'cursor-crosshair' : 'cursor-grab'}`} 
+                          className={`relative bg-slate-50 select-none origin-top-left transition-transform duration-200 ${isEditMapMode ? 'cursor-crosshair' : 'cursor-grab'}`} 
                           style={{ 
                              width: `${gridCols * 40}px`, 
                              height: `${gridRows * 40}px`, 
@@ -261,15 +261,11 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                                 <div className={`w-full h-full border-[2px] sm:border-[3px] rounded-md sm:rounded-lg shadow-sm backdrop-blur-sm flex flex-col items-center justify-center relative transition-all group-hover:shadow-md group-hover:scale-[1.02] ${cardBorderClass}`}>
                                    
                                    {/* แสดงชื่อแปลงเป็นหลัก */}
-                                   <div className="flex items-center gap-0.5 sm:gap-1">
-                                      <span className="font-bold text-[10px] sm:text-sm">{plotInfo.id}</span>
-                                      {plotInfo.is_completed && <span className="text-[8px] sm:text-[10px]" title="สร้างเสร็จพร้อมโอน">🔑</span>}
-                                      {plotInfo.has_customer && <span className="text-[8px] sm:text-[10px]" title="มีลูกค้าจองแล้ว">👤</span>}
-                                   </div>
+                                   <span className="font-black text-[10px] sm:text-sm">{plotInfo.id}</span>
                                    
                                    {/* 🌟 🌟 ถ้ามีการค้นหาช่างและเจอแปลงของช่าง: ให้แถมป้ายชื่อช่างแปะไว้ตรงกลางผังเลย! 🌟 🌟 */}
                                    {hasSearchedContractor && isMatchContractor && (
-                                      <div className="absolute -bottom-2 bg-amber-500 text-slate-900 font-bold px-1.5 py-0.5 rounded text-[8px] sm:text-[10px] uppercase tracking-wider shadow-md whitespace-nowrap border border-white z-40">
+                                      <div className="absolute -bottom-2 bg-amber-500 text-slate-900 font-black px-1.5 py-0.5 rounded text-[8px] sm:text-[10px] uppercase tracking-wider shadow-md whitespace-nowrap border border-white z-40">
                                          👷‍♂️ {currentPlotAssignment.contractor_name.split(' ')[0]}
                                       </div>
                                    )}
@@ -277,18 +273,14 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                                    {/* Tooltip รายละเอียดเมื่อเอาเมาส์ชี้ (คงเดิมไว้ทั้งหมด) */}
                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-[160px] sm:w-[180px] bg-slate-900 text-white rounded-xl sm:rounded-2xl shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all p-3 sm:p-4 pointer-events-none z-[100] border border-slate-700">
                                       <div className="flex justify-between items-center w-full mb-1 sm:mb-2">
-                                         <div className="flex items-center gap-1">
-                                            <span className="font-bold text-xs sm:text-sm">{plotInfo.id}</span>
-                                            {plotInfo.is_completed && <span className="bg-emerald-500 text-white text-[8px] px-1 rounded-sm" title="สร้างเสร็จพร้อมโอน">🔑</span>}
-                                            {plotInfo.has_customer && <span className="bg-blue-500 text-white text-[8px] px-1 rounded-sm" title="มีลูกค้าจองแล้ว">👤</span>}
-                                         </div>
-                                         <span className={`text-[8px] sm:text-[10px] font-bold px-1.5 sm:px-2 py-0.5 rounded-full ${statusInfo.status === 'delayed' ? 'bg-rose-500 text-white' : statusInfo.status === 'completed' ? 'bg-emerald-500 text-white' : statusInfo.status === 'ahead' ? 'bg-indigo-500 text-white' : statusInfo.status === 'on-track' ? 'bg-blue-500 text-white' : 'bg-slate-600 text-slate-300'}`}>{statusInfo.label}</span>
+                                         <span className="font-black text-xs sm:text-sm">{plotInfo.id}</span>
+                                         <span className={`text-[8px] sm:text-[10px] font-black px-1.5 sm:px-2 py-0.5 rounded-full ${statusInfo.status === 'delayed' ? 'bg-rose-500 text-white' : statusInfo.status === 'completed' ? 'bg-emerald-500 text-white' : statusInfo.status === 'ahead' ? 'bg-indigo-500 text-white' : statusInfo.status === 'on-track' ? 'bg-blue-500 text-white' : 'bg-slate-600 text-slate-300'}`}>{statusInfo.label}</span>
                                       </div>
                                       <p className="text-[9px] sm:text-[10px] text-slate-400 mb-1 sm:mb-2 flex items-center gap-1 sm:gap-1.5"><HardHat size={10} className="sm:w-3 sm:h-3"/> {plotInfo.foreman || 'ไม่ระบุ'}</p>
                                       
                                       {/* 🌟 กล่องแสดงงานล่าสุดใน Tooltip */}
                                       <div className="bg-slate-800/80 p-1.5 sm:p-2 rounded-lg border border-slate-700/50 mb-2 sm:mb-3">
-                                         <p className="text-[8px] text-[#86868b] uppercase font-bold tracking-widest mb-0.5 flex items-center gap-1"><Activity size={8}/> งานล่าสุด:</p>
+                                         <p className="text-[8px] text-slate-500 uppercase font-bold tracking-widest mb-0.5 flex items-center gap-1"><Activity size={8}/> งานล่าสุด:</p>
                                          <p className="text-[9px] sm:text-[10px] text-amber-400 font-bold truncate">{latestTaskStr}</p>
                                       </div>
                                       
@@ -310,11 +302,11 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                    </div>
 
                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 sm:mb-6 mt-8 sm:mt-12 gap-3 sm:gap-4">
-                      <h3 className="font-bold text-xl tracking-tight sm:text-3xl text-[#1d1d1f] italic uppercase">Plot Directory</h3>
+                      <h3 className="font-black text-xl sm:text-3xl text-slate-800 italic uppercase">Plot Directory</h3>
                       <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 w-full sm:w-auto">
-                        <div className="relative flex-1 sm:w-64"><Search className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 text-slate-400 sm:w-[18px] sm:h-[18px]" size={14}/><input type="text" placeholder="ค้นหาแปลง (เช่น A-01)" value={searchPlot} onChange={(e) => setSearchPlot(e.target.value)} className="w-full bg-white border border-black/5 rounded-lg sm:rounded-xl pl-9 sm:pl-11 pr-3 sm:pr-4 py-2 sm:py-3.5 text-xs sm:text-sm font-bold outline-none focus:border-blue-500 text-[#1d1d1f] shadow-sm" /></div>
+                        <div className="relative flex-1 sm:w-64"><Search className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 text-slate-400 sm:w-[18px] sm:h-[18px]" size={14}/><input type="text" placeholder="ค้นหาแปลง (เช่น A-01)" value={searchPlot} onChange={(e) => setSearchPlot(e.target.value)} className="w-full bg-white border border-slate-200 rounded-lg sm:rounded-xl pl-9 sm:pl-11 pr-3 sm:pr-4 py-2 sm:py-3.5 text-xs sm:text-sm font-bold outline-none focus:border-blue-500 text-slate-700 shadow-sm" /></div>
                         {currentUserRole !== 'Foreman' && (
-                           <div className="relative flex-1 sm:w-64"><Filter className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 text-slate-400 sm:w-[18px] sm:h-[18px]" size={14}/><select value={filterForeman} onChange={(e) => setFilterForeman(e.target.value)} className="w-full bg-white border border-black/5 rounded-lg sm:rounded-xl pl-9 sm:pl-11 pr-3 sm:pr-4 py-2 sm:py-3.5 text-xs sm:text-sm font-bold outline-none focus:border-blue-500 text-[#1d1d1f] appearance-none shadow-sm cursor-pointer"><option value="">โฟร์แมนทั้งหมด</option>{foremenList.map((f: any) => <option key={f.id} value={f.username}>{f.username}</option>)}</select></div>
+                           <div className="relative flex-1 sm:w-64"><Filter className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 text-slate-400 sm:w-[18px] sm:h-[18px]" size={14}/><select value={filterForeman} onChange={(e) => setFilterForeman(e.target.value)} className="w-full bg-white border border-slate-200 rounded-lg sm:rounded-xl pl-9 sm:pl-11 pr-3 sm:pr-4 py-2 sm:py-3.5 text-xs sm:text-sm font-bold outline-none focus:border-blue-500 text-slate-700 appearance-none shadow-sm cursor-pointer"><option value="">โฟร์แมนทั้งหมด</option>{foremenList.map((f: any) => <option key={f.id} value={f.username}>{f.username}</option>)}</select></div>
                         )}
                       </div>
                    </div>
@@ -331,7 +323,7 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                         const latestTaskStr = latestTask ? `${latestTask.task_name} (${latestUpdate.progress}%)` : 'ยังไม่มีงานอัปเดต';
 
                         return (
-                          <div key={plot.id} onClick={() => { setSelectedPlot(plot); setView('house-detail'); }} className="relative group w-full bg-white p-4 sm:p-8 rounded-xl sm:rounded-[2.5rem] border border-black/5 text-left hover:border-blue-500 hover:shadow-xl hover:-translate-y-1 transition-all flex flex-col justify-between h-full cursor-pointer">
+                          <div key={plot.id} onClick={() => { setSelectedPlot(plot); setView('house-detail'); }} className="relative group w-full bg-white p-4 sm:p-8 rounded-xl sm:rounded-[2.5rem] border border-slate-200 text-left hover:border-blue-500 hover:shadow-xl hover:-translate-y-1 transition-all flex flex-col justify-between h-full cursor-pointer">
                            {/* 🌟 ปุ่มลบแปลงบ้าน (เห็นเฉพาะ Admin) 🌟 */}
                             {isAdmin && (
                               <button onClick={(e) => { e.stopPropagation(); handleDeletePlot(plot.id); }} className="absolute top-3 right-3 sm:top-5 sm:right-5 p-1.5 sm:p-2 bg-rose-50 text-rose-500 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-rose-500 hover:text-white transition-all z-20 shadow-sm" title="ลบแปลงนี้">
@@ -346,19 +338,13 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                             )}
                             {/* ส่วนหัวของการ์ด และป้ายสถานะ */}
                             <div className="flex justify-between items-start w-full mb-1 sm:mb-2">
-                              <div className="flex flex-col gap-1">
-                                <h3 className={`${isMobileLayout ? 'text-2xl' : 'text-4xl sm:text-5xl'} font-bold text-[#1d1d1f] truncate`}>{plot.id}</h3>
-                                <div className="flex gap-1.5">
-                                  {plot.is_completed && <span className="bg-emerald-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow-sm" title="สร้างเสร็จพร้อมโอน">🔑 เสร็จแล้ว</span>}
-                                  {plot.has_customer && <span className="bg-blue-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow-sm" title="มีลูกค้าจองแล้ว">👤 จองแล้ว</span>}
-                                </div>
-                              </div>
-                              <span className={`text-[8px] sm:text-[10px] font-bold px-2 py-1 rounded-full ${statusInfo.status === 'delayed' ? 'bg-rose-100 text-rose-600' : statusInfo.status === 'completed' ? 'bg-emerald-100 text-emerald-600' : statusInfo.status === 'ahead' ? 'bg-indigo-100 text-indigo-600' : statusInfo.status === 'on-track' ? 'bg-blue-100 text-blue-600' : 'bg-[#f5f5f7] text-[#86868b]'}`}>
+                              <h3 className={`${isMobileLayout ? 'text-2xl' : 'text-4xl sm:text-5xl'} font-black text-slate-800 truncate`}>{plot.id}</h3>
+                              <span className={`text-[8px] sm:text-[10px] font-black px-2 py-1 rounded-full ${statusInfo.status === 'delayed' ? 'bg-rose-100 text-rose-600' : statusInfo.status === 'completed' ? 'bg-emerald-100 text-emerald-600' : statusInfo.status === 'ahead' ? 'bg-indigo-100 text-indigo-600' : statusInfo.status === 'on-track' ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-500'}`}>
                                 {statusInfo.label}
                               </span>
                             </div>
 
-                            <div className={`${isMobileLayout ? 'text-[9px]' : 'text-base'} font-bold text-[#86868b] mb-1 sm:mb-3 flex items-center gap-1.5`}><HardHat size={isMobileLayout ? 12 : 18} className="text-orange-500" /> {plot.foreman || 'ไม่ระบุ'}</div>
+                            <div className={`${isMobileLayout ? 'text-[9px]' : 'text-base'} font-bold text-slate-500 mb-1 sm:mb-3 flex items-center gap-1.5`}><HardHat size={isMobileLayout ? 12 : 18} className="text-orange-500" /> {plot.foreman || 'ไม่ระบุ'}</div>
                             <p className={`${isMobileLayout ? 'text-[8px]' : 'text-xs'} text-slate-400 font-bold uppercase tracking-wider mb-2 sm:mb-3`}>{plot.type}</p>
                             
                             {/* 🌟 กล่องแสดงงานล่าสุดของการ์ด */}
@@ -366,7 +352,7 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                                <Activity size={isMobileLayout ? 12 : 16} className="text-blue-500 shrink-0"/>
                                <div className="min-w-0 flex-1">
                                   <p className="text-[8px] sm:text-[10px] text-slate-400 font-bold uppercase">อัปเดตล่าสุด</p>
-                                  <p className="text-[10px] sm:text-xs font-bold text-blue-700 truncate">{latestTaskStr}</p>
+                                  <p className="text-[10px] sm:text-xs font-black text-blue-700 truncate">{latestTaskStr}</p>
                                </div>
                             </div>
                             
@@ -377,22 +363,22 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                               
                               {/* แถบ Plan (แผนงาน) */}
                               <div>
-                                <div className={`flex items-center justify-between font-bold ${isMobileLayout ? 'text-[8px]' : 'text-[10px] sm:text-xs'} mb-1 sm:mb-1.5`}>
+                                <div className={`flex items-center justify-between font-black ${isMobileLayout ? 'text-[8px]' : 'text-[10px] sm:text-xs'} mb-1 sm:mb-1.5`}>
                                   <span className="text-slate-400 uppercase tracking-widest">Plan (แผน)</span>
-                                  <span className="text-[#86868b]">{statusInfo.planned}%</span>
+                                  <span className="text-slate-500">{statusInfo.planned}%</span>
                                 </div>
-                                <div className="h-1.5 sm:h-2.5 bg-[#f5f5f7] rounded-full overflow-hidden">
+                                <div className="h-1.5 sm:h-2.5 bg-slate-100 rounded-full overflow-hidden">
                                   <div className="h-full bg-slate-300 transition-all duration-500" style={{width: `${statusInfo.planned}%`}}></div>
                                 </div>
                               </div>
 
                               {/* แถบ Actual (งานจริง) */}
                               <div>
-                                <div className={`flex items-center justify-between font-bold ${isMobileLayout ? 'text-[8px]' : 'text-[10px] sm:text-xs'} mb-1 sm:mb-1.5`}>
+                                <div className={`flex items-center justify-between font-black ${isMobileLayout ? 'text-[8px]' : 'text-[10px] sm:text-xs'} mb-1 sm:mb-1.5`}>
                                   <span className="text-slate-400 uppercase tracking-widest">Actual (จริง)</span>
                                   <span className={`${statusInfo.status === 'delayed' ? 'text-rose-500' : 'text-blue-600'} ${isMobileLayout ? 'text-sm' : 'text-lg'}`}>{statusInfo.actual}%</span>
                                 </div>
-                                <div className="h-1.5 sm:h-2.5 bg-[#f5f5f7] rounded-full overflow-hidden">
+                                <div className="h-1.5 sm:h-2.5 bg-slate-100 rounded-full overflow-hidden">
                                   <div className={`h-full transition-all duration-500 ${statusInfo.status === 'delayed' ? 'bg-rose-500' : 'bg-blue-500'}`} style={{width: `${statusInfo.actual}%`}}></div>
                                 </div>
                               </div>

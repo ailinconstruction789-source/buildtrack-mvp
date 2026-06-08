@@ -56,39 +56,37 @@ export function useBuildTrackData(loggedInUser: any) {
         { data: projectProgressData },
         assignData,
         schedulesData,
-        { data: recentUpdates }
+        { data: recentUpdates },
+        { data: defectsData }
       ] = await Promise.all([
         supabase.from('projects').select('*').order('created_at', { ascending: true }),
         supabase.from('house_types').select('*'),
         supabase.from('task_templates').select('*').order('task_order', { ascending: true }),
         supabase.from('plots').select('*, house_types(type_name)').order('created_at', { ascending: true }),
         supabase.from('contractors').select('*'),
-        // Only fetch relevant notifications at the DB layer
-        supabase.from('notifications')
-          .select('*')
-          .or(`target_user.eq.${loggedInUser.username},target_role.eq.${loggedInUser.role}`)
-          .order('created_at', { ascending: false }),
+        supabase.from('notifications').select('*').or(`target_user.eq.${loggedInUser.username},target_role.eq.${loggedInUser.role}`).order('created_at', { ascending: false }),
         supabase.from('vw_plot_progress').select('*'),
         supabase.from('vw_project_progress').select('*'),
         fetchWithoutLimit('plot_task_assignments'),
         fetchWithoutLimit('plot_task_schedules'),
-        supabase.from('task_updates').select('*').order('created_at', { ascending: false }).limit(200) // For global feed
+        supabase.from('task_updates').select('*').order('created_at', { ascending: false }).limit(3000),
+        supabase.from('defects').select('*').order('created_at', { ascending: false })
       ]);
 
       setNotifications(notifData || []);
-      setAssignments(assignData || []); 
-      setContractors(contData || []); 
+      setDefects(defectsData || []);
+      setAssignments(assignData || []);
+      setContractors(contData || []);
       setAllUpdatesRecord(recentUpdates || []);
       
       const latestUpdates: any = {}; 
-      const tDates: any = {}; 
+      const tDates: any = {};
       const newSched: any = {};
 
       schedulesData?.forEach((s: any) => { newSched[`${s.plot_id}-${s.task_template_id}`] = s; });
       setSchedules(newSched);
       
       // We populate latestUpdatesMap and taskDates from the new DB columns in plot_task_assignments
-      // instead of looping through all task_updates.
       assignData?.forEach((assign: any) => { 
         const key = `${assign.plot_id}-${assign.task_template_id}`; 
         latestUpdates[key] = {
@@ -97,6 +95,26 @@ export function useBuildTrackData(loggedInUser: any) {
            progress: assign.current_progress || 0,
         }; 
         tDates[key] = { start: assign.actual_start_date, end: assign.actual_end_date };
+      });
+      
+      // Inspection Queue needs action, role, and created_at
+      recentUpdates?.forEach((upd: any) => {
+        const key = `${upd.plot_id}-${upd.task_template_id}`;
+        if (latestUpdates[key] && !latestUpdates[key].action) {
+          latestUpdates[key].action = upd.action;
+          latestUpdates[key].role = upd.role;
+          latestUpdates[key].created_at = upd.created_at;
+          latestUpdates[key].progress = upd.progress;
+        } else if (!latestUpdates[key]) {
+          latestUpdates[key] = {
+            plot_id: upd.plot_id,
+            task_template_id: upd.task_template_id,
+            progress: upd.progress,
+            action: upd.action,
+            role: upd.role,
+            created_at: upd.created_at
+          };
+        }
       });
       
       setLatestUpdatesMap(latestUpdates); 
@@ -127,56 +145,126 @@ export function useBuildTrackData(loggedInUser: any) {
       setTaskTemplates(tasks || []); 
       setPlots(formattedPlots || []); 
       setProjects(formattedProjects || []); 
-      
-    } catch (error) { 
-      console.error('Error fetching data:', error); 
-    } finally { 
-      setLoading(false); 
+      setLoading(false);
+    } catch (error) {
+      console.error('Error fetching core data:', error);
+      setLoading(false);
     }
   }, [loggedInUser]);
 
-  // Atomic fetch function for lazy loading heavy specific plot data
+  // 🌟 ฟังก์ชันโหลดข้อมูลเจาะจงแปลง (Lazy Load Plot Details)
   const fetchPlotDetails = useCallback(async (plotId: string) => {
     try {
       const [
-        { data: schedulesData },
-        { data: updatesData },
-        { data: defectsData }
+        { data: assignData },
+        { data: schedData },
+        { data: updData },
+        { data: defData }
       ] = await Promise.all([
+        supabase.from('plot_task_assignments').select('*').eq('plot_id', plotId),
         supabase.from('plot_task_schedules').select('*').eq('plot_id', plotId),
-        supabase.from('task_updates').select('*').eq('plot_id', plotId).order('created_at', { ascending: true }),
-        supabase.from('defects').select('*').eq('plot_id', plotId)
+        supabase.from('task_updates').select('*').eq('plot_id', plotId).order('created_at', { ascending: false }),
+        supabase.from('defects').select('*').eq('plot_id', plotId).order('created_at', { ascending: false })
       ]);
 
-      setSchedules((prev: any) => {
+      setAssignments(prev => {
+        const others = prev.filter(a => a.plot_id !== plotId);
+        return [...others, ...(assignData || [])];
+      });
+
+      setSchedules(prev => {
         const newSched = { ...prev };
-        schedulesData?.forEach((s: any) => { newSched[`${s.plot_id}-${s.task_template_id}`] = s; });
+        schedData?.forEach((s: any) => { newSched[`${s.plot_id}-${s.task_template_id}`] = s; });
         return newSched;
       });
 
-      setDefects((prev: any) => {
-        const existingWithoutCurrentPlot = prev.filter((d: any) => d.plot_id !== plotId);
-        return [...existingWithoutCurrentPlot, ...(defectsData || [])];
+      setTaskDates(prev => {
+        const newDates = { ...prev };
+        assignData?.forEach((a: any) => {
+          newDates[`${a.plot_id}-${a.task_template_id}`] = { start: a.actual_start_date, end: a.actual_end_date };
+        });
+        return newDates;
       });
 
-      // Update latestUpdatesMap so action fields are populated for QC logic if viewed
-      if (updatesData && updatesData.length > 0) {
-        setLatestUpdatesMap((prev: any) => {
-           const newUpdates = { ...prev };
-           updatesData.forEach((upd: any) => {
-              newUpdates[`${upd.plot_id}-${upd.task_template_id}`] = upd;
-           });
-           return newUpdates;
+      setLatestUpdatesMap(prev => {
+        const newMap = { ...prev };
+        assignData?.forEach((a: any) => {
+          const key = `${a.plot_id}-${a.task_template_id}`;
+          if (!newMap[key]) {
+            newMap[key] = { plot_id: a.plot_id, task_template_id: a.task_template_id, progress: a.current_progress || 0 };
+          } else {
+            newMap[key].progress = a.current_progress || 0;
+          }
         });
-        
-        // Also merge into allUpdatesRecord so history is available for this plot
-        setAllUpdatesRecord((prev: any) => {
-           const existing = prev.filter((u: any) => u.plot_id !== plotId);
-           return [...existing, ...updatesData];
+        updData?.forEach((upd: any) => {
+          const key = `${upd.plot_id}-${upd.task_template_id}`;
+          if (newMap[key] && !newMap[key].action) {
+            newMap[key].action = upd.action;
+            newMap[key].role = upd.role;
+            newMap[key].created_at = upd.created_at;
+          }
         });
-      }
-    } catch (error) {
-      console.error(`Error fetching details for plot ${plotId}:`, error);
+        return newMap;
+      });
+
+      setAllUpdatesRecord(prev => {
+        const others = prev.filter(u => u.plot_id !== plotId);
+        return [...others, ...(updData || [])];
+      });
+
+      setDefects(prev => {
+        const others = prev.filter(d => d.plot_id !== plotId);
+        return [...others, ...(defData || [])];
+      });
+
+    } catch (err) {
+      console.error('Error fetching plot details:', err);
+    }
+  }, []);
+
+  // 🌟 ฟังก์ชันโหลดข้อมูล Analytics ผู้บริหาร
+  const fetchOwnerAnalyticsData = useCallback(async () => {
+    try {
+      const [assignData, schedData, { data: updData }, { data: defData }] = await Promise.all([
+        fetchWithoutLimit('plot_task_assignments'),
+        fetchWithoutLimit('plot_task_schedules'),
+        supabase.from('task_updates').select('*').order('created_at', { ascending: false }),
+        supabase.from('defects').select('*').order('created_at', { ascending: false })
+      ]);
+
+      const latestUpdates: any = {}; 
+      const tDates: any = {}; 
+      const newSched: any = {};
+
+      schedData?.forEach((s: any) => { newSched[`${s.plot_id}-${s.task_template_id}`] = s; });
+      setSchedules(newSched);
+      
+      assignData?.forEach((assign: any) => { 
+        const key = `${assign.plot_id}-${assign.task_template_id}`; 
+        latestUpdates[key] = {
+           plot_id: assign.plot_id,
+           task_template_id: assign.task_template_id,
+           progress: assign.current_progress || 0,
+        }; 
+        tDates[key] = { start: assign.actual_start_date, end: assign.actual_end_date };
+      });
+      
+      updData?.forEach((upd: any) => {
+        const key = `${upd.plot_id}-${upd.task_template_id}`;
+        if (latestUpdates[key] && !latestUpdates[key].action) {
+          latestUpdates[key].action = upd.action;
+          latestUpdates[key].role = upd.role;
+          latestUpdates[key].created_at = upd.created_at;
+        }
+      });
+      
+      setLatestUpdatesMap(latestUpdates); 
+      setTaskDates(tDates);
+      setAllUpdatesRecord(updData || []);
+      setDefects(defData || []);
+
+    } catch (err) {
+      console.error('Error fetching analytics:', err);
     }
   }, []);
 
@@ -197,6 +285,39 @@ export function useBuildTrackData(loggedInUser: any) {
     if (loggedInUser) fetchAllData();
   }, [loggedInUser, fetchAllData]);
 
+  useEffect(() => {
+    if (!loggedInUser) return;
+
+    const channel = supabase
+      .channel('realtime_task_updates')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'task_updates' },
+        (payload) => {
+          const newUpdate = payload.new;
+          setAllUpdatesRecord((prev) => [newUpdate, ...prev]);
+          setLatestUpdatesMap((prev: any) => {
+            const key = `${newUpdate.plot_id}-${newUpdate.task_template_id}`;
+            return {
+              ...prev,
+              [key]: {
+                ...prev[key],
+                plot_id: newUpdate.plot_id,
+                task_template_id: newUpdate.task_template_id,
+                progress: newUpdate.progress,
+                created_at: newUpdate.created_at
+              }
+            };
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [loggedInUser]);
+
   return {
     loading, setLoading,
     projects, setProjects,
@@ -207,12 +328,14 @@ export function useBuildTrackData(loggedInUser: any) {
     allUsers, setAllUsers,
     assignments, setAssignments,
     schedules, setSchedules,
-    defects, setDefects,
-    notifications, setNotifications,
-    latestUpdatesMap, setLatestUpdatesMap,
-    taskDates, setTaskDates,
-    allUpdatesRecord, setAllUpdatesRecord,
+    defects,
+    notifications,
+    latestUpdatesMap,
+    taskDates,
+    allUpdatesRecord,
     fetchAllData,
-    fetchPlotDetails
+    fetchPlotDetails,
+    fetchOwnerAnalyticsData,
+    fetchWithoutLimit
   };
 }
