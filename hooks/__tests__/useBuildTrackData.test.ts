@@ -6,6 +6,12 @@ import { supabase } from '@/lib/supabase';
 vi.mock('@/lib/supabase', () => ({
   supabase: {
     from: vi.fn(),
+    channel: vi.fn(() => ({
+      on: vi.fn(() => ({
+        subscribe: vi.fn(),
+      })),
+    })),
+    removeChannel: vi.fn(),
   },
 }));
 
@@ -16,10 +22,21 @@ describe('useBuildTrackData Hook', () => {
     vi.clearAllMocks();
   });
 
-  it('initially sets loading to true and does not fetch if user is null', () => {
+  it('initially sets loading to true and fetches only users if user is null', async () => {
+    (supabase.from as Mock).mockImplementation((table: string) => ({
+      select: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      then: (resolve: any) => resolve({ data: [], error: null }),
+    }));
     const { result } = renderHook(() => useBuildTrackData(null));
     expect(result.current.loading).toBe(true);
-    expect(supabase.from).not.toHaveBeenCalled();
+    
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    expect(supabase.from).toHaveBeenCalledWith('users');
+    expect(supabase.from).not.toHaveBeenCalledWith('projects');
   });
 
   it('fetches all data when loggedInUser is provided', async () => {
@@ -28,6 +45,7 @@ describe('useBuildTrackData Hook', () => {
     const mockOr = vi.fn().mockReturnThis();
     const mockLimit = vi.fn().mockReturnThis();
     const mockEq = vi.fn().mockReturnThis();
+    const mockRange = vi.fn().mockReturnThis();
 
     // Mock the chain methods and their final resolutions
     const createMockChain = (data: any) => ({
@@ -36,6 +54,7 @@ describe('useBuildTrackData Hook', () => {
       or: mockOr,
       limit: mockLimit,
       eq: mockEq,
+      range: mockRange,
       then: (resolve: any) => resolve({ data, error: null })
     });
 
@@ -112,7 +131,8 @@ describe('useBuildTrackData Hook', () => {
     expect(result.current.defects[0].plot_id).toBe('p2');
 
     expect(result.current.latestUpdatesMap['p2-2']).toBeDefined();
-    expect(result.current.latestUpdatesMap['p2-2'].id).toBe(2);
+    expect(result.current.latestUpdatesMap['p2-2'].plot_id).toBe('p2');
+    expect(result.current.latestUpdatesMap['p2-2'].task_template_id).toBe(2);
 
     expect(result.current.allUpdatesRecord).toHaveLength(1);
   });

@@ -53,6 +53,8 @@ interface MapVisualizerProps {
   handleEditPlot: (p: any) => void;
   setIsPresentationOpen: (b: boolean) => void;
   setCurrentSlideIndex: (i: number) => void;
+  handleTogglePlotCustomer?: (id: string, current: boolean) => void;
+  handleTogglePlotCompleted?: (id: string, current: boolean) => void;
 }
 
 export default function MapVisualizer(props: MapVisualizerProps) {
@@ -66,7 +68,9 @@ export default function MapVisualizer(props: MapVisualizerProps) {
     taskTemplates, assignments, searchContractor, setSearchContractor,
     plotsActiveToday, searchPlot, setSearchPlot, filterForeman, setFilterForeman,
     foremenList, displayPlots, handleDeletePlot, handleEditPlot,
-    setIsPresentationOpen, setCurrentSlideIndex
+    setIsPresentationOpen, setCurrentSlideIndex,
+    handleTogglePlotCustomer,
+    handleTogglePlotCompleted
   } = props;
 
   return (
@@ -346,6 +350,17 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                             )}
                             {/* ส่วนหัวของการ์ด และป้ายสถานะ */}
                             <div className="flex justify-between items-start w-full mb-1 sm:mb-2">
+                              
+                            {isAdmin && handleTogglePlotCustomer && handleTogglePlotCompleted && (
+                                <div className="flex gap-2 mb-3 z-20 relative">
+                                  <button onClick={(e) => { e.stopPropagation(); handleTogglePlotCustomer(plot.id, !!plot.has_customer); }} className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all border ${plot.has_customer ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100' : 'bg-[#f5f5f7] text-[#86868b] border-transparent hover:bg-slate-200'}`}>
+                                    👤 {plot.has_customer ? 'มีลูกค้า' : 'ระบุลูกค้า'}
+                                  </button>
+                                  <button onClick={(e) => { e.stopPropagation(); handleTogglePlotCompleted(plot.id, !!plot.is_completed); }} className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all border ${plot.is_completed ? 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100' : 'bg-[#f5f5f7] text-[#86868b] border-transparent hover:bg-slate-200'}`}>
+                                    🔑 {plot.is_completed ? 'โอนแล้ว' : 'พร้อมโอน'}
+                                  </button>
+                                </div>
+                            )}
                               <div className="flex flex-col gap-1">
                                 <h3 className={`${isMobileLayout ? 'text-2xl' : 'text-4xl sm:text-5xl'} font-bold text-[#1d1d1f] truncate`}>{plot.id}</h3>
                                 <div className="flex gap-1.5">

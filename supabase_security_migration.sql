@@ -50,8 +50,8 @@ WHERE NOT EXISTS (
   SELECT 1 FROM auth.identities ai WHERE ai.user_id = au.id
 );
 
--- 3. ลบความลับ (PIN) ออกจากตารางที่คนทั่วไปมองเห็นได้!
-ALTER TABLE public.users DROP COLUMN IF EXISTS pin;
+-- 3. ลบความลับ (PIN) ออกจากตารางที่คนทั่วไปมองเห็นได้! (Commented out to keep for trial purposes)
+-- ALTER TABLE public.users DROP COLUMN IF EXISTS pin;
 
 -- 4. เปิดใช้งานระบบล็อกฐานข้อมูล (Row Level Security - RLS)
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
@@ -71,13 +71,24 @@ ALTER TABLE public.house_types ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Allow public read access to users" ON public.users FOR SELECT TO public USING (true);
 CREATE POLICY "Allow authenticated full access to users" ON public.users FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
--- นโยบายสำหรับตารางอื่นๆ: ให้คนที่ Login แล้วอ่านและแก้ไขได้เต็มที่
-CREATE POLICY "Allow auth all projects" ON public.projects FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Allow auth all plots" ON public.plots FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Allow auth all task_templates" ON public.task_templates FOR ALL TO authenticated USING (true) WITH CHECK (true);
+-- นโยบายสำหรับตารางอื่นๆ: ให้คนที่ Login แล้วอ่านและแก้ไขได้ตาม Role
+-- projects, plots, task_templates: ให้ทุกคนอ่านได้ แต่เฉพาะ Admin/Planner สร้าง/แก้ไขได้
+CREATE POLICY "Allow read projects" ON public.projects FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Allow admin/planner write projects" ON public.projects FOR ALL TO authenticated USING ((auth.jwt() -> 'user_metadata' ->> 'role') IN ('Admin', 'Project Planner', 'Owner')) WITH CHECK ((auth.jwt() -> 'user_metadata' ->> 'role') IN ('Admin', 'Project Planner', 'Owner'));
+
+CREATE POLICY "Allow read plots" ON public.plots FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Allow admin/planner write plots" ON public.plots FOR ALL TO authenticated USING ((auth.jwt() -> 'user_metadata' ->> 'role') IN ('Admin', 'Project Planner', 'Owner')) WITH CHECK ((auth.jwt() -> 'user_metadata' ->> 'role') IN ('Admin', 'Project Planner', 'Owner'));
+
+CREATE POLICY "Allow read task_templates" ON public.task_templates FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Allow admin/planner write task_templates" ON public.task_templates FOR ALL TO authenticated USING ((auth.jwt() -> 'user_metadata' ->> 'role') IN ('Admin', 'Project Planner', 'Owner')) WITH CHECK ((auth.jwt() -> 'user_metadata' ->> 'role') IN ('Admin', 'Project Planner', 'Owner'));
+
+-- task_updates: ควบคุมให้เหมาะสม
+CREATE POLICY "Allow read task_updates" ON public.task_updates FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Allow specific roles write task_updates" ON public.task_updates FOR ALL TO authenticated USING ((auth.jwt() -> 'user_metadata' ->> 'role') IN ('Admin', 'Owner', 'Site Engineer', 'Foreman', 'QC', 'Project Planner')) WITH CHECK ((auth.jwt() -> 'user_metadata' ->> 'role') IN ('Admin', 'Owner', 'Site Engineer', 'Foreman', 'QC', 'Project Planner'));
+
+-- ตารางที่เหลือ: อนุญาต authenticated อ่านเขียน
 CREATE POLICY "Allow auth all assignments" ON public.plot_task_assignments FOR ALL TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Allow auth all schedules" ON public.plot_task_schedules FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Allow auth all updates" ON public.task_updates FOR ALL TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Allow auth all defects" ON public.defects FOR ALL TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Allow auth all notifications" ON public.notifications FOR ALL TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Allow auth all contractors" ON public.contractors FOR ALL TO authenticated USING (true) WITH CHECK (true);

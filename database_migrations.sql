@@ -48,11 +48,11 @@ BEGIN
     FROM task_updates
     WHERE plot_id = v_plot_id AND task_template_id = v_task_template_id;
 
-    -- Calculate Max End Date (Only when QC approved)
+    -- Calculate Max End Date (Only when progress reaches 100)
     SELECT MAX(created_at) INTO max_end
     FROM task_updates
     WHERE plot_id = v_plot_id AND task_template_id = v_task_template_id
-      AND action IN ('QC อนุมัติผ่าน', 'QC อนุมัติ');
+      AND progress = 100;
 
     -- Calculate Latest Progress
     SELECT progress INTO latest_progress

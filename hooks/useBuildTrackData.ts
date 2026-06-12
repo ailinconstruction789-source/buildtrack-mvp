@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 
-export function useBuildTrackData(loggedInUser: any) {
+export function useBuildTrackData(loggedInUser: any, selectedProjectName?: string | null) {
   const [loading, setLoading] = useState(true);
   
   // 🏢 Core Data States
@@ -23,12 +23,16 @@ export function useBuildTrackData(loggedInUser: any) {
   const [taskDates, setTaskDates] = useState<any>({});
   const [allUpdatesRecord, setAllUpdatesRecord] = useState<any[]>([]);
 
-  const fetchWithoutLimit = async (table: string) => {
+  const fetchWithoutLimit = async (table: string, projectName?: string | null) => {
     let allData: any[] = [];
     let from = 0; let to = 999;
     let hasMore = true;
     while (hasMore) {
-      const { data, error } = await supabase.from(table).select('*').range(from, to);
+      let query = supabase.from(table).select(projectName ? '*, plots!inner(project_name)' : '*').range(from, to);
+      if (projectName) {
+        query = query.eq('plots.project_name', projectName);
+      }
+      const { data, error } = await query;
       if (error) break;
       if (data && data.length > 0) {
         allData = [...allData, ...data];
@@ -67,8 +71,8 @@ export function useBuildTrackData(loggedInUser: any) {
         supabase.from('notifications').select('*').or(`target_user.eq.${loggedInUser.username},target_role.eq.${loggedInUser.role}`).order('created_at', { ascending: false }),
         supabase.from('vw_plot_progress').select('*'),
         supabase.from('vw_project_progress').select('*'),
-        fetchWithoutLimit('plot_task_assignments'),
-        fetchWithoutLimit('plot_task_schedules'),
+        fetchWithoutLimit('plot_task_assignments', selectedProjectName),
+        fetchWithoutLimit('plot_task_schedules', selectedProjectName),
         supabase.from('task_updates').select('*').order('created_at', { ascending: false }).limit(3000),
         supabase.from('defects').select('*').order('created_at', { ascending: false })
       ]);
@@ -150,7 +154,7 @@ export function useBuildTrackData(loggedInUser: any) {
       console.error('Error fetching core data:', error);
       setLoading(false);
     }
-  }, [loggedInUser]);
+  }, [loggedInUser, selectedProjectName]);
 
   // 🌟 ฟังก์ชันโหลดข้อมูลเจาะจงแปลง (Lazy Load Plot Details)
   const fetchPlotDetails = useCallback(async (plotId: string) => {
@@ -202,6 +206,15 @@ export function useBuildTrackData(loggedInUser: any) {
             newMap[key].action = upd.action;
             newMap[key].role = upd.role;
             newMap[key].created_at = upd.created_at;
+          } else if (!newMap[key]) {
+            newMap[key] = {
+              plot_id: upd.plot_id,
+              task_template_id: upd.task_template_id,
+              progress: upd.progress,
+              action: upd.action,
+              role: upd.role,
+              created_at: upd.created_at
+            };
           }
         });
         return newMap;

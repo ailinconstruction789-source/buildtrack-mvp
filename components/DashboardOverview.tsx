@@ -1,5 +1,5 @@
 import React from 'react';
-import { Wrench, Users, PlusCircle, Building, ClipboardList, Monitor, Settings, Map as MapIcon, AlertTriangle, Grid, Clock, SortAsc, CheckCircle, HardHat, FolderOpen, Activity, AlertCircle } from 'lucide-react';
+import { Wrench, Users, PlusCircle, Building, ClipboardList, Monitor, Settings, Map as MapIcon, AlertTriangle, Grid, Clock, SortAsc, CheckCircle, HardHat, FolderOpen, Activity, AlertCircle, Home } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
 interface DashboardOverviewProps {
@@ -109,7 +109,7 @@ export default function DashboardOverview({
                 <h2 className="font-bold text-lg tracking-tight sm:text-2xl text-[#1d1d1f] italic uppercase tracking-tighter flex items-center gap-2"><ClipboardList className={isQC ? 'text-purple-600' : 'text-blue-600'} size={20}/> Inspection Queue <span className="bg-slate-800 text-white text-[10px] px-2 py-0.5 rounded-full">{inspectionQueue.length}</span></h2>
                 
                 {/* 🌟 1. TABS คัดงานด่วน */}
-                <div className="flex bg-slate-200/60 p-1 rounded-xl w-fit border border-black/5/80">
+                <div className="flex bg-slate-200/60 p-1 rounded-xl w-fit border border-black/10">
                   <button onClick={() => setInspectionFilterTab('all')} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${inspectionFilterTab === 'all' ? 'bg-white shadow-sm text-[#1d1d1f]' : 'text-[#86868b] hover:text-[#1d1d1f]'}`}>ทั้งหมด</button>
                   <button onClick={() => setInspectionFilterTab('urgent')} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${inspectionFilterTab === 'urgent' ? 'bg-rose-500 shadow-sm text-white' : 'text-[#86868b] hover:text-rose-600'}`}><AlertTriangle size={14}/> ด่วน <span className={`${inspectionFilterTab === 'urgent' ? 'bg-white/20 text-white' : 'bg-rose-100 text-rose-600'} px-1.5 py-0.5 rounded-md text-[10px] leading-none`}>{inspectionQueue.filter(q => (Date.now() - q.time) > 172800000).length}</span></button>
                 </div>
@@ -117,7 +117,7 @@ export default function DashboardOverview({
             
             <div className="flex items-center gap-2 w-full xl:w-auto">
                 {/* 🌟 2. View Mode Toggle (ปุ่มเปลี่ยนสลับ Card / List) */}
-                <div className="flex bg-slate-200/60 p-1 rounded-xl shrink-0 border border-black/5/80">
+                <div className="flex bg-slate-200/60 p-1 rounded-xl shrink-0 border border-black/10">
                   <button onClick={() => setInspectionViewMode('card')} className={`p-1.5 sm:p-2 rounded-lg transition-all ${inspectionViewMode === 'card' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-400 hover:text-blue-500'}`} title="มุมมองการ์ด"><Grid size={16}/></button>
                   <button onClick={() => setInspectionViewMode('list')} className={`p-1.5 sm:p-2 rounded-lg transition-all ${inspectionViewMode === 'list' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-400 hover:text-blue-500'}`} title="มุมมองตาราง"><ClipboardList size={16}/></button>
                 </div>
@@ -136,53 +136,81 @@ export default function DashboardOverview({
           ) : (
             <div className="max-h-[50vh] sm:max-h-[600px] overflow-y-auto custom-scrollbar pr-1 sm:pr-3 pb-2">
               <div className={`${inspectionViewMode === 'card' ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4' : 'flex flex-col gap-2'}`}>
-                {inspectionQueue.filter(q => inspectionFilterTab === 'all' || (inspectionFilterTab === 'urgent' && (Date.now() - q.time) > 172800000)).map(q => {
-                  const isUrgent = (Date.now() - q.time) > 172800000;
-                  const relatedProject = projects.find(p => p.name === q.project_name); const relatedPlot = plots.find(p => p.id === q.plot_id); const relatedTask = taskTemplates.find(t => t.id === q.task_template_id);
+                {(() => {
+                  const filteredQ = inspectionQueue.filter(q => inspectionFilterTab === 'all' || (inspectionFilterTab === 'urgent' && (Date.now() - q.time) > 172800000));
                   
-                  const clickAction = () => { setSelectedProject(relatedProject); setSelectedPlot(relatedPlot); setSelectedTask(relatedTask); setTaskReturnView('dashboard'); setView('task-progress'); };
-
-                  {/* 🌟 Layout แบบ List View (ตารางแนวนอน) */}
                   if (inspectionViewMode === 'list') {
-                      return (
-                        <button key={`${q.plot_id}-${q.task_template_id}`} onClick={clickAction} className={`bg-white p-3 sm:p-4 rounded-xl sm:rounded-2xl border ${isUrgent ? 'border-rose-400 bg-rose-50/50' : 'border-black/5'} shadow-sm hover:border-blue-500 hover:shadow-md transition-all text-left flex flex-col sm:flex-row sm:items-center justify-between gap-3 group`}>
-                          <div className="flex items-center gap-3 sm:gap-4 flex-1 overflow-hidden">
-                              <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-xl flex flex-col items-center justify-center shrink-0 shadow-inner ${q.statusFor === 'QC' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
-                                <span className="text-[10px] sm:text-xs font-bold uppercase">รอ {q.statusFor}</span>
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 mb-1">
-                                    <h4 className="font-bold text-[#1d1d1f] text-lg sm:text-xl truncate">{q.plot_id}</h4>
-                                    {isUrgent && <span className="bg-rose-500 text-white text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1 animate-pulse shadow-sm"><AlertTriangle size={10}/> ค้างตรวจนาน</span>}
-                                </div>
-                                <p className="text-xs sm:text-sm font-bold text-[#86868b] truncate">{q.task_name}</p>
-                              </div>
+                    // Group by plot_id
+                    const grouped = filteredQ.reduce((acc, q) => {
+                      if (!acc[q.plot_id]) acc[q.plot_id] = [];
+                      acc[q.plot_id].push(q);
+                      return acc;
+                    }, {} as Record<string, typeof filteredQ>);
+                    
+                    return (
+                      <div className="flex flex-col gap-6 w-full">
+                        {Object.entries(grouped).map(([plotId, items]) => (
+                          <div key={plotId} className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden w-full">
+                            <div className="bg-slate-50 border-b border-black/5 px-4 py-3 flex items-center justify-between">
+                              <h3 className="font-bold text-[#1d1d1f] flex items-center gap-2"><Home size={18} className="text-blue-500"/> แปลง {plotId}</h3>
+                              <span className="text-xs font-bold bg-slate-200 text-slate-600 px-2 py-0.5 rounded-md">{items.length} งาน</span>
+                            </div>
+                            <div className="flex flex-col">
+                              {items.map((q, idx) => {
+                                const isUrgent = (Date.now() - q.time) > 172800000;
+                                const relatedProject = projects.find(p => p.name === q.project_name); const relatedPlot = plots.find(p => p.id === q.plot_id); const relatedTask = taskTemplates.find(t => t.id === q.task_template_id);
+                                const clickAction = () => { setSelectedProject(relatedProject); setSelectedPlot(relatedPlot); setSelectedTask(relatedTask); setTaskReturnView('dashboard'); setView('task-progress'); };
+                                
+                                return (
+                                  <button key={`${q.plot_id}-${q.task_template_id}`} onClick={clickAction} className={`p-3 sm:p-4 text-left flex flex-col sm:flex-row sm:items-center justify-between gap-3 group transition-all ${idx !== items.length - 1 ? 'border-b border-black/5' : ''} hover:bg-slate-50 ${isUrgent ? 'border-l-4 border-l-rose-500 bg-rose-50/30' : 'border-l-4 border-l-transparent'}`}>
+                                    <div className="flex items-center gap-3 sm:gap-4 flex-1 overflow-hidden">
+                                        <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex flex-col items-center justify-center shrink-0 shadow-inner ${q.statusFor === 'QC' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                                          <span className="text-[9px] sm:text-[10px] font-bold uppercase">รอ {q.statusFor}</span>
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                          <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                                              <p className="text-xs sm:text-sm font-bold text-[#1d1d1f] truncate group-hover:text-blue-600 transition-colors">{q.task_name}</p>
+                                              {isUrgent && <span className="bg-rose-500 text-white text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1 animate-pulse shadow-sm whitespace-nowrap shrink-0"><AlertTriangle size={10}/> ด่วนมาก: ต้องรีบเข้าตรวจ</span>}
+                                          </div>
+                                          <p className="text-[10px] sm:text-xs text-slate-400 font-bold flex items-center gap-1"><HardHat size={12}/> {q.foreman}</p>
+                                        </div>
+                                    </div>
+                                    <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-center gap-1 shrink-0 pt-2 sm:pt-0 sm:pl-4">
+                                        <span className={`text-[10px] sm:text-xs font-bold ${isUrgent ? 'text-rose-600' : 'text-slate-400'}`}><Clock size={12} className="inline mr-1"/> {new Date(q.time).toLocaleDateString('th-TH', {month:'short', day:'numeric'})} {new Date(q.time).toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'})}</span>
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
                           </div>
-                          <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-center gap-2 shrink-0 border-t sm:border-t-0 sm:border-l border-slate-100 pt-2 sm:pt-0 sm:pl-4">
-                              <p className="text-[10px] sm:text-xs text-slate-400 font-bold flex items-center gap-1"><HardHat size={12}/> {q.foreman}</p>
-                              <span className={`text-[10px] sm:text-xs font-bold ${isUrgent ? 'text-rose-600' : 'text-slate-400'}`}><Clock size={12} className="inline mr-1"/> {new Date(q.time).toLocaleDateString('th-TH', {month:'short', day:'numeric'})} {new Date(q.time).toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'})}</span>
-                          </div>
-                        </button>
-                      )
+                        ))}
+                      </div>
+                    );
                   }
 
-                  {/* 🌟 Layout แบบ Card View (การ์ดสี่เหลี่ยมของเดิม แต่อัปเกรด) */}
-                  return (
-                    <button key={`${q.plot_id}-${q.task_template_id}`} onClick={clickAction} className={`bg-white p-4 sm:p-5 rounded-2xl sm:rounded-[1.5rem] border ${isUrgent ? 'border-rose-400 bg-rose-50/50' : 'border-black/5'} shadow-sm hover:border-blue-500 hover:shadow-lg hover:-translate-y-1 transition-all text-left group relative overflow-hidden`}>
-                        {isUrgent && <div className="absolute top-0 left-0 w-full h-1.5 bg-rose-500"></div>}
-                        <div className="flex justify-between items-start mb-3 mt-1 sm:mt-0">
-                          <span className={`text-[9px] sm:text-xs font-bold uppercase tracking-widest px-2.5 py-1 rounded-md text-white shadow-sm ${q.statusFor === 'QC' ? 'bg-purple-600' : 'bg-blue-600'}`}>รอ {q.statusFor}</span>
-                          <span className={`text-[9px] sm:text-[10px] font-bold flex items-center gap-1 px-2 py-1 rounded-md ${isUrgent ? 'bg-rose-100 text-rose-600 animate-pulse' : 'bg-[#f5f5f7] text-[#86868b]'}`}><Clock size={10}/> {new Date(q.time).toLocaleDateString('th-TH',{day:'numeric', month:'short'})} {new Date(q.time).toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'})}</span>
-                        </div>
-                        <div className="flex items-center gap-2 mb-1.5">
-                          <h4 className="font-bold text-[#1d1d1f] text-2xl">{q.plot_id}</h4>
-                          {isUrgent && <AlertTriangle size={16} className="text-rose-500 animate-pulse"/>}
-                        </div>
-                        <p className="text-xs sm:text-sm font-bold text-[#86868b] line-clamp-2 my-1.5 min-h-[32px] sm:min-h-[40px]">{q.task_name}</p>
-                        <p className="text-[10px] sm:text-xs text-slate-400 flex items-center gap-1.5 mt-3 pt-3 border-t border-black/5/60"><HardHat size={14} className="text-slate-300"/> {q.foreman}</p>
-                    </button>
-                  );
-                })}
+                  // Card View rendering
+                  return filteredQ.map(q => {
+                    const isUrgent = (Date.now() - q.time) > 172800000;
+                    const relatedProject = projects.find(p => p.name === q.project_name); const relatedPlot = plots.find(p => p.id === q.plot_id); const relatedTask = taskTemplates.find(t => t.id === q.task_template_id);
+                    const clickAction = () => { setSelectedProject(relatedProject); setSelectedPlot(relatedPlot); setSelectedTask(relatedTask); setTaskReturnView('dashboard'); setView('task-progress'); };
+
+                    return (
+                      <button key={`${q.plot_id}-${q.task_template_id}`} onClick={clickAction} className={`bg-white p-4 sm:p-5 rounded-2xl sm:rounded-[1.5rem] border ${isUrgent ? 'border-rose-400 bg-rose-50/50' : 'border-black/5'} shadow-sm hover:border-blue-500 hover:shadow-lg hover:-translate-y-1 transition-all text-left group relative overflow-hidden`}>
+                          {isUrgent && <div className="absolute top-0 left-0 w-full h-1.5 bg-rose-500"></div>}
+                          <div className="flex justify-between items-start mb-3 mt-1 sm:mt-0">
+                            <span className={`text-[9px] sm:text-xs font-bold uppercase tracking-widest px-2.5 py-1 rounded-md text-white shadow-sm ${q.statusFor === 'QC' ? 'bg-purple-600' : 'bg-blue-600'}`}>รอ {q.statusFor}</span>
+                            <span className={`text-[9px] sm:text-[10px] font-bold flex items-center gap-1 px-2 py-1 rounded-md ${isUrgent ? 'bg-rose-100 text-rose-600 animate-pulse' : 'bg-[#f5f5f7] text-[#86868b]'}`}><Clock size={10}/> {new Date(q.time).toLocaleDateString('th-TH',{day:'numeric', month:'short'})} {new Date(q.time).toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'})}</span>
+                          </div>
+                          <div className="flex items-center gap-2 mb-1.5">
+                            <h4 className="font-bold text-[#1d1d1f] text-2xl">{q.plot_id}</h4>
+                            {isUrgent && <AlertTriangle size={16} className="text-rose-500 animate-pulse"/>}
+                          </div>
+                          <p className="text-xs sm:text-sm font-bold text-[#86868b] line-clamp-2 my-1.5 min-h-[32px] sm:min-h-[40px]">{q.task_name}</p>
+                          <p className="text-[10px] sm:text-xs text-slate-400 flex items-center gap-1.5 mt-3 pt-3 border-t border-black/5"><HardHat size={14} className="text-slate-300"/> {q.foreman}</p>
+                      </button>
+                    );
+                  });
+                })()}
               </div>
             </div>
           )}

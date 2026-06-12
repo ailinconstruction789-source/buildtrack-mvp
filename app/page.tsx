@@ -64,6 +64,7 @@ export default function ConstructionApp() {
   const [loggedInUser, setLoggedInUser] = useState<any>(null);
   const [loginData, setLoginData] = useState({ username: '', pin: '' });
 
+  const [selectedProject, setSelectedProject] = useState<any>(null);
   const {
     loading, setLoading,
     projects, setProjects,
@@ -82,13 +83,12 @@ export default function ConstructionApp() {
     fetchAllData,
     fetchPlotDetails,
     fetchOwnerAnalyticsData
-  } = useBuildTrackData(loggedInUser);
+  } = useBuildTrackData(loggedInUser, selectedProject?.name);
 
 
   const [view, setView] = useState('dashboard');
   const [taskReturnView, setTaskReturnView] = useState('house-detail');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
-  const [selectedProject, setSelectedProject] = useState<any>(null);
   const [selectedPlot, setSelectedPlot] = useState<any>(null);
   const [selectedTask, setSelectedTask] = useState<any>(null);
 
@@ -228,12 +228,23 @@ export default function ConstructionApp() {
         } catch (e: any) {
           if (e?.name !== 'AbortError') console.error("ดึงข้อมูลอากาศไม่สำเร็จ:", e);
         }
+      }, (error) => {
+        if (!isMounted) return;
+        console.warn("Geolocation access denied or failed:", error);
+        setWeatherInfo({
+          location: "Bangkok",
+          currentTemp: 30,
+          currentDetails: { icon: '☀️', text: 'ไม่ได้ระบุตำแหน่ง' },
+          hourly: [],
+          alert: null
+        });
       });
     }
     return () => { isMounted = false; controller.abort(); };
   }, []);
   const [progressValue, setProgressValue] = useState(0);
   const [isSending, setIsSending] = useState(false);
+
   const [selectedFiles, setSelectedFiles] = useState<any[]>([]);
   const [fullImageUrl, setFullImageUrl] = useState<any>(null);
 
@@ -381,7 +392,7 @@ export default function ConstructionApp() {
     checkSession();
 
     const updateActivity = () => {
-      if (localStorage.getItem('buildtrack_user')) {
+      if (localStorage.getItem('buildtrack_last_active')) {
         // 🌟 Throttle: อัปเดตทุก 30 วินาทีเท่านั้น ป้องกัน write ถี่เกินไปบน touchscreen / keyboard
         const last = parseInt(localStorage.getItem('buildtrack_last_active') || '0');
         if (Date.now() - last > 30000) {
@@ -1002,6 +1013,22 @@ export default function ConstructionApp() {
       const { data } = await supabase.from('defects').select('*'); setDefects(data || []);
     } catch (e: any) { showAlert('Error', (e as Error).message); } setIsSubmittingDefect(false);
   };
+  const handleUploadOverviewImage = async (file: File) => {
+    if (!selectedPlot) return;
+    try {
+      const comp = await compressImageNative(file);
+      const path = `${selectedPlot.id}/overview-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const { error } = await supabase.storage.from('task_images').upload(path, comp);
+      if (error) throw new Error('อัปโหลดรูปหน้าบ้านไม่สำเร็จ');
+      const overviewUrl = supabase.storage.from('task_images').getPublicUrl(path).data.publicUrl;
+      await supabase.from('plots').update({ overview_image_url: overviewUrl }).eq('id', selectedPlot.id);
+      await fetchAllData();
+      showAlert('สำเร็จ', 'อัปเดตภาพรวมหน้าบ้านเรียบร้อยแล้ว');
+    } catch (e: any) {
+      showAlert('Error', (e as Error).message);
+    }
+  };
+
   const handleSendPost = async () => {
     if ((!inputText.trim() && selectedFiles.length === 0) || isSending) return;
     setIsSending(true);
@@ -1120,7 +1147,7 @@ export default function ConstructionApp() {
         await supabase.from('defects')
           .update({ status: 'resolved', resolved_at: new Date().toISOString() })
           .eq('plot_id', selectedPlot.id)
-          .eq('task_template_id', selectedTask.id)
+          .eq('task_id', selectedTask.id)
           .eq('status', 'pending');
       }
 
@@ -1317,7 +1344,7 @@ export default function ConstructionApp() {
         }
       `}} />
 
-      <div className={`${isMobilePreview ? 'w-[390px] h-[844px] bg-slate-50 border-[14px] border-slate-950 rounded-[3rem] shadow-2xl relative overflow-hidden flex flex-col' : 'flex h-screen w-full overflow-hidden'} print:hidden`}>
+      <div className={`${isMobilePreview ? '@container w-[390px] h-[844px] bg-slate-50 border-[14px] border-slate-950 rounded-[3rem] shadow-2xl relative overflow-hidden flex flex-col' : '@container flex h-screen w-full overflow-hidden'} print:hidden`}>
 
         {/* Modals & Dialogs */}
         {assignModal.isOpen && (
@@ -1483,7 +1510,7 @@ export default function ConstructionApp() {
                           {/* หัวข้อชื่อคน */}
                           <div className="bg-slate-800 px-5 py-3 flex justify-between items-center">
                             <h4 className="font-black text-white text-lg flex items-center gap-2">👤 {user}</h4>
-                            <span className="text-[10px] font-black bg-white/20 text-white px-2.5 py-1 rounded-lg uppercase tracking-wider">{data.role}</span>
+                            <span className="text-[10px] font-black bg-white/20 text-white px-2.5 py-1 rounded-lg uppercase tracking-wider mint-wider">{data.role}</span>
                           </div>
                           {/* รายการที่คนๆ นั้นทำ */}
                           <div className="divide-y divide-slate-100">
@@ -1584,7 +1611,7 @@ export default function ConstructionApp() {
         )}
 
         {dialogConfig.isOpen && (
-          <div className="absolute inset-0 z-[600] bg-black/40 backdrop-blur-xl flex items-center justify-center p-4 fixed transition-all"><div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full p-6 text-center space-y-4"><div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-2 ${dialogConfig.type === 'confirm' ? 'bg-rose-100 text-rose-600' : 'bg-blue-100 text-blue-600'}`}><AlertTriangle size={32} /></div><h3 className="text-xl font-black">{dialogConfig.title}</h3><p className="text-slate-500 font-medium">{dialogConfig.message}</p><div className="flex gap-3 w-full mt-4">{dialogConfig.type === 'confirm' ? (<><button onClick={closeDialog} className="flex-1 bg-slate-100 text-slate-600 font-bold py-3.5 rounded-xl hover:bg-slate-200">ยกเลิก</button><button onClick={dialogConfig.onConfirm || undefined} className="flex-1 bg-rose-600 text-white font-bold py-3.5 rounded-xl hover:bg-rose-700">ยืนยัน</button></>) : (<button onClick={closeDialog} className="w-full bg-slate-800 text-white font-bold py-3.5 rounded-xl">รับทราบ</button>)}</div></div></div>
+          <div className="fixed inset-0 z-[600] bg-black/40 backdrop-blur-xl flex items-center justify-center p-4 transition-all"><div className="bg-white rounded-[2rem] shadow-2xl min-w-[320px] max-w-sm w-full p-6 text-center space-y-4"><div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-2 ${dialogConfig.type === 'confirm' ? 'bg-rose-100 text-rose-600' : 'bg-blue-100 text-blue-600'}`}><AlertTriangle size={32} /></div><h3 className="text-xl font-black">{dialogConfig.title}</h3><p className="text-slate-500 font-medium">{dialogConfig.message}</p><div className="flex gap-3 w-full mt-4">{dialogConfig.type === 'confirm' ? (<><button onClick={closeDialog} className="flex-1 bg-slate-100 text-slate-600 font-bold py-3.5 rounded-xl hover:bg-slate-200">ยกเลิก</button><button onClick={dialogConfig.onConfirm || undefined} className="flex-1 bg-rose-600 text-white font-bold py-3.5 rounded-xl hover:bg-rose-700">ยืนยัน</button></>) : (<button onClick={closeDialog} className="w-full bg-slate-800 text-white font-bold py-3.5 rounded-xl">รับทราบ</button>)}</div></div></div>
         )}
 
         {/* 🧭 Left Sidebar (Desktop Only) - ฉบับพับเก็บได้ */}
@@ -2286,7 +2313,7 @@ export default function ConstructionApp() {
                   assignments={assignments} taskDates={taskDates} setUpdates={setUpdates} setProgressValue={setProgressValue}
                   isAdmin={isAdmin} isProcurement={isProcurement} setScheduleInputs={setScheduleInputs} allUpdatesRecord={allUpdatesRecord}
                   handleTogglePlotCustomer={handleTogglePlotCustomer} handleTogglePlotCompleted={handleTogglePlotCompleted}
-                  getPlotOverallStatus={getPlotOverallStatus}
+                  getPlotOverallStatus={getPlotOverallStatus} handleUploadOverviewImage={handleUploadOverviewImage}
                 />
               )}
 

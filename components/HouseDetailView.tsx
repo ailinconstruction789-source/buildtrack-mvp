@@ -235,7 +235,7 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                               
                                     <div className="absolute inset-0 flex pointer-events-none">
                                        {timeMarkers.map((m: any, i: any) => (
-                                          <div key={i} className={`border-l h-full relative ${m.isMonth ? 'border-black/10 bg-slate-200/20' : 'border-black/5/50'}`} style={{position: 'absolute', left: `${m.left}%`, width: `${(1 / totalChartDays) * 100}%`}}>
+                                          <div key={i} className={`border-l h-full relative ${m.isMonth ? 'border-black/10 bg-slate-200/20' : 'border-black/5'}`} style={{position: 'absolute', left: `${m.left}%`, width: `${(1 / totalChartDays) * 100}%`}}>
                                                         
                                              {m.monthLabel && (
                                                 <div className="absolute top-1.5 sm:top-2 left-1 bg-slate-800 text-white font-bold px-2 py-0.5 rounded shadow-sm text-[8px] sm:text-[10px] whitespace-nowrap z-30 border border-slate-700">
