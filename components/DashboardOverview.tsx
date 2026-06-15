@@ -39,10 +39,11 @@ interface DashboardOverviewProps {
   setGridRows: (r: number) => void;
   setMapZoom: (z: number) => void;
   handleEditProject: (p: any) => void;
+  loading?: boolean;
 }
 
 export default function DashboardOverview({
-  view, setView,
+  view, setView, loading,
   isSiteEngineer, isQC, isAdmin, isOwner, isForeman, isProcurement, isProjectPlanner,
   isMobileLayout,
   projects, plots, taskTemplates, loggedInUser,
@@ -80,7 +81,23 @@ export default function DashboardOverview({
       </div>
       
       <div className={`grid gap-3 sm:gap-6 ${isMobileLayout ? 'grid-cols-1' : 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'}`}>
-        {projects.map((proj) => (
+        {loading ? (
+          [1, 2, 3, 4].map(i => (
+            <div key={i} className="bg-slate-50 w-full p-5 sm:p-8 rounded-2xl sm:rounded-[2rem] border border-black/5 flex flex-col justify-between min-h-[140px] sm:min-h-[180px]">
+               <div>
+                 <div className="animate-pulse bg-slate-200 h-6 sm:h-8 w-3/4 rounded-lg mb-2"></div>
+                 <div className="animate-pulse bg-slate-200 h-3 sm:h-4 w-1/3 rounded-md mb-8"></div>
+               </div>
+               <div>
+                 <div className="flex justify-between mb-2">
+                   <div className="animate-pulse bg-slate-200 h-2 sm:h-3 w-1/4 rounded"></div>
+                   <div className="animate-pulse bg-slate-200 h-2 sm:h-3 w-1/4 rounded"></div>
+                 </div>
+                 <div className="animate-pulse bg-slate-200 h-2 sm:h-3 w-full rounded-full"></div>
+               </div>
+            </div>
+          ))
+        ) : projects.map((proj) => (
           <div key={proj.name} onClick={() => { 
               const conf = proj.layout_data?.find((c: any) => c.type === 'config');
               setGridCols(conf?.cols || 40); setGridRows(conf?.rows || 24); setMapZoom(1);
@@ -142,7 +159,19 @@ export default function DashboardOverview({
           </div>
 
           {/* 🌟 พื้นที่แสดงผลคิวงาน */}
-          {inspectionQueue.filter(q => inspectionFilterTab === 'all' || (inspectionFilterTab === 'urgent' && (Date.now() - q.time) > 172800000)).length === 0 ? ( 
+          {loading ? (
+             <div className="flex flex-col gap-3">
+               {[1,2,3].map(i => (
+                 <div key={i} className="bg-slate-50 border border-slate-100 p-4 rounded-xl flex items-center gap-4 w-full">
+                    <div className="w-12 h-12 rounded-xl bg-slate-200 animate-pulse shrink-0"></div>
+                    <div className="flex flex-col gap-2 flex-1">
+                      <div className="h-4 w-1/3 bg-slate-200 rounded animate-pulse"></div>
+                      <div className="h-3 w-1/4 bg-slate-200 rounded animate-pulse"></div>
+                    </div>
+                 </div>
+               ))}
+             </div>
+          ) : inspectionQueue.filter(q => inspectionFilterTab === 'all' || (inspectionFilterTab === 'urgent' && (Date.now() - q.time) > 172800000)).length === 0 ? ( 
             <div className="bg-white rounded-2xl sm:rounded-[2rem] border border-dashed border-black/10 p-8 sm:p-16 text-center flex flex-col items-center justify-center gap-3 sm:gap-4">
                 <div className="w-16 h-16 sm:w-20 sm:h-20 bg-[#f5f5f7] rounded-full flex items-center justify-center"><CheckCircle size={32} className="text-emerald-400 opacity-50"/></div>
                 <p className="text-slate-400 font-bold italic text-sm sm:text-xl">ไม่มีงานรอตรวจสอบในหมวดหมู่นี้</p>
@@ -163,14 +192,14 @@ export default function DashboardOverview({
                     
                     return (
                       <div className="flex flex-col gap-6 w-full">
-                        {Object.entries(grouped).map(([plotId, items]) => (
+                        {Object.entries(grouped).map(([plotId, items]: any) => (
                           <div key={plotId} className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden w-full">
                             <div className="bg-slate-50 border-b border-black/5 px-4 py-3 flex items-center justify-between">
                               <h3 className="font-bold text-[#1d1d1f] flex items-center gap-2"><Home size={18} className="text-blue-500"/> แปลง {plotId}</h3>
                               <span className="text-xs font-bold bg-slate-200 text-slate-600 px-2 py-0.5 rounded-md">{items.length} งาน</span>
                             </div>
                             <div className="flex flex-col">
-                              {items.map((q, idx) => {
+                              {items.map((q: any, idx: number) => {
                                 const isUrgent = (Date.now() - q.time) > 172800000;
                                 const relatedProject = projects.find(p => p.name === q.project_name); const relatedPlot = plots.find(p => p.id === q.plot_id); const relatedTask = taskTemplates.find(t => t.id === q.task_template_id);
                                 const clickAction = () => { setSelectedProject(relatedProject); setSelectedPlot(relatedPlot); setSelectedTask(relatedTask); setTaskReturnView('dashboard'); setView('task-progress'); };

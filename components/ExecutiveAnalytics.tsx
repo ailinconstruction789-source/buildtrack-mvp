@@ -3,7 +3,7 @@ import { Activity, DollarSign, Wallet, Hammer, ChevronRight } from 'lucide-react
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 export default function ExecutiveAnalytics({
-  projects, plots, taskTemplates, schedules, latestUpdatesMap, foremenList, allUpdatesRecord
+  loading, projects, plots, taskTemplates, schedules, latestUpdatesMap, foremenList, allUpdatesRecord
 }: any) {
 
   // 💰 1. Financial Analytics
@@ -79,7 +79,7 @@ export default function ExecutiveAnalytics({
         score: qualityScore,
         reworks: totalReworks
       };
-    }).sort((a, b) => b.score - a.score);
+    }).sort((a: any, b: any) => b.score - a.score);
   }, [foremenList, plots, taskTemplates, allUpdatesRecord]);
 
   // 📈 3. S-Curve Data (Earned Value Management)
@@ -167,6 +167,16 @@ export default function ExecutiveAnalytics({
       </div>
 
       {/* 1. Top Section: Financial Metrics */}
+      {loading ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-10">
+          {[1,2,3,4].map(i => (
+            <div key={i} className="bg-white p-8 rounded-3xl border border-black/[0.03] shadow-[0_2px_10px_rgba(0,0,0,0.02)] flex flex-col justify-between h-[180px] animate-pulse">
+               <div className="flex items-center gap-2 mb-8"><div className="w-8 h-8 rounded-full bg-slate-100"></div><div className="w-24 h-4 bg-slate-100 rounded"></div></div>
+               <div><div className="w-3/4 h-10 bg-slate-100 rounded mb-2"></div><div className="w-1/2 h-3 bg-slate-100 rounded"></div></div>
+            </div>
+          ))}
+        </div>
+      ) : (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-10">
         <div className="bg-white p-8 rounded-3xl border border-black/[0.03] shadow-[0_2px_10px_rgba(0,0,0,0.02)] flex flex-col justify-between hover:shadow-[0_8px_20px_rgba(0,0,0,0.04)] transition-shadow duration-300">
           <div className="flex items-center gap-2 mb-8">
@@ -212,7 +222,22 @@ export default function ExecutiveAnalytics({
           </div>
         </div>
       </div>
+      )}
 
+      {loading ? (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="bg-white p-8 rounded-3xl border border-black/[0.03] shadow-[0_2px_10px_rgba(0,0,0,0.02)] animate-pulse h-[400px]">
+             <div className="h-6 w-1/3 bg-slate-100 rounded mb-8"></div>
+             <div className="w-full h-full bg-slate-50 rounded-xl"></div>
+          </div>
+          <div className="bg-white p-8 rounded-3xl border border-black/[0.03] shadow-[0_2px_10px_rgba(0,0,0,0.02)] animate-pulse h-[400px]">
+             <div className="flex justify-between mb-8"><div className="h-6 w-1/3 bg-slate-100 rounded"></div><div className="h-4 w-1/4 bg-slate-100 rounded"></div></div>
+             <div className="space-y-4">
+                {[1,2,3,4,5].map(i => <div key={i} className="w-full h-14 bg-slate-50 rounded-2xl"></div>)}
+             </div>
+          </div>
+        </div>
+      ) : (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* 2. Middle Section: Construction S-Curve */}
         <div className="bg-white p-8 rounded-3xl border border-black/[0.03] shadow-[0_2px_10px_rgba(0,0,0,0.02)]">
@@ -243,7 +268,7 @@ export default function ExecutiveAnalytics({
                   />
                   <Tooltip 
                     contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 8px 30px rgba(0,0,0,0.12)', padding: '16px' }}
-                    formatter={(value: number, name: string) => [`฿${value.toLocaleString()}`, name === 'PV' ? 'Planned Value (Budget)' : 'Earned Value (Actual WIP)']}
+                    formatter={(value: any, name: any) => [`฿${Number(value).toLocaleString()}`, name === 'PV' ? 'Planned Value (Budget)' : 'Earned Value (Actual WIP)']}
                     labelStyle={{ fontWeight: 'bold', color: '#1d1d1f', marginBottom: '8px' }}
                   />
                   <Legend 
@@ -314,6 +339,7 @@ export default function ExecutiveAnalytics({
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }
