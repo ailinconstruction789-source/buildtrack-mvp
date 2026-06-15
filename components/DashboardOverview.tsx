@@ -85,7 +85,7 @@ export default function DashboardOverview({
               const conf = proj.layout_data?.find((c: any) => c.type === 'config');
               setGridCols(conf?.cols || 40); setGridRows(conf?.rows || 24); setMapZoom(1);
               setSelectedProject(proj); setMapGrid(proj.layout_data?.filter((c: any) => c.type !== 'config') || []); setIsEditMapMode(false); setView('project-detail'); 
-          }} className="bg-white w-full p-5 sm:p-8 rounded-2xl sm:rounded-[2rem] border border-black/5 text-left hover:border-blue-500 hover:shadow-2xl hover:-translate-y-1 transition-all group relative overflow-hidden cursor-pointer">
+          }} className="premium-card w-full p-5 sm:p-8 text-left hover:border-blue-500 group relative overflow-hidden cursor-pointer">
             
             {/* 🌟 ปุ่มแก้ไขชื่อโครงการ (แสดงเฉพาะ Admin) */}
             {isAdmin && (
