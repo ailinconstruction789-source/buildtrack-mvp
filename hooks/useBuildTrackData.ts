@@ -173,18 +173,18 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
         supabase.from('defects').select('*').eq('plot_id', plotId).order('created_at', { ascending: false })
       ]);
 
-      setAssignments(prev => {
-        const others = prev.filter(a => a.plot_id !== plotId);
+      setAssignments((prev: any) => {
+        const others = prev.filter((a: any) => a.plot_id !== plotId);
         return [...others, ...(assignData || [])];
       });
 
-      setSchedules(prev => {
+      setSchedules((prev: any) => {
         const newSched = { ...prev };
         schedData?.forEach((s: any) => { newSched[`${s.plot_id}-${s.task_template_id}`] = s; });
         return newSched;
       });
 
-      setTaskDates(prev => {
+      setTaskDates((prev: any) => {
         const newDates = { ...prev };
         assignData?.forEach((a: any) => {
           newDates[`${a.plot_id}-${a.task_template_id}`] = { start: a.actual_start_date, end: a.actual_end_date };
@@ -192,7 +192,7 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
         return newDates;
       });
 
-      setLatestUpdatesMap(prev => {
+      setLatestUpdatesMap((prev: any) => {
         const newMap = { ...prev };
         assignData?.forEach((a: any) => {
           const key = `${a.plot_id}-${a.task_template_id}`;
@@ -222,13 +222,13 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
         return newMap;
       });
 
-      setAllUpdatesRecord(prev => {
-        const others = prev.filter(u => u.plot_id !== plotId);
+      setAllUpdatesRecord((prev: any) => {
+        const others = prev.filter((u: any) => u.plot_id !== plotId);
         return [...others, ...(updData || [])];
       });
 
-      setDefects(prev => {
-        const others = prev.filter(d => d.plot_id !== plotId);
+      setDefects((prev: any) => {
+        const others = prev.filter((d: any) => d.plot_id !== plotId);
         return [...others, ...(defData || [])];
       });
 
@@ -391,10 +391,10 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
     schedules, setSchedules,
     defects,
     setDefects,
-    notifications,
-    latestUpdatesMap,
-    taskDates,
-    allUpdatesRecord,
+    notifications, setNotifications,
+    latestUpdatesMap, setLatestUpdatesMap,
+    taskDates, setTaskDates,
+    allUpdatesRecord, setAllUpdatesRecord,
     fetchAllData,
     fetchPlotDetails,
     fetchOwnerAnalyticsData,

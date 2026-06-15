@@ -54,7 +54,8 @@ interface MapVisualizerProps {
   setIsPresentationOpen: (b: boolean) => void;
   setCurrentSlideIndex: (i: number) => void;
   handleTogglePlotCustomer?: (id: string, current: boolean) => void;
-  handleTogglePlotCompleted?: (id: string, current: boolean) => void;
+  handleTogglePlotCompleted?: (id: string, current: boolean, actualProgress: number, hasCustomer: boolean) => void;
+  loading?: boolean;
 }
 
 export default function MapVisualizer(props: MapVisualizerProps) {
@@ -153,7 +154,17 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                      )}
 
                      {/* 🌟 UX Blueprint Map 🌟 */}
-                     <div className="w-full overflow-auto pb-4 custom-scrollbar bg-slate-300 rounded-xl sm:rounded-3xl border-2 sm:border-4 border-slate-400 shadow-inner" style={{ height: isMobileLayout ? '350px' : '600px' }}>
+                     <div className="w-full overflow-auto pb-4 custom-scrollbar bg-slate-300 rounded-xl sm:rounded-3xl border-2 sm:border-4 border-slate-400 shadow-inner relative" style={{ height: isMobileLayout ? '350px' : '600px' }}>
+                       {props.loading && (
+                         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center p-4 sm:p-8 bg-slate-300/80 backdrop-blur-md">
+                           <div className="grid grid-cols-3 sm:grid-cols-4 gap-3 sm:gap-6 w-full max-w-2xl animate-pulse">
+                             {Array.from({length: 12}).map((_, i) => (
+                               <div key={i} className="aspect-square bg-slate-400/50 rounded-xl sm:rounded-2xl border-2 border-slate-400/30"></div>
+                             ))}
+                           </div>
+                           <p className="mt-8 text-slate-500 font-bold tracking-widest text-sm uppercase animate-pulse">Building Map...</p>
+                         </div>
+                       )}
                        <div 
                           className={`relative bg-slate-300 select-none origin-top-left transition-transform duration-200 ${isEditMapMode ? 'cursor-crosshair' : 'cursor-grab'}`} 
                           style={{ 
@@ -380,7 +391,7 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                                   <button onClick={(e) => { e.stopPropagation(); handleTogglePlotCustomer(plot.id, !!plot.has_customer); }} className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all border ${plot.has_customer ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100' : 'bg-[#f5f5f7] text-[#86868b] border-transparent hover:bg-slate-200'}`}>
                                     👤 {plot.has_customer ? 'มีลูกค้า' : 'ระบุลูกค้า'}
                                   </button>
-                                  <button onClick={(e) => { e.stopPropagation(); handleTogglePlotCompleted(plot.id, !!plot.is_completed); }} className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all border ${plot.is_completed ? 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100' : 'bg-[#f5f5f7] text-[#86868b] border-transparent hover:bg-slate-200'}`}>
+                                  <button onClick={(e) => { e.stopPropagation(); handleTogglePlotCompleted(plot.id, !!plot.is_completed, statusInfo.actual, !!plot.has_customer); }} className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all border ${plot.is_completed ? 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100' : 'bg-[#f5f5f7] text-[#86868b] border-transparent hover:bg-slate-200'}`}>
                                     🔑 {plot.is_completed ? 'โอนแล้ว' : 'พร้อมโอน'}
                                   </button>
                                 </div>

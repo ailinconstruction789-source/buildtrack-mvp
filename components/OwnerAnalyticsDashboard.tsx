@@ -72,7 +72,7 @@ export default function OwnerAnalyticsDashboard({
         totalReworks,
         defectCount
       };
-    }).sort((a, b) => b.onTimeRate - a.onTimeRate || a.totalReworks - b.totalReworks);
+    }).sort((a: any, b: any) => b.onTimeRate - a.onTimeRate || a.totalReworks - b.totalReworks);
   }, [foremenList, plots, taskTemplates, schedules, latestUpdatesMap, allUpdatesRecord, defects]);
 
   // 3. Defect Stats

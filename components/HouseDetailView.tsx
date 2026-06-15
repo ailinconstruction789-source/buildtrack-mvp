@@ -51,10 +51,11 @@ interface HouseDetailViewProps {
   setScheduleInputs: (v: any) => void;
   allUpdatesRecord: any[];
   handleTogglePlotCustomer: (plotId: any, currentStatus: boolean) => void;
-  handleTogglePlotCompleted: (plotId: any, currentStatus: boolean, actualProgress: number) => void;
+  handleTogglePlotCompleted: (plotId: any, currentStatus: boolean, actualProgress: number, hasCustomer: boolean) => void;
   getPlotOverallStatus: (plotId: any) => any;
   handleUploadOverviewImage: (file: File) => Promise<void>;
   togglePlotSaleStatus: (plotId: any, currentStatus: string, pausedAt: string | null) => Promise<boolean>;
+  loading?: boolean;
 }
 
 export default function HouseDetailView(props: HouseDetailViewProps) {
@@ -292,7 +293,28 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                            </tr>
                          </thead>
                          <tbody className={isMobileLayout ? 'block p-3 sm:p-0 bg-[#f5f5f7]' : ''}>
-                          {taskTemplates.filter(t => t.house_type_id === selectedPlot.house_type_id).map((task) => {
+                          {props.loading ? (
+                            Array.from({length: 6}).map((_, i) => (
+                               <React.Fragment key={`skel-${i}`}>
+                                  {/* Mobile Skeleton */}
+                                  <tr className={`bg-white border-b border-black/5 animate-pulse mb-3 rounded-xl overflow-hidden block shadow-sm ${isMobileLayout ? 'table-row block' : 'hidden'}`}>
+                                     <td className="p-4 block w-full">
+                                        <div className="flex justify-between mb-4"><div className="h-4 bg-slate-200 rounded w-1/2"></div><div className="h-4 bg-slate-200 rounded w-1/4"></div></div>
+                                        <div className="h-3 bg-slate-200 rounded w-full mb-2"></div>
+                                        <div className="h-8 bg-slate-200 rounded w-full mt-4"></div>
+                                     </td>
+                                  </tr>
+                                  {/* PC Skeleton */}
+                                  <tr className={`bg-white border-b border-black/5 animate-pulse ${isMobileLayout ? 'hidden' : 'table-row'}`}>
+                                    <td className="p-3 h-[120px] w-[280px] bg-white sticky left-0 shadow-[4px_0_10px_-4px_rgba(0,0,0,0.1)] z-20"><div className="h-4 bg-slate-200 rounded w-3/4 mb-2 mt-2"></div><div className="h-3 bg-slate-200 rounded w-1/2"></div></td>
+                                    <td className="p-3 w-[140px] sticky left-[280px] bg-white z-20"><div className="h-6 bg-slate-200 rounded w-full mt-2"></div></td>
+                                    <td className="p-3 w-[100px] sticky left-[420px] bg-white z-20"><div className="h-6 bg-slate-200 rounded w-full mt-2"></div></td>
+                                    <td className="p-3 w-[140px] sticky left-[520px] bg-white z-20 shadow-[6px_0_10px_-6px_rgba(0,0,0,0.1)]"><div className="h-6 bg-slate-200 rounded w-full mt-2"></div></td>
+                                    <td className="p-3"><div className="h-8 bg-slate-200 rounded-full w-[40%] mt-2"></div></td>
+                                  </tr>
+                               </React.Fragment>
+                            ))
+                          ) : taskTemplates.filter(t => t.house_type_id === selectedPlot.house_type_id).map((task) => {
                             const key             = `${selectedPlot.id}-${task.id}`;
                                     const isUpdatedToday = latestUpdatesMap[key]?.updated_at && new Date(latestUpdatesMap[key].updated_at).toDateString() === new Date().toDateString();
                                     const assignment      = assignments.find(a => a.task_template_id === task.id && a.plot_id === selectedPlot.id);

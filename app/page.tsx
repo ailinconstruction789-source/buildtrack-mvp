@@ -1999,6 +1999,7 @@ export default function ConstructionApp() {
               )}
               {/* 🏢 View: Dashboard */}
               <DashboardOverview
+                loading={loading}
                 view={view}
                 setView={setView}
                 isSiteEngineer={isSiteEngineer}
@@ -2253,6 +2254,7 @@ export default function ConstructionApp() {
                         latestUpdatesMap={latestUpdatesMap}
                       />
                       <ExecutiveAnalytics
+                        loading={loading}
                         projects={projects}
                         plots={plots}
                         taskTemplates={taskTemplates}
@@ -2421,6 +2423,7 @@ export default function ConstructionApp() {
               {/* 🗺️ View: Project Detail & Map Builder */}
               {view === 'project-detail' && selectedProject && (
                 <MapVisualizer
+                  loading={loading}
                   view={view} setView={setView} selectedProject={selectedProject}
                   isAdmin={isAdmin} currentUserRole={currentUserRole} isMobileLayout={isMobileLayout}
                   isEditMapMode={isEditMapMode} setIsEditMapMode={setIsEditMapMode}
@@ -2444,6 +2447,7 @@ export default function ConstructionApp() {
               {/* 📋 LEVEL 3: House Detail */}
               {view === 'house-detail' && selectedPlot && (
                 <HouseDetailView
+                  loading={loading}
                   view={view} setView={setView} selectedPlot={selectedPlot} selectedProject={selectedProject}
                   isMobileLayout={isMobileLayout} plotPlanStart={plotPlanStart} plotPlanEnd={plotPlanEnd}
                   daysElapsed={daysElapsed} totalPlannedDays={totalPlannedDays} daysRemaining={daysRemaining}
