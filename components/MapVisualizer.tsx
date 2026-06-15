@@ -155,16 +155,7 @@ export default function MapVisualizer(props: MapVisualizerProps) {
 
                      {/* 🌟 UX Blueprint Map 🌟 */}
                      <div className="w-full overflow-auto pb-4 custom-scrollbar bg-slate-300 rounded-xl sm:rounded-3xl border-2 sm:border-4 border-slate-400 shadow-inner relative" style={{ height: isMobileLayout ? '350px' : '600px' }}>
-                       {props.loading && (
-                         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center p-4 sm:p-8 bg-slate-300/80 backdrop-blur-md">
-                           <div className="grid grid-cols-3 sm:grid-cols-4 gap-3 sm:gap-6 w-full max-w-2xl animate-pulse">
-                             {Array.from({length: 12}).map((_, i) => (
-                               <div key={i} className="aspect-square bg-slate-400/50 rounded-xl sm:rounded-2xl border-2 border-slate-400/30"></div>
-                             ))}
-                           </div>
-                           <p className="mt-8 text-slate-500 font-bold tracking-widest text-sm uppercase animate-pulse">Building Map...</p>
-                         </div>
-                       )}
+
                        <div 
                           className={`relative bg-slate-300 select-none origin-top-left transition-transform duration-200 ${isEditMapMode ? 'cursor-crosshair' : 'cursor-grab'}`} 
                           style={{ 
@@ -276,6 +267,17 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                                  // ถ้าไม่ใช่ช่างที่ค้นหา: ปรับจางลงมากเป็นสีขาวดำ เพื่อขับช่างคนนั้นให้เด่น
                                  searchHighlightClass = "opacity-10 scale-95 grayscale pointer-events-none";
                               }
+                           } else {
+                              // ถ้าไม่ได้ค้นหาช่าง ให้ใส่สไตล์ Overdue
+                              const isOverdue = statusInfo.planned === 100 && statusInfo.actual < 100 && statusInfo.status !== 'ready_for_sale' && !plotInfo.is_completed;
+                              const isCritical = isOverdue && plotInfo.has_customer;
+
+                              if (isCritical) {
+                                  cardBorderClass = "bg-rose-50 border-rose-600 text-rose-900 shadow-[0_0_15px_rgba(225,29,72,0.6)] border-[3px]";
+                                  searchHighlightClass = "animate-pulse";
+                              } else if (isOverdue) {
+                                  cardBorderClass = "bg-orange-50 border-orange-500 text-orange-900 border-[2px]";
+                              }
                            }
 
                            return (
@@ -302,8 +304,31 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                                    <div className="flex items-center gap-0.5 sm:gap-1 relative z-10">
                                       <span className={`font-bold text-[10px] sm:text-sm ${isGrassPlanted ? 'bg-white/80 px-1.5 py-0.5 rounded shadow-sm' : ''}`}>{plotInfo.id}</span>
                                       {plotInfo.is_completed && <span className={`text-[8px] sm:text-[10px] ${isGrassPlanted ? 'bg-white/80 rounded-full shadow-sm px-0.5' : ''}`} title="สร้างเสร็จพร้อมโอน">🔑</span>}
-                                      {plotInfo.has_customer && <span className={`text-[8px] sm:text-[10px] ${isGrassPlanted ? 'bg-white/80 rounded-full shadow-sm px-0.5' : ''}`} title="มีลูกค้าจองแล้ว">👤</span>}
+                                      {plotInfo.has_customer && (
+                                         <span 
+                                            className={`text-[8px] sm:text-[10px] px-0.5 rounded-full transition-all ${
+                                               statusInfo.status === 'delayed' && !plotInfo.is_completed 
+                                               ? 'bg-orange-400 shadow-[0_0_8px_rgba(251,146,60,0.8)] animate-pulse border border-orange-300' 
+                                               : (isGrassPlanted ? 'bg-white/80 shadow-sm' : '')
+                                            }`} 
+                                            title={statusInfo.status === 'delayed' && !plotInfo.is_completed ? "มีลูกค้าจองแล้ว (งานล่าช้ากว่าแผน)" : "มีลูกค้าจองแล้ว"}
+                                         >
+                                            👤
+                                         </span>
+                                      )}
                                    </div>
+                                   
+                                   {/* 🌟 ไอคอนแจ้งเตือน Overdue 🌟 */}
+                                   {(!hasSearchedContractor) && (() => {
+                                      const isOverdue = statusInfo.planned === 100 && statusInfo.actual < 100 && statusInfo.status !== 'ready_for_sale' && !plotInfo.is_completed;
+                                      const isCritical = isOverdue && plotInfo.has_customer;
+                                      if (isCritical) {
+                                         return <div className="absolute top-0 right-0 bg-rose-600 text-white rounded-bl-lg px-1 py-0.5 text-[8px] sm:text-[9px] font-bold shadow-md z-30 flex items-center gap-0.5" title="เร่งด่วนพิเศษ! ลูกค้ารออยู่และเลยแผนแล้ว"><span className="text-[10px]">🚨</span> เร่งด่วน</div>;
+                                      } else if (isOverdue) {
+                                         return <div className="absolute top-0 right-0 bg-orange-500 text-white rounded-bl-lg px-1 py-0.5 text-[8px] sm:text-[9px] font-bold shadow z-30 flex items-center gap-0.5" title="เลยกำหนดแผนงาน"><span className="text-[10px]">⚠️</span> ล่าช้า</div>;
+                                      }
+                                      return null;
+                                   })()}
                                    
                                    {/* 🌟 🌟 ถ้ามีการค้นหาช่างและเจอแปลงของช่าง: ให้แถมป้ายชื่อช่างแปะไว้ตรงกลางผังเลย! 🌟 🌟 */}
                                    {hasSearchedContractor && isMatchContractor && (

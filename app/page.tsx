@@ -203,15 +203,15 @@ export default function ConstructionApp() {
 
           // คำนวณพยากรณ์ 4 ชั่วโมงข้างหน้า
           const currentHour = new Date().getHours();
-          const nextHours = wData.hourly.time.slice(currentHour + 1, currentHour + 5).map((time: string, idx: number) => ({
+          const nextHours = wData.hourly?.time?.slice(currentHour + 1, currentHour + 5).map((time: string, idx: number) => ({
             time: new Date(time).getHours() + ":00",
             temp: Math.round(wData.hourly.temperature_2m[currentHour + 1 + idx]),
             details: getWeatherDetails(wData.hourly.weather_code[currentHour + 1 + idx]),
             rainProb: wData.hourly.precipitation_probability[currentHour + 1 + idx]
-          }));
+          })) || [];
 
           // ระบบเตือนภัยหน้างาน (UV & Rain)
-          const currentUV = wData.hourly.uv_index[currentHour];
+          const currentUV = wData.hourly?.uv_index?.[currentHour] || 0;
           const willRain = nextHours.some((h: any) => h.rainProb > 50);
 
           let alert = null;
@@ -222,26 +222,47 @@ export default function ConstructionApp() {
           if (isMounted) {
             setWeatherInfo({
               location: placeName,
-              currentTemp: Math.round(wData.current.temperature_2m),
-              currentDetails: getWeatherDetails(wData.current.weather_code),
+              currentTemp: Math.round(wData.current?.temperature_2m || 0),
+              currentDetails: getWeatherDetails(wData.current?.weather_code || 0),
               hourly: nextHours,
               alert: alert
             });
           }
         } catch (e: any) {
-          if (e?.name !== 'AbortError') console.error("ดึงข้อมูลอากาศไม่สำเร็จ:", e);
+          if (e?.name !== 'AbortError') {
+            console.error("ดึงข้อมูลอากาศไม่สำเร็จ:", e);
+            if (isMounted) {
+              setWeatherInfo({
+                location: "ข้อมูลไม่พร้อม",
+                currentTemp: 0,
+                currentDetails: { icon: '🌤️', text: 'ไม่สามารถดึงข้อมูลได้' },
+                hourly: [],
+                alert: null
+              });
+            }
+          }
         }
       }, (error) => {
         if (!isMounted) return;
         console.warn("Geolocation access denied or failed:", error);
         setWeatherInfo({
-          location: "Bangkok",
+          location: "Bangkok (ค่าเริ่มต้น)",
           currentTemp: 30,
           currentDetails: { icon: '☀️', text: 'ไม่ได้ระบุตำแหน่ง' },
           hourly: [],
           alert: null
         });
-      });
+      }, { timeout: 10000, maximumAge: 60000 });
+    } else {
+      if (isMounted) {
+        setWeatherInfo({
+          location: "Bangkok (ค่าเริ่มต้น)",
+          currentTemp: 30,
+          currentDetails: { icon: '☀️', text: 'เบราว์เซอร์ไม่รองรับ GPS' },
+          hourly: [],
+          alert: null
+        });
+      }
     }
     return () => { isMounted = false; controller.abort(); };
   }, []);
@@ -1065,7 +1086,7 @@ export default function ConstructionApp() {
         }));
       }
       const actionLabel = progressValue === 100 ? 'ส่งงาน 100%' : 'อัปเดตงาน';
-      const { error } = await supabase.from('task_updates').insert([{ plot_id: selectedPlot.id, task_template_id: selectedTask.id, user_name: loggedInUser.username, role: currentUserRole, action: actionLabel, text_content: inputText || actionLabel, progress: progressValue, image_url: imageUrls.join(','), weather_info: weatherInfo ? `${weatherInfo.currentDetails.icon} ${weatherInfo.currentDetails.text} (${weatherInfo.currentTemp}°C)` : null }]);
+      const { error } = await supabase.from('task_updates').insert([{ plot_id: selectedPlot.id, task_template_id: selectedTask.id, user_name: loggedInUser.username, role: currentUserRole, action: actionLabel, text_content: inputText || actionLabel, progress: progressValue, is_completed: progressValue === 100, image_url: imageUrls.join(','), weather_info: weatherInfo ? `${weatherInfo.currentDetails.icon} ${weatherInfo.currentDetails.text} (${weatherInfo.currentTemp}°C)` : null }]);
       if (error) throw error;
 
       // 🌟 ดึงประวัติงานสดๆ ทันที เพื่ออัปเดต chat view ให้ผู้ใช้เห็นว่าส่งแล้ว (Instant UI Feedback)
@@ -1125,7 +1146,7 @@ export default function ConstructionApp() {
           return supabase.storage.from('task_images').getPublicUrl(path).data.publicUrl;
         }));
       }
-      const { error } = await supabase.from('task_updates').insert([{ plot_id: selectedPlot.id, task_template_id: selectedTask.id, user_name: loggedInUser.username, role: currentUserRole, action: actionLabel, text_content: inputText || (isApproved ? 'งานเรียบร้อยดี ตรวจผ่าน' : 'พบข้อบกพร่อง กรุณาแก้ไข'), progress: finalP, image_url: imageUrls.join(','), weather_info: weatherInfo ? `${weatherInfo.currentDetails.icon} ${weatherInfo.currentDetails.text} (${weatherInfo.currentTemp}°C)` : null }]);
+      const { error } = await supabase.from('task_updates').insert([{ plot_id: selectedPlot.id, task_template_id: selectedTask.id, user_name: loggedInUser.username, role: currentUserRole, action: actionLabel, text_content: inputText || (isApproved ? 'งานเรียบร้อยดี ตรวจผ่าน' : 'พบข้อบกพร่อง กรุณาแก้ไข'), progress: finalP, is_completed: finalP === 100, image_url: imageUrls.join(','), weather_info: weatherInfo ? `${weatherInfo.currentDetails.icon} ${weatherInfo.currentDetails.text} (${weatherInfo.currentTemp}°C)` : null }]);
       if (error) throw error;
       if (!isApproved) {
         const notifPayload = [];
@@ -1999,7 +2020,6 @@ export default function ConstructionApp() {
               )}
               {/* 🏢 View: Dashboard */}
               <DashboardOverview
-                loading={loading}
                 view={view}
                 setView={setView}
                 isSiteEngineer={isSiteEngineer}
@@ -2013,6 +2033,8 @@ export default function ConstructionApp() {
                 projects={projects}
                 plots={plots}
                 taskTemplates={taskTemplates}
+                schedules={schedules}
+                latestUpdatesMap={latestUpdatesMap}
                 loggedInUser={loggedInUser}
                 inspectionQueue={inspectionQueue}
                 inspectionFilterTab={inspectionFilterTab}
@@ -2966,12 +2988,10 @@ export default function ConstructionApp() {
                   <span className="text-[9px] font-black mt-1">ช่าง</span>
                 </button>
               )}
-              {isAdmin && (
-                <button onClick={() => handleLogout()} className={`flex flex-col items-center p-2 rounded-xl w-16 text-rose-600 hover:bg-rose-50'}`}>
-                  <LogOut size={20} className='fill-rose-100' />
-                  <span className="text-[9px] font-black mt-1">ออกระบบ</span>
-                </button>
-              )}
+              <button onClick={() => handleLogout()} className="flex flex-col items-center p-2 rounded-xl w-16 text-rose-600 hover:bg-rose-50">
+                <LogOut size={20} className="fill-rose-100" />
+                <span className="text-[9px] font-black mt-1">ออกระบบ</span>
+              </button>
             </nav>
           )}
         </div>

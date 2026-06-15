@@ -258,7 +258,8 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                      <div className="bg-[#f5f5f7] w-full overflow-x-auto custom-scrollbar border-t border-black/5" style={{ maxHeight: '800px', overflowY: 'auto' }}>
                        {isMobileLayout && <div className="text-center text-[10px] text-slate-400 font-bold py-2 bg-[#f5f5f7] border-b border-black/5">↔️ ปัดซ้าย-ขวา เพื่อดูตาราง ↔️</div>}
                          <table className={`text-left border-collapse w-full relative ${isMobileLayout ? 'block' : 'min-w-[1200px]'}`}>
-                         <thead className={`${isMobileLayout ? 'hidden' : 'sticky top-0 z-[60] bg-[#f5f5f7] shadow-sm text-[10px] sm:text-xs font-bold uppercase text-[#86868b] tracking-widest'}`}>
+                         {!isMobileLayout && (
+                         <thead className="sticky top-0 z-[60] bg-[#f5f5f7] shadow-sm text-[10px] sm:text-xs font-bold uppercase text-[#86868b] tracking-widest">
                            <tr>
                              <th className={`sticky left-0 bg-[#f5f5f7] z-[65] border-b border-r border-black/5 p-3 sm:p-5 ${isMobileLayout ? 'w-[220px] min-w-[220px] max-w-[220px]' : 'w-[280px] min-w-[280px] max-w-[280px]'} shadow-[4px_0_15px_-5px_rgba(0,0,0,0.1)]`}>Task Name</th>
                              <th className="sticky left-[220px] sm:left-[280px] bg-[#f5f5f7] z-[65] border-b border-r border-black/5 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.08)]">Start</th>
@@ -292,26 +293,31 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                  </th>
                            </tr>
                          </thead>
+                         )}
                          <tbody className={isMobileLayout ? 'block p-3 sm:p-0 bg-[#f5f5f7]' : ''}>
                           {props.loading ? (
                             Array.from({length: 6}).map((_, i) => (
                                <React.Fragment key={`skel-${i}`}>
                                   {/* Mobile Skeleton */}
-                                  <tr className={`bg-white border-b border-black/5 animate-pulse mb-3 rounded-xl overflow-hidden block shadow-sm ${isMobileLayout ? 'table-row block' : 'hidden'}`}>
+                                  {isMobileLayout && (
+                                  <tr className="bg-white border-b border-black/5 animate-pulse mb-3 rounded-xl overflow-hidden block shadow-sm table-row block">
                                      <td className="p-4 block w-full">
                                         <div className="flex justify-between mb-4"><div className="h-4 bg-slate-200 rounded w-1/2"></div><div className="h-4 bg-slate-200 rounded w-1/4"></div></div>
                                         <div className="h-3 bg-slate-200 rounded w-full mb-2"></div>
                                         <div className="h-8 bg-slate-200 rounded w-full mt-4"></div>
                                      </td>
                                   </tr>
+                                  )}
                                   {/* PC Skeleton */}
-                                  <tr className={`bg-white border-b border-black/5 animate-pulse ${isMobileLayout ? 'hidden' : 'table-row'}`}>
+                                  {!isMobileLayout && (
+                                  <tr className="bg-white border-b border-black/5 animate-pulse table-row">
                                     <td className="p-3 h-[120px] w-[280px] bg-white sticky left-0 shadow-[4px_0_10px_-4px_rgba(0,0,0,0.1)] z-20"><div className="h-4 bg-slate-200 rounded w-3/4 mb-2 mt-2"></div><div className="h-3 bg-slate-200 rounded w-1/2"></div></td>
                                     <td className="p-3 w-[140px] sticky left-[280px] bg-white z-20"><div className="h-6 bg-slate-200 rounded w-full mt-2"></div></td>
                                     <td className="p-3 w-[100px] sticky left-[420px] bg-white z-20"><div className="h-6 bg-slate-200 rounded w-full mt-2"></div></td>
                                     <td className="p-3 w-[140px] sticky left-[520px] bg-white z-20 shadow-[6px_0_10px_-6px_rgba(0,0,0,0.1)]"><div className="h-6 bg-slate-200 rounded w-full mt-2"></div></td>
                                     <td className="p-3"><div className="h-8 bg-slate-200 rounded-full w-[40%] mt-2"></div></td>
                                   </tr>
+                                  )}
                                </React.Fragment>
                             ))
                           ) : taskTemplates.filter(t => t.house_type_id === selectedPlot.house_type_id).map((task) => {
@@ -472,7 +478,8 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                   )}
 
                                   {/* 💻 2. โซน PC: ตาราง Gantt Chart (ซ่อนในมือถือ โชว์เฉพาะใน PC) */}
-                                  <tr className={`group hover:bg-slate-50/80 transition-colors bg-white cursor-pointer ${isMobileLayout ? 'hidden' : 'table-row'}`} onClick={(e: any) => { 
+                                  {!isMobileLayout && (
+                                  <tr className="group hover:bg-slate-50/80 transition-colors bg-white cursor-pointer table-row" onClick={(e: any) => { 
                                       const target = e.target as HTMLElement; 
                                       if (target) { 
                                         if (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'BUTTON') return; 
@@ -730,6 +737,7 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                        </div>
                                      </td>
                                </tr>
+                               )}
                                </React.Fragment>
                              )
                            })}
