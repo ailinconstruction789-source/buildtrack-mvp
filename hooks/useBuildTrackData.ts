@@ -28,12 +28,13 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
     let from = 0; let to = 999;
     let hasMore = true;
     while (hasMore) {
-      let query = supabase.from(table).select(projectName ? '*, plots!inner(project_name)' : '*').range(from, to);
-      if (projectName) {
-        query = query.eq('plots.project_name', projectName);
-      }
+      let query = supabase.from(table).select('*').range(from, to);
+      
       const { data, error } = await query;
-      if (error) break;
+      if (error) {
+        console.error(`Error in fetchWithoutLimit for table ${table}:`, error);
+        break;
+      }
       if (data && data.length > 0) {
         allData = [...allData, ...data];
         from += 1000; to += 1000;
@@ -97,6 +98,7 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
            plot_id: assign.plot_id,
            task_template_id: assign.task_template_id,
            progress: assign.current_progress || 0,
+           actual_end_date: assign.actual_end_date,
         }; 
         tDates[key] = { start: assign.actual_start_date, end: assign.actual_end_date };
       });
@@ -331,6 +333,52 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
     };
   }, [loggedInUser]);
 
+  const togglePlotSaleStatus = async (plotId: string, currentStatus: string, pausedAt: string | null) => {
+    try {
+      if (currentStatus === 'active' || !currentStatus) {
+        // Pause plot
+        const { error } = await supabase.from('plots').update({ 
+          sale_status: 'ready_for_sale', 
+          paused_for_sale_at: new Date().toISOString() 
+        }).eq('id', plotId);
+        if (error) throw error;
+      } else if (currentStatus === 'ready_for_sale') {
+        // Resume plot
+        if (pausedAt) {
+          const offsetMs = Date.now() - new Date(pausedAt).getTime();
+          
+          const { data: plotSchedules } = await supabase.from('plot_task_schedules').select('*').eq('plot_id', plotId);
+          if (plotSchedules) {
+            for (const sched of plotSchedules) {
+               const key = `${plotId}-${sched.task_template_id}`;
+               const progress = latestUpdatesMap[key]?.progress || 0;
+               if (progress < 100) {
+                 const newStart = new Date(new Date(sched.planned_start).getTime() + offsetMs).toISOString();
+                 const newEnd = new Date(new Date(sched.planned_end).getTime() + offsetMs).toISOString();
+                 await supabase.from('plot_task_schedules').update({
+                    planned_start: newStart,
+                    planned_end: newEnd
+                 }).eq('id', sched.id);
+               }
+            }
+          }
+        }
+        
+        const { error } = await supabase.from('plots').update({ 
+          sale_status: 'active', 
+          paused_for_sale_at: null 
+        }).eq('id', plotId);
+        if (error) throw error;
+      }
+      
+      await fetchAllData();
+      return true;
+    } catch (e) {
+      console.error("Error toggling sale status:", e);
+      return false;
+    }
+  };
+
   return {
     loading, setLoading,
     projects, setProjects,
@@ -342,6 +390,7 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
     assignments, setAssignments,
     schedules, setSchedules,
     defects,
+    setDefects,
     notifications,
     latestUpdatesMap,
     taskDates,
@@ -349,6 +398,7 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
     fetchAllData,
     fetchPlotDetails,
     fetchOwnerAnalyticsData,
-    fetchWithoutLimit
+    fetchWithoutLimit,
+    togglePlotSaleStatus
   };
 }

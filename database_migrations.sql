@@ -105,8 +105,12 @@ SELECT
     p.foreman_name,
     COUNT(t.id) AS total_tasks,
     COALESCE(SUM(pta.current_progress), 0) AS sum_progress,
+    COALESCE(SUM(t.cost), 0) AS total_cost,
     CASE 
-        WHEN COUNT(t.id) > 0 THEN ROUND(COALESCE(SUM(pta.current_progress), 0)::NUMERIC / COUNT(t.id)) 
+        WHEN COALESCE(SUM(t.cost), 0) > 0 THEN 
+            ROUND((SUM(pta.current_progress * t.cost) / SUM(t.cost))::NUMERIC)
+        WHEN COUNT(t.id) > 0 THEN 
+            ROUND(COALESCE(SUM(pta.current_progress), 0)::NUMERIC / COUNT(t.id)) 
         ELSE 0 
     END AS overall_progress
 FROM plots p
@@ -120,7 +124,10 @@ SELECT
     vpp.project_name,
     COUNT(vpp.plot_id) AS plot_count,
     CASE 
-        WHEN COUNT(vpp.plot_id) > 0 THEN ROUND(SUM(vpp.overall_progress)::NUMERIC / COUNT(vpp.plot_id)) 
+        WHEN SUM(vpp.total_cost) > 0 THEN 
+            ROUND((SUM(vpp.overall_progress * vpp.total_cost) / SUM(vpp.total_cost))::NUMERIC)
+        WHEN COUNT(vpp.plot_id) > 0 THEN 
+            ROUND(SUM(vpp.overall_progress)::NUMERIC / COUNT(vpp.plot_id)) 
         ELSE 0 
     END AS project_progress
 FROM vw_plot_progress vpp

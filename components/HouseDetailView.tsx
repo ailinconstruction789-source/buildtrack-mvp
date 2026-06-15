@@ -53,6 +53,8 @@ interface HouseDetailViewProps {
   handleTogglePlotCustomer: (plotId: any, currentStatus: boolean) => void;
   handleTogglePlotCompleted: (plotId: any, currentStatus: boolean, actualProgress: number) => void;
   getPlotOverallStatus: (plotId: any) => any;
+  handleUploadOverviewImage: (file: File) => Promise<void>;
+  togglePlotSaleStatus: (plotId: any, currentStatus: string, pausedAt: string | null) => Promise<boolean>;
 }
 
 export default function HouseDetailView(props: HouseDetailViewProps) {
@@ -69,16 +71,40 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
     getChartLeft, getChartWidth, assignments, taskDates,
     setUpdates, setProgressValue, isAdmin, isProcurement,
     setScheduleInputs, allUpdatesRecord,
-    handleTogglePlotCustomer, handleTogglePlotCompleted, getPlotOverallStatus
+    handleTogglePlotCustomer, handleTogglePlotCompleted, getPlotOverallStatus,
+    handleUploadOverviewImage, togglePlotSaleStatus
   } = props;
+
+  const currentPlotStatus = selectedPlot ? getPlotOverallStatus(selectedPlot.id) : null;
 
   return (
     <>
 {/* 📋 LEVEL 3: House Detail */}
                {view === 'house-detail' && selectedPlot && (
                  <div className="animate-in slide-in-from-right duration-300">
-                   <button onClick={() => setView('project-detail')} className="mb-4 sm:mb-6 text-xs sm:text-base font-bold text-blue-600 flex items-center gap-1.5 hover:-translate-x-1 transition-transform">← {isMobileLayout ? 'BACK' : `BACK TO ${selectedProject?.name}`}</button>
+                   {/* 📸 Overview Image Section */}
                    
+                   {/* 📸 Overview Image Section */}
+                   {selectedPlot.overview_image_url ? (
+                     <div className="mb-6 relative w-full h-48 sm:h-72 rounded-xl overflow-hidden shadow-lg group border border-slate-200">
+                       <img src={selectedPlot.overview_image_url} alt="Overview" className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
+                       <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                       <label className="absolute bottom-3 right-3 bg-white/90 hover:bg-white text-slate-800 p-2 sm:px-4 sm:py-2 rounded-full sm:rounded-lg cursor-pointer backdrop-blur-sm transition-all shadow-[0_4px_15px_rgba(0,0,0,0.2)] flex items-center gap-2 text-xs font-bold hover:scale-105">
+                          <Camera size={16}/> <span className="hidden sm:inline">เปลี่ยนภาพหน้างาน</span>
+                          <input type="file" accept="image/*" className="hidden" onChange={(e) => { if(e.target.files?.[0]) handleUploadOverviewImage(e.target.files[0]) }} />
+                       </label>
+                     </div>
+                   ) : (
+                     <div className="mb-6 w-full h-32 sm:h-48 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 flex flex-col items-center justify-center text-slate-500 hover:bg-blue-50 hover:border-blue-400 transition-all shadow-inner group">
+                       <ImageIcon size={32} className="mb-2 opacity-40 group-hover:opacity-60 transition-opacity group-hover:text-blue-500" />
+                       <p className="text-xs sm:text-sm font-bold mb-3">ยังไม่มีภาพรวมหน้างาน</p>
+                       <label className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg cursor-pointer transition-all shadow-md text-xs font-bold flex items-center gap-2 hover:shadow-lg hover:-translate-y-0.5">
+                          <Camera size={16}/> อัปโหลดภาพ
+                          <input type="file" accept="image/*" className="hidden" onChange={(e) => { if(e.target.files?.[0]) handleUploadOverviewImage(e.target.files[0]) }} />
+                       </label>
+                     </div>
+                   )}
+
                {/* 💬 LEVEL 4: Task Progress (ฉบับปรับปรุงฟอนต์ขนาดเท่าชื่องาน) */}
                 <div className="bg-slate-800 rounded-xl border-b-4 border-b-rose-600 shadow-lg p-3 text-white">
                   
@@ -90,7 +116,8 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                         <div className="flex items-center gap-2">
                            <h2 className="text-xl font-bold italic tracking-tighter">{selectedPlot.id}</h2>
                            {/* 🌟 ป้ายสถานะสำหรับบ้านเสร็จ และมีลูกค้า 🌟 */}
-                           {selectedPlot.is_completed && <span className="bg-emerald-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow-sm" title="สร้างเสร็จพร้อมโอน">🔑</span>}
+                           {selectedPlot.is_completed && currentPlotStatus?.actual === 100 && <span className="bg-emerald-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow-sm" title="สร้างเสร็จพร้อมโอน">🔑</span>}
+                           {selectedPlot.is_completed && currentPlotStatus?.actual < 100 && <span className="bg-purple-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow-sm" title="โอนแล้วแต่ยังเก็บงานไม่เสร็จ">🔑 โอนแล้ว-รอเก็บงาน</span>}
                            {selectedPlot.has_customer && <span className="bg-blue-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow-sm" title="มีลูกค้าจองแล้ว">👤</span>}
                         </div>
                         <p className="text-slate-400 font-bold uppercase text-[9px] italic">{selectedPlot.foreman || 'ไม่ระบุ'}</p>
@@ -122,7 +149,7 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
 
                     {/* ส่วนขวา: ปุ่มจัดการ */}
                     <div className="flex flex-col sm:flex-row gap-2 ml-auto items-end sm:items-center">
-                      {isAdmin && (
+                      {(isAdmin || isProjectPlanner) && (
                         <div className="flex gap-1.5">
                           <button 
                             onClick={() => handleTogglePlotCustomer(selectedPlot.id, selectedPlot.has_customer)} 
@@ -132,12 +159,23 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                           </button>
                           <button 
                             onClick={() => {
-                              const statusInfo = getPlotOverallStatus(selectedPlot.id);
-                              handleTogglePlotCompleted(selectedPlot.id, selectedPlot.is_completed, statusInfo.actual);
+                              handleTogglePlotCompleted(selectedPlot.id, selectedPlot.is_completed, currentPlotStatus.actual, selectedPlot.has_customer);
                             }} 
-                            className={`px-2.5 py-1.5 rounded text-[10px] sm:text-xs font-bold border transition-all flex items-center gap-1 shadow-sm ${selectedPlot.is_completed ? 'bg-emerald-600 border-emerald-500 text-white shadow-[0_0_10px_rgba(5,150,105,0.4)]' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-emerald-900/50 hover:text-emerald-400 hover:border-emerald-700'}`}
+                            disabled={!selectedPlot.has_customer && !selectedPlot.is_completed}
+                            title={!selectedPlot.has_customer && !selectedPlot.is_completed ? "ต้องระบุลูกค้าก่อนถึงจะโอนได้" : ""}
+                            className={`px-2.5 py-1.5 rounded text-[10px] sm:text-xs font-bold border transition-all flex items-center gap-1 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed ${selectedPlot.is_completed ? 'bg-emerald-600 border-emerald-500 text-white shadow-[0_0_10px_rgba(5,150,105,0.4)]' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-emerald-900/50 hover:text-emerald-400 hover:border-emerald-700'}`}
                           >
-                            🔑 {selectedPlot.is_completed ? 'บ้านเสร็จแล้ว' : 'พร้อมโอน'}
+                            🔑 {selectedPlot.is_completed ? (currentPlotStatus?.actual < 100 ? 'โอนแล้ว-รอเก็บงาน' : 'เสร็จสมบูรณ์') : 'พร้อมโอน'}
+                          </button>
+                          
+                          {/* 🌟 New Button for "Ready for Sale" Toggle 🌟 */}
+                          <button 
+                            onClick={() => togglePlotSaleStatus(selectedPlot.id, selectedPlot.sale_status, selectedPlot.paused_for_sale_at)} 
+                            disabled={selectedPlot.sale_status !== 'ready_for_sale' && currentPlotStatus?.actual < 85}
+                            title={selectedPlot.sale_status !== 'ready_for_sale' && currentPlotStatus?.actual < 85 ? "ความคืบหน้าต้องถึง 85% ถึงจะตั้งเป็นบ้านพร้อมขายได้" : ""}
+                            className={`px-2.5 py-1.5 rounded text-[10px] sm:text-xs font-bold border transition-all flex items-center gap-1 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed ${selectedPlot.sale_status === 'ready_for_sale' ? 'bg-amber-500 border-amber-400 text-white shadow-[0_0_10px_rgba(245,158,11,0.4)]' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-amber-900/50 hover:text-amber-400 hover:border-amber-700'}`}
+                          >
+                            {selectedPlot.sale_status === 'ready_for_sale' ? '✨ เริ่มงานตกแต่ง (ลูกค้ายืนยัน)' : '🏠 บ้านพร้อมขาย (หยุดเวลา)'}
                           </button>
                         </div>
                       )}
@@ -263,8 +301,37 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                             const plan  = schedules[key]  || {};
                             const dates = taskDates[key]  || {};
                             const tProgress = latestUpdatesMap[key]?.progress || 0;
+                            const tAction = latestUpdatesMap[key]?.action;
+                            const tRole = latestUpdatesMap[key]?.role;
+                            
+                            // Find the first time it reached 100% in the current streak
+                            let first100DateInStreak = null;
+                            const tUpdates = allUpdatesRecord
+                                .filter((u: any) => u.plot_id === selectedPlot.id && u.task_template_id === task.id)
+                                .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+                            
+                            for (let i = tUpdates.length - 1; i >= 0; i--) {
+                                if (tUpdates[i].progress < 100) break;
+                                first100DateInStreak = tUpdates[i].created_at || tUpdates[i].updated_at;
+                            }
 
                             const isTaskCompleted = tProgress === 100;
+                            let rawDateToUse = first100DateInStreak || dates?.end;
+                            
+                            const actualEndRaw = rawDateToUse ? new Date(rawDateToUse).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-';
+                            let actualEndUI = <div className="w-full text-[9px] sm:text-[11px] font-bold text-green-600 text-center">{actualEndRaw}</div>;
+                            
+                            if (tProgress === 100 && actualEndRaw !== '-') {
+                                if (tAction === 'QC อนุมัติ' || tAction === 'QC อนุมัติผ่าน' || (!task.require_qc && tAction === 'Site Engineer อนุมัติ')) {
+                                  actualEndUI = <div className="flex items-center justify-center gap-1 w-full text-[9px] sm:text-[11px] font-bold text-emerald-600 text-center"><span>{actualEndRaw}</span><span className="text-[7px] bg-emerald-100 text-emerald-800 px-1 rounded-sm whitespace-nowrap">✅ สำเร็จ</span></div>;
+                                } else if (tAction === 'Site Engineer อนุมัติ' && task.require_qc) {
+                                  actualEndUI = <div className="flex items-center justify-center gap-1 w-full text-[9px] sm:text-[11px] font-bold text-orange-600 text-center"><span>{actualEndRaw}</span><span className="text-[7px] bg-orange-100 text-orange-800 px-1 rounded-sm whitespace-nowrap">🔍 รอ QC</span></div>;
+                                } else if (tAction === 'ส่งงาน 100%' || tRole === 'Foreman') {
+                                  actualEndUI = <div className="flex items-center justify-center gap-1 w-full text-[9px] sm:text-[11px] font-bold text-yellow-600 text-center"><span>{actualEndRaw}</span><span className="text-[7px] bg-yellow-100 text-yellow-800 px-1 rounded-sm whitespace-nowrap">⏳ รอ SE</span></div>;
+                                }
+                            } else if (actualEndRaw !== '-') {
+                                actualEndUI = <div className="w-full text-[9px] sm:text-[11px] font-bold text-blue-600 text-center">-</div>;
+                            }
 
                             // Timestamps for Gantt bars
                             const aStartTs = dates?.start ? new Date(dates.start).getTime() : null;
@@ -549,9 +616,7 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                                 />
                                              </div>
                                              <div className="flex items-center justify-center">
-                                                <div className="w-full text-[9px] sm:text-[11px] font-bold text-green-600 text-center">
-                                                  {dates?.end ? new Date(dates.end).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
-                                                </div>
+                                                {actualEndUI}
                                              </div>
                                           </td>
                                        </>
@@ -612,9 +677,7 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                               </div>
                                             </div>
                                             <div className="flex items-center justify-center">
-                                              <div className="w-full text-[9px] sm:text-[11px] font-bold text-green-600 text-center">
-                                                {dates?.end ? new Date(dates.end).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
-                                              </div>
+                                              {actualEndUI}
                                             </div>
                                          </td>
                                        </>
@@ -624,8 +687,10 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                     {/* 🌟 3. บีบความสูงช่องกราฟฝั่งขวาลงให้เท่าฝั่งซ้าย และจัดตำแหน่งแท่งกราฟใหม่ 🌟 */}
                                     {/* 🌟 ปรับขยายความสูงช่องกราฟ ให้เท่ากับฝั่งซ้ายเป๊ะๆ */}
                                      <td className="border-b border-black/5 p-0 relative z-10 w-full" style={{ minWidth: `${totalChartDays * 36}px`, height: isMobileLayout ? '90px' : '100px' }}>
-                                       <div className="absolute inset-0 flex pointer-events-none z-0">
-                                          {timeMarkers.map((m: any, i: any) => ( <div key={i} className={`border-l h-full ${m.isMonth ? 'border-black/10 bg-slate-50/50' : 'border-slate-100'}`} style={{position: 'absolute', left: `${m.left}%`, width: `${(1 / totalChartDays) * 100}%`}}></div> ))}
+                                       <div className="absolute inset-0 pointer-events-none z-0" style={{ 
+                                            backgroundImage: `repeating-linear-gradient(to right, transparent, transparent calc(100% / ${totalChartDays} - 1px), #f1f5f9 calc(100% / ${totalChartDays} - 1px), #f1f5f9 calc(100% / ${totalChartDays}))`,
+                                            backgroundSize: `calc(100% / ${totalChartDays}) 100%`
+                                         }}>
                                           {todayTs >= chartStart && todayTs <= chartEnd && ( <div className="absolute top-0 bottom-0 border-l-2 sm:border-l-[3px] border-dashed border-rose-500/80 z-[15] pointer-events-none" style={{ left: `${getChartLeft(todayTs)}%` }}></div> )}
                                        </div>
                                        

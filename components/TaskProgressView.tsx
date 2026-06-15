@@ -73,7 +73,7 @@ export default function TaskProgressView(props: TaskProgressViewProps) {
     <>
 {view === 'task-progress' && selectedTask && (
                    <div className="animate-in slide-in-from-right duration-300">
-                       <button onClick={() => setView(taskReturnView)} className="mb-4 sm:mb-6 text-xs sm:text-base font-bold text-blue-600 flex items-center gap-1.5 hover:-translate-x-1 transition-transform">← {isMobileLayout ? 'BACK' : (taskReturnView === 'dashboard' ? 'BACK TO DASHBOARD' : 'BACK TO PLOT')}</button>
+                       {/* 🌟 Header Section 🌟 */}
                        <div className="bg-white rounded-2xl sm:rounded-[2.5rem] shadow-2xl border border-black/5 overflow-hidden flex flex-col h-[75vh] sm:h-[800px] relative border-b-8 border-b-blue-600">
                            <header className={`${isMobileLayout ? 'p-4' : 'p-6 sm:p-10'} bg-slate-800 text-white flex justify-between items-center shrink-0`}>
                                <div>

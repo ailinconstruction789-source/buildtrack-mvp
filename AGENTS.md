@@ -51,6 +51,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - **Subagent Delegation Limits:** 
   - ONLY spawn subagents for complex tasks that clearly benefit from parallel execution (e.g., refactoring 3 separate files at once).
   - DO NOT spawn subagents for trivial tasks that can be done sequentially in a few steps.
+  - **AVOID OVERWRITE CONFLICTS:** NEVER allow multiple subagents to modify the SAME file concurrently. If multiple tasks require changing the same file, the Manager must execute them sequentially, or first refactor the file into smaller components.
   - **NO RECURSIVE SPAWNING:** Subagents must NOT spawn their own subagents. They must complete their assigned task and report back to the Manager.
   - Limit the number of concurrent subagents to a reasonable amount (e.g., max 3-4 at a time) to prevent resource loops.
 - **Manager Responsibilities:**

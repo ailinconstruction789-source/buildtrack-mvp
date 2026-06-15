@@ -32,3 +32,7 @@ The team must ONLY analyze the code and write the report. They must NOT modify, 
 
 ### Non-destructive Verification
 - [ ] No changes have been made to any `.tsx`, `.ts`, `.js`, `.css`, or `.sql` files within the working directory.
+
+## Follow-up — 2026-06-15T02:22:59Z
+
+The server restarted and you were stopped. Please resume your comprehensive codebase review to find any bugs, UX/UI issues, or security flaws. The user is preparing to upload the project to GitHub. Finish generating the `code_review_report.md` artifact and report back when you are done.

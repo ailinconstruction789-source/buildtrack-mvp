@@ -79,7 +79,7 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                {view === 'project-detail' && selectedProject && (
                  <div className="animate-in slide-in-from-right duration-300">
                    <div className="flex justify-between items-end mb-4 sm:mb-6">
-                      <button onClick={() => setView('dashboard')} className="text-xs sm:text-base font-bold text-blue-600 flex items-center gap-1 sm:gap-2 hover:translate-x-[-4px] transition-transform">← {isMobileLayout ? 'BACK' : 'BACK TO PROJECTS'}</button>
+                      {/* 🗺️ Header Row */}
                       {isAdmin && (
                         <div className="flex flex-wrap justify-end gap-1.5 sm:gap-3">
                           <button onClick={() => setView('admin-plot')} className="flex items-center gap-1 sm:gap-2 px-2.5 sm:px-5 py-1.5 sm:py-3 rounded-lg sm:rounded-full font-bold text-[10px] sm:text-sm bg-white text-blue-600 border border-blue-200 hover:bg-blue-50 transition-colors shadow-sm sm:shadow-md"><PlusCircle size={14} className="sm:w-4 sm:h-4"/> เพิ่มแปลง</button>
@@ -153,15 +153,15 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                      )}
 
                      {/* 🌟 UX Blueprint Map 🌟 */}
-                     <div className="w-full overflow-auto pb-4 custom-scrollbar bg-[#f5f5f7] rounded-xl sm:rounded-3xl border-2 sm:border-4 border-black/10 shadow-inner" style={{ height: isMobileLayout ? '350px' : '600px' }}>
+                     <div className="w-full overflow-auto pb-4 custom-scrollbar bg-slate-300 rounded-xl sm:rounded-3xl border-2 sm:border-4 border-slate-400 shadow-inner" style={{ height: isMobileLayout ? '350px' : '600px' }}>
                        <div 
-                          className={`relative bg-[#f5f5f7] select-none origin-top-left transition-transform duration-200 ${isEditMapMode ? 'cursor-crosshair' : 'cursor-grab'}`} 
+                          className={`relative bg-slate-300 select-none origin-top-left transition-transform duration-200 ${isEditMapMode ? 'cursor-crosshair' : 'cursor-grab'}`} 
                           style={{ 
                              width: `${gridCols * 40}px`, 
                              height: `${gridRows * 40}px`, 
                              minWidth: '100%', 
                              transform: `scale(${mapZoom})`,
-                             backgroundImage: `radial-gradient(#cbd5e1 1.5px, transparent 1.5px)`,
+                             backgroundImage: `radial-gradient(#94a3b8 1.5px, transparent 1.5px)`,
                              backgroundSize: `40px 40px` // Dot grid pattern
                           }} 
                           onMouseLeave={handleMouseUp} onMouseUp={handleMouseUp}
@@ -192,7 +192,7 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                              const cellData = mapGrid.find(c => c.x === x && c.y === y && (c.type === 'plot' || c.type === 'road'));
                              
                              let baseStyles = 'border-r border-b border-transparent '; // Remove solid grid lines
-                             if (isEditMapMode && !cellData) baseStyles += 'hover:bg-blue-100/30 ';
+                             if (isEditMapMode && !cellData) baseStyles += 'hover:bg-slate-400/30 ';
 
                              if (cellData?.type === 'plot') {
                                const adj = getAdjacency(x, y, 'plot', cellData.plotId);
@@ -200,7 +200,7 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                                // Remove inner borders for contiguous plots
                                if (adj.hasTop) baseStyles += '!border-t-0 '; if (adj.hasBottom) baseStyles += '!border-b-0 '; if (adj.hasLeft) baseStyles += '!border-l-0 '; if (adj.hasRight) baseStyles += '!border-r-0 ';
                              } else if (cellData?.type === 'road') { 
-                               baseStyles = 'bg-slate-600 flex items-center justify-center border-slate-700 '; 
+                               baseStyles = 'bg-slate-500 flex items-center justify-center border-slate-600 '; 
                              }
 
                              return (
@@ -227,6 +227,21 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                            const latestUpdate = plotUpdates.length > 0 ? plotUpdates[plotUpdates.length - 1] : null;
                            const latestTask = latestUpdate ? taskTemplates.find((t: any) => t.id === latestUpdate.task_template_id) : null;
                            const latestTaskStr = latestTask ? `${latestTask.task_name} (${latestUpdate.progress}%)` : 'ยังไม่มีงานอัปเดต';
+
+                           // 🌿 ตรวจสอบสถานะงาน "งานปูหญ้า" ว่าเสร็จ 100% หรือไม่
+                           const grassTaskTemplates = taskTemplates?.filter((t: any) => t.task_name.includes('งานปูหญ้า')) || [];
+                           let isGrassPlanted = false;
+                           if (grassTaskTemplates.length > 0) {
+                              const grassTemplateIds = grassTaskTemplates.map((t: any) => String(t.id));
+                              const grassUpdates = plotUpdates.filter((u: any) => grassTemplateIds.includes(String(u.task_template_id)));
+                              if (grassUpdates.length > 0) {
+                                 const latestGrassUpdate = grassUpdates.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+                                 if (Number(latestGrassUpdate.progress) === 100) isGrassPlanted = true;
+                              } else {
+                                 const grassAssignment = assignments?.find((a: any) => String(a.plot_id) === String(plotInfo.id) && grassTemplateIds.includes(String(a.task_template_id)));
+                                 if (grassAssignment && Number(grassAssignment.current_progress) === 100) isGrassPlanted = true;
+                              }
+                           }
 
                            // ดักจับว่าแปลงนี้ใช้ช่างที่เรากำลังค้นหาอยู่หรือไม่
 
@@ -262,13 +277,21 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                                    </div>
                                 )}
 
-                                <div className={`w-full h-full border-[2px] sm:border-[3px] rounded-md sm:rounded-lg shadow-sm backdrop-blur-sm flex flex-col items-center justify-center relative transition-all group-hover:shadow-md group-hover:scale-[1.02] ${cardBorderClass}`}>
+                                <div className={`w-full h-full border-[2px] sm:border-[3px] rounded-md sm:rounded-lg shadow-sm backdrop-blur-sm flex flex-col items-center justify-center relative transition-all group-hover:shadow-md group-hover:scale-[1.02] ${cardBorderClass} overflow-hidden`}>
                                    
+                                    {/* 🌿 ลาย Grass Hatch ของ AutoCAD (งานปูหญ้าเสร็จ 100%) */}
+                                    {isGrassPlanted && (
+                                       <div className="absolute inset-0 pointer-events-none z-0 opacity-40" style={{ 
+                                          backgroundImage: `url("data:image/svg+xml;utf8,<svg width='40' height='40' xmlns='http://www.w3.org/2000/svg'><g stroke='%2316a34a' stroke-width='1.2' stroke-linecap='round' fill='none'><path d='M10,25 Q12,18 15,12 M10,25 Q15,22 20,18 M10,25 Q8,18 5,14' /><path d='M30,15 Q32,8 35,2 M30,15 Q35,12 40,8 M30,15 Q28,8 25,4' /></g></svg>")`,
+                                          backgroundSize: '30px 30px'
+                                       }}></div>
+                                    )}
+
                                    {/* แสดงชื่อแปลงเป็นหลัก */}
-                                   <div className="flex items-center gap-0.5 sm:gap-1">
-                                      <span className="font-bold text-[10px] sm:text-sm">{plotInfo.id}</span>
-                                      {plotInfo.is_completed && <span className="text-[8px] sm:text-[10px]" title="สร้างเสร็จพร้อมโอน">🔑</span>}
-                                      {plotInfo.has_customer && <span className="text-[8px] sm:text-[10px]" title="มีลูกค้าจองแล้ว">👤</span>}
+                                   <div className="flex items-center gap-0.5 sm:gap-1 relative z-10">
+                                      <span className={`font-bold text-[10px] sm:text-sm ${isGrassPlanted ? 'bg-white/80 px-1.5 py-0.5 rounded shadow-sm' : ''}`}>{plotInfo.id}</span>
+                                      {plotInfo.is_completed && <span className={`text-[8px] sm:text-[10px] ${isGrassPlanted ? 'bg-white/80 rounded-full shadow-sm px-0.5' : ''}`} title="สร้างเสร็จพร้อมโอน">🔑</span>}
+                                      {plotInfo.has_customer && <span className={`text-[8px] sm:text-[10px] ${isGrassPlanted ? 'bg-white/80 rounded-full shadow-sm px-0.5' : ''}`} title="มีลูกค้าจองแล้ว">👤</span>}
                                    </div>
                                    
                                    {/* 🌟 🌟 ถ้ามีการค้นหาช่างและเจอแปลงของช่าง: ให้แถมป้ายชื่อช่างแปะไว้ตรงกลางผังเลย! 🌟 🌟 */}
@@ -277,6 +300,8 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                                          👷‍♂️ {currentPlotAssignment.contractor_name.split(' ')[0]}
                                       </div>
                                    )}
+                                   
+                                </div>
                                    
                                    {/* Tooltip รายละเอียดเมื่อเอาเมาส์ชี้ (คงเดิมไว้ทั้งหมด) */}
                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-[160px] sm:w-[180px] bg-slate-900 text-white rounded-xl sm:rounded-2xl shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all p-3 sm:p-4 pointer-events-none z-[100] border border-slate-700">
@@ -305,7 +330,6 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                                       </div>
                                       <div className="absolute top-full left-1/2 -translate-x-1/2 border-[5px] sm:border-[6px] border-transparent border-t-slate-900"></div>
                                    </div>
-                                </div>
                              </div>
                            )
                          })}

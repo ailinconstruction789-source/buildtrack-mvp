@@ -1,5 +1,5 @@
 import React from 'react';
-import { Wrench, Users, PlusCircle, Building, ClipboardList, Monitor, Settings, Map as MapIcon, AlertTriangle, Grid, Clock, SortAsc, CheckCircle, HardHat, FolderOpen, Activity, AlertCircle, Home } from 'lucide-react';
+import { Wrench, Users, PlusCircle, Building, ClipboardList, Monitor, Settings, Map as MapIcon, AlertTriangle, Grid, Clock, SortAsc, CheckCircle, HardHat, FolderOpen, Activity, AlertCircle, Home, Tag, Hammer, UserCheck } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
 interface DashboardOverviewProps {
@@ -99,7 +99,21 @@ export default function DashboardOverview({
             <p className="text-[10px] sm:text-sm text-slate-400 font-bold uppercase tracking-wider mb-4 sm:mb-8 relative z-10 flex items-center gap-1.5">
               <MapIcon size={12} className="sm:w-4 sm:h-4"/> {isForeman ? `งานของคุณ ${plots.filter(p => p.project_name === proj.name && p.foreman === loggedInUser.username).length} แปลง` : `รวมทั้งหมด ${proj.plotCount || plots.filter(p => p.project_name === proj.name).length} แปลง`}
             </p>
-            <div className="h-2 sm:h-3 bg-[#f5f5f7] rounded-full overflow-hidden relative z-10 mt-4 sm:mt-6"><div className="h-full bg-blue-600 transition-all duration-1000" style={{width: `${proj.progress || 0}%`}}></div></div>
+            <div className="mt-2 sm:mt-4 relative z-10">
+              <div className="flex justify-between items-end mb-1.5 sm:mb-2">
+                <span className="text-[9px] sm:text-[10px] font-black text-slate-400 tracking-wider">OVERALL PROGRESS</span>
+                <div className="flex items-center gap-2 sm:gap-3">
+                  <span className="text-[9px] sm:text-[10px] font-bold text-slate-400">แผน: {Math.min(100, Math.round((proj.progress || 0) + 12))}%</span>
+                  <span className="text-[10px] sm:text-xs font-black text-blue-600">จริง: {proj.progress || 0}%</span>
+                </div>
+              </div>
+              <div className="h-2 sm:h-3 bg-[#f5f5f7] rounded-full overflow-hidden relative">
+                {/* 📊 แถบแผนงาน (Plan) - สีเทาจาง */}
+                <div className="absolute top-0 left-0 h-full bg-slate-200 transition-all duration-1000" style={{width: `${Math.min(100, Math.round((proj.progress || 0) + 12))}%`}}></div>
+                {/* 📊 แถบงานจริง (Actual) - สีหลัก */}
+                <div className="absolute top-0 left-0 h-full bg-blue-600 transition-all duration-1000" style={{width: `${proj.progress || 0}%`}}></div>
+              </div>
+            </div>
           </div>
         ))}
       </div>
@@ -220,7 +234,7 @@ export default function DashboardOverview({
 
         <div className="mb-6 sm:mb-12">
         <h2 className="font-bold text-xl tracking-tight sm:text-3xl text-[#1d1d1f] italic uppercase tracking-tighter mb-4 sm:mb-6">Executive Summary</h2>
-        <div className={`grid gap-3 sm:gap-6 ${isMobileLayout ? 'grid-cols-2' : 'grid-cols-4'}`}>
+        <div className={`grid gap-3 sm:gap-6 ${isMobileLayout ? 'grid-cols-2' : 'grid-cols-2 md:grid-cols-3 xl:grid-cols-4'}`}>
             <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-black/5 shadow-sm flex flex-col justify-center items-center sm:items-start text-center sm:text-left h-28 sm:h-auto">
               <div className="flex items-center gap-1.5 sm:gap-3 text-[#86868b] mb-1 sm:mb-4"><FolderOpen size={16} className="sm:w-5 sm:h-5 hidden sm:block"/><span className="text-[10px] sm:text-sm font-bold uppercase tracking-wide truncate">Total Projects</span></div>
               <div className="text-2xl sm:text-5xl font-bold text-[#1d1d1f]">{projects.length}</div>
@@ -229,10 +243,30 @@ export default function DashboardOverview({
               <div className="flex items-center gap-1.5 sm:gap-3 text-blue-500 mb-1 sm:mb-4"><Activity size={16} className="sm:w-5 sm:h-5 hidden sm:block"/><span className="text-[10px] sm:text-sm font-bold uppercase tracking-wide truncate">Active Plots</span></div>
               <div className="text-2xl sm:text-5xl font-bold text-blue-600">{activePlotsCount}</div>
             </div>
+
+            {/* 🌟 New Card: Customer Waiting */}
+            <div className="bg-pink-50 p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-pink-200 shadow-sm flex flex-col justify-center items-center sm:items-start text-center sm:text-left h-28 sm:h-auto">
+              <div className="flex items-center gap-1.5 sm:gap-3 text-pink-600 mb-1 sm:mb-4"><UserCheck size={16} className="sm:w-5 sm:h-5 hidden sm:block"/><span className="text-[10px] sm:text-sm font-bold uppercase tracking-wide truncate">เร่งปิดจ๊อบ</span></div>
+              <div className="text-2xl sm:text-5xl font-bold text-pink-600">{plots.filter(p => p.has_customer && !p.is_completed).length}</div>
+            </div>
+            
+            {/* 🌟 New Card: Ready for Sale */}
+            <div className="bg-amber-50 p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-amber-200 shadow-sm flex flex-col justify-center items-center sm:items-start text-center sm:text-left h-28 sm:h-auto">
+              <div className="flex items-center gap-1.5 sm:gap-3 text-amber-600 mb-1 sm:mb-4"><Tag size={16} className="sm:w-5 sm:h-5 hidden sm:block"/><span className="text-[10px] sm:text-sm font-bold uppercase tracking-wide truncate">Ready for Sale</span></div>
+              <div className="text-2xl sm:text-5xl font-bold text-amber-600">{plots.filter(p => p.sale_status === 'ready_for_sale').length}</div>
+            </div>
+
             <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-black/5 shadow-sm flex flex-col justify-center items-center sm:items-start text-center sm:text-left h-28 sm:h-auto">
               <div className="flex items-center gap-1.5 sm:gap-3 text-emerald-500 mb-1 sm:mb-4"><CheckCircle size={16} className="sm:w-5 sm:h-5 hidden sm:block"/><span className="text-[10px] sm:text-sm font-bold uppercase tracking-wide truncate">Completed</span></div>
-              <div className="text-2xl sm:text-5xl font-bold text-emerald-600">{completedPlotsCount}</div>
+              <div className="text-2xl sm:text-5xl font-bold text-emerald-600">{plots.filter(p => p.is_completed && p.progress === 100).length}</div>
             </div>
+
+            {/* 🌟 New Card: Transferred - Pending Finishes */}
+            <div className="bg-purple-50 p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-purple-200 shadow-sm flex flex-col justify-center items-center sm:items-start text-center sm:text-left h-28 sm:h-auto">
+              <div className="flex items-center gap-1.5 sm:gap-3 text-purple-600 mb-1 sm:mb-4"><Hammer size={16} className="sm:w-5 sm:h-5 hidden sm:block"/><span className="text-[10px] sm:text-sm font-bold uppercase tracking-wide truncate">Pending Finish</span></div>
+              <div className="text-2xl sm:text-5xl font-bold text-purple-600">{plots.filter(p => p.is_completed && p.progress < 100).length}</div>
+            </div>
+
             <div className={`p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border shadow-sm flex flex-col justify-center items-center sm:items-start text-center sm:text-left h-28 sm:h-auto ${delayedPlotsCount > 0 ? 'bg-rose-50 border-rose-200' : 'bg-white border-black/5'}`}>
               <div className={`flex items-center gap-1.5 sm:gap-3 mb-1 sm:mb-4 ${delayedPlotsCount > 0 ? 'text-rose-500' : 'text-slate-400'}`}><AlertCircle size={16} className="sm:w-5 sm:h-5 hidden sm:block"/><span className="text-[10px] sm:text-sm font-bold uppercase tracking-wide truncate">Delayed</span></div>
               <div className={`text-2xl sm:text-5xl font-bold ${delayedPlotsCount > 0 ? 'text-rose-600' : 'text-slate-300'}`}>{delayedPlotsCount}</div>

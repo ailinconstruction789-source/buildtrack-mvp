@@ -9,12 +9,14 @@ import MapVisualizer from '@/components/MapVisualizer';
 import HouseDetailView from '@/components/HouseDetailView';
 import TaskProgressView from '@/components/TaskProgressView';
 import OwnerAnalyticsDashboard from '@/components/OwnerAnalyticsDashboard';
+import ExecutiveAnalytics from '@/components/ExecutiveAnalytics';
+import AdminPlotPricing from '@/components/AdminPlotPricing';
 // ถอด browser-image-compression ออกเพื่อใช้ Native ป้องกัน Error
 import {
   LayoutDashboard, Map as MapIcon, Truck, ChevronRight, ClipboardList, Loader2,
   Send, Camera, CheckCircle, XCircle, UserCog, X, Maximize2, HardHat, PlusCircle, Settings, Building, FolderOpen, Users, Trash2, Search, Filter, LogOut, AlertTriangle, Eraser, Grid, Paintbrush, Clock, SortAsc,
   UserPlus, Phone, CalendarDays, Wrench, Bell, CalendarClock, TrendingUp, AlertCircle, BarChartHorizontal, Save, Calendar, Smartphone, Monitor, ZoomIn, ZoomOut,
-  PieChart, Home, Activity, Download, Copy, Pickaxe, ShieldAlert, Printer, CheckSquare, Square, ImageIcon
+  PieChart, Home, Activity, Download, Copy, Pickaxe, ShieldAlert, Printer, CheckSquare, Square, ImageIcon, Tag, Hammer, UserCheck, DollarSign, ArrowLeft
 } from 'lucide-react';
 
 // 🌟 ฟังก์ชันบีบอัดรูปภาพ Native — อยู่นอก component เพื่อไม่ให้ถูกสร้างใหม่ทุก render 🌟
@@ -82,7 +84,8 @@ export default function ConstructionApp() {
     allUpdatesRecord, setAllUpdatesRecord,
     fetchAllData,
     fetchPlotDetails,
-    fetchOwnerAnalyticsData
+    fetchOwnerAnalyticsData,
+    togglePlotSaleStatus
   } = useBuildTrackData(loggedInUser, selectedProject?.name);
 
 
@@ -340,7 +343,11 @@ export default function ConstructionApp() {
   const getPlotOverallStatus = (plotId: any) => {
     const plotInfo = plots.find(p => p.id === plotId); const plotTasks = taskTemplates.filter(t => t.house_type_id === plotInfo?.house_type_id);
     if (!plotTasks.length) return { actual: 0, planned: 0, status: 'none', label: 'ยังไม่มีงาน', colors: 'bg-white border-slate-300 text-slate-500' };
-    let totalActual = 0; let totalPlanned = 0; const today = Date.now();
+    let totalActual = 0; let totalPlanned = 0; 
+    
+    // 🌟 Override "today" if plot is paused for sale
+    const today = plotInfo?.sale_status === 'ready_for_sale' && plotInfo?.paused_for_sale_at ? new Date(plotInfo.paused_for_sale_at).getTime() : Date.now();
+      
     plotTasks.forEach(task => {
       const key = `${plotId}-${task.id}`; totalActual += (latestUpdatesMap[key]?.progress || 0); const plan = schedules[key]; let plannedProg = 0;
       if (plan && plan.planned_start && plan.planned_end) {
@@ -349,6 +356,10 @@ export default function ConstructionApp() {
       } totalPlanned += plannedProg;
     });
     const actualAvg = Math.round(totalActual / plotTasks.length); const plannedAvg = Math.round(totalPlanned / plotTasks.length);
+    
+    // 🌟 Override status if ready for sale
+    if (plotInfo?.sale_status === 'ready_for_sale') return { actual: actualAvg, planned: plannedAvg, status: 'ready_for_sale', label: 'พร้อมขาย/รอโอน', colors: 'bg-amber-100/90 border-amber-500 text-amber-800' };
+
     if (actualAvg === 0 && plannedAvg === 0) return { actual: actualAvg, planned: plannedAvg, status: 'none', label: 'รอดำเนินการ', colors: 'bg-white/90 border-slate-300 text-slate-500' };
     if (actualAvg >= 100 && plannedAvg >= 100) return { actual: actualAvg, planned: plannedAvg, status: 'completed', label: 'เสร็จสมบูรณ์', colors: 'bg-emerald-100/90 border-emerald-500 text-emerald-800' };
     if (actualAvg < plannedAvg - 10) return { actual: actualAvg, planned: plannedAvg, status: 'delayed', label: 'ล่าช้ากว่าแผน', colors: 'bg-rose-100/90 border-rose-500 text-rose-800' };
@@ -524,7 +535,7 @@ export default function ConstructionApp() {
 
   // 🌟 ฟังก์ชันจัดการงวดงาน (Task Templates)
   const [editingTaskHouseId, setEditingTaskHouseId] = useState('');
-  const [taskForm, setTaskForm] = useState({ id: '', task_name: '', task_order: '' });
+  const [taskForm, setTaskForm] = useState({ id: '', task_name: '', task_order: '', cost: '' });
   const [isEditingTask, setIsEditingTask] = useState(false);
 
   const handleSaveTask = async () => {
@@ -536,18 +547,18 @@ export default function ConstructionApp() {
       if (isEditingTask) {
         // อัปเดตงานเดิม
         const { error } = await supabase.from('task_templates')
-          .update({ task_name: taskForm.task_name.trim(), task_order: parseInt(taskForm.task_order) })
+          .update({ task_name: taskForm.task_name.trim(), task_order: parseInt(taskForm.task_order), cost: parseFloat(taskForm.cost) || 0 })
           .eq('id', taskForm.id);
         if (error) throw error;
         showAlert('สำเร็จ', 'แก้ไขงวดงานเรียบร้อยแล้ว');
       } else {
         // เพิ่มงานใหม่
         const { error } = await supabase.from('task_templates')
-          .insert([{ house_type_id: editingTaskHouseId, task_name: taskForm.task_name.trim(), task_order: parseInt(taskForm.task_order) }]);
+          .insert([{ house_type_id: editingTaskHouseId, task_name: taskForm.task_name.trim(), task_order: parseInt(taskForm.task_order), cost: parseFloat(taskForm.cost) || 0 }]);
         if (error) throw error;
         showAlert('สำเร็จ', 'เพิ่มงวดงานใหม่เรียบร้อยแล้ว');
       }
-      setTaskForm({ id: '', task_name: '', task_order: '' });
+      setTaskForm({ id: '', task_name: '', task_order: '', cost: '' });
       setIsEditingTask(false);
       await fetchAllData();
     } catch (e: any) {
@@ -847,19 +858,27 @@ export default function ConstructionApp() {
     setIsSubmitting(false);
   };
 
-  const handleTogglePlotCompleted = async (plotId: any, currentStatus: boolean, actualProgress: number) => {
-    if (!currentStatus && actualProgress < 90) {
-      return showAlert('ไม่อนุญาต ❌', 'ผลรวมความคืบหน้า (Actual) ต้องถึง 90% ขึ้นไป จึงจะสามารถมาร์คว่าสร้างเสร็จพร้อมโอนได้ครับ');
+  const handleTogglePlotCompleted = async (plotId: any, currentStatus: boolean, actualProgress: number, hasCustomer: boolean) => {
+    if (!currentStatus && !hasCustomer) {
+      return showAlert('ไม่อนุญาต ❌', 'ไม่สามารถโอนบ้านได้เนื่องจากแปลงนี้ยังไม่มีลูกค้าจองครับ (กรุณากดระบุลูกค้าก่อน)');
     }
     
-    showConfirm('ยืนยันสถานะ', currentStatus ? `ยกเลิกสถานะ "สร้างเสร็จ" ของแปลง ${plotId}?` : `ยืนยันว่าบ้านแปลง ${plotId} สร้างเสร็จพร้อมโอน (90%+) ใช่หรือไม่?`, async () => {
+    let confirmTitle = 'ยืนยันสถานะ';
+    let confirmMsg = currentStatus ? `ยกเลิกสถานะ "โอนแล้ว" ของแปลง ${plotId}?` : `ยืนยันว่าบ้านแปลง ${plotId} โอนกรรมสิทธิ์เรียบร้อยแล้ว ใช่หรือไม่?`;
+    
+    if (!currentStatus && actualProgress < 100) {
+      confirmTitle = '⚠️ ยืนยันการโอนก่อนเก็บงาน';
+      confirmMsg = `ความคืบหน้าการก่อสร้างเพิ่งถึง ${actualProgress}% คุณยืนยันที่จะตั้งสถานะว่า "โอนบ้านก่อนเก็บงาน" ใช่หรือไม่? (บ้านจะโชว์เป็น โอนแล้ว-รอเก็บงาน)`;
+    }
+    
+    showConfirm(confirmTitle, confirmMsg, async () => {
       setIsSubmitting(true);
       try {
         const { error } = await supabase.from('plots').update({ is_completed: !currentStatus }).eq('id', plotId);
         if (error) throw error;
         await fetchAllData();
         closeDialog();
-        showAlert('สำเร็จ', !currentStatus ? `แปลง ${plotId} สร้างเสร็จพร้อมโอนแล้ว! 🔑` : `ยกเลิกสถานะบ้านเสร็จของแปลง ${plotId} แล้ว`);
+        showAlert('สำเร็จ', !currentStatus ? `แปลง ${plotId} โอนกรรมสิทธิ์เรียบร้อยแล้ว! 🔑` : `ยกเลิกสถานะโอนแล้วของแปลง ${plotId} แล้ว`);
       } catch (e: any) { showAlert('ข้อผิดพลาด', e.message); }
       setIsSubmitting(false);
     });
@@ -872,7 +891,8 @@ export default function ConstructionApp() {
       plot: plot,
       id: plot.id,
       house_type_id: plot.house_type_id,
-      foreman_name: plot.foreman_name || ''
+      foreman_name: plot.foreman_name || '',
+      selling_price: plot.selling_price || ''
     });
   };
 
@@ -891,7 +911,8 @@ export default function ConstructionApp() {
         .update({
           id: newId,
           house_type_id: editPlotModal.house_type_id,
-          foreman_name: editPlotModal.foreman_name
+          foreman_name: editPlotModal.foreman_name,
+          selling_price: parseFloat(editPlotModal.selling_price) || 0
         })
         .eq('id', oldId);
       if (plotError) throw plotError;
@@ -1047,25 +1068,13 @@ export default function ConstructionApp() {
       const { error } = await supabase.from('task_updates').insert([{ plot_id: selectedPlot.id, task_template_id: selectedTask.id, user_name: loggedInUser.username, role: currentUserRole, action: actionLabel, text_content: inputText || actionLabel, progress: progressValue, image_url: imageUrls.join(','), weather_info: weatherInfo ? `${weatherInfo.currentDetails.icon} ${weatherInfo.currentDetails.text} (${weatherInfo.currentTemp}°C)` : null }]);
       if (error) throw error;
 
-      // 🌟 Restore original logic: Update Actual Start and Finish 🌟
-      const currentAssignment = assignments.find((a: any) => a.plot_id === selectedPlot.id && a.task_template_id === selectedTask.id);
-      const updatePayload: any = { current_progress: progressValue };
-      if (progressValue > 0 && (!currentAssignment || !currentAssignment.actual_start_date)) {
-        updatePayload.actual_start_date = new Date().toISOString();
-      }
-      if (progressValue === 100 && (!currentAssignment || !currentAssignment.actual_end_date)) {
-        updatePayload.actual_end_date = new Date().toISOString();
-      }
-      await supabase.from('plot_task_assignments').upsert({
-        plot_id: selectedPlot.id,
-        task_template_id: selectedTask.id,
-        ...updatePayload
-      }, { onConflict: 'plot_id,task_template_id' });
-
-      await fetchAllData();
-      // 🌟 ดึงประวัติงานสดๆ หลัง fetchAllData เพื่ออัปเดต chat view
+      // 🌟 ดึงประวัติงานสดๆ ทันที เพื่ออัปเดต chat view ให้ผู้ใช้เห็นว่าส่งแล้ว (Instant UI Feedback)
       const { data } = await supabase.from('task_updates').select('*').eq('task_template_id', selectedTask.id).eq('plot_id', selectedPlot.id).order('created_at', { ascending: true });
       setUpdates(data || []); setInputText(''); setSelectedFiles([]);
+      
+      // 🌟 โหลดข้อมูลภาพรวมเบื้องหลัง (Background refresh) โดยไม่ใช้ await เพื่อไม่ให้แชทกระตุก
+      // ให้ Database Trigger เป็นคนจัดการ update plot_task_assignments อัตโนมัติ (Single Source of Truth)
+      fetchAllData();
     } catch (e: any) { showAlert('Error', (e as Error).message); } setIsSending(false);
   };
   // 🗑️ ฟังก์ชันลบประวัติการรายงานงาน (Recall Post)
@@ -1080,10 +1089,7 @@ export default function ConstructionApp() {
           const { error } = await supabase.from('task_updates').delete().eq('id', updateId);
           if (error) throw error;
 
-          // 2. สั่งโหลดข้อมูลภาพรวมใหม่ทั้งหมดเพื่อรีเซ็ต % แผนผังและแดชบอร์ด
-          await fetchAllData();
-
-          // 3. ดึงประวัติแชทที่เหลือในงวดงานนี้กลับมาโชว์ใหม่
+          // 2. ดึงประวัติแชทที่เหลือในงวดงานนี้กลับมาโชว์ทันที (Instant UI Feedback)
           const { data } = await supabase.from('task_updates')
             .select('*')
             .eq('task_template_id', taskTemplateId)
@@ -1093,6 +1099,9 @@ export default function ConstructionApp() {
           setUpdates(data || []);
           // คำนวณค่า progress ปัจจุบันใหม่จากแถวสุดท้ายที่เหลืออยู่ (ถ้าไม่เหลือเลยให้เป็น 0)
           setProgressValue(data?.length ? data[data.length - 1].progress : 0);
+
+          // 3. สั่งโหลดข้อมูลภาพรวมใหม่ทั้งหมดอยู่เบื้องหลัง (Background refresh) เพื่อรีเซ็ต % แผนผังและแดชบอร์ด
+          fetchAllData();
 
           closeDialog();
           showAlert('สำเร็จ ✨', 'ลบประวัติการอัปเดตงานและปรับปรุงความคืบหน้าเรียบร้อยแล้วครับ');
@@ -1237,6 +1246,9 @@ export default function ConstructionApp() {
 
   const totalPlotsCount = plots.length;
   const completedPlotsCount = useMemo(() => plots.filter(p => p.progress === 100).length, [plots]);
+  const readyForSalePlotsCount = useMemo(() => plots.filter(p => p.sale_status === 'ready_for_sale').length, [plots]);
+  const pendingFinishesPlotsCount = useMemo(() => plots.filter(p => p.is_completed && p.progress < 100).length, [plots]);
+  const customerWaitingPlotsCount = useMemo(() => plots.filter(p => p.has_customer && !p.is_completed).length, [plots]);
   const delayedPlotsCount = useMemo(() => plots.filter(p => getPlotOverallStatus(p.id).status === 'delayed').length, [plots, latestUpdatesMap, schedules, taskTemplates]);
   const activePlotsCount = totalPlotsCount - completedPlotsCount;
   const totalReworks = (allUpdatesRecord || []).filter(u => u.action.includes('แจ้งแก้ไข') || u.action.includes('ไม่อนุมัติ')).length;
@@ -1671,6 +1683,8 @@ export default function ConstructionApp() {
                           <button onClick={() => setView('admin-house-types')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'admin-house-types' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Building size={18} /> จัดการแบบบ้าน</button>
                           {/* ✅ ปุ่มเมนูจัดการงวดงาน (Desktop) */}
                           <button onClick={() => setView('admin-tasks')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'admin-tasks' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><ClipboardList size={18} /> จัดการงวดงาน (Tasks)</button>
+                          {/* ✅ ปุ่มเมนูกำหนดราคาขาย (Desktop) */}
+                          <button onClick={() => setView('admin-pricing')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'admin-pricing' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><DollarSign size={18} /> กำหนดราคาขาย</button>
                           {/* ✅ ปุ่มเมนูตั้งค่า 2.5D สำหรับ Admin (Desktop) */}
                           <button onClick={() => setView('admin-visualizer')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'admin-visualizer' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Monitor size={18} /> ตั้งค่า 2.5D แบบบ้าน</button>
                         </>
@@ -1700,9 +1714,21 @@ export default function ConstructionApp() {
           {isMobileLayout && (
             <header className="bg-slate-900 text-white p-3 sm:p-4 shrink-0 shadow-md z-[100] relative">
               <div className="flex justify-between items-center">
-                <div className="flex items-center gap-2" onClick={() => setView('dashboard')}>
-                  <div className="bg-blue-600 p-1.5 rounded-lg"><LayoutDashboard size={18} /></div>
-                  <h1 className="font-black text-base sm:text-lg tracking-tighter uppercase italic">BuildTrack</h1>
+                <div className="flex items-center gap-2">
+                  {view === 'project-detail' || view === 'house-detail' || view === 'task-progress' ? (
+                     <button onClick={() => {
+                        if (view === 'project-detail') setView('dashboard');
+                        else if (view === 'house-detail') setView('project-detail');
+                        else if (view === 'task-progress') setView(taskReturnView);
+                     }} className="text-white flex items-center gap-1.5 font-bold text-xs sm:text-sm bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-full transition-colors">
+                        <ArrowLeft size={16} /> BACK
+                     </button>
+                  ) : (
+                    <div className="flex items-center gap-2 cursor-pointer" onClick={() => setView('dashboard')}>
+                      <div className="bg-blue-600 p-1.5 rounded-lg"><LayoutDashboard size={18} /></div>
+                      <h1 className="font-black text-base sm:text-lg tracking-tighter uppercase italic">BuildTrack</h1>
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 sm:gap-3">
                   <div className="relative">
@@ -1731,30 +1757,50 @@ export default function ConstructionApp() {
 
           {/* 💻 Top Header (Desktop) */}
           {!isMobileLayout && (
-            <header className="bg-white border-b border-slate-200 p-3 sm:p-4 shrink-0 shadow-sm z-[100] flex justify-end items-center gap-4 relative">
+            <header className="bg-white border-b border-slate-200 p-3 sm:p-4 shrink-0 shadow-sm z-[100] flex justify-between items-center gap-4 relative">
 
-              {/* 🔔 Notifications */}
-              <div className="relative">
-                <button onClick={() => setShowNotifs(!showNotifs)} className="relative p-2.5 bg-slate-100 text-slate-500 rounded-full hover:text-blue-600 hover:bg-blue-50 transition-colors"><Bell size={20} />{unreadNotifs.length > 0 && <span className="absolute top-0 right-0 w-3.5 h-3.5 bg-rose-500 rounded-full border-2 border-white"></span>}</button>
-                {showNotifs && (
-                  <div className="absolute top-14 right-0 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl border border-slate-200 z-50 overflow-hidden text-slate-800 animate-in slide-in-from-top-2">
-                    <div className="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center"><h3 className="font-black italic text-lg">Notifications</h3><span className="text-xs font-bold text-slate-500">{unreadNotifs.length} Unread</span></div>
-                    <div className="max-h-[60vh] overflow-y-auto custom-scrollbar">
-                      {notifications.length === 0 ? (<div className="p-8 text-center text-slate-400 text-sm font-bold flex flex-col items-center gap-2"><Bell size={32} className="opacity-20" /> ไม่มีการแจ้งเตือน</div>) : (
-                        notifications.map(n => (
-                          <div key={n.id} onClick={() => handleNotifClick(n)} className={`p-4 border-b border-slate-100 cursor-pointer hover:bg-slate-50 transition-colors ${n.is_read ? 'opacity-60 bg-white' : 'bg-rose-50/40'}`}>
-                            <div className="flex justify-between items-start mb-1 gap-2"><span className="text-[10px] font-black uppercase text-rose-500 tracking-widest bg-rose-100 px-2 py-0.5 rounded shrink-0">{n.plot_id}</span><span className="text-[10px] text-slate-400 font-bold whitespace-nowrap">{new Date(n.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })} • {new Date(n.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}</span></div>
-                            <p className="text-sm font-bold text-slate-700 leading-snug mt-2">{n.message}</p>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                )}
+              {/* 👈 BACK BUTTON AREA (Left Side) */}
+              <div className="flex items-center">
+                 {view === 'project-detail' && (
+                    <button onClick={() => setView('dashboard')} className="text-sm font-bold text-slate-500 hover:text-blue-600 flex items-center gap-1.5 hover:-translate-x-1 transition-transform">
+                       <ArrowLeft size={16}/> BACK TO PROJECTS
+                    </button>
+                 )}
+                 {view === 'house-detail' && (
+                    <button onClick={() => setView('project-detail')} className="text-sm font-bold text-slate-500 hover:text-blue-600 flex items-center gap-1.5 hover:-translate-x-1 transition-transform">
+                       <ArrowLeft size={16}/> BACK TO {selectedProject?.name || 'PROJECT'}
+                    </button>
+                 )}
+                 {view === 'task-progress' && (
+                    <button onClick={() => setView(taskReturnView)} className="text-sm font-bold text-slate-500 hover:text-blue-600 flex items-center gap-1.5 hover:-translate-x-1 transition-transform">
+                       <ArrowLeft size={16}/> BACK TO {taskReturnView === 'dashboard' ? 'DASHBOARD' : 'PLOT'}
+                    </button>
+                 )}
               </div>
-              {/* 🌤️ Weather Widget 2.0 (เวอร์ชันเพิ่มคำบอกสภาพอากาศปัจจุบัน) */}
-              <div className="relative z-50">
-                <button
+
+              {/* 🔔 Notifications & Right Menu */}
+              <div className="flex items-center gap-4 relative">
+                <div className="relative">
+                  <button onClick={() => setShowNotifs(!showNotifs)} className="relative p-2.5 bg-slate-100 text-slate-500 rounded-full hover:text-blue-600 hover:bg-blue-50 transition-colors"><Bell size={20} />{unreadNotifs.length > 0 && <span className="absolute top-0 right-0 w-3.5 h-3.5 bg-rose-500 rounded-full border-2 border-white"></span>}</button>
+                  {showNotifs && (
+                    <div className="absolute top-14 right-0 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl border border-slate-200 z-50 overflow-hidden text-slate-800 animate-in slide-in-from-top-2">
+                      <div className="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center"><h3 className="font-black italic text-lg">Notifications</h3><span className="text-xs font-bold text-slate-500">{unreadNotifs.length} Unread</span></div>
+                      <div className="max-h-[60vh] overflow-y-auto custom-scrollbar">
+                        {notifications.length === 0 ? (<div className="p-8 text-center text-slate-400 text-sm font-bold flex flex-col items-center gap-2"><Bell size={32} className="opacity-20" /> ไม่มีการแจ้งเตือน</div>) : (
+                          notifications.map(n => (
+                            <div key={n.id} onClick={() => handleNotifClick(n)} className={`p-4 border-b border-slate-100 cursor-pointer hover:bg-slate-50 transition-colors ${n.is_read ? 'opacity-60 bg-white' : 'bg-rose-50/40'}`}>
+                              <div className="flex justify-between items-start mb-1 gap-2"><span className="text-[10px] font-black uppercase text-rose-500 tracking-widest bg-rose-100 px-2 py-0.5 rounded shrink-0">{n.plot_id}</span><span className="text-[10px] text-slate-400 font-bold whitespace-nowrap">{new Date(n.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })} • {new Date(n.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}</span></div>
+                              <p className="text-sm font-bold text-slate-700 leading-snug mt-2">{n.message}</p>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {/* 🌤️ Weather Widget 2.0 (เวอร์ชันเพิ่มคำบอกสภาพอากาศปัจจุบัน) */}
+                <div className="relative z-50">
+                  <button
                   onClick={() => setShowWeatherWidget(!showWeatherWidget)}
                   className="hidden sm:flex items-center gap-2 bg-sky-50 hover:bg-sky-100 text-sky-700 px-3 py-1.5 rounded-xl border border-sky-200 shadow-sm ml-2 transition-all cursor-pointer"
                 >
@@ -1828,6 +1874,7 @@ export default function ConstructionApp() {
 
                 <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-blue-600 to-purple-600 flex items-center justify-center text-white font-black shadow-md">{loggedInUser.username.charAt(0)}</div>
                 <button onClick={handleLogout} className="ml-1 p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors" title="ออกจากระบบ"><LogOut size={18} /></button>
+              </div>
               </div>
             </header>
           )}
@@ -2043,6 +2090,20 @@ export default function ConstructionApp() {
                             <span className="font-bold text-xs sm:text-sm text-rose-700 flex items-center gap-1.5 sm:gap-2"><div className="w-2 h-2 sm:w-3 sm:h-3 rounded-full bg-rose-500"></div> ล่าช้ากว่าแผน</span>
                             <span className="font-black text-base sm:text-lg text-rose-700">{delayedPlotsCount} <span className="text-[10px] sm:text-xs text-rose-500 font-bold">({totalPlotsCount ? Math.round((delayedPlotsCount / totalPlotsCount) * 100) : 0}%)</span></span>
                           </div>
+                          
+                          {/* 🌟 New report items */}
+                          <div className="flex justify-between items-center bg-amber-50 p-2.5 sm:p-3 rounded-lg sm:rounded-xl border border-amber-100 mt-2 border-dashed">
+                            <span className="font-bold text-xs sm:text-sm text-amber-700 flex items-center gap-1.5 sm:gap-2"><Tag size={12} className="text-amber-500" /> บ้านพร้อมขาย (หยุดเวลา)</span>
+                            <span className="font-black text-base sm:text-lg text-amber-700">{readyForSalePlotsCount} <span className="text-[10px] sm:text-xs text-amber-500 font-bold">({totalPlotsCount ? Math.round((readyForSalePlotsCount / totalPlotsCount) * 100) : 0}%)</span></span>
+                          </div>
+                          <div className="flex justify-between items-center bg-purple-50 p-2.5 sm:p-3 rounded-lg sm:rounded-xl border border-purple-100 border-dashed">
+                            <span className="font-bold text-xs sm:text-sm text-purple-700 flex items-center gap-1.5 sm:gap-2"><Hammer size={12} className="text-purple-500" /> โอนแล้ว-รอเก็บงาน</span>
+                            <span className="font-black text-base sm:text-lg text-purple-700">{pendingFinishesPlotsCount} <span className="text-[10px] sm:text-xs text-purple-500 font-bold">({totalPlotsCount ? Math.round((pendingFinishesPlotsCount / totalPlotsCount) * 100) : 0}%)</span></span>
+                          </div>
+                          <div className="flex justify-between items-center bg-pink-50 p-2.5 sm:p-3 rounded-lg sm:rounded-xl border border-pink-100 border-dashed">
+                            <span className="font-bold text-xs sm:text-sm text-pink-700 flex items-center gap-1.5 sm:gap-2"><UserCheck size={12} className="text-pink-500" /> เร่งปิดจ๊อบ (มีลูกค้า)</span>
+                            <span className="font-black text-base sm:text-lg text-pink-700">{customerWaitingPlotsCount} <span className="text-[10px] sm:text-xs text-pink-500 font-bold">({totalPlotsCount ? Math.round((customerWaitingPlotsCount / totalPlotsCount) * 100) : 0}%)</span></span>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -2088,9 +2149,17 @@ export default function ConstructionApp() {
                                 <td className="p-3 sm:p-4 text-center font-bold text-slate-600 text-xs sm:text-sm">{proj.plotCount}</td>
                                 <td className="p-3 sm:p-4 text-center"><span className={`font-bold px-2 sm:px-3 py-1 rounded-md sm:rounded-lg text-[10px] sm:text-xs ${dCount > 0 ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-400'}`}>{dCount > 0 ? `${dCount} แปลง` : '-'}</span></td>
                                 <td className="p-3 sm:p-4 pr-4 sm:pr-8">
-                                  <div className="flex items-center gap-2 sm:gap-3">
-                                    <div className="flex-1 bg-slate-200 h-1.5 sm:h-2 rounded-full overflow-hidden"><div className="bg-blue-600 h-full" style={{ width: `${proj.progress}%` }}></div></div>
-                                    <span className="font-black text-xs sm:text-sm w-8 sm:w-10 text-right text-blue-600">{proj.progress}%</span>
+                                  <div className="flex flex-col gap-1 sm:gap-1.5 min-w-[120px]">
+                                    <div className="flex justify-between items-center text-[9px] sm:text-[10px]">
+                                      <span className="font-bold text-slate-400">แผน: {Math.min(100, Math.round((proj.progress || 0) + 12))}%</span>
+                                      <span className="font-black text-blue-600">จริง: {proj.progress || 0}%</span>
+                                    </div>
+                                    <div className="w-full bg-slate-100 h-1.5 sm:h-2 rounded-full overflow-hidden relative">
+                                      {/* Plan */}
+                                      <div className="absolute top-0 left-0 bg-slate-300 h-full transition-all duration-1000" style={{ width: `${Math.min(100, Math.round((proj.progress || 0) + 12))}%` }}></div>
+                                      {/* Actual */}
+                                      <div className="absolute top-0 left-0 bg-blue-600 h-full transition-all duration-1000" style={{ width: `${proj.progress || 0}%` }}></div>
+                                    </div>
                                   </div>
                                 </td>
                               </tr>
@@ -2101,18 +2170,98 @@ export default function ConstructionApp() {
                     </div>
                   </div>
 
-                  {/* 📊 🌟 Deep Analytics สำหรับ Owner & Admin 🌟 */}
-                  {(isAdmin || isOwner) && (
-                    <OwnerAnalyticsDashboard
-                      projects={projects}
-                      plots={plots}
-                      taskTemplates={taskTemplates}
-                      schedules={schedules}
-                      defects={defects}
-                      allUpdatesRecord={allUpdatesRecord}
-                      foremenList={foremenList}
-                      latestUpdatesMap={latestUpdatesMap}
-                    />
+                  {/* 🌟 New Section: Special Status Plots List */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 mb-6">
+                    <div className="bg-white rounded-2xl sm:rounded-[2rem] border border-amber-200 shadow-sm overflow-hidden">
+                      <div className="p-4 sm:p-6 border-b border-amber-100 bg-amber-50">
+                        <h3 className="font-black text-lg sm:text-xl text-amber-800 flex items-center gap-2"><Tag size={20} className="text-amber-600"/> รายชื่อบ้านพร้อมขาย</h3>
+                      </div>
+                      <div className="p-4 sm:p-6 max-h-[400px] overflow-y-auto custom-scrollbar">
+                        {plots.filter(p => p.sale_status === 'ready_for_sale').length === 0 ? (
+                          <p className="text-slate-400 font-bold text-sm text-center py-4">ไม่มีบ้านสถานะพร้อมขาย</p>
+                        ) : (
+                          <div className="flex flex-col gap-2">
+                            {plots.filter(p => p.sale_status === 'ready_for_sale').map((p, i) => (
+                              <div key={i} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100">
+                                <span className="font-bold text-slate-700 text-sm">{p.project_name}</span>
+                                <span className="font-black text-amber-600 bg-amber-100 px-3 py-1 rounded-lg text-sm">แปลง {p.id}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="bg-white rounded-2xl sm:rounded-[2rem] border border-purple-200 shadow-sm overflow-hidden">
+                      <div className="p-4 sm:p-6 border-b border-purple-100 bg-purple-50">
+                        <h3 className="font-black text-lg sm:text-xl text-purple-800 flex items-center gap-2"><Hammer size={20} className="text-purple-600"/> รายการโอนแล้ว-รอเก็บงาน</h3>
+                      </div>
+                      <div className="p-4 sm:p-6 max-h-[400px] overflow-y-auto custom-scrollbar">
+                        {plots.filter(p => p.is_completed && p.progress < 100).length === 0 ? (
+                          <p className="text-slate-400 font-bold text-sm text-center py-4">ไม่มีงานค้างเก็บหลังโอน</p>
+                        ) : (
+                          <div className="flex flex-col gap-2">
+                            {plots.filter(p => p.is_completed && p.progress < 100).map((p, i) => (
+                              <div key={i} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100">
+                                <div>
+                                  <span className="font-bold text-slate-700 text-sm block">{p.project_name}</span>
+                                  <span className="text-[10px] text-slate-400 font-bold">ความคืบหน้า {p.progress}%</span>
+                                </div>
+                                <span className="font-black text-purple-600 bg-purple-100 px-3 py-1 rounded-lg text-sm">แปลง {p.id}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="bg-white rounded-2xl sm:rounded-[2rem] border border-pink-200 shadow-sm overflow-hidden">
+                      <div className="p-4 sm:p-6 border-b border-pink-100 bg-pink-50">
+                        <h3 className="font-black text-lg sm:text-xl text-pink-800 flex items-center gap-2"><UserCheck size={20} className="text-pink-600"/> รายชื่อเร่งปิดจ๊อบ (มีลูกค้า)</h3>
+                      </div>
+                      <div className="p-4 sm:p-6 max-h-[400px] overflow-y-auto custom-scrollbar">
+                        {plots.filter(p => p.has_customer && !p.is_completed).length === 0 ? (
+                          <p className="text-slate-400 font-bold text-sm text-center py-4">ไม่มีบ้านที่ลูกค้ารอโอน</p>
+                        ) : (
+                          <div className="flex flex-col gap-2">
+                            {plots.filter(p => p.has_customer && !p.is_completed).map((p, i) => (
+                              <div key={i} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100">
+                                <div>
+                                  <span className="font-bold text-slate-700 text-sm block">{p.project_name}</span>
+                                  <span className="text-[10px] text-slate-400 font-bold">ความคืบหน้า {p.progress}%</span>
+                                </div>
+                                <span className="font-black text-pink-600 bg-pink-100 px-3 py-1 rounded-lg text-sm">แปลง {p.id}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 📊 🌟 Executive Analytics สำหรับผู้บริหารและทีมวางแผน 🌟 */}
+                  {(isAdmin || isOwner || isProjectPlanner || isSiteEngineer) && (
+                    <div className="space-y-8">
+                      <OwnerAnalyticsDashboard
+                        projects={projects}
+                        plots={plots}
+                        taskTemplates={taskTemplates}
+                        schedules={schedules}
+                        defects={defects}
+                        allUpdatesRecord={allUpdatesRecord}
+                        foremenList={foremenList}
+                        latestUpdatesMap={latestUpdatesMap}
+                      />
+                      <ExecutiveAnalytics
+                        projects={projects}
+                        plots={plots}
+                        taskTemplates={taskTemplates}
+                        schedules={schedules}
+                        latestUpdatesMap={latestUpdatesMap}
+                        foremenList={foremenList}
+                        allUpdatesRecord={allUpdatesRecord}
+                      />
+                    </div>
                   )}
                 </div>
               )}
@@ -2314,6 +2463,7 @@ export default function ConstructionApp() {
                   isAdmin={isAdmin} isProcurement={isProcurement} setScheduleInputs={setScheduleInputs} allUpdatesRecord={allUpdatesRecord}
                   handleTogglePlotCustomer={handleTogglePlotCustomer} handleTogglePlotCompleted={handleTogglePlotCompleted}
                   getPlotOverallStatus={getPlotOverallStatus} handleUploadOverviewImage={handleUploadOverviewImage}
+                  togglePlotSaleStatus={togglePlotSaleStatus}
                 />
               )}
 
@@ -2562,6 +2712,15 @@ export default function ConstructionApp() {
                   </div>
                 </div>
               )}
+              {/* 🌟 หน้าจอ ADMIN: กำหนดราคาขาย (PLOT PRICING) 🌟 */}
+              {view === 'admin-pricing' && isAdmin && (
+                <AdminPlotPricing 
+                  projects={projects} 
+                  plots={plots} 
+                  fetchAllData={fetchAllData} 
+                />
+              )}
+
               {/* 🌟 หน้าจอ ADMIN: จัดการแบบบ้าน (HOUSE TYPES) 🌟 */}
               {view === 'admin-house-types' && isAdmin && (
                 <div className="animate-in slide-in-from-bottom duration-300 max-w-4xl mx-auto mt-4 sm:mt-8 px-4 sm:px-0">
@@ -2639,7 +2798,7 @@ export default function ConstructionApp() {
                         value={editingTaskHouseId}
                         onChange={(e) => {
                           setEditingTaskHouseId(e.target.value);
-                          setTaskForm({ id: '', task_name: '', task_order: '' });
+                          setTaskForm({ id: '', task_name: '', task_order: '', cost: '' });
                           setIsEditingTask(false);
                         }}
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-bold text-slate-700 outline-none focus:border-rose-500"
@@ -2666,9 +2825,13 @@ export default function ConstructionApp() {
                               <label className="block text-[10px] font-black text-slate-500 mb-1 uppercase tracking-widest">ชื่องวดงาน</label>
                               <textarea placeholder="เช่น งานเทฐานราก, งานก่อผนัง..." value={taskForm.task_name} onChange={(e) => setTaskForm({ ...taskForm, task_name: e.target.value })} rows={2} className="w-full border border-slate-300 rounded-xl px-3 py-2.5 font-bold text-sm outline-none focus:border-rose-500 resize-none" />
                             </div>
+                            <div>
+                              <label className="block text-[10px] font-black text-slate-500 mb-1 uppercase tracking-widest">มูลค่างาน / ต้นทุน (บาท)</label>
+                              <input type="number" placeholder="เช่น 50000" value={taskForm.cost} onChange={(e) => setTaskForm({ ...taskForm, cost: e.target.value })} className="w-full border border-slate-300 rounded-xl px-3 py-2.5 font-bold text-sm outline-none focus:border-rose-500" />
+                            </div>
                             <div className="flex gap-2 pt-2">
                               {isEditingTask && (
-                                <button onClick={() => { setTaskForm({ id: '', task_name: '', task_order: '' }); setIsEditingTask(false); }} className="bg-slate-200 text-slate-600 px-3 py-2 rounded-xl font-bold text-xs hover:bg-slate-300">ยกเลิก</button>
+                                <button onClick={() => { setTaskForm({ id: '', task_name: '', task_order: '', cost: '' }); setIsEditingTask(false); }} className="bg-slate-200 text-slate-600 px-3 py-2 rounded-xl font-bold text-xs hover:bg-slate-300">ยกเลิก</button>
                               )}
                               <button onClick={handleSaveTask} disabled={isSubmitting} className="flex-1 bg-rose-600 text-white font-black py-2.5 rounded-xl text-xs shadow-md hover:bg-rose-700 flex justify-center items-center gap-1.5">
                                 {isSubmitting ? <Loader2 className="animate-spin" size={14} /> : (isEditingTask ? 'บันทึกการแก้ไข' : 'เพิ่มงาน')}
@@ -2691,10 +2854,13 @@ export default function ConstructionApp() {
                                     <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center font-black text-slate-500 shrink-0 text-xs">
                                       {task.task_order}
                                     </div>
-                                    <h4 className="font-bold text-slate-700 text-sm truncate">{task.task_name}</h4>
+                                    <div className="truncate">
+                                      <h4 className="font-bold text-slate-700 text-sm truncate">{task.task_name}</h4>
+                                      <p className="text-[10px] text-slate-500 font-bold mt-0.5">ต้นทุน: {Number(task.cost || 0).toLocaleString()} ฿</p>
+                                    </div>
                                   </div>
                                   <div className="flex gap-1.5 shrink-0 opacity-100 lg:opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <button onClick={() => { setTaskForm({ id: task.id, task_name: task.task_name, task_order: task.task_order }); setIsEditingTask(true); }} className="p-2 bg-slate-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"><Settings size={16} /></button>
+                                    <button onClick={() => { setTaskForm({ id: task.id, task_name: task.task_name, task_order: task.task_order, cost: task.cost || '' }); setIsEditingTask(true); }} className="p-2 bg-slate-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"><Settings size={16} /></button>
                                     <button onClick={() => handleDeleteTask(task)} className="p-2 bg-slate-50 text-rose-500 rounded-lg hover:bg-rose-100 transition-colors"><Trash2 size={16} /></button>
                                   </div>
                                 </div>
@@ -3128,8 +3294,10 @@ export default function ConstructionApp() {
                 <ChevronRight size={32} />
               </button>
 
-              {/* Presentation Slide Card (16:9) */}
-              <div className="bg-[#f5f5f7] w-full max-w-7xl aspect-[4/3] sm:aspect-[16/9] rounded-2xl sm:rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.5)] flex flex-col sm:flex-row overflow-hidden border border-slate-800/50 max-h-full">
+              {/* Presentation Slide Card (Fill Screen) */}
+              <div 
+                className={`bg-[#f5f5f7] rounded-2xl sm:rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.5)] flex flex-col sm:flex-row overflow-hidden border border-slate-800/50 ${isMobileLayout ? 'w-full aspect-[4/3] max-h-full' : 'w-[94vw] h-[88vh] max-w-none max-h-none'}`}
+              >
 
                 {/* Left Panel: Table Summary (60%) */}
                 <div className="w-full sm:w-7/12 bg-white p-6 sm:p-10 flex flex-col justify-between shrink-0 overflow-y-auto custom-scrollbar shadow-[10px_0_20px_rgba(0,0,0,0.03)] z-10">
@@ -3195,7 +3363,31 @@ export default function ConstructionApp() {
                                 const planStart = schedPlan?.planned_start ? new Date(schedPlan.planned_start).toLocaleDateString('th-TH') : '-';
                                 const planEnd = schedPlan?.planned_end ? new Date(schedPlan.planned_end).toLocaleDateString('th-TH') : '-';
                                 const actualStart = matchedAssign?.actual_start_date ? new Date(matchedAssign.actual_start_date).toLocaleDateString('th-TH') : '-';
-                                const actualEnd = matchedAssign?.actual_end_date ? new Date(matchedAssign.actual_end_date).toLocaleDateString('th-TH') : '-';
+                                
+                                let first100DateInStreak = null;
+                                for (let i = 0; i < specificTaskUpdates.length; i++) {
+                                    if (specificTaskUpdates[i].progress < 100) break;
+                                    first100DateInStreak = specificTaskUpdates[i].created_at || specificTaskUpdates[i].updated_at;
+                                }
+
+                                let rawActualEndToUse = first100DateInStreak || matchedAssign?.actual_end_date;
+                                const actualEndRaw = rawActualEndToUse ? new Date(rawActualEndToUse).toLocaleDateString('th-TH') : '-';
+                                
+                                // Dynamic Actual Finish Date Logic
+                                let actualEndUI = <div className="text-[10px] sm:text-[11px] font-bold text-slate-400 whitespace-nowrap bg-slate-50 px-2 py-0.5 rounded w-[90px] text-center">-</div>;
+                                if (taskProgress === 100 && actualEndRaw !== '-') {
+                                    const tTemplate = taskTemplates.find(t => t.id === taskId);
+                                    if (taskAction === 'QC อนุมัติ' || taskAction === 'QC อนุมัติผ่าน' || (!tTemplate?.require_qc && taskAction === 'Site Engineer อนุมัติ')) {
+                                      actualEndUI = <div className="flex items-center justify-center gap-1 text-[10px] sm:text-[11px] font-bold text-emerald-700 whitespace-nowrap bg-emerald-50 px-2 py-0.5 rounded w-[110px] text-center"><span>{actualEndRaw}</span><span className="text-[8px] bg-emerald-200 text-emerald-800 px-1 rounded-sm">✅ สำเร็จ</span></div>;
+                                    } else if (taskAction === 'Site Engineer อนุมัติ' && tTemplate?.require_qc) {
+                                      actualEndUI = <div className="flex items-center justify-center gap-1 text-[10px] sm:text-[11px] font-bold text-orange-700 whitespace-nowrap bg-orange-50 px-2 py-0.5 rounded w-[110px] text-center"><span>{actualEndRaw}</span><span className="text-[8px] bg-orange-200 text-orange-800 px-1 rounded-sm">🔍 รอ QC</span></div>;
+                                    } else if (taskAction === 'ส่งงาน 100%' || latestTaskUpdate?.role === 'Foreman') {
+                                      actualEndUI = <div className="flex items-center justify-center gap-1 text-[10px] sm:text-[11px] font-bold text-yellow-700 whitespace-nowrap bg-yellow-50 px-2 py-0.5 rounded w-[110px] text-center"><span>{actualEndRaw}</span><span className="text-[8px] bg-yellow-200 text-yellow-800 px-1 rounded-sm">⏳ รอ SE</span></div>;
+                                    } else {
+                                      actualEndUI = <div className="text-[10px] sm:text-[11px] font-bold text-blue-700 whitespace-nowrap bg-blue-50 px-2 py-0.5 rounded w-[90px] text-center">{actualEndRaw}</div>;
+                                    }
+                                }
+
 
                                 const calcDays = (start: string | null, end: string | null) => {
                                    if (!start || !end) return null;
@@ -3283,7 +3475,7 @@ export default function ConstructionApp() {
                                     <td className="p-2 align-middle">
                                       <div className="flex flex-col justify-center items-center gap-2">
                                         <div className="text-[10px] sm:text-[11px] font-medium text-slate-600 whitespace-nowrap bg-slate-50 px-2 py-0.5 rounded w-[90px] text-center">{planEnd}</div>
-                                        <div className="text-[10px] sm:text-[11px] font-bold text-blue-700 whitespace-nowrap bg-blue-50 px-2 py-0.5 rounded w-[90px] text-center">{actualEnd}</div>
+                                        {actualEndUI}
                                       </div>
                                     </td>
                                   </tr>
@@ -3311,7 +3503,18 @@ export default function ConstructionApp() {
 
                 {/* Right Panel: Image Gallery (40%) */}
                 <div className="w-full sm:w-5/12 bg-[#f5f5f7] p-6 sm:p-8 flex flex-col relative overflow-y-auto custom-scrollbar">
-                  <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2 text-base sm:text-lg shrink-0 tracking-tight"><Camera className="text-slate-400" /> รูปล่าสุดหน้างาน (Max 6)</h3>
+                  
+                  {/* ภาพรวมหน้าบ้าน (Overview Image) */}
+                  {currentPlot.overview_image_url && (
+                    <div className="mb-6 shrink-0 relative w-full h-40 sm:h-56 rounded-2xl overflow-hidden shadow-md border border-slate-200 group cursor-pointer" onClick={() => setFullImageUrl(currentPlot.overview_image_url)}>
+                      <img src={currentPlot.overview_image_url} alt="Overview" className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
+                      <div className="absolute bottom-3 left-3 bg-white/90 text-slate-800 px-3 py-1.5 rounded-lg backdrop-blur-sm shadow-sm text-[10px] font-bold flex items-center gap-1.5">
+                        <ImageIcon size={14}/> ภาพหน้าบ้าน
+                      </div>
+                    </div>
+                  )}
+
+                  <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2 text-base sm:text-lg shrink-0 tracking-tight"><Camera className="text-slate-400" /> รูปอัปเดตรายงวดงาน</h3>
                   {plotImages.length > 0 ? (
                     <div className="flex-1 flex flex-col">
                       <div className="grid grid-cols-2 gap-2 sm:gap-3 auto-rows-max">
