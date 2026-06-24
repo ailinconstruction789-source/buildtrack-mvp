@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Calendar, Phone, HardHat, AlertTriangle, CheckCircle, PackageCheck, CloudRain, ChevronLeft, ChevronRight, User, Home, Clock } from 'lucide-react';
 
 interface ContractorScheduleViewProps {
@@ -25,6 +25,30 @@ const ContractorScheduleView = function ContractorScheduleView({
 
   const [currentWeekOffset, setCurrentWeekOffset] = useState(0);
   const [checklists, setChecklists] = useState<Record<string, boolean>>({});
+  
+  // Mobile Swipe State
+  const [activeDayIdx, setActiveDayIdx] = useState(0);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    if (window.innerWidth >= 768) return;
+    const container = e.currentTarget;
+    const scrollLeft = container.scrollLeft;
+    const width = container.clientWidth;
+    // + gap is handled roughly by rounding
+    const newIdx = Math.round(scrollLeft / width);
+    if (newIdx !== activeDayIdx && newIdx >= 0 && newIdx < 7) {
+      setActiveDayIdx(newIdx);
+    }
+  };
+
+  const scrollTo = (idx: number) => {
+    setActiveDayIdx(idx);
+    const container = scrollContainerRef.current;
+    if (container && container.children[idx]) {
+      container.children[idx].scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' });
+    }
+  };
 
   useEffect(() => {
     try {
@@ -217,13 +241,31 @@ const ContractorScheduleView = function ContractorScheduleView({
           </div>
         </div>
 
-        <div className="overflow-x-auto custom-scrollbar pb-4">
-          <div className="min-w-[800px] grid grid-cols-7 gap-3">
+        {/* MOBILE DAY PICKER TABS */}
+        <div className="flex md:hidden gap-2 mb-4 overflow-x-auto custom-scrollbar pb-2 snap-x">
+          {calendarDaysData.map((day, idx) => (
+            <button 
+              key={idx} 
+              onClick={() => scrollTo(idx)} 
+              className={`snap-center shrink-0 px-4 py-2 rounded-full font-bold text-sm transition-colors border ${activeDayIdx === idx ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-slate-50 text-slate-500 border-slate-200'}`}
+            >
+               {day.date.toLocaleDateString('th-TH', { weekday: 'short' })} {day.date.getDate()}
+            </button>
+          ))}
+        </div>
+
+        {/* TIMELINE CONTAINER */}
+        <div className="pb-4 relative">
+          <div 
+            ref={scrollContainerRef}
+            onScroll={handleScroll}
+            className="flex md:grid md:grid-cols-7 gap-4 md:gap-3 overflow-x-auto snap-x snap-mandatory custom-scrollbar pb-2 md:min-w-[800px]"
+          >
             {calendarDaysData.map((dayData, idx) => {
               const { date, isToday, clashes, tasksForDay, groupedTasksWithDetails } = dayData;
 
               return (
-                <div key={idx} className={`flex flex-col border ${isToday ? 'border-blue-500 bg-blue-50/30' : 'border-black/5 bg-slate-50/50'} rounded-2xl overflow-hidden`}>
+                <div key={idx} className={`snap-center snap-always w-full shrink-0 md:w-auto flex flex-col border ${isToday ? 'border-blue-500 bg-blue-50/30 shadow-sm' : 'border-black/5 bg-slate-50/50'} rounded-2xl overflow-hidden`}>
                   <div className={`text-center py-2 border-b ${isToday ? 'bg-blue-500 text-white border-blue-600' : 'bg-black/5 border-black/5 text-[#86868b]'}`}>
                     <div className="text-xs font-bold uppercase tracking-wider">{date.toLocaleDateString('th-TH', { weekday: 'short' })}</div>
                     <div className="text-2xl font-black mt-0.5">{date.getDate()}</div>
@@ -237,13 +279,13 @@ const ContractorScheduleView = function ContractorScheduleView({
                     )}
 
                     {tasksForDay.length === 0 ? (
-                      <div className="text-center text-slate-300 text-[10px] font-medium mt-4">ไม่มีงาน</div>
+                      <div className="text-center text-slate-300 text-[10px] md:text-xs font-medium mt-6">ไม่มีงาน</div>
                     ) : (
                       groupedTasksWithDetails.map((group, i) => {
                         const { plotId, tasks, isClashing, uniqueContractorNames } = group;
                         
                         return (
-                          <div key={i} className={`p-2 rounded-xl border shadow-sm text-left ${isClashing ? 'bg-rose-50 border-rose-200' : 'bg-white border-black/5'}`}>
+                          <div key={i} className={`p-3 md:p-2 rounded-xl border shadow-sm text-left ${isClashing ? 'bg-rose-50 border-rose-200' : 'bg-white border-black/5'}`}>
                             <div className="flex items-center justify-between mb-2 pb-1.5 border-b border-black/5">
                               <span className="text-xs font-black text-[#1d1d1f] bg-[#f5f5f7] px-2 py-0.5 rounded-md border border-black/5 flex items-center gap-1">
                                 🏠 {plotId}
@@ -251,7 +293,7 @@ const ContractorScheduleView = function ContractorScheduleView({
                               <span className="text-[10px] font-bold text-slate-400">{tasks.length} งาน</span>
                             </div>
                             {isClashing && (
-                               <div className="text-[9px] bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded mb-2 font-bold break-words leading-tight">
+                               <div className="text-[10px] bg-rose-100 text-rose-700 px-2 py-1 rounded mb-2 font-bold break-words leading-tight">
                                   ⚡ ชนกัน: {uniqueContractorNames}
                                </div>
                             )}
@@ -259,7 +301,7 @@ const ContractorScheduleView = function ContractorScheduleView({
                               {tasks.map((t: any, idx: number) => (
                                 <div key={idx} className="flex flex-col gap-1">
                                   <div className="flex justify-between items-start">
-                                    <p className="text-[11px] text-[#515154] font-semibold leading-tight line-clamp-2 pr-1">{t.task.task_name}</p>
+                                    <p className="text-xs md:text-[11px] text-[#515154] font-semibold leading-tight line-clamp-2 pr-1">{t.task.task_name}</p>
                                     <span className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded font-bold shrink-0" title={t.contractorName}>{t.contractorName.split(' ')[0]}</span>
                                   </div>
                                 </div>

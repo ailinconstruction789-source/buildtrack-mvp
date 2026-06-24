@@ -2,7 +2,7 @@
 import React from 'react';
 import { supabase } from '@/lib/supabase';
 import { 
-  Activity, Calendar, Camera, HardHat, Loader2, Monitor, Pickaxe, PlusCircle, UserCog, Users, ImageIcon
+  Activity, Calendar, Camera, HardHat, Loader2, Monitor, Pickaxe, PlusCircle, UserCog, Users, ImageIcon, Truck, XCircle, Send
 } from 'lucide-react';
 
 interface HouseDetailViewProps {
@@ -56,6 +56,8 @@ interface HouseDetailViewProps {
   handleUploadOverviewImage: (file: File) => Promise<void>;
   togglePlotSaleStatus: (plotId: any, currentStatus: string, pausedAt: string | null) => Promise<boolean>;
   loading?: boolean;
+  materialRequests?: any[];
+  fetchAllData?: () => void;
 }
 
 const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
@@ -73,13 +75,77 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
     setUpdates, setProgressValue, isAdmin, isProcurement,
     setScheduleInputs, allUpdatesRecord,
     handleTogglePlotCustomer, handleTogglePlotCompleted, getPlotOverallStatus,
-    handleUploadOverviewImage, togglePlotSaleStatus
+    handleUploadOverviewImage, togglePlotSaleStatus,
+    materialRequests, fetchAllData
   } = props;
 
   const currentPlotStatus = selectedPlot ? getPlotOverallStatus(selectedPlot.id) : null;
 
+  const [requestMaterialNote, setRequestMaterialNote] = React.useState('');
+  const [requestMaterialTask, setRequestMaterialTask] = React.useState<any>(null);
+  const [isSubmittingMaterial, setIsSubmittingMaterial] = React.useState(false);
+
+  const handleRequestMaterial = async () => {
+    if (!requestMaterialTask || !selectedPlot) return;
+    setIsSubmittingMaterial(true);
+    try {
+      const { error } = await supabase.from('task_material_requests').insert([{
+        plot_id: selectedPlot.id,
+        task_template_id: requestMaterialTask.id,
+        notes: requestMaterialNote,
+        requested_by: currentUserRole,
+        status: 'requested'
+      }]);
+      if (error) throw error;
+      if (fetchAllData) await fetchAllData();
+      setRequestMaterialTask(null);
+      setRequestMaterialNote('');
+      alert('บันทึกคำขอเบิกวัสดุเรียบร้อยแล้ว');
+    } catch (e: any) {
+      alert('เกิดข้อผิดพลาด: ' + e.message);
+    } finally {
+      setIsSubmittingMaterial(false);
+    }
+  };
+
   return (
     <>
+      {/* 🛑 Material Request Modal */}
+      {requestMaterialTask && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col">
+            <div className="bg-slate-800 p-4 text-white flex justify-between items-center">
+              <div>
+                <h3 className="font-bold text-lg">เบิกวัสดุสำหรับงาน</h3>
+                <p className="text-xs text-slate-300">{requestMaterialTask.task_name}</p>
+              </div>
+              <button onClick={() => setRequestMaterialTask(null)} className="p-2 hover:bg-slate-700 rounded-full transition-colors">
+                <XCircle size={20} />
+              </button>
+            </div>
+            <div className="p-5 flex-1 overflow-y-auto">
+              <label className="block text-sm font-bold text-slate-700 mb-2">รายละเอียดเพิ่มเติม (Optional)</label>
+              <textarea 
+                value={requestMaterialNote}
+                onChange={(e) => setRequestMaterialNote(e.target.value)}
+                placeholder="ระบุชื่อวัสดุ จำนวน หรือหมายเหตุอื่นๆ ที่สโตร์ควรรู้..."
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm focus:border-blue-500 outline-none h-32 resize-none"
+              ></textarea>
+            </div>
+            <div className="p-4 border-t border-slate-100 flex gap-2">
+              <button onClick={() => setRequestMaterialTask(null)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-colors">ยกเลิก</button>
+              <button 
+                onClick={handleRequestMaterial} 
+                disabled={isSubmittingMaterial}
+                className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-colors flex justify-center items-center gap-2"
+              >
+                {isSubmittingMaterial ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />} ส่งคำขอเบิก
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
 {/* 📋 LEVEL 3: House Detail */}
                {view === 'house-detail' && selectedPlot && (
                  <div className="animate-in slide-in-from-right duration-300">
@@ -373,6 +439,9 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                             // Realtime Pickaxe Logic
                             const hasUpdateToday = allUpdatesRecord.some((u: any) => u.plot_id === selectedPlot.id && u.task_template_id === task.id && new Date(u.created_at).toLocaleDateString('en-CA') === new Date().toLocaleDateString('en-CA'));
 
+                            // Material Request Logic
+                            const matReq = materialRequests?.find(m => m.plot_id === selectedPlot.id && m.task_template_id === task.id);
+
                             // Card view helpers
                             const contractorName  = assignment ? assignment.contractor_name  : '';
                             const contractorPhone = assignment ? assignment.contractor_phone : '';
@@ -472,6 +541,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                                               <button onClick={(e) => { e.stopPropagation(); openTaskProgress(); }} className={`flex-[2] py-3 ${tProgress === 100 ? 'bg-emerald-600 hover:bg-emerald-500 border-emerald-700' : 'bg-slate-800 hover:bg-slate-700 border-slate-900'} text-white text-[11px] sm:text-xs font-bold rounded-xl active:scale-95 transition-all flex flex-col items-center justify-center gap-1 shadow-md border-b-4 active:border-b-0 active:translate-y-[4px]`}>
                                                   <Camera size={16} className={tProgress === 100 ? 'text-emerald-100' : 'text-blue-300'} /> {tProgress === 100 ? 'ดูประวัติ / แจ้งซ่อม' : 'อัปเดตความคืบหน้า'}
                                               </button>
+
                                             </div>
                                         </td>
                                       </tr>
@@ -735,6 +805,8 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                                              </div> 
                                           )}
                                        </div>
+                                       
+
                                      </td>
                                </tr>
                                )}

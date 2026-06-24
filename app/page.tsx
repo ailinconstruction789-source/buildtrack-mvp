@@ -12,6 +12,7 @@ import TaskProgressView from '@/components/TaskProgressView';
 import OwnerAnalyticsDashboard from '@/components/OwnerAnalyticsDashboard';
 import ExecutiveAnalytics from '@/components/ExecutiveAnalytics';
 import MasterGanttChart from '@/components/MasterGanttChart';
+import MaterialStoreDashboard from '@/components/MaterialStoreDashboard';
 import AdminPlotPricing from '@/components/AdminPlotPricing';
 // ถอด browser-image-compression ออกเพื่อใช้ Native ป้องกัน Error
 import {
@@ -87,7 +88,8 @@ export default function ConstructionApp() {
     fetchAllData,
     fetchPlotDetails,
     fetchOwnerAnalyticsData,
-    togglePlotSaleStatus
+    togglePlotSaleStatus,
+    materialRequests, setMaterialRequests
   } = useBuildTrackData(loggedInUser, selectedProject?.name);
 
 
@@ -2281,6 +2283,7 @@ export default function ConstructionApp() {
                   isQC={isQC}
                   isAdmin={isAdmin}
                   isOwner={isOwner}
+                  isStore={loggedInUser?.role === 'Store' || loggedInUser?.role === 'Admin'}
                   isForeman={isForeman}
                   isProcurement={isProcurement}
                   isProjectPlanner={isProjectPlanner}
@@ -2834,6 +2837,21 @@ export default function ConstructionApp() {
                 </div>
               )}
 
+              {view === 'store-dashboard' && (loggedInUser?.role === 'Store' || loggedInUser?.role === 'Admin') && (
+                <div className="animate-in slide-in-from-bottom duration-300 mx-auto mt-4 sm:mt-8 px-4 sm:px-0">
+                  <button onClick={() => setView('dashboard')} className="mb-4 sm:mb-6 text-xs sm:text-base font-bold text-blue-600 flex items-center gap-1.5">← {isMobileLayout ? 'BACK' : 'BACK TO DASHBOARD'}</button>
+                  <MaterialStoreDashboard 
+                    view={view}
+                    materialRequests={materialRequests}
+                    plots={plots}
+                    taskTemplates={taskTemplates}
+                    projects={projects}
+                    loggedInUser={loggedInUser}
+                    setMaterialRequests={setMaterialRequests}
+                  />
+                </div>
+              )}
+
               {/* 🌟 2. ADMIN FORMS: USERS 🌟 */}
               {view === 'admin-users' && isAdmin && (
                 <div className="animate-in slide-in-from-bottom duration-300 max-w-3xl mx-auto mt-4 sm:mt-8 px-4 sm:px-0">
@@ -2843,7 +2861,7 @@ export default function ConstructionApp() {
                     <div className="flex flex-col sm:flex-row gap-3 mb-8">
                       <input type="text" value={newUser.name} onChange={(e) => setNewUser({ ...newUser, name: e.target.value })} placeholder="ชื่อผู้ใช้ใหม่..." className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:border-rose-500" />
                       <select value={newUser.role} onChange={(e) => setNewUser({ ...newUser, role: e.target.value })} className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:border-rose-500 text-slate-700">
-                        <option value="Foreman">Foreman</option><option value="Site Engineer">Site Engineer</option><option value="QC">QC</option><option value="Project Planner">Project Planner (วางแผน)</option><option value="Procurement">Procurement (จัดจ้าง)</option><option value="Admin">Admin</option><option value="Owner">Owner (ผู้บริหาร / ดูได้อย่างเดียว)</option>
+                        <option value="Foreman">Foreman</option><option value="Site Engineer">Site Engineer</option><option value="QC">QC</option><option value="Project Planner">Project Planner (วางแผน)</option><option value="Procurement">Procurement (จัดจ้าง)</option><option value="Store">Store (สโตร์)</option><option value="Admin">Admin</option><option value="Owner">Owner (ผู้บริหาร / ดูได้อย่างเดียว)</option>
                       </select>
                       <button onClick={handleAddUser} disabled={isSubmitting} className="bg-rose-600 text-white px-6 py-3 rounded-xl font-black shadow-lg hover:bg-rose-700 flex justify-center items-center gap-2">{isSubmitting ? <Loader2 className="animate-spin" size={18} /> : 'เพิ่มผู้ใช้'}</button>
                     </div>
@@ -3266,6 +3284,12 @@ export default function ConstructionApp() {
                 <button onClick={() => setView('global-feed')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'global-feed' ? 'text-blue-600' : 'text-slate-400'}`}>
                   <ClipboardList size={20} className={activeView === 'global-feed' ? 'fill-blue-100' : ''} />
                   <span className="text-[9px] font-black mt-1">ฟีดรวม</span>
+                </button>
+              )}
+              {(loggedInUser?.role === 'Store' || isAdmin) && (
+                <button onClick={() => setView('store-dashboard')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'store-dashboard' ? 'text-blue-600' : 'text-slate-400'}`}>
+                  <FolderOpen size={20} className={activeView === 'store-dashboard' ? 'fill-blue-100' : ''} />
+                  <span className="text-[9px] font-black mt-1">สโตร์</span>
                 </button>
               )}
               <button onClick={() => setView('dashboard')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'dashboard' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>

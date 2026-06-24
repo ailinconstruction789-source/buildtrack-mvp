@@ -11,6 +11,7 @@ interface DashboardOverviewProps {
   isOwner: boolean;
   isForeman: boolean;
   isProcurement: boolean;
+  isStore: boolean;
   isProjectPlanner: boolean;
   isMobileLayout: boolean;
   projects: any[];
@@ -45,7 +46,7 @@ interface DashboardOverviewProps {
 
 const DashboardOverview = function DashboardOverview({
   view, setView,
-  isSiteEngineer, isQC, isAdmin, isOwner, isForeman, isProcurement, isProjectPlanner,
+  isSiteEngineer, isQC, isAdmin, isOwner, isForeman, isProcurement, isStore, isProjectPlanner,
   isMobileLayout,
   projects, plots, taskTemplates, schedules, latestUpdatesMap, loggedInUser,
   inspectionQueue, inspectionFilterTab, setInspectionFilterTab,
@@ -61,13 +62,14 @@ const DashboardOverview = function DashboardOverview({
 
   return (
     <div className="animate-in fade-in zoom-in-95 duration-500 w-full mx-auto">
-        {(isSiteEngineer || isQC || isAdmin || isOwner || isForeman || isProcurement || isProjectPlanner) && (
+        {(isSiteEngineer || isQC || isAdmin || isOwner || isForeman || isProcurement || isStore || isProjectPlanner) && (
         <div className="mb-6 sm:mb-12 mt-6 sm:mt-8">
         <div className="flex flex-col md:flex-row md:justify-between md:items-end mb-4 sm:mb-6 gap-3">
         <h2 className="font-semibold text-2xl tracking-tight sm:text-4xl text-[#1d1d1f]">Projects Overview</h2>
         {isMobileLayout && (
             <div className="flex flex-wrap gap-2 shrink-0 w-full">
             {isProcurement && (<button onClick={() => setView('procurement-contractors')} className="flex-1 items-center justify-center gap-1.5 bg-emerald-500 text-white px-3 py-2.5 rounded-xl font-medium text-[12px] shadow-sm flex active:scale-95 transition-all"><Wrench size={16} /> ช่าง</button>)}
+            {isStore && (<button onClick={() => setView('store-dashboard')} className="flex-1 items-center justify-center gap-1.5 bg-blue-500 text-white px-3 py-2.5 rounded-xl font-medium text-[12px] shadow-sm flex active:scale-95 transition-all"><FolderOpen size={16} /> สโตร์</button>)}
             {isAdmin && (
                 <>
                 <button onClick={() => setView('admin-users')} className="flex-1 items-center justify-center gap-1.5 bg-white/70 backdrop-blur-md text-[#1d1d1f] border border-black/5 px-2 py-2.5 rounded-xl font-medium text-[12px] shadow-sm flex whitespace-nowrap active:scale-95 transition-all"><Users size={16} /> ผู้ใช้</button>

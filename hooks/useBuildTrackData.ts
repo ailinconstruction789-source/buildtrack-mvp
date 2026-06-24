@@ -17,6 +17,7 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
   const [schedules, setSchedules] = useState<any>({});
   const [defects, setDefects] = useState<any[]>([]);
   const [notifications, setNotifications] = useState<any[]>([]);
+  const [materialRequests, setMaterialRequests] = useState<any[]>([]);
   
   // 📈 Derived / Mapped Data States
   const [latestUpdatesMap, setLatestUpdatesMap] = useState<any>({});
@@ -87,7 +88,8 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
         assignData,
         schedulesData,
         { data: recentUpdates },
-        { data: defectsData }
+        { data: defectsData },
+        { data: materialReqData }
       ] = await Promise.all([
         supabase.from('projects').select('*').order('created_at', { ascending: true }),
         supabase.from('house_types').select('*'),
@@ -100,11 +102,13 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
         fetchWithoutLimit('plot_task_assignments', selectedProjectName),
         fetchWithoutLimit('plot_task_schedules', selectedProjectName),
         supabase.from('task_updates').select('*').order('created_at', { ascending: false }).limit(3000),
-        supabase.from('defects').select('*').order('created_at', { ascending: false })
+        supabase.from('defects').select('*').order('created_at', { ascending: false }),
+        supabase.from('vw_task_material_requests').select('*')
       ]);
 
       setNotifications(notifData || []);
       setDefects(defectsData || []);
+      setMaterialRequests(materialReqData || []);
       setAssignments(assignData || []);
       setContractors(contData || []);
       setAllUpdatesRecord(recentUpdates || []);
@@ -424,6 +428,8 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
     fetchPlotDetails,
     fetchOwnerAnalyticsData,
     fetchWithoutLimit,
-    togglePlotSaleStatus
+    togglePlotSaleStatus,
+    materialRequests,
+    setMaterialRequests
   };
 }
