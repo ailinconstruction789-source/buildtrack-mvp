@@ -69,7 +69,7 @@ export default function AdminPlotPricing({ projects, plots, fetchAllData }: any)
   const currentPlots = plots.filter((p: any) => p.project_name === selectedProject).sort((a: any, b: any) => a.id.localeCompare(b.id, undefined, { numeric: true }));
 
   return (
-    <div className="animate-in slide-in-from-bottom-4 duration-500 max-w-[1400px] mx-auto w-full h-full p-4 sm:p-8">
+    <div className="animate-in slide-in-from-bottom-4 duration-500 w-full mx-auto h-full p-4 sm:p-8">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-6 sm:mb-8 gap-3 sm:gap-4">
         <div>
           <h2 className="text-2xl sm:text-4xl font-black text-slate-800 italic uppercase tracking-tighter flex items-center gap-3"><DollarSign className="text-emerald-500" size={32} /> กำหนดราคาขาย</h2>

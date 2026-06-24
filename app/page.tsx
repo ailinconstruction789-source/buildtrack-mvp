@@ -1,15 +1,17 @@
 
 'use client';
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useTransition } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useBuildTrackData } from '@/hooks/useBuildTrackData';
 import LoginView from '@/components/LoginView';
 import DashboardOverview from '@/components/DashboardOverview';
+import ContractorScheduleView from '@/components/ContractorScheduleView';
 import MapVisualizer from '@/components/MapVisualizer';
 import HouseDetailView from '@/components/HouseDetailView';
 import TaskProgressView from '@/components/TaskProgressView';
 import OwnerAnalyticsDashboard from '@/components/OwnerAnalyticsDashboard';
 import ExecutiveAnalytics from '@/components/ExecutiveAnalytics';
+import MasterGanttChart from '@/components/MasterGanttChart';
 import AdminPlotPricing from '@/components/AdminPlotPricing';
 // ถอด browser-image-compression ออกเพื่อใช้ Native ป้องกัน Error
 import {
@@ -89,8 +91,22 @@ export default function ConstructionApp() {
   } = useBuildTrackData(loggedInUser, selectedProject?.name);
 
 
-  const [view, setView] = useState('dashboard');
+  const [view, setViewInternal] = useState('dashboard');
+  const [loadingView, setLoadingView] = useState<string | null>(null);
+
+  const setView = useCallback((newView: any) => {
+    if (newView === 'project-detail') {
+      setViewInternal(newView); // No skeleton for map visualizer
+      return;
+    }
+    setLoadingView(newView);
+    setTimeout(() => {
+      setViewInternal(newView);
+      setLoadingView(null);
+    }, 100);
+  }, []);
   const [taskReturnView, setTaskReturnView] = useState('house-detail');
+  const activeView = loadingView || view;
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
   const [selectedPlot, setSelectedPlot] = useState<any>(null);
   const [selectedTask, setSelectedTask] = useState<any>(null);
@@ -104,6 +120,13 @@ export default function ConstructionApp() {
   const [editProjectModal, setEditProjectModal] = useState({ isOpen: false, oldName: '', newName: '' });
   const [confirmDialog, setConfirmDialog] = useState<any>({ isOpen: false, title: '', message: '', onConfirm: null, isDestructive: true });
   const [errorDialog, setErrorDialog] = useState<any>({ isOpen: false, title: '', message: '' });
+
+  const [toastConfig, setToastConfig] = useState<{message: string, type: 'success'|'error', visible: boolean}>({ message: '', type: 'success', visible: false });
+  const showToast = useCallback((message: string, type: 'success'|'error' = 'success') => {
+    setToastConfig({ message, type, visible: true });
+    setTimeout(() => setToastConfig(prev => ({ ...prev, visible: false })), 4000);
+  }, []);
+
   // 🌟 State สำหรับระบบ 2.5D แบบเจาะจงรายงวดงาน (0-99% และ 100%)
   const [editingHouseType, setEditingHouseType] = useState<any>(null);
   const [visualConfig, setVisualConfig] = useState<Record<string, any>>({}); // เก็บค่าแบบ Map { [taskId]: { progress_image, progress_z, done_image, done_z } }
@@ -144,7 +167,7 @@ export default function ConstructionApp() {
         .eq('id', editingHouseType.id);
       if (error) throw error;
       await fetchAllData();
-      showAlert('สำเร็จ', 'บันทึกการจัดเลเยอร์ 2.5D แบบรายงวดงานเรียบร้อยแล้วครับ');
+      showToast('บันทึกการจัดเลเยอร์ 2.5D แบบรายงวดงานเรียบร้อยแล้วครับ', "success");
     } catch (e: any) {
       showAlert('ผิดพลาด', e.message);
     }
@@ -271,6 +294,8 @@ export default function ConstructionApp() {
 
   const [selectedFiles, setSelectedFiles] = useState<any[]>([]);
   const [fullImageUrl, setFullImageUrl] = useState<any>(null);
+  const [galleryImages, setGalleryImages] = useState<{url: string, label?: string}[]>([]);
+  const [galleryIndex, setGalleryIndex] = useState<number>(0);
 
   const [newProjectName, setNewProjectName] = useState('');
   const [newPlot, setNewPlot] = useState({ id: '', house_type_id: '', foreman_name: '' });
@@ -280,7 +305,7 @@ export default function ConstructionApp() {
 
   const [searchPlot, setSearchPlot] = useState('');
   const [filterForeman, setFilterForeman] = useState('');
-  const [searchContractor, setSearchContractor] = useState('');
+  const [searchTask, setSearchTask] = useState('');
   const [inspectionSort, setInspectionSort] = useState('time');
   const [inspectionViewMode, setInspectionViewMode] = useState('card');
   const [inspectionFilterTab, setInspectionFilterTab] = useState('all');
@@ -481,13 +506,33 @@ export default function ConstructionApp() {
   useEffect(() => {
     const handleKeyDown = (e: any) => {
       if (!isPresentationOpen) return;
+      if (galleryImages.length > 0 || fullImageUrl) return; // ป้องกันการเลื่อนสไลด์หลักซ้อนกับแกลเลอรี่ภาพ
       if (e.key === 'ArrowRight') setCurrentSlideIndex(prev => Math.min(prev + 1, plots.length - 1));
       if (e.key === 'ArrowLeft') setCurrentSlideIndex(prev => Math.max(prev - 1, 0));
       if (e.key === 'Escape') setIsPresentationOpen(false);
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isPresentationOpen, plots.length]);
+  }, [isPresentationOpen, plots.length, galleryImages.length, fullImageUrl]);
+
+  // 🌟 ระบบจับการกดปุ่มคีย์บอร์ด (ซ้าย, ขวา, ESC) สำหรับ Gallery Lightbox และ FullImage
+  useEffect(() => {
+    const handleKeyDown = (e: any) => {
+      if (galleryImages.length === 0 && !fullImageUrl) return;
+      
+      if (galleryImages.length > 0) {
+        if (e.key === 'ArrowRight') setGalleryIndex(prev => Math.min(prev + 1, galleryImages.length - 1));
+        if (e.key === 'ArrowLeft') setGalleryIndex(prev => Math.max(prev - 1, 0));
+      }
+
+      if (e.key === 'Escape') {
+        setGalleryImages([]);
+        setFullImageUrl(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [fullImageUrl, galleryImages.length]);
 
   // ==========================================
   // 4. HANDLERS
@@ -534,13 +579,13 @@ export default function ConstructionApp() {
           .update({ type_name: houseTypeForm.type_name.trim(), memo: houseTypeForm.memo })
           .eq('id', houseTypeForm.id);
         if (error) throw error;
-        showAlert('สำเร็จ', 'แก้ไขข้อมูลแบบบ้านเรียบร้อยแล้ว');
+        showToast('แก้ไขข้อมูลแบบบ้านเรียบร้อยแล้ว', "success");
       } else {
         // เพิ่มแบบบ้านใหม่
         const { error } = await supabase.from('house_types')
           .insert([{ type_name: houseTypeForm.type_name.trim(), memo: houseTypeForm.memo }]);
         if (error) throw error;
-        showAlert('สำเร็จ', 'เพิ่มแบบบ้านใหม่เข้าสู่ระบบเรียบร้อยแล้ว');
+        showToast('เพิ่มแบบบ้านใหม่เข้าสู่ระบบเรียบร้อยแล้ว', "success");
       }
 
       // ล้างค่าฟอร์มและโหลดข้อมูลใหม่
@@ -571,13 +616,13 @@ export default function ConstructionApp() {
           .update({ task_name: taskForm.task_name.trim(), task_order: parseInt(taskForm.task_order), cost: parseFloat(taskForm.cost) || 0 })
           .eq('id', taskForm.id);
         if (error) throw error;
-        showAlert('สำเร็จ', 'แก้ไขงวดงานเรียบร้อยแล้ว');
+        showToast('แก้ไขงวดงานเรียบร้อยแล้ว', "success");
       } else {
         // เพิ่มงานใหม่
         const { error } = await supabase.from('task_templates')
           .insert([{ house_type_id: editingTaskHouseId, task_name: taskForm.task_name.trim(), task_order: parseInt(taskForm.task_order), cost: parseFloat(taskForm.cost) || 0 }]);
         if (error) throw error;
-        showAlert('สำเร็จ', 'เพิ่มงวดงานใหม่เรียบร้อยแล้ว');
+        showToast('เพิ่มงวดงานใหม่เรียบร้อยแล้ว', "success");
       }
       setTaskForm({ id: '', task_name: '', task_order: '', cost: '' });
       setIsEditingTask(false);
@@ -629,7 +674,7 @@ export default function ConstructionApp() {
 
           await fetchAllData();
           closeDialog();
-          showAlert('สำเร็จ', 'ลบงวดงานออกจากระบบเรียบร้อยแล้ว');
+          showToast('ลบงวดงานออกจากระบบเรียบร้อยแล้ว', "success");
         } catch (e: any) {
           showAlert('ล้มเหลว', 'เกิดข้อผิดพลาดในการลบ: ' + e.message);
         }
@@ -678,7 +723,7 @@ export default function ConstructionApp() {
       // 🌟 upsert แบบ batch ครั้งเดียว แทนการ delete+insert ทีละรายการ (atomic & fast) 🌟
       const { error } = await supabase.from('plot_task_schedules').upsert(payloads, { onConflict: 'plot_id,task_template_id' });
       if (error) throw error;
-      showAlert('สำเร็จ', 'บันทึกแผนงานทั้งหมดเรียบร้อยแล้ว'); setScheduleInputs({}); await fetchAllData();
+      showToast('บันทึกแผนงานทั้งหมดเรียบร้อยแล้ว', "success"); setScheduleInputs({}); await fetchAllData();
     } catch (e: any) { showAlert('Error', (e as Error).message); } setIsSubmitting(false);
   };
 
@@ -732,7 +777,7 @@ export default function ConstructionApp() {
     setCopyModalOpen(false);
     setCopySourcePlot('');
     setCopyStartDate('');
-    showAlert('สำเร็จ', 'ดึงข้อมูลและปรับเลื่อนแผนงานอัตโนมัติสำเร็จ! กรุณากด "บันทึก" ด้านขวาบน เพื่อยืนยันลงระบบครับ');
+    showToast('ดึงข้อมูลและปรับเลื่อนแผนงานอัตโนมัติสำเร็จ! กรุณากด "บันทึก" ด้านขวาบน เพื่อยืนยันลงระบบครับ', "success");
   };
   const handleExportCSV = () => {
     let csvContent = "\uFEFFชื่อโครงการ,รหัสแปลง (Plot),แบบบ้าน,โฟร์แมน,ความคืบหน้าจริง (%),ความคืบหน้าตามแผน (%),สถานะ\n";
@@ -750,7 +795,7 @@ export default function ConstructionApp() {
   const handleMouseUp = () => { setIsDrawing(false); setLastDrawCell(null); };
   const paintCell = (x: any, y: any) => setMapGrid((prev: any) => [...prev.filter((c: any) => !((c.type === 'plot' || c.type === 'road') && c.x === x && c.y === y)), { id: `${x}-${y}`, type: mapTool, x, y, plotId: mapTool === 'plot' ? mapSelectedPlot : null }]);
   const eraseCell = (x: any, y: any) => setMapGrid((prev: any) => prev.filter((c: any) => !((c.type === 'plot' || c.type === 'road') && c.x === x && c.y === y)));
-  const handleSaveMap = async () => { setIsSubmitting(true); try { const finalGrid = [...mapGrid.filter(c => c.type !== 'config'), { id: 'GRID_CONFIG', type: 'config', cols: gridCols, rows: gridRows }]; await supabase.from('projects').update({ layout_data: finalGrid }).eq('name', selectedProject.name); showAlert('สำเร็จ', 'บันทึกแผนผังเรียบร้อย!'); await fetchAllData(); setSelectedProject((prev: any) => ({ ...prev, layout_data: finalGrid })); setIsEditMapMode(false); } catch (e: any) { showAlert('Error', (e as Error).message); } finally { setIsSubmitting(false); } };
+  const handleSaveMap = async () => { setIsSubmitting(true); try { const finalGrid = [...mapGrid.filter(c => c.type !== 'config'), { id: 'GRID_CONFIG', type: 'config', cols: gridCols, rows: gridRows }]; await supabase.from('projects').update({ layout_data: finalGrid }).eq('name', selectedProject.name); showToast('บันทึกแผนผังเรียบร้อย!', "success"); await fetchAllData(); setSelectedProject((prev: any) => ({ ...prev, layout_data: finalGrid })); setIsEditMapMode(false); } catch (e: any) { showAlert('Error', (e as Error).message); } finally { setIsSubmitting(false); } };
 
   // =========================================================================
   // 🌟 ADMIN / PROCUREMENT FORMS HANDLERS (ฟังก์ชันกรอกข้อมูลทำงานจริง 100%) 🌟
@@ -764,7 +809,7 @@ export default function ConstructionApp() {
       setNewUser({ ...newUser, name: '' });
       const { data } = await supabase.from('users').select('*').order('role', { ascending: true }).order('username', { ascending: true });
       setAllUsers(data || []);
-      showAlert('สำเร็จ', `เพิ่มผู้ใช้งานเรียบร้อยแล้ว!`);
+      showToast(`เพิ่มผู้ใช้งานเรียบร้อยแล้ว!`, "success");
     } catch (e: any) { showAlert('Error', (e as Error).message); } finally { setIsSubmitting(false); }
   };
 
@@ -784,7 +829,7 @@ export default function ConstructionApp() {
     setIsSubmitting(true);
     try {
       await supabase.from('projects').insert([{ name: newProjectName.trim() }]);
-      setNewProjectName(''); await fetchAllData(); setView('dashboard'); showAlert('สำเร็จ', 'สร้างโครงการใหม่เรียบร้อยแล้ว');
+      setNewProjectName(''); await fetchAllData(); setView('dashboard'); showToast('สร้างโครงการใหม่เรียบร้อยแล้ว', "success");
     } catch (e: any) { showAlert('Error', (e as Error).message); } finally { setIsSubmitting(false); }
   };
 
@@ -792,7 +837,7 @@ export default function ConstructionApp() {
     if (!newPlot.id.trim() || !newPlot.house_type_id) return showAlert('แจ้งเตือน', 'กรอกรหัสแปลงและเลือกแบบบ้านให้ครบถ้วน'); setIsSubmitting(true);
     try {
       await supabase.from('plots').insert([{ id: newPlot.id.trim(), house_type_id: newPlot.house_type_id, foreman_name: newPlot.foreman_name, project_name: selectedProject.name }]);
-      setNewPlot({ id: '', house_type_id: '', foreman_name: '' }); await fetchAllData(); setView('project-detail'); showAlert('สำเร็จ', 'เพิ่มแปลงบ้านลงโครงการเรียบร้อยแล้ว');
+      setNewPlot({ id: '', house_type_id: '', foreman_name: '' }); await fetchAllData(); setView('project-detail'); showToast('เพิ่มแปลงบ้านลงโครงการเรียบร้อยแล้ว', "success");
     } catch (e: any) { showAlert('Error', (e as Error).message); } finally { setIsSubmitting(false); }
   };
 
@@ -800,7 +845,7 @@ export default function ConstructionApp() {
     if (!newContractor.name.trim() || !newContractor.phone.trim()) return showAlert('แจ้งเตือน', 'กรุณากรอกข้อมูลช่างให้ครบ'); setIsSubmitting(true);
     try {
       await supabase.from('contractors').insert([{ name: newContractor.name.trim(), phone: newContractor.phone.trim() }]);
-      setNewContractor({ name: '', phone: '' }); await fetchAllData(); showAlert('สำเร็จ', 'เพิ่มรายชื่อช่างใหม่เรียบร้อยแล้ว');
+      setNewContractor({ name: '', phone: '' }); await fetchAllData(); showToast('เพิ่มรายชื่อช่างใหม่เรียบร้อยแล้ว', "success");
     } catch (e: any) { showAlert('Error', (e as Error).message); } finally { setIsSubmitting(false); }
   };
 
@@ -836,8 +881,9 @@ export default function ConstructionApp() {
       }
 
       setAssignModal({ isOpen: false, task: null, name: '', phone: '' });
-      fetchAllData(); // โหลดซ้ำไว้เบื้องหลังชิวๆ
-      showAlert('สำเร็จ', 'มอบหมายงานให้ช่างเรียบร้อยแล้ว');
+      // เอา fetchAllData ออก เพื่อไม่ให้เกิดหน้าจอ Loading โหลดใหม่ทั้งหน้า ซึ่งทำให้ตำแหน่ง Scroll หายไป
+      // ข้อมูล State ถูกอัปเดตไปแล้วในขั้นตอนข้างต้น (setAssignments) จึงไม่จำเป็นต้องโหลดใหม่ทั้งหมด
+      // ปิด Alert ออกไป เพื่อไม่ให้เด้งขัดจังหวะ ให้ผู้ใช้อยู่ตำแหน่งเดิมและมอบหมายงานต่อไปได้ทันที
     } catch (e: any) {
       showAlert('Error', 'เกิดข้อผิดพลาดจากฐานข้อมูล: ' + (e as Error).message);
     }
@@ -858,7 +904,7 @@ export default function ConstructionApp() {
 
         await fetchAllData();
         closeDialog();
-        showAlert('สำเร็จ', `ลบแปลง ${plotId} ออกจากระบบแล้ว`);
+        showToast(`ลบแปลง ${plotId} ออกจากระบบแล้ว`, "success");
       } catch (e: any) {
         showAlert('ข้อผิดพลาด', e.message);
       } finally {
@@ -874,7 +920,7 @@ export default function ConstructionApp() {
       const { error } = await supabase.from('plots').update({ has_customer: !currentStatus }).eq('id', plotId);
       if (error) throw error;
       await fetchAllData();
-      showAlert('สำเร็จ', !currentStatus ? `กำหนดให้แปลง ${plotId} มีลูกค้าแล้ว 👤` : `ยกเลิกสถานะลูกค้าของแปลง ${plotId} แล้ว`);
+      showToast(!currentStatus ? `กำหนดให้แปลง ${plotId} มีลูกค้าแล้ว 👤` : `ยกเลิกสถานะลูกค้าของแปลง ${plotId} แล้ว`, "success");
     } catch (e: any) { showAlert('ข้อผิดพลาด', e.message); }
     setIsSubmitting(false);
   };
@@ -899,7 +945,7 @@ export default function ConstructionApp() {
         if (error) throw error;
         await fetchAllData();
         closeDialog();
-        showAlert('สำเร็จ', !currentStatus ? `แปลง ${plotId} โอนกรรมสิทธิ์เรียบร้อยแล้ว! 🔑` : `ยกเลิกสถานะโอนแล้วของแปลง ${plotId} แล้ว`);
+        showToast(!currentStatus ? `แปลง ${plotId} โอนกรรมสิทธิ์เรียบร้อยแล้ว! 🔑` : `ยกเลิกสถานะโอนแล้วของแปลง ${plotId} แล้ว`, "success");
       } catch (e: any) { showAlert('ข้อผิดพลาด', e.message); }
       setIsSubmitting(false);
     });
@@ -974,7 +1020,7 @@ export default function ConstructionApp() {
         }
       }
 
-      showAlert('สำเร็จ', 'แก้ไขข้อมูลและอัปเดตผังโครงการเรียบร้อยแล้ว');
+      showToast('แก้ไขข้อมูลและอัปเดตผังโครงการเรียบร้อยแล้ว', "success");
     } catch (e: any) {
       showAlert('ข้อผิดพลาด', e.message);
     } finally {
@@ -1007,7 +1053,7 @@ export default function ConstructionApp() {
 
       setEditProjectModal({ ...editProjectModal, isOpen: false });
       await fetchAllData();
-      showAlert('สำเร็จ', 'เปลี่ยนชื่อโครงการเรียบร้อยแล้ว');
+      showToast('เปลี่ยนชื่อโครงการเรียบร้อยแล้ว', "success");
     } catch (e: any) {
       showAlert('ข้อผิดพลาด', e.message);
     } finally {
@@ -1065,7 +1111,7 @@ export default function ConstructionApp() {
       const overviewUrl = supabase.storage.from('task_images').getPublicUrl(path).data.publicUrl;
       await supabase.from('plots').update({ overview_image_url: overviewUrl }).eq('id', selectedPlot.id);
       await fetchAllData();
-      showAlert('สำเร็จ', 'อัปเดตภาพรวมหน้าบ้านเรียบร้อยแล้ว');
+      showToast('อัปเดตภาพรวมหน้าบ้านเรียบร้อยแล้ว', "success");
     } catch (e: any) {
       showAlert('Error', (e as Error).message);
     }
@@ -1636,16 +1682,45 @@ export default function ConstructionApp() {
         )}
 
         {/* 🌟 หน้าต่างซูมรูปภาพ (ตั้ง z-index ให้สูงสุดระดับ 999999 เพื่อไม่ให้โดน Pop-up อื่นบัง) */}
-        {fullImageUrl && (
-          <div className="fixed inset-0 z-[999999] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 cursor-zoom-out" onClick={() => setFullImageUrl(null)}>
-            <button className="absolute top-6 right-6 text-white hover:text-rose-500 transition-colors bg-white/10 p-3 rounded-full backdrop-blur-md" onClick={() => setFullImageUrl(null)}><X size={28} /></button>
-            <img src={fullImageUrl} className="max-w-full max-h-[90vh] object-contain rounded-2xl shadow-2xl" onClick={(e) => e.stopPropagation()} alt="Full size" />
+        {(fullImageUrl || galleryImages.length > 0) && (
+          <div className="fixed inset-0 z-[999999] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 cursor-zoom-out" onClick={() => { setFullImageUrl(null); setGalleryImages([]); }}>
+            <button className="absolute top-6 right-6 text-white hover:text-rose-500 transition-colors bg-white/10 p-3 rounded-full backdrop-blur-md" onClick={() => { setFullImageUrl(null); setGalleryImages([]); }}><X size={28} /></button>
+            
+            {galleryImages.length > 0 && (
+              <>
+                <button 
+                  onClick={(e) => { e.stopPropagation(); setGalleryIndex(p => Math.max(p - 1, 0)); }} 
+                  disabled={galleryIndex === 0} 
+                  className="absolute left-4 sm:left-10 p-3 sm:p-5 bg-white/10 hover:bg-white/20 text-white rounded-full disabled:opacity-0 transition z-50 backdrop-blur-md"
+                >
+                  <ChevronRight size={32} className="rotate-180" />
+                </button>
+                <button 
+                  onClick={(e) => { e.stopPropagation(); setGalleryIndex(p => Math.min(p + 1, galleryImages.length - 1)); }} 
+                  disabled={galleryIndex === galleryImages.length - 1} 
+                  className="absolute right-4 sm:right-10 p-3 sm:p-5 bg-white/10 hover:bg-white/20 text-white rounded-full disabled:opacity-0 transition z-50 backdrop-blur-md"
+                >
+                  <ChevronRight size={32} />
+                </button>
+              </>
+            )}
+
+            <div className="relative flex flex-col items-center justify-center" onClick={(e) => e.stopPropagation()}>
+               <img src={galleryImages.length > 0 ? galleryImages[galleryIndex].url : fullImageUrl} className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl" alt="Full size" />
+               {galleryImages.length > 0 && galleryImages[galleryIndex].label && (
+                 <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/70 text-white px-4 py-2 rounded-lg backdrop-blur-sm text-sm sm:text-base font-bold whitespace-nowrap shadow-lg border border-white/20">
+                   {galleryImages[galleryIndex].label}
+                 </div>
+               )}
+            </div>
           </div>
         )}
 
         {dialogConfig.isOpen && (
           <div className="fixed inset-0 z-[600] bg-black/40 backdrop-blur-xl flex items-center justify-center p-4 transition-all"><div className="bg-white rounded-[2rem] shadow-2xl min-w-[320px] max-w-sm w-full p-6 text-center space-y-4"><div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-2 ${dialogConfig.type === 'confirm' ? 'bg-rose-100 text-rose-600' : 'bg-blue-100 text-blue-600'}`}><AlertTriangle size={32} /></div><h3 className="text-xl font-black">{dialogConfig.title}</h3><p className="text-slate-500 font-medium">{dialogConfig.message}</p><div className="flex gap-3 w-full mt-4">{dialogConfig.type === 'confirm' ? (<><button onClick={closeDialog} className="flex-1 bg-slate-100 text-slate-600 font-bold py-3.5 rounded-xl hover:bg-slate-200">ยกเลิก</button><button onClick={dialogConfig.onConfirm || undefined} className="flex-1 bg-rose-600 text-white font-bold py-3.5 rounded-xl hover:bg-rose-700">ยืนยัน</button></>) : (<button onClick={closeDialog} className="w-full bg-slate-800 text-white font-bold py-3.5 rounded-xl">รับทราบ</button>)}</div></div></div>
         )}
+
+
 
         {/* 🧭 Left Sidebar (Desktop Only) - ฉบับพับเก็บได้ */}
         {!isMobileLayout && (
@@ -1679,14 +1754,20 @@ export default function ConstructionApp() {
                   <nav className="space-y-1">
                     {/* 📜 เมนูแรกสุด: ไทม์ไลน์รวมหน้าไซต์ (สำหรับ Owner และ Admin) */}
                     {(isAdmin || isOwner || isSiteEngineer) && (
-                      <button onClick={() => setView('global-feed')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'global-feed' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><ClipboardList size={18} /> Live Feed หน้าไซต์</button>
+                      <button onClick={() => setView('global-feed')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'global-feed' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><ClipboardList size={18} /> Live Feed หน้าไซต์</button>
                     )}
-                    <button onClick={() => setView('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'dashboard' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Home size={18} /> Dashboard</button>
+                    <button onClick={() => setView('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'dashboard' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Home size={18} /> Dashboard</button>
+                    {(isAdmin || isProjectPlanner || isOwner) && (
+                      <button onClick={() => setView('master-gantt')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'master-gantt' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Grid size={18} /> Master Gantt Chart</button>
+                    )}
                     {(isAdmin || isProjectPlanner || isQC || isSiteEngineer || isOwner || isForeman) && (
-                      <button onClick={() => setView('reports')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'reports' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><PieChart size={18} /> Reports & Analytics</button>
+                      <button onClick={() => setView('contractor-schedule')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'contractor-schedule' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Calendar size={18} /> แผนงานผู้รับเหมา</button>
+                    )}
+                    {(isAdmin || isProjectPlanner || isQC || isSiteEngineer || isOwner || isForeman) && (
+                      <button onClick={() => setView('reports')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'reports' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><PieChart size={18} /> Reports & Analytics</button>
                     )}
                     {(isAdmin || isQC || isSiteEngineer || isOwner || isForeman) && (
-                      <button onClick={() => setView('defects')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'defects' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><ShieldAlert size={18} /> Defect Tracking</button>
+                      <button onClick={() => setView('defects')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'defects' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><ShieldAlert size={18} /> Defect Tracking</button>
                     )}
                   </nav>
                 </div>
@@ -1697,21 +1778,21 @@ export default function ConstructionApp() {
                     <nav className="space-y-1">
                       {isAdmin && (
                         <>
-                          <button onClick={() => setView('admin-project')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'admin-project' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><PlusCircle size={18} /> สร้างโครงการ</button>
-                          <button onClick={() => setView('admin-plot')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'admin-plot' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><MapIcon size={18} /> เพิ่มแปลงบ้าน</button>
-                          <button onClick={() => setView('admin-users')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'admin-users' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Users size={18} /> จัดการผู้ใช้งาน</button>
+                          <button onClick={() => setView('admin-project')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'admin-project' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><PlusCircle size={18} /> สร้างโครงการ</button>
+                          <button onClick={() => setView('admin-plot')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'admin-plot' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><MapIcon size={18} /> เพิ่มแปลงบ้าน</button>
+                          <button onClick={() => setView('admin-users')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'admin-users' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Users size={18} /> จัดการผู้ใช้งาน</button>
                           {/* ✅ ปุ่มเมนูจัดการแบบบ้าน (Desktop) */}
-                          <button onClick={() => setView('admin-house-types')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'admin-house-types' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Building size={18} /> จัดการแบบบ้าน</button>
+                          <button onClick={() => setView('admin-house-types')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'admin-house-types' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Building size={18} /> จัดการแบบบ้าน</button>
                           {/* ✅ ปุ่มเมนูจัดการงวดงาน (Desktop) */}
-                          <button onClick={() => setView('admin-tasks')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'admin-tasks' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><ClipboardList size={18} /> จัดการงวดงาน (Tasks)</button>
+                          <button onClick={() => setView('admin-tasks')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'admin-tasks' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><ClipboardList size={18} /> จัดการงวดงาน (Tasks)</button>
                           {/* ✅ ปุ่มเมนูกำหนดราคาขาย (Desktop) */}
-                          <button onClick={() => setView('admin-pricing')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'admin-pricing' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><DollarSign size={18} /> กำหนดราคาขาย</button>
+                          <button onClick={() => setView('admin-pricing')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'admin-pricing' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><DollarSign size={18} /> กำหนดราคาขาย</button>
                           {/* ✅ ปุ่มเมนูตั้งค่า 2.5D สำหรับ Admin (Desktop) */}
-                          <button onClick={() => setView('admin-visualizer')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'admin-visualizer' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Monitor size={18} /> ตั้งค่า 2.5D แบบบ้าน</button>
+                          <button onClick={() => setView('admin-visualizer')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'admin-visualizer' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Monitor size={18} /> ตั้งค่า 2.5D แบบบ้าน</button>
                         </>
                       )}
                       {(isAdmin || isProcurement) && (
-                        <button onClick={() => setView('procurement-contractors')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${view === 'procurement-contractors' ? 'bg-emerald-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Wrench size={18} /> จัดการรายชื่อช่าง</button>
+                        <button onClick={() => setView('procurement-contractors')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'procurement-contractors' ? 'bg-emerald-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Wrench size={18} /> จัดการรายชื่อช่าง</button>
                       )}
                     </nav>
                   </div>
@@ -1902,10 +1983,156 @@ export default function ConstructionApp() {
 
           {/* 🌟 Scrollable Content Area 🌟 */}
           <main className={`flex-1 overflow-y-auto custom-scrollbar ${isMobileLayout ? 'p-3 pb-24' : 'p-6 sm:p-8 pb-12'} scroll-smooth relative`}>
-            <div className={`${isMobileLayout || view === 'reports' ? 'w-full' : 'max-w-[1400px] mx-auto'}`}>
+            <div className="w-full">
+              {/* 🌟🌟 MAIN VIEW SWITCHER 🌟🌟 */}
+              {loadingView ? (
+                <div className="flex-1 p-6 sm:p-8 space-y-6 w-full bg-slate-50 min-h-[80vh] relative overflow-hidden flex flex-col">
+                   {loadingView === 'master-gantt' ? (
+                      <div className="space-y-6 animate-pulse opacity-60 flex-1 flex flex-col">
+                         {/* Header: Title and Dropdowns */}
+                         <div className="flex justify-between items-start mb-2">
+                            <div className="space-y-3">
+                               <div className="h-10 w-72 bg-slate-200 rounded-xl"></div>
+                               <div className="h-4 w-96 bg-slate-100 rounded-lg"></div>
+                            </div>
+                            <div className="flex gap-3">
+                               <div className="h-10 w-32 bg-slate-200 rounded-xl border border-slate-200"></div>
+                               <div className="h-10 w-28 bg-slate-200 rounded-xl border border-slate-200"></div>
+                            </div>
+                         </div>
+                         {/* Gantt Body: Sidebar + Grid */}
+                         <div className="flex flex-1 border border-slate-200 rounded-2xl overflow-hidden bg-white">
+                            {/* Left Column (Plots) */}
+                            <div className="w-[200px] sm:w-[250px] border-r border-slate-200 flex flex-col">
+                               <div className="h-14 bg-slate-50 border-b border-slate-200 flex items-center px-4">
+                                  <div className="h-5 w-24 bg-slate-200 rounded-lg"></div>
+                               </div>
+                               {[1,2,3,4,5,6].map(i => (
+                                 <div key={i} className="h-24 border-b border-slate-50 p-4 flex flex-col justify-center">
+                                    <div className="h-6 w-10 bg-slate-200 rounded-lg mb-2"></div>
+                                    <div className="h-3 w-16 bg-slate-100 rounded-md"></div>
+                                 </div>
+                               ))}
+                            </div>
+                            {/* Right Column (Timeline Grid) */}
+                            <div className="flex-1 flex flex-col relative overflow-hidden">
+                               <div className="h-14 bg-slate-50 border-b border-slate-200 flex items-end">
+                                 {/* Vertical grid line simulators */}
+                                 {Array.from({length: 15}).map((_, i) => (
+                                    <div key={i} className="flex-1 border-r border-slate-200/50 h-full flex flex-col items-center justify-center pt-2">
+                                       <div className="h-2 w-5 bg-slate-200 rounded-sm mb-1.5"></div>
+                                       <div className="h-3 w-4 bg-slate-300 rounded-sm"></div>
+                                    </div>
+                                 ))}
+                               </div>
+                               {[1,2,3,4,5,6].map((row, i) => (
+                                 <div key={row} className="h-24 border-b border-slate-50 relative flex items-center">
+                                    {/* Grid background lines */}
+                                    <div className="absolute inset-0 flex">
+                                       {Array.from({length: 15}).map((_, j) => (
+                                          <div key={j} className="flex-1 border-r border-slate-100 h-full"></div>
+                                       ))}
+                                    </div>
+                                    {/* Simulated Gantt Bars */}
+                                    <div className={`absolute h-8 bg-blue-100 rounded-full z-10 flex items-center px-3 shadow-sm`} style={{ left: `${5 + (i%4)*15}%`, width: `${15 + (i%3)*15}%` }}>
+                                       <div className="h-2 w-1/2 bg-blue-200 rounded-full"></div>
+                                    </div>
+                                    {i % 2 === 0 && (
+                                       <div className={`absolute h-8 bg-purple-100 rounded-full z-10 flex items-center px-3 shadow-sm`} style={{ left: `${40 + (i%3)*10}%`, width: `${20 + (i%2)*15}%` }}>
+                                          <div className="h-2 w-1/3 bg-purple-200 rounded-full"></div>
+                                       </div>
+                                    )}
+                                 </div>
+                               ))}
+                            </div>
+                         </div>
+                      </div>
+                   ) : loadingView === 'contractor-schedule' ? (
+                      <div className="space-y-6 animate-pulse opacity-60 flex-1 flex flex-col">
+                         <div className="flex justify-between items-center mb-2">
+                            <div className="space-y-3">
+                               <div className="h-10 w-64 bg-slate-200 rounded-xl"></div>
+                               <div className="h-4 w-48 bg-slate-100 rounded-lg"></div>
+                            </div>
+                            <div className="h-10 w-32 bg-slate-200 rounded-xl"></div>
+                         </div>
+                         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 flex-1">
+                            <div className="bg-white rounded-3xl xl:col-span-2 border border-slate-200 shadow-sm p-6 flex flex-col">
+                               <div className="h-8 w-1/3 bg-slate-200 rounded-lg mb-6"></div>
+                               <div className="flex-1 flex gap-3">
+                                  {Array.from({length: 7}).map((_, i) => (
+                                     <div key={i} className="flex-1 bg-slate-50 border border-slate-100 rounded-xl h-full flex flex-col gap-2 p-2">
+                                        <div className="h-4 w-8 bg-slate-200 mx-auto rounded-sm mt-2 mb-4"></div>
+                                        {i % 2 === 0 ? <div className="h-20 bg-blue-100 rounded-lg w-full"></div> : i % 3 === 0 ? <div className="h-16 bg-emerald-100 rounded-lg w-full"></div> : null}
+                                     </div>
+                                  ))}
+                               </div>
+                            </div>
+                            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 flex flex-col gap-4">
+                               <div className="h-8 w-1/2 bg-slate-200 rounded-lg mb-4"></div>
+                               {[1,2,3,4,5].map(i => <div key={i} className="h-20 bg-slate-50 border border-slate-100 rounded-xl w-full flex items-center p-4 gap-4"><div className="w-10 h-10 rounded-full bg-slate-200"></div><div className="flex-1 space-y-2"><div className="h-4 w-1/2 bg-slate-200 rounded"></div><div className="h-3 w-1/3 bg-slate-100 rounded"></div></div></div>)}
+                            </div>
+                         </div>
+                      </div>
+                   ) : loadingView === 'defects' ? (
+                      <div className="space-y-6 animate-pulse opacity-60 flex-1 flex flex-col">
+                         <div className="flex justify-between items-center mb-2">
+                            <div className="h-10 w-64 bg-slate-200 rounded-xl"></div>
+                            <div className="flex gap-3"><div className="h-10 w-24 bg-slate-200 rounded-xl"></div><div className="h-10 w-24 bg-slate-200 rounded-xl"></div></div>
+                         </div>
+                         <div className="w-full flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+                            <div className="h-14 bg-slate-50 border-b border-slate-200 flex items-center px-6 gap-6">
+                               <div className="h-4 w-1/6 bg-slate-200 rounded-md"></div>
+                               <div className="h-4 w-1/6 bg-slate-200 rounded-md"></div>
+                               <div className="h-4 w-2/6 bg-slate-200 rounded-md"></div>
+                               <div className="h-4 w-1/6 bg-slate-200 rounded-md"></div>
+                            </div>
+                            {[1, 2, 3, 4, 5, 6].map(i => (
+                               <div key={i} className="h-20 w-full border-b border-slate-50 p-6 flex items-center gap-6">
+                                  <div className="h-6 w-1/6 bg-slate-100 rounded-lg"></div>
+                                  <div className="h-6 w-1/6 bg-slate-100 rounded-lg"></div>
+                                  <div className="h-8 w-2/6 bg-slate-50 rounded-xl border border-slate-100"></div>
+                                  <div className="h-8 w-1/6 bg-slate-100 rounded-lg"></div>
+                                  <div className="h-10 w-24 bg-slate-200 rounded-xl ml-auto"></div>
+                               </div>
+                            ))}
+                         </div>
+                      </div>
+                   ) : (
+                      <div className="space-y-6 animate-pulse opacity-60 flex-1 flex flex-col">
+                         <div className="flex justify-between items-center mb-2">
+                            <div className="h-10 w-64 bg-slate-200 rounded-xl"></div>
+                            <div className="h-10 w-48 bg-slate-200 rounded-xl hidden sm:block"></div>
+                         </div>
+                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+                            {[1,2,3,4].map(i => (
+                               <div key={i} className="h-32 bg-white rounded-3xl border border-slate-200 shadow-sm p-6 flex flex-col justify-between">
+                                  <div className="flex justify-between items-start">
+                                     <div className="h-12 w-12 bg-slate-100 rounded-xl"></div>
+                                     <div className="h-6 w-16 bg-slate-100 rounded-full"></div>
+                                  </div>
+                                  <div className="space-y-2 mt-4">
+                                     <div className="h-6 w-24 bg-slate-200 rounded-lg"></div>
+                                  </div>
+                               </div>
+                            ))}
+                         </div>
+                         <div className="flex-1 w-full bg-white rounded-3xl mt-2 border border-slate-200 shadow-sm p-8 flex flex-col">
+                            <div className="h-8 w-64 bg-slate-200 rounded-xl mb-8"></div>
+                            <div className="flex-1 flex items-end gap-6 px-4">
+                               {[1,2,3,4,5,6,7,8,9,10].map(i => (
+                                  <div key={i} className="flex-1 bg-slate-100 rounded-t-xl" style={{ height: `${20 + (i%5)*15}%` }}></div>
+                               ))}
+                            </div>
+                         </div>
+                      </div>
+                   )}
+                </div>
+              ) : (
+                <>
               {/* 📜 🌟 View: Global Timeline Feed (ฟีดรวมทุกรายงานเพื่อผู้บริหาร) 🌟 */}
               {view === 'global-feed' && (
-                <div className="animate-in fade-in zoom-in-95 duration-500 max-w-[900px] mx-auto">
+                <div className="animate-in fade-in zoom-in-95 duration-500 max-w-4xl mx-auto">
                   <div className="mb-6 sm:mb-8">
                     <h2 className="font-black text-2xl sm:text-4xl text-slate-800 italic uppercase tracking-tighter flex items-center gap-2">
                       <Activity className="text-blue-600 animate-pulse" size={28} /> Site Activity Live Feed
@@ -1995,7 +2222,7 @@ export default function ConstructionApp() {
                                       key={i}
                                       src={url.trim()}
                                       onClick={() => setFullImageUrl(url.trim())}
-                                      className="w-full h-40 sm:h-56 object-cover rounded-xl border border-slate-200 shadow-sm cursor-zoom-in hover:opacity-95 transition-opacity"
+                                      className="w-full aspect-[4/3] sm:aspect-video object-cover rounded-xl border border-slate-200 shadow-sm cursor-zoom-in hover:opacity-95 transition-opacity"
                                       alt="Live Feed Report Image"
                                     />
                                   ))}
@@ -2018,51 +2245,80 @@ export default function ConstructionApp() {
                   </div>
                 </div>
               )}
+              {/* 👷 Contractor Schedule View */}
+              {view === 'contractor-schedule' && (
+                <ContractorScheduleView
+                  view={view}
+                  schedules={schedules}
+                  assignments={assignments}
+                  plots={plots}
+                  taskTemplates={taskTemplates}
+                  contractors={contractors}
+                  weatherInfo={weatherInfo}
+                  latestUpdatesMap={latestUpdatesMap}
+                  loggedInUser={loggedInUser}
+                />
+              )}
+              {/* 📅 Master Gantt Chart View */}
+              {view === 'master-gantt' && (
+                <MasterGanttChart
+                  view={view}
+                  plots={plots}
+                  taskTemplates={taskTemplates}
+                  schedules={schedules}
+                  latestUpdatesMap={latestUpdatesMap}
+                  projects={projects}
+                  contractors={contractors}
+                  assignments={assignments}
+                />
+              )}
               {/* 🏢 View: Dashboard */}
-              <DashboardOverview
-                view={view}
-                setView={setView}
-                isSiteEngineer={isSiteEngineer}
-                isQC={isQC}
-                isAdmin={isAdmin}
-                isOwner={isOwner}
-                isForeman={isForeman}
-                isProcurement={isProcurement}
-                isProjectPlanner={isProjectPlanner}
-                isMobileLayout={isMobileLayout}
-                projects={projects}
-                plots={plots}
-                taskTemplates={taskTemplates}
-                schedules={schedules}
-                latestUpdatesMap={latestUpdatesMap}
-                loggedInUser={loggedInUser}
-                inspectionQueue={inspectionQueue}
-                inspectionFilterTab={inspectionFilterTab}
-                setInspectionFilterTab={setInspectionFilterTab}
-                inspectionViewMode={inspectionViewMode}
-                setInspectionViewMode={setInspectionViewMode}
-                inspectionSort={inspectionSort}
-                setInspectionSort={setInspectionSort}
-                activePlotsCount={activePlotsCount}
-                completedPlotsCount={completedPlotsCount}
-                delayedPlotsCount={delayedPlotsCount}
-                setSelectedProject={setSelectedProject}
-                setSelectedPlot={setSelectedPlot}
-                setSelectedTask={setSelectedTask}
-                setTaskReturnView={setTaskReturnView}
-                setUpdates={setUpdates}
-                setProgressValue={setProgressValue}
-                setMapGrid={setMapGrid}
-                setIsEditMapMode={setIsEditMapMode}
-                setGridCols={setGridCols}
-                setGridRows={setGridRows}
-                setMapZoom={setMapZoom}
-                handleEditProject={handleEditProject}
-              />
+              {view === 'dashboard' && (
+                <DashboardOverview
+                  view={view}
+                  setView={setView}
+                  isSiteEngineer={isSiteEngineer}
+                  isQC={isQC}
+                  isAdmin={isAdmin}
+                  isOwner={isOwner}
+                  isForeman={isForeman}
+                  isProcurement={isProcurement}
+                  isProjectPlanner={isProjectPlanner}
+                  isMobileLayout={isMobileLayout}
+                  projects={projects}
+                  plots={plots}
+                  taskTemplates={taskTemplates}
+                  schedules={schedules}
+                  latestUpdatesMap={latestUpdatesMap}
+                  loggedInUser={loggedInUser}
+                  inspectionQueue={inspectionQueue}
+                  inspectionFilterTab={inspectionFilterTab}
+                  setInspectionFilterTab={setInspectionFilterTab}
+                  inspectionViewMode={inspectionViewMode}
+                  setInspectionViewMode={setInspectionViewMode}
+                  inspectionSort={inspectionSort}
+                  setInspectionSort={setInspectionSort}
+                  activePlotsCount={activePlotsCount}
+                  completedPlotsCount={completedPlotsCount}
+                  delayedPlotsCount={delayedPlotsCount}
+                  setSelectedProject={setSelectedProject}
+                  setSelectedPlot={setSelectedPlot}
+                  setSelectedTask={setSelectedTask}
+                  setTaskReturnView={setTaskReturnView}
+                  setUpdates={setUpdates}
+                  setProgressValue={setProgressValue}
+                  setMapGrid={setMapGrid}
+                  setIsEditMapMode={setIsEditMapMode}
+                  setGridCols={setGridCols}
+                  setGridRows={setGridRows}
+                  setMapZoom={setMapZoom}
+                  handleEditProject={handleEditProject}
+                />
+              )}
 
               {/* 📊 🌟 View: Reports & Analytics 🌟 */}
               {view === 'reports' && (
-                <div className="animate-in slide-in-from-bottom-4 duration-500 max-w-[1400px] mx-auto">
+                <div className="animate-in slide-in-from-bottom-4 duration-500 w-full mx-auto">
                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-6 sm:mb-8 gap-3 sm:gap-4">
                     <div>
                       <h2 className="text-2xl sm:text-4xl font-black text-slate-800 italic uppercase tracking-tighter">Project Reports</h2>
@@ -2166,22 +2422,53 @@ export default function ConstructionApp() {
                           {projects.map((proj, idx) => {
                             const projPlots = plots.filter(p => p.project_name === proj.name);
                             const dCount = projPlots.filter(p => getPlotOverallStatus(p.id).status === 'delayed').length;
+                            let plannedAvg = 0;
+                            if (schedules && taskTemplates && plots) {
+                              const pPlots = plots.filter((p: any) => p.project_name === proj.name);
+                              let plannedTotalWeight = 0;
+                              let totalCost = 0;
+                              let naivePlannedTotal = 0;
+                              let taskCount = 0;
+                              pPlots.forEach((p: any) => {
+                                const pTasks = taskTemplates.filter((t: any) => t.house_type_id === p.house_type_id);
+                                taskCount += pTasks.length;
+                                pTasks.forEach((t: any) => {
+                                   const key = `${p.id}-${t.id}`;
+                                   const plan = schedules?.[key];
+                                   let plannedProg = 0;
+                                   const today = Date.now();
+                                   if (plan && plan.planned_start && plan.planned_end) {
+                                     const pStart = new Date(plan.planned_start).getTime();
+                                     const pEnd = new Date(plan.planned_end).getTime();
+                                     if (today >= pEnd) plannedProg = 100;
+                                     else if (today <= pStart) plannedProg = 0;
+                                     else plannedProg = Math.round(((today - pStart) / (pEnd - pStart)) * 100);
+                                   }
+                                   
+                                   const taskCost = t.cost ? Number(t.cost) : 0;
+                                   plannedTotalWeight += (plannedProg * taskCost);
+                                   totalCost += taskCost;
+                                   naivePlannedTotal += plannedProg;
+                                });
+                              });
+                              plannedAvg = totalCost > 0 
+                                ? Math.round(plannedTotalWeight / totalCost) 
+                                : (taskCount > 0 ? Math.round(naivePlannedTotal / taskCount) : 0);
+                            }
                             return (
                               <tr key={idx} className="border-b border-slate-100 hover:bg-slate-50/50">
                                 <td className="p-3 sm:p-4 pl-4 sm:pl-8 font-bold text-slate-700 text-xs sm:text-sm">{proj.name}</td>
                                 <td className="p-3 sm:p-4 text-center font-bold text-slate-600 text-xs sm:text-sm">{proj.plotCount}</td>
                                 <td className="p-3 sm:p-4 text-center"><span className={`font-bold px-2 sm:px-3 py-1 rounded-md sm:rounded-lg text-[10px] sm:text-xs ${dCount > 0 ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-400'}`}>{dCount > 0 ? `${dCount} แปลง` : '-'}</span></td>
                                 <td className="p-3 sm:p-4 pr-4 sm:pr-8">
-                                  <div className="flex flex-col gap-1 sm:gap-1.5 min-w-[120px]">
-                                    <div className="flex justify-between items-center text-[9px] sm:text-[10px]">
-                                      <span className="font-bold text-slate-400">แผน: {Math.min(100, Math.round((proj.progress || 0) + 12))}%</span>
-                                      <span className="font-black text-blue-600">จริง: {proj.progress || 0}%</span>
+                                  <div className="flex flex-col gap-1 sm:gap-2 min-w-[120px]">
+                                    <div className="flex justify-between items-center text-[9px] sm:text-[10px] mb-1">
+                                      <span className="text-blue-500 font-bold">ทำได้จริง: {proj.progress || 0}%</span>
+                                      <span className="text-[#86868b] font-bold">ตามแผน: {plannedAvg}%</span>
                                     </div>
-                                    <div className="w-full bg-slate-100 h-1.5 sm:h-2 rounded-full overflow-hidden relative">
-                                      {/* Plan */}
-                                      <div className="absolute top-0 left-0 bg-slate-300 h-full transition-all duration-1000" style={{ width: `${Math.min(100, Math.round((proj.progress || 0) + 12))}%` }}></div>
-                                      {/* Actual */}
-                                      <div className="absolute top-0 left-0 bg-blue-600 h-full transition-all duration-1000" style={{ width: `${proj.progress || 0}%` }}></div>
+                                    <div className="h-2.5 sm:h-3 bg-black/5 rounded-full overflow-hidden shadow-inner relative">
+                                      <div className="absolute top-0 left-0 h-full bg-slate-300 opacity-60 rounded-full" style={{ width: `${plannedAvg}%` }}></div>
+                                      <div className={`absolute top-0 left-0 h-full ${proj.progress >= plannedAvg ? 'bg-emerald-500' : 'bg-blue-500'} rounded-full transition-all duration-1000 ease-out`} style={{ width: `${proj.progress || 0}%`, zIndex: 10 }}></div>
                                     </div>
                                   </div>
                                 </td>
@@ -2274,6 +2561,8 @@ export default function ConstructionApp() {
                         allUpdatesRecord={allUpdatesRecord}
                         foremenList={foremenList}
                         latestUpdatesMap={latestUpdatesMap}
+                        contractors={contractors}
+                        assignments={assignments}
                       />
                       <ExecutiveAnalytics
                         loading={loading}
@@ -2292,7 +2581,7 @@ export default function ConstructionApp() {
 
               {/* ⚠️ View: Defect Tracking (Full Page) ⚠️ */}
               {view === 'defects' && (
-                <div className="animate-in slide-in-from-bottom-4 duration-500 max-w-[1400px] mx-auto w-full h-full p-4 sm:p-8">
+                <div className="animate-in slide-in-from-bottom-4 duration-500 w-full mx-auto h-full p-4 sm:p-8">
                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-6 sm:mb-8 gap-3 sm:gap-4">
                     <div>
                       <h2 className="text-2xl sm:text-4xl font-black text-slate-800 italic uppercase tracking-tighter flex items-center gap-3"><ShieldAlert className="text-rose-500" size={32} /> Defect Tracking</h2>
@@ -2384,10 +2673,10 @@ export default function ConstructionApp() {
                                     const imageUrls = defect.image_urls ? defect.image_urls.split(',').filter((u:string)=>u) : [];
 
                                     return (
-                                      <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
+                                      <tr key={idx} className={`hover:bg-slate-50/80 transition-colors ${daysAging > 7 && defect.status === 'pending' ? 'bg-rose-50/50' : ''}`}>
                                         <td className="p-4 pl-6 sm:pl-8">
                                           <div className="font-bold text-slate-700 text-xs sm:text-sm">{new Date(defect.created_at).toLocaleDateString('th-TH')}</div>
-                                          {defect.status === 'pending' && <div className={`text-[10px] font-black mt-1 px-2 py-0.5 rounded inline-block ${daysAging > 3 ? 'bg-rose-100 text-rose-600' : 'bg-amber-100 text-amber-700'}`}>ค้าง {daysAging} วัน</div>}
+                                          {defect.status === 'pending' && <div className={`text-[10px] font-black mt-1 px-2 py-0.5 rounded inline-block ${daysAging > 7 ? 'bg-rose-100 text-rose-700 border border-rose-300 shadow-sm animate-pulse' : 'bg-amber-100 text-amber-700'}`}>{daysAging > 7 ? `🚨 เกิน SLA (${daysAging} วัน)` : `ค้าง ${daysAging} วัน`}</div>}
                                           {defect.status === 'resolved' && defect.resolved_at && <div className="text-[10px] font-bold mt-1 px-2 py-0.5 rounded inline-block bg-emerald-100 text-emerald-700">แก้เมื่อ: {new Date(defect.resolved_at).toLocaleDateString('th-TH')}</div>}
                                         </td>
                                         <td className="p-4 font-black text-slate-800 text-sm sm:text-base">{defect.plot_id}</td>
@@ -2396,6 +2685,10 @@ export default function ConstructionApp() {
                                         </td>
                                         <td className="p-4 font-bold text-slate-600 text-xs sm:text-sm">
                                           <span className="bg-blue-50 text-blue-700 border border-blue-100 px-2 py-1 rounded-md">{defect.reporter_name || defect.reported_by || 'System'}</span>
+                                          <div className="mt-2 flex flex-col gap-0.5">
+                                             <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider">ผู้รับผิดชอบ (Assignee):</span>
+                                             <span className="text-[11px] font-bold text-indigo-700 flex items-center gap-1"><HardHat size={12}/> {plotInfo?.foreman || 'ยังไม่ระบุ Foreman'}</span>
+                                          </div>
                                         </td>
                                         <td className="p-4 text-xs sm:text-sm text-slate-600 font-medium">
                                           <p className="truncate max-w-[250px] mb-2">{defect.description || 'ไม่มีรายละเอียด'}</p>
@@ -2457,7 +2750,8 @@ export default function ConstructionApp() {
                   handleMouseEnter={handleMouseEnter} handleMouseUp={handleMouseUp}
                   setSelectedPlot={setSelectedPlot} plotBounds={plotBounds} getPlotOverallStatus={getPlotOverallStatus}
                   allUpdatesRecord={allUpdatesRecord} taskTemplates={taskTemplates} assignments={assignments}
-                  searchContractor={searchContractor} setSearchContractor={setSearchContractor}
+                  searchTask={searchTask} setSearchTask={setSearchTask}
+                  schedules={schedules} taskDates={taskDates}
                   plotsActiveToday={plotsActiveToday} searchPlot={searchPlot} setSearchPlot={setSearchPlot}
                   filterForeman={filterForeman} setFilterForeman={setFilterForeman} foremenList={foremenList}
                   displayPlots={displayPlots} handleDeletePlot={handleDeletePlot} handleEditPlot={handleEditPlot}
@@ -2958,6 +3252,8 @@ export default function ConstructionApp() {
                   </div>
                 </div>
               )}
+              </>
+              )}
 
             </div>
           </main>
@@ -2967,24 +3263,36 @@ export default function ConstructionApp() {
             <nav className="bg-white border-t border-slate-200 p-2 fixed bottom-0 left-[14px] right-[14px] rounded-b-[2rem] z-[100] shadow-[0_-10px_40px_rgba(0,0,0,0.1)] flex justify-around">
               {/* 📜 ปุ่มแรกบนมือถือ: ฟีดรวม */}
               {(isAdmin || isOwner) && (
-                <button onClick={() => setView('global-feed')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${view === 'global-feed' ? 'text-blue-600' : 'text-slate-400'}`}>
-                  <ClipboardList size={20} className={view === 'global-feed' ? 'fill-blue-100' : ''} />
+                <button onClick={() => setView('global-feed')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'global-feed' ? 'text-blue-600' : 'text-slate-400'}`}>
+                  <ClipboardList size={20} className={activeView === 'global-feed' ? 'fill-blue-100' : ''} />
                   <span className="text-[9px] font-black mt-1">ฟีดรวม</span>
                 </button>
               )}
-              <button onClick={() => setView('dashboard')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${view === 'dashboard' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
-                <Home size={20} className={view === 'dashboard' ? 'fill-blue-100' : ''} />
+              <button onClick={() => setView('dashboard')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'dashboard' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
+                <Home size={20} className={activeView === 'dashboard' ? 'fill-blue-100' : ''} />
                 <span className="text-[9px] font-black mt-1">หน้าหลัก</span>
               </button>
+              {(isSiteEngineer || isForeman || isAdmin || isProjectPlanner) && (
+                <button onClick={() => setView('contractor-schedule')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'contractor-schedule' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
+                  <Calendar size={20} className={activeView === 'contractor-schedule' ? 'fill-blue-100' : ''} />
+                  <span className="text-[9px] font-black mt-1">งานช่าง</span>
+                </button>
+              )}
+              {(isAdmin || isProjectPlanner) && (
+                <button onClick={() => setView('master-gantt')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'master-gantt' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
+                  <Grid size={20} className={activeView === 'master-gantt' ? 'fill-blue-100' : ''} />
+                  <span className="text-[9px] font-black mt-1">Gantt</span>
+                </button>
+              )}
               {(isAdmin || isProjectPlanner || isQC || isSiteEngineer || isOwner || isForeman) && (
-                <button onClick={() => setView('reports')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${view === 'reports' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
-                  <PieChart size={20} className={view === 'reports' ? 'fill-blue-100' : ''} />
+                <button onClick={() => setView('reports')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'reports' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
+                  <PieChart size={20} className={activeView === 'reports' ? 'fill-blue-100' : ''} />
                   <span className="text-[9px] font-black mt-1">รายงาน</span>
                 </button>
               )}
               {(isAdmin || isProcurement) && (
-                <button onClick={() => setView('procurement-contractors')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${view === 'procurement-contractors' ? 'text-emerald-600' : 'text-slate-400 hover:text-slate-600'}`}>
-                  <Wrench size={20} className={view === 'procurement-contractors' ? 'fill-emerald-100' : ''} />
+                <button onClick={() => setView('procurement-contractors')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'procurement-contractors' ? 'text-emerald-600' : 'text-slate-400 hover:text-slate-600'}`}>
+                  <Wrench size={20} className={activeView === 'procurement-contractors' ? 'fill-emerald-100' : ''} />
                   <span className="text-[9px] font-black mt-1">ช่าง</span>
                 </button>
               )}
@@ -3530,7 +3838,18 @@ export default function ConstructionApp() {
                   
                   {/* ภาพรวมหน้าบ้าน (Overview Image) */}
                   {currentPlot.overview_image_url && (
-                    <div className="mb-6 shrink-0 relative w-full h-40 sm:h-56 rounded-2xl overflow-hidden shadow-md border border-slate-200 group cursor-pointer" onClick={() => setFullImageUrl(currentPlot.overview_image_url)}>
+                    <div 
+                      className="mb-6 shrink-0 relative w-full h-40 sm:h-56 rounded-2xl overflow-hidden shadow-md border border-slate-200 group cursor-pointer" 
+                      onClick={() => {
+                        const plotsWithOverview = plots.filter((p: any) => p.overview_image_url);
+                        const images = plotsWithOverview.map((p: any) => ({ url: p.overview_image_url, label: `รูปหน้าบ้านแปลง: ${p.id}` }));
+                        const idx = plotsWithOverview.findIndex((p: any) => p.id === currentPlot.id);
+                        if (images.length > 0) {
+                          setGalleryImages(images);
+                          setGalleryIndex(idx !== -1 ? idx : 0);
+                        }
+                      }}
+                    >
                       <img src={currentPlot.overview_image_url} alt="Overview" className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
                       <div className="absolute bottom-3 left-3 bg-white/90 text-slate-800 px-3 py-1.5 rounded-lg backdrop-blur-sm shadow-sm text-[10px] font-bold flex items-center gap-1.5">
                         <ImageIcon size={14}/> ภาพหน้าบ้าน

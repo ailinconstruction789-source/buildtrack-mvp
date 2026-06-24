@@ -27,15 +27,40 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
     let allData: any[] = [];
     let from = 0; let to = 999;
     let hasMore = true;
+
     while (hasMore) {
-      let query = supabase.from(table).select('*').range(from, to);
+      let query;
+      // Use PostgREST embedded filtering if we need to filter by project_name
+      if (projectName && projectName !== 'all' && (table === 'plot_task_assignments' || table === 'plot_task_schedules')) {
+        query = supabase.from(table)
+          .select('*, plots!inner(project_name)')
+          .eq('plots.project_name', projectName)
+          .range(from, to);
+      } else {
+        query = supabase.from(table).select('*').range(from, to);
+      }
       
       const { data, error } = await query;
       if (error) {
-        console.error(`Error in fetchWithoutLimit for table ${table}:`, error);
-        break;
-      }
-      if (data && data.length > 0) {
+        // Fallback to fetch all if the inner join fails (e.g. no explicit foreign key defined in PostgREST cache)
+        if (projectName && projectName !== 'all') {
+           console.warn(`Optimized fetch failed for ${table}, falling back to full fetch. Please ensure foreign keys are defined or run SQL migrations.`);
+           const fallbackQuery = supabase.from(table).select('*').range(from, to);
+           const fallbackResult = await fallbackQuery;
+           if (fallbackResult.error) {
+             console.error(`Fallback error in fetchWithoutLimit for table ${table}:`, fallbackResult.error);
+             break;
+           }
+           if (fallbackResult.data && fallbackResult.data.length > 0) {
+             allData = [...allData, ...fallbackResult.data];
+             from += 1000; to += 1000;
+             if (fallbackResult.data.length < 1000) hasMore = false;
+           } else { hasMore = false; }
+        } else {
+           console.error(`Error in fetchWithoutLimit for table ${table}:`, error);
+           break;
+        }
+      } else if (data && data.length > 0) {
         allData = [...allData, ...data];
         from += 1000; to += 1000;
         if (data.length < 1000) hasMore = false;

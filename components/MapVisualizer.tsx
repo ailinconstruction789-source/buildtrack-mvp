@@ -1,8 +1,8 @@
 
-import React from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Map as MapIcon, Monitor, Search, ZoomOut, ZoomIn, Loader2, Paintbrush, 
-  Eraser, Pickaxe, HardHat, Activity, Trash2, Settings, PlusCircle, Grid, Filter
+  Eraser, Pickaxe, HardHat, Activity, Trash2, Settings, PlusCircle, Grid, Filter, X
 } from 'lucide-react';
 
 interface MapVisualizerProps {
@@ -40,8 +40,10 @@ interface MapVisualizerProps {
   allUpdatesRecord: any[];
   taskTemplates: any[];
   assignments: any[];
-  searchContractor: string;
-  setSearchContractor: (s: string) => void;
+  searchTask: string;
+  setSearchTask: (s: string) => void;
+  schedules?: any;
+  taskDates?: any;
   plotsActiveToday: Set<string>;
   searchPlot: string;
   setSearchPlot: (s: string) => void;
@@ -58,7 +60,74 @@ interface MapVisualizerProps {
   loading?: boolean;
 }
 
-export default function MapVisualizer(props: MapVisualizerProps) {
+const TaskSearchRadar = ({ 
+  uniqueTaskNamesList, 
+  searchTask, 
+  setSearchTask, 
+  isMobile 
+}: { 
+  uniqueTaskNamesList: string[]; 
+  searchTask: string; 
+  setSearchTask: (s: string) => void; 
+  isMobile?: boolean; 
+}) => {
+  const [localSearchTask, setLocalSearchTask] = useState(searchTask);
+
+  useEffect(() => {
+    setLocalSearchTask(searchTask);
+  }, [searchTask]);
+
+  const handleSearchClick = () => {
+    setSearchTask(localSearchTask);
+  };
+
+  const handleClearSearch = () => {
+    setLocalSearchTask('');
+    setSearchTask('');
+  };
+
+  const filteredTaskNamesList = useMemo(() => {
+    if (!localSearchTask.trim()) return uniqueTaskNamesList;
+    return uniqueTaskNamesList.filter((name: any) => name.toLowerCase().includes(localSearchTask.toLowerCase()));
+  }, [uniqueTaskNamesList, localSearchTask]);
+
+  return (
+    <div className={`${isMobile ? 'lg:hidden w-full mb-4 sm:mb-6' : 'relative hidden lg:flex mr-2 w-80'} group items-center gap-2 z-30`}>
+       <div className="relative flex-1">
+         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+         <input 
+           type="text" 
+           placeholder="พิมพ์ชื่องานเพื่อดูสถานะ (กด Enter)..." 
+           value={localSearchTask} 
+           onChange={(e) => setLocalSearchTask(e.target.value)} 
+           onKeyDown={(e) => e.key === 'Enter' && handleSearchClick()}
+           className="w-full bg-[#f5f5f7] border border-black/5 rounded-lg pl-8 pr-8 py-2 text-xs font-bold outline-none focus:border-indigo-500 text-[#1d1d1f] shadow-sm peer" 
+         />
+         {localSearchTask && (
+           <button onClick={handleClearSearch} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-rose-500">
+             <X size={14} />
+           </button>
+         )}
+         <div className={`absolute top-full left-0 mt-1 w-full ${isMobile ? 'max-h-48' : 'max-h-60'} overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-xl opacity-0 invisible peer-focus:opacity-100 peer-focus:visible group-hover:opacity-100 group-hover:visible z-[100] transition-all`}>
+            {filteredTaskNamesList.map((taskName: any) => (
+              <div 
+                key={taskName} 
+                onMouseDown={(e) => { e.preventDefault(); setLocalSearchTask(taskName); setSearchTask(taskName); }}
+                className={`px-3 py-2 hover:bg-blue-50 cursor-pointer ${isMobile ? 'text-xs' : 'text-[10px]'} font-bold text-slate-700 truncate border-b border-slate-50 last:border-0`}
+              >
+                {taskName}
+              </div>
+            ))}
+            {filteredTaskNamesList.length === 0 && (
+              <div className="px-3 py-4 text-center text-slate-400 text-[10px] italic">ไม่พบชื่องานนี้</div>
+            )}
+         </div>
+       </div>
+    </div>
+  );
+};
+
+const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
   const {
     view, setView, selectedProject, isAdmin, currentUserRole, isMobileLayout,
     isEditMapMode, setIsEditMapMode, gridCols, setGridCols, gridRows, setGridRows,
@@ -66,13 +135,21 @@ export default function MapVisualizer(props: MapVisualizerProps) {
     mapSelectedPlot, setMapSelectedPlot, plots, isSubmitting, handleSaveMap,
     mapGrid, getAdjacency, handleMouseDown, handleMouseEnter, handleMouseUp,
     setSelectedPlot, plotBounds, getPlotOverallStatus, allUpdatesRecord,
-    taskTemplates, assignments, searchContractor, setSearchContractor,
+    taskTemplates, assignments, searchTask, setSearchTask, schedules, taskDates,
     plotsActiveToday, searchPlot, setSearchPlot, filterForeman, setFilterForeman,
     foremenList, displayPlots, handleDeletePlot, handleEditPlot,
     setIsPresentationOpen, setCurrentSlideIndex,
     handleTogglePlotCustomer,
     handleTogglePlotCompleted
   } = props;
+
+  // 🚀 Performance Fix: Memoize the Task List for the Dropdown
+  const uniqueTaskNamesList = useMemo(() => {
+    return Array.from(new Set(
+      taskTemplates?.filter((t:any) => plots.some((p:any) => p.house_type_id === t.house_type_id && p.project_name === selectedProject?.name))
+      .map((t:any) => t.task_name)
+    )).sort();
+  }, [taskTemplates, plots, selectedProject?.name]);
 
   return (
     <>
@@ -106,11 +183,8 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                               </button>
                           )}
                           
-                          {/* 🌟 UX: ช่องค้นหาช่างเข้างานวันนี้ (Contractor Radar) 🌟 */}
-                          <div className="relative hidden lg:block mr-2 w-64">
-                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-                             <input type="text" placeholder="ค้นหาช่าง..." value={searchContractor} onChange={(e) => setSearchContractor(e.target.value)} className="w-full bg-[#f5f5f7] border border-black/5 rounded-lg pl-8 pr-3 py-2 text-xs font-bold outline-none focus:border-blue-500 text-[#1d1d1f] shadow-sm" />
-                          </div>
+                          {/* 🌟 UX: ช่องค้นหาชื่องาน (Task Radar) 🌟 */}
+                          <TaskSearchRadar uniqueTaskNamesList={uniqueTaskNamesList} searchTask={searchTask} setSearchTask={setSearchTask} />
 
                           <div className="flex bg-[#f5f5f7] rounded-lg border border-black/5 shadow-sm p-1">
                              <button onClick={handleZoomOut} className="p-1.5 sm:p-2.5 text-[#86868b] hover:text-blue-600 hover:bg-white rounded-md sm:rounded-lg transition-colors"><ZoomOut size={16} className="sm:w-5 sm:h-5"/></button>
@@ -126,10 +200,7 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                      </div>
 
                      {/* Mobile Search Bar */}
-                     <div className="lg:hidden w-full mb-4 sm:mb-6 relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-                        <input type="text" placeholder="ค้นหาชื่อช่างในผัง..." value={searchContractor} onChange={(e) => setSearchContractor(e.target.value)} className="w-full bg-[#f5f5f7] border border-black/5 rounded-lg pl-8 pr-3 py-2 text-xs font-bold outline-none focus:border-blue-500 text-[#1d1d1f] shadow-sm" />
-                     </div>
+                     <TaskSearchRadar uniqueTaskNamesList={uniqueTaskNamesList} searchTask={searchTask} setSearchTask={setSearchTask} isMobile={true} />
 
                      {isEditMapMode && (
                        <div className="flex flex-col xl:flex-row gap-3 sm:gap-4 mb-4 sm:mb-6 p-3 sm:p-5 bg-[#f5f5f7] rounded-xl sm:rounded-2xl border border-black/5 shadow-inner">
@@ -154,14 +225,14 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                      )}
 
                      {/* 🌟 UX Blueprint Map 🌟 */}
-                     <div className="w-full overflow-auto pb-4 custom-scrollbar bg-slate-300 rounded-xl sm:rounded-3xl border-2 sm:border-4 border-slate-400 shadow-inner relative" style={{ height: isMobileLayout ? '350px' : '600px' }}>
+                     <div className="w-full overflow-auto pb-4 custom-scrollbar bg-slate-300 rounded-xl sm:rounded-3xl border-2 sm:border-4 border-slate-400 shadow-inner relative" style={{ height: isMobileLayout ? '350px' : '75vh' }}>
 
                        <div 
-                          className={`relative bg-slate-300 select-none origin-top-left transition-transform duration-200 ${isEditMapMode ? 'cursor-crosshair' : 'cursor-grab'}`} 
+                          className={`relative mx-auto bg-slate-300 select-none origin-top-left transition-transform duration-200 shrink-0 ${isEditMapMode ? 'cursor-crosshair' : 'cursor-grab'}`} 
                           style={{ 
                              width: `${gridCols * 40}px`, 
+                             minWidth: `${gridCols * 40}px`,
                              height: `${gridRows * 40}px`, 
-                             minWidth: '100%', 
                              transform: `scale(${mapZoom})`,
                              backgroundImage: `radial-gradient(#94a3b8 1.5px, transparent 1.5px)`,
                              backgroundSize: `40px 40px` // Dot grid pattern
@@ -247,24 +318,86 @@ export default function MapVisualizer(props: MapVisualizerProps) {
 
                            // ดักจับว่าแปลงนี้ใช้ช่างที่เรากำลังค้นหาอยู่หรือไม่
 
-                           // ดักจับว่าแปลงนี้ใช้ช่างที่เรากำลังค้นหาอยู่หรือไม่
-                           const currentPlotAssignment = assignments.slice().reverse().find((a: any) => a.plot_id === plotId);
-                           const hasSearchedContractor = searchContractor.trim() !== '';
-                           const isMatchContractor = currentPlotAssignment?.contractor_name.toLowerCase().includes(searchContractor.toLowerCase());
+                           const hasSearchedTask = searchTask.trim() !== '';
+                           const plotTaskMatch = hasSearchedTask ? taskTemplates?.find((t: any) => t.house_type_id === plotInfo.house_type_id && t.task_name === searchTask) : null;
+                           const isMatchTask = !!plotTaskMatch;
 
                            const isActiveToday = plotsActiveToday.has(plotId);
 
-                           // ปรับสไตล์เอฟเฟกต์ไฮไลท์ช่าง
+                           // ปรับสไตล์เอฟเฟกต์ไฮไลท์งาน
                            let searchHighlightClass = "opacity-100 scale-100";
                            let cardBorderClass = statusInfo.colors; 
+                           let taskStatusBadge = null;
+                           let taskProgressBar = null;
 
-                           if (hasSearchedContractor) {
-                              if (isMatchContractor) {
-                                 // ถ้าใช่ช่างที่ค้นหา: ล็อกขอบสีทองหนาพิเศษ + ใส่เงาไฟนีออนกระพริบวิบวับ
-                                 searchHighlightClass = "opacity-100 scale-105 z-50 animate-pulse";
-                                 cardBorderClass = "bg-amber-50 border-amber-500 text-amber-900 shadow-[0_0_25px_rgba(245,158,11,0.8)] border-[4px]";
+                           if (hasSearchedTask) {
+                              if (isMatchTask) {
+                                 // ดึงข้อมูล Schedule และ Update
+                                 const tKey = `${plotId}-${plotTaskMatch.id}`;
+                                 const tPlan = schedules?.[tKey];
+                                 const tAct = assignments?.slice().reverse().find((a: any) => a.plot_id === plotId && a.task_template_id === plotTaskMatch.id);
+                                 
+                                 const currentProgress = tAct?.current_progress || 0;
+                                 
+                                 let badgeLine1 = '';
+                                 let badgeLine2 = '';
+                                 let badgeColorClass = '';
+
+                                 if (currentProgress === 100) {
+                                    cardBorderClass = "bg-emerald-50 border-emerald-500 text-emerald-900 shadow-[0_0_15px_rgba(16,185,129,0.8)] border-[3px]";
+                                    badgeLine1 = "🟢 เสร็จแล้ว";
+                                    badgeLine2 = "100%";
+                                    badgeColorClass = "bg-emerald-700/95";
+                                 } else if (currentProgress > 0) {
+                                    cardBorderClass = "bg-amber-50 border-amber-500 text-amber-900 shadow-[0_0_15px_rgba(245,158,11,0.8)] border-[3px]";
+                                    badgeLine1 = "🟡 กำลังทำ";
+                                    badgeLine2 = `${currentProgress}%`;
+                                    badgeColorClass = "bg-amber-700/95";
+                                    searchHighlightClass = "opacity-100 scale-105 z-50 animate-pulse";
+                                 } else {
+                                    let isLateToStart = false;
+                                    if (tPlan?.planned_start) {
+                                        const today = new Date();
+                                        today.setHours(0, 0, 0, 0);
+                                        const pStart = new Date(tPlan.planned_start);
+                                        pStart.setHours(0, 0, 0, 0);
+                                        if (pStart < today) isLateToStart = true;
+                                    }
+
+                                    if (isLateToStart) {
+                                        cardBorderClass = "bg-rose-50 border-rose-500 text-rose-900 shadow-[0_0_15px_rgba(244,63,94,0.8)] border-[3px]";
+                                        searchHighlightClass = "opacity-100 scale-105 z-50 animate-pulse";
+                                    } else {
+                                        cardBorderClass = "bg-slate-100 border-slate-400 text-slate-700 shadow-sm border-[2px]";
+                                    }
+                                    
+                                    badgeLine1 = "⚪ ยังไม่เริ่ม";
+                                    if (tPlan?.planned_start) {
+                                       const pStart = new Date(tPlan.planned_start).toLocaleDateString('th-TH', { month: 'short', day: 'numeric' });
+                                       badgeLine2 = `รอ ${pStart}`;
+                                    } else {
+                                       badgeLine2 = "-";
+                                    }
+                                    badgeColorClass = "bg-slate-700/95";
+                                 }
+
+                                 taskStatusBadge = (
+                                    <div className="absolute -bottom-3 sm:-bottom-4 left-1/2 -translate-x-1/2 flex flex-col z-50 rounded-md overflow-hidden shadow-lg border border-white/20 hover:scale-110 transition-transform">
+                                       <div className={`flex flex-col items-center justify-center text-white font-bold px-1.5 sm:px-2 py-0.5 sm:py-1 ${badgeColorClass} min-w-[50px] sm:min-w-[60px] max-w-[80px]`}>
+                                          <span className="text-[7px] sm:text-[8px] whitespace-nowrap">{badgeLine1}</span>
+                                          {badgeLine2 && <span className="text-[6px] sm:text-[7px] text-white/80 whitespace-nowrap leading-tight mt-[1px]">{badgeLine2}</span>}
+                                       </div>
+                                       {/* Progress Bar (Thin line at the bottom of the tag) */}
+                                       <div className="w-full h-[2px] sm:h-[3px] bg-slate-300">
+                                          <div className={`h-full ${currentProgress === 100 ? 'bg-emerald-400' : 'bg-amber-400'}`} style={{width: `${currentProgress}%`}}></div>
+                                       </div>
+                                    </div>
+                                 );
+                                 
+                                 taskProgressBar = null;
+
                               } else {
-                                 // ถ้าไม่ใช่ช่างที่ค้นหา: ปรับจางลงมากเป็นสีขาวดำ เพื่อขับช่างคนนั้นให้เด่น
+                                 // ถ้าไม่มีงานนี้: ปรับจางลงมาก
                                  searchHighlightClass = "opacity-10 scale-95 grayscale pointer-events-none";
                               }
                            } else {
@@ -319,7 +452,7 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                                    </div>
                                    
                                    {/* 🌟 ไอคอนแจ้งเตือน Overdue 🌟 */}
-                                   {(!hasSearchedContractor) && (() => {
+                                   {(!hasSearchedTask) && (() => {
                                       const isOverdue = statusInfo.planned === 100 && statusInfo.actual < 100 && statusInfo.status !== 'ready_for_sale' && !plotInfo.is_completed;
                                       const isCritical = isOverdue && plotInfo.has_customer;
                                       if (isCritical) {
@@ -330,17 +463,10 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                                       return null;
                                    })()}
                                    
-                                   {/* 🌟 🌟 ถ้ามีการค้นหาช่างและเจอแปลงของช่าง: ให้แถมป้ายชื่อช่างแปะไว้ตรงกลางผังเลย! 🌟 🌟 */}
-                                   {hasSearchedContractor && isMatchContractor && (
-                                      <div className="absolute -bottom-2 bg-amber-500 text-slate-900 font-bold px-1.5 py-0.5 rounded text-[8px] sm:text-[10px] uppercase tracking-wider shadow-md whitespace-nowrap border border-white z-40">
-                                         👷‍♂️ {currentPlotAssignment.contractor_name.split(' ')[0]}
-                                      </div>
-                                   )}
-                                   
                                 </div>
-                                   
-                                   {/* Tooltip รายละเอียดเมื่อเอาเมาส์ชี้ (คงเดิมไว้ทั้งหมด) */}
-                                   <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-[160px] sm:w-[180px] bg-slate-900 text-white rounded-xl sm:rounded-2xl shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all p-3 sm:p-4 pointer-events-none z-[100] border border-slate-700">
+                                
+                                {/* Tooltip รายละเอียดเมื่อเอาเมาส์ชี้ (คงเดิมไว้ทั้งหมด) */}
+                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-[160px] sm:w-[180px] bg-slate-900 text-white rounded-xl sm:rounded-2xl shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all p-3 sm:p-4 pointer-events-none z-[100] border border-slate-700">
                                       <div className="flex justify-between items-center w-full mb-1 sm:mb-2">
                                          <div className="flex items-center gap-1">
                                             <span className="font-bold text-xs sm:text-sm">{plotInfo.id}</span>
@@ -369,6 +495,82 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                              </div>
                            )
                          })}
+
+                         {/* 🌟 🌟 Layer ที่ 2: ป้ายสถานะงานแบบลอย (Floating Badge) 🌟 🌟 
+                              แยกออกมาวาดทีหลัง เพื่อให้ป้ายอยู่บนสุดเสมอ ไม่ถูกบ้านแปลงด้านล่างทับ */}
+                         {Object.entries(plotBounds).map(([plotId, bounds]:any) => {
+                           const plotInfo = plots.find((p: any) => p.id === plotId); if (!plotInfo) return null;
+                           const w = bounds.maxX - bounds.minX + 1, h = bounds.maxY - bounds.minY + 1;
+                           
+                           const hasSearchedTask = searchTask.trim() !== '';
+                           const plotTaskMatch = hasSearchedTask ? taskTemplates?.find((t: any) => t.house_type_id === plotInfo.house_type_id && t.task_name === searchTask) : null;
+                           const isMatchTask = !!plotTaskMatch;
+
+                           if (!hasSearchedTask || !isMatchTask) return null;
+
+                           const tKey = `${plotId}-${plotTaskMatch.id}`;
+                           const tPlan = schedules?.[tKey];
+                           const tAct = assignments?.slice().reverse().find((a: any) => a.plot_id === plotId && a.task_template_id === plotTaskMatch.id);
+                           
+                           const currentProgress = tAct?.current_progress || 0;
+                           
+                           let badgeLine1 = '';
+                           let badgeLine2 = '';
+                           let badgeColorClass = '';
+
+                           if (currentProgress === 100) {
+                              badgeLine1 = "🟢 เสร็จแล้ว";
+                              badgeLine2 = "100%";
+                              badgeColorClass = "bg-emerald-700/95";
+                           } else if (currentProgress > 0) {
+                              badgeLine1 = "🟡 กำลังทำ";
+                              badgeLine2 = `${currentProgress}%`;
+                              badgeColorClass = "bg-amber-700/95";
+                           } else {
+                              let isLateToStart = false;
+                              let lateDays = 0;
+                              if (tPlan?.planned_start) {
+                                  const today = new Date();
+                                  today.setHours(0, 0, 0, 0);
+                                  const pStart = new Date(tPlan.planned_start);
+                                  pStart.setHours(0, 0, 0, 0);
+                                  if (pStart < today) {
+                                      isLateToStart = true;
+                                      lateDays = Math.floor((today.getTime() - pStart.getTime()) / (1000 * 60 * 60 * 24));
+                                  }
+                              }
+
+                              if (isLateToStart) {
+                                 badgeLine1 = "🔴 เริ่มงานช้า!";
+                                 const pStartStr = new Date(tPlan.planned_start).toLocaleDateString('th-TH', { month: 'short', day: 'numeric' });
+                                 badgeLine2 = `แผน: ${pStartStr}`;
+                                 badgeColorClass = "bg-rose-600/95";
+                              } else {
+                                 badgeLine1 = "⚪ ยังไม่เริ่ม";
+                                 if (tPlan?.planned_start) {
+                                    const pStart = new Date(tPlan.planned_start).toLocaleDateString('th-TH', { month: 'short', day: 'numeric' });
+                                    badgeLine2 = `รอ ${pStart}`;
+                                 } else {
+                                    badgeLine2 = "-";
+                                 }
+                                 badgeColorClass = "bg-slate-700/95";
+                              }
+                           }
+
+                           return (
+                             <div key={`badge-${plotId}`} className="absolute pointer-events-none z-[80]" style={{ left: `${(bounds.minX / gridCols) * 100}%`, top: `${(bounds.minY / gridRows) * 100}%`, width: `${(w / gridCols) * 100}%`, height: `${(h / gridRows) * 100}%` }}>
+                                <div className="absolute -bottom-3 sm:-bottom-4 left-1/2 -translate-x-1/2 flex flex-col rounded-md overflow-hidden shadow-lg border border-white/20 transition-transform hover:scale-110 pointer-events-auto">
+                                   <div className={`flex flex-col items-center justify-center text-white font-bold px-1.5 sm:px-2 py-0.5 sm:py-1 ${badgeColorClass} min-w-[50px] sm:min-w-[60px] max-w-[80px]`}>
+                                      <span className="text-[7px] sm:text-[8px] whitespace-nowrap">{badgeLine1}</span>
+                                      {badgeLine2 && <span className="text-[6px] sm:text-[7px] text-white/80 whitespace-nowrap leading-tight mt-[1px]">{badgeLine2}</span>}
+                                   </div>
+                                   <div className="w-full h-[2px] sm:h-[3px] bg-slate-300">
+                                      <div className={`h-full ${currentProgress === 100 ? 'bg-emerald-400' : 'bg-amber-400'}`} style={{width: `${currentProgress}%`}}></div>
+                                   </div>
+                                </div>
+                             </div>
+                           );
+                         })}
                        </div>
                      </div>
                    </div>
@@ -383,7 +585,7 @@ export default function MapVisualizer(props: MapVisualizerProps) {
                       </div>
                    </div>
                    
-                   <div className={`grid gap-3 sm:gap-6 ${isMobileLayout ? 'grid-cols-2' : 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'}`}>
+                   <div className={`grid gap-3 sm:gap-6 ${isMobileLayout ? 'grid-cols-2' : 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 2xl:grid-cols-6'}`}>
                         {displayPlots.map((plot: any) => {
                         // 🌟 ดึงข้อมูล Status ของแปลงนั้นๆ เพื่อเอา % แผนงาน (planned) และ % งานจริง (actual) 🌟
                         const statusInfo = getPlotOverallStatus(plot.id);
@@ -491,3 +693,5 @@ export default function MapVisualizer(props: MapVisualizerProps) {
     </>
   );
 }
+
+export default React.memo(MapVisualizer);

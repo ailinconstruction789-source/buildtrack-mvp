@@ -96,41 +96,82 @@ export default function ExecutiveAnalytics({
       if (!monthlyData[monthStr]) monthlyData[monthStr] = { PV: 0, EV: 0 };
     };
 
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    ensureMonth(currentMonth);
+
     if (schedules) {
       const schedArray = Array.isArray(schedules) ? schedules : Object.keys(schedules).map(k => ({...schedules[k], _key: k}));
       schedArray.forEach((s: any) => {
-        if (!s.planned_end) return;
-        const date = new Date(s.planned_end);
-        if (isNaN(date.getTime())) return;
-        const monthStr = date.toISOString().slice(0, 7);
-        ensureMonth(monthStr);
+        if (!s.planned_end || !s.planned_start) return;
         
         let taskId = s.task_template_id;
         if (!taskId && s._key) {
            const parts = s._key.split('-');
            taskId = parts.length === 10 ? parts.slice(5).join('-') : (parts.length >= 2 ? parts[1] : s._key);
         }
-        monthlyData[monthStr].PV += (taskCostMap[taskId] || 0);
+        const cost = taskCostMap[taskId] || 0;
+        
+        const start = new Date(s.planned_start);
+        const end = new Date(s.planned_end);
+        
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) return;
+
+        if (start.toISOString().slice(0, 7) === end.toISOString().slice(0, 7)) {
+            const m = end.toISOString().slice(0, 7);
+            ensureMonth(m);
+            monthlyData[m].PV += cost;
+        } else {
+            const totalMs = end.getTime() - start.getTime() || 1;
+            let current = new Date(start.getFullYear(), start.getMonth(), 1);
+            const endMonth = new Date(end.getFullYear(), end.getMonth(), 1);
+            
+            while (current <= endMonth) {
+                const m = current.toISOString().slice(0, 7);
+                const endOfMonth = new Date(current.getFullYear(), current.getMonth() + 1, 0, 23, 59, 59, 999);
+                
+                const spanStart = Math.max(start.getTime(), current.getTime());
+                const spanEnd = Math.min(end.getTime(), endOfMonth.getTime());
+                const spanMs = Math.max(0, spanEnd - spanStart);
+                
+                ensureMonth(m);
+                monthlyData[m].PV += (cost * (spanMs / totalMs));
+                
+                current = new Date(current.getFullYear(), current.getMonth() + 1, 1);
+            }
+        }
       });
     }
 
     if (latestUpdatesMap) {
       Object.keys(latestUpdatesMap).forEach(key => {
         const upd = latestUpdatesMap[key];
-        if (Number(upd.progress) === 100) {
-          const dateStr = upd.actual_end_date || upd.resolved_at || upd.created_at || upd.updated_at;
-          if (!dateStr) return;
-          const date = new Date(dateStr);
-          if (isNaN(date.getTime())) return;
-          const monthStr = date.toISOString().slice(0, 7);
-          ensureMonth(monthStr);
+        const progress = Number(upd.progress || 0);
+        if (progress === 0) return;
 
-          let taskId = upd.task_template_id;
-          if (!taskId) {
-            const parts = key.split('-');
-            taskId = parts.length === 10 ? parts.slice(5).join('-') : (parts.length >= 2 ? parts[1] : key);
+        let taskId = upd.task_template_id;
+        if (!taskId) {
+          const parts = key.split('-');
+          taskId = parts.length === 10 ? parts.slice(5).join('-') : (parts.length >= 2 ? parts[1] : key);
+        }
+        const cost = taskCostMap[taskId] || 0;
+
+        if (progress === 100) {
+          const dateStr = upd.actual_end_date || upd.resolved_at || upd.created_at || upd.updated_at;
+          if (dateStr) {
+            const date = new Date(dateStr);
+            if (!isNaN(date.getTime())) {
+              const monthStr = date.toISOString().slice(0, 7);
+              ensureMonth(monthStr);
+              monthlyData[monthStr].EV += cost;
+            } else {
+              monthlyData[currentMonth].EV += cost;
+            }
+          } else {
+            monthlyData[currentMonth].EV += cost;
           }
-          monthlyData[monthStr].EV += (taskCostMap[taskId] || 0);
+        } else {
+          // Partial progress -> assign to current month
+          monthlyData[currentMonth].EV += (cost * (progress / 100));
         }
       });
     }
@@ -138,7 +179,6 @@ export default function ExecutiveAnalytics({
     const sortedMonths = Object.keys(monthlyData).sort();
     let cumulativePV = 0;
     let cumulativeEV = 0;
-    const currentMonth = new Date().toISOString().slice(0, 7);
 
     return sortedMonths.map(month => {
       cumulativePV += monthlyData[month].PV;

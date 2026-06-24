@@ -43,7 +43,7 @@ interface DashboardOverviewProps {
   handleEditProject: (p: any) => void;
 }
 
-export default function DashboardOverview({
+const DashboardOverview = function DashboardOverview({
   view, setView,
   isSiteEngineer, isQC, isAdmin, isOwner, isForeman, isProcurement, isProjectPlanner,
   isMobileLayout,
@@ -60,7 +60,7 @@ export default function DashboardOverview({
   if (view !== 'dashboard') return null;
 
   return (
-    <div className="animate-in fade-in zoom-in-95 duration-500 max-w-7xl mx-auto">
+    <div className="animate-in fade-in zoom-in-95 duration-500 w-full mx-auto">
         {(isSiteEngineer || isQC || isAdmin || isOwner || isForeman || isProcurement || isProjectPlanner) && (
         <div className="mb-6 sm:mb-12 mt-6 sm:mt-8">
         <div className="flex flex-col md:flex-row md:justify-between md:items-end mb-4 sm:mb-6 gap-3">
@@ -86,28 +86,36 @@ export default function DashboardOverview({
           let plannedAvg = 0;
           if (schedules && taskTemplates && plots) {
             const pPlots = plots.filter((p: any) => p.project_name === proj.name);
-            let plannedTotal = 0;
-            let taskCount = 0;
-            pPlots.forEach((p: any) => {
-              const pTasks = taskTemplates.filter((t: any) => t.house_type_id === p.house_type_id);
-              taskCount += pTasks.length;
-              pTasks.forEach((t: any) => {
-                 const key = `${p.id}-${t.id}`;
-                 const plan = schedules?.[key];
-                 let plannedProg = 0;
-                 const today = Date.now();
-                 if (plan && plan.planned_start && plan.planned_end) {
-                   const pStart = new Date(plan.planned_start).getTime();
-                   const pEnd = new Date(plan.planned_end).getTime();
-                   if (today >= pEnd) plannedProg = 100;
-                   else if (today <= pStart) plannedProg = 0;
-                   else plannedProg = Math.round(((today - pStart) / (pEnd - pStart)) * 100);
-                 }
-                 plannedTotal += plannedProg;
+              let plannedTotalWeight = 0;
+              let totalCost = 0;
+              let naivePlannedTotal = 0;
+              let taskCount = 0;
+              pPlots.forEach((p: any) => {
+                const pTasks = taskTemplates.filter((t: any) => t.house_type_id === p.house_type_id);
+                taskCount += pTasks.length;
+                pTasks.forEach((t: any) => {
+                   const key = `${p.id}-${t.id}`;
+                   const plan = schedules?.[key];
+                   let plannedProg = 0;
+                   const today = Date.now();
+                   if (plan && plan.planned_start && plan.planned_end) {
+                     const pStart = new Date(plan.planned_start).getTime();
+                     const pEnd = new Date(plan.planned_end).getTime();
+                     if (today >= pEnd) plannedProg = 100;
+                     else if (today <= pStart) plannedProg = 0;
+                     else plannedProg = Math.round(((today - pStart) / (pEnd - pStart)) * 100);
+                   }
+                   
+                   const taskCost = t.cost ? Number(t.cost) : 0;
+                   plannedTotalWeight += (plannedProg * taskCost);
+                   totalCost += taskCost;
+                   naivePlannedTotal += plannedProg;
+                });
               });
-            });
-            plannedAvg = taskCount > 0 ? Math.round(plannedTotal / taskCount) : 0;
-          }
+              plannedAvg = totalCost > 0 
+                ? Math.round(plannedTotalWeight / totalCost) 
+                : (taskCount > 0 ? Math.round(naivePlannedTotal / taskCount) : 0);
+            }
 
           return (
           <div key={proj.name} onClick={() => { 
@@ -288,3 +296,5 @@ export default function DashboardOverview({
 </div>
   );
 }
+
+export default React.memo(DashboardOverview);

@@ -43,7 +43,7 @@ interface TaskProgressViewProps {
   handleSendPost: () => void;
 }
 
-export default function TaskProgressView(props: TaskProgressViewProps) {
+const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps) {
   const {
     view, setView, taskReturnView, isMobileLayout, selectedTask, selectedPlot,
     setProgressValue, progressValue, isSending, setFullImageUrl,
@@ -177,7 +177,7 @@ export default function TaskProgressView(props: TaskProgressViewProps) {
                                  isPendingSE ? (
                                    <div className={`flex flex-col ${isMobileLayout ? 'gap-2' : 'gap-3 sm:gap-4'}`}>
                                      <div className={`flex ${isMobileLayout ? 'gap-1.5' : 'gap-2 sm:gap-3'} items-center`}>
-                                         <label className={`text-slate-400 hover:text-blue-600 ${isMobileLayout ? 'p-2 rounded-lg' : 'p-2 sm:p-4 rounded-xl sm:rounded-[1.5rem]'} bg-[#f5f5f7] cursor-pointer shadow-sm active:scale-90 transition-transform flex flex-col items-center justify-center`} title="รูปผลงาน"><Camera size={isMobileLayout ? 18 : 24} /><span className="text-[8px] font-bold mt-0.5">ผลงาน</span><input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { const files = Array.from(e.target.files || []).map(f => ({ file: f, previewUrl: URL.createObjectURL(f) })); setSelectedFiles([...selectedFiles, ...files].slice(0, 4)); }} /></label>
+                                         <label className={`text-slate-400 hover:text-blue-600 ${isMobileLayout ? 'p-2 rounded-lg' : 'p-2 sm:p-4 rounded-xl sm:rounded-[1.5rem]'} bg-[#f5f5f7] cursor-pointer shadow-sm active:scale-90 transition-transform flex flex-col items-center justify-center`} title="รูปผลงาน"><Camera size={isMobileLayout ? 18 : 24} /><span className="text-[8px] font-bold mt-0.5">ผลงาน</span><input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { const files = Array.from(e.target.files || []).map(f => ({ file: f, previewUrl: URL.createObjectURL(f) })); setSelectedFiles([...selectedFiles, ...files].slice(0, 10)); }} /></label>
                                          <input type="text" value={inputText} onChange={(e) => setInputText(e.target.value)} placeholder="ระบุความคิดเห็น..." className={`flex-1 bg-[#f5f5f7] ${isMobileLayout ? 'rounded-lg px-3 py-2.5 text-[10px]' : 'rounded-xl sm:rounded-[1.5rem] px-4 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm'} font-bold outline-none focus:border-blue-500`} />
                                      </div>
                                      <div className={`flex ${isMobileLayout ? 'gap-1.5' : 'gap-2 sm:gap-4'}`}>
@@ -190,7 +190,7 @@ export default function TaskProgressView(props: TaskProgressViewProps) {
                                  isPendingQC ? (
                                    <div className={`flex flex-col ${isMobileLayout ? 'gap-2' : 'gap-3 sm:gap-4'}`}>
                                      <div className={`flex ${isMobileLayout ? 'gap-1.5' : 'gap-2 sm:gap-3'} items-center`}>
-                                         <label className={`text-slate-400 hover:text-purple-600 ${isMobileLayout ? 'p-2 rounded-lg' : 'p-2 sm:p-4 rounded-xl sm:rounded-[1.5rem]'} bg-[#f5f5f7] cursor-pointer shadow-sm active:scale-90 transition-transform flex flex-col items-center justify-center`} title="รูปผลงาน"><Camera size={isMobileLayout ? 18 : 24} /><span className="text-[8px] font-bold mt-0.5">ผลงาน</span><input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { const files = Array.from(e.target.files || []).map(f => ({ file: f, previewUrl: URL.createObjectURL(f) })); setSelectedFiles([...selectedFiles, ...files].slice(0, 4)); }} /></label>
+                                         <label className={`text-slate-400 hover:text-purple-600 ${isMobileLayout ? 'p-2 rounded-lg' : 'p-2 sm:p-4 rounded-xl sm:rounded-[1.5rem]'} bg-[#f5f5f7] cursor-pointer shadow-sm active:scale-90 transition-transform flex flex-col items-center justify-center`} title="รูปผลงาน"><Camera size={isMobileLayout ? 18 : 24} /><span className="text-[8px] font-bold mt-0.5">ผลงาน</span><input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { const files = Array.from(e.target.files || []).map(f => ({ file: f, previewUrl: URL.createObjectURL(f) })); setSelectedFiles([...selectedFiles, ...files].slice(0, 10)); }} /></label>
                                          <input type="text" value={inputText} onChange={(e) => setInputText(e.target.value)} placeholder="ระบุความคิดเห็น..." className={`flex-1 bg-[#f5f5f7] ${isMobileLayout ? 'rounded-lg px-3 py-2.5 text-[10px]' : 'rounded-xl sm:rounded-[1.5rem] px-4 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm'} font-bold outline-none focus:border-purple-500`} />
                                      </div>
                                      <div className={`flex ${isMobileLayout ? 'gap-1.5' : 'gap-2 sm:gap-4'}`}>
@@ -212,7 +212,7 @@ export default function TaskProgressView(props: TaskProgressViewProps) {
                                            <span className={`font-bold text-blue-600 text-right italic ${isMobileLayout ? 'text-sm w-10' : 'text-xl sm:text-2xl w-16 sm:w-20'}`}>{progressValue}%</span>
                                        </div>
                                        <div className={`flex items-center ${isMobileLayout ? 'gap-1.5' : 'gap-2 sm:gap-3'}`}>
-                                           <label className={`text-slate-400 hover:text-blue-600 ${isMobileLayout ? 'p-2 rounded-lg' : 'p-3 sm:p-4 rounded-xl sm:rounded-[1.5rem]'} bg-[#f5f5f7] cursor-pointer shadow-sm active:scale-90 transition-transform flex flex-col items-center justify-center`} title="รูปผลงาน"><Camera size={isMobileLayout ? 18 : 24} /><span className="text-[8px] font-bold mt-0.5">ผลงาน</span><input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { const files = Array.from(e.target.files || []).map(f => ({ file: f, previewUrl: URL.createObjectURL(f) })); setSelectedFiles([...selectedFiles, ...files].slice(0, 4)); }} /></label>
+                                           <label className={`text-slate-400 hover:text-blue-600 ${isMobileLayout ? 'p-2 rounded-lg' : 'p-3 sm:p-4 rounded-xl sm:rounded-[1.5rem]'} bg-[#f5f5f7] cursor-pointer shadow-sm active:scale-90 transition-transform flex flex-col items-center justify-center`} title="รูปผลงาน"><Camera size={isMobileLayout ? 18 : 24} /><span className="text-[8px] font-bold mt-0.5">ผลงาน</span><input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { const files = Array.from(e.target.files || []).map(f => ({ file: f, previewUrl: URL.createObjectURL(f) })); setSelectedFiles([...selectedFiles, ...files].slice(0, 10)); }} /></label>
                                            <input type="text" value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendPost()} placeholder="อธิบายงาน..." className={`flex-1 bg-[#f5f5f7] ${isMobileLayout ? 'rounded-lg px-3 py-2 text-[10px]' : 'rounded-xl sm:rounded-[1.5rem] px-5 sm:px-6 py-3 sm:py-4 text-sm'} font-bold outline-none border-2 border-transparent focus:border-blue-500 shadow-inner`} />
                                            <button onClick={handleSendPost} disabled={isSending} className={`${isMobileLayout ? 'p-2 rounded-lg' : 'p-3 sm:p-4 rounded-xl sm:rounded-[1.5rem]'} text-white shadow-md disabled:opacity-50 ${progressValue === 100 ? 'bg-orange-500 hover:bg-orange-600' : 'bg-blue-600 hover:bg-blue-700'}`}>{isSending ? <Loader2 className="animate-spin" size={isMobileLayout ? 18 : 24}/> : <Send size={isMobileLayout ? 18 : 24}/>}</button>
                                        </div>
@@ -229,3 +229,5 @@ export default function TaskProgressView(props: TaskProgressViewProps) {
     </>
   );
 }
+
+export default React.memo(TaskProgressView);

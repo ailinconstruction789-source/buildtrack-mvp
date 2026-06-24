@@ -1,8 +1,9 @@
 import React, { useMemo } from 'react';
-import { TrendingUp, AlertTriangle, Target, ShieldAlert, Award } from 'lucide-react';
+import { TrendingUp, AlertTriangle, Target, ShieldAlert, Award, Users } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
 
 export default function OwnerAnalyticsDashboard({
-  projects, plots, taskTemplates, schedules, defects, allUpdatesRecord, foremenList, latestUpdatesMap
+  projects, plots, taskTemplates, schedules, defects, allUpdatesRecord, foremenList, latestUpdatesMap, contractors, assignments
 }: any) {
 
   // 1. Bottleneck & Rework Analysis
@@ -100,8 +101,9 @@ export default function OwnerAnalyticsDashboard({
     if (!projects) return [];
     return projects.map((proj: any) => {
       const pPlots = plots?.filter((p: any) => p.project_name === proj.name) || [];
-      let actualTotal = 0;
-      let plannedTotal = 0;
+      let plannedTotalWeight = 0;
+      let totalCost = 0;
+      let naivePlannedTotal = 0;
       let taskCount = 0;
 
       pPlots.forEach((p: any) => {
@@ -109,8 +111,6 @@ export default function OwnerAnalyticsDashboard({
         taskCount += pTasks.length;
         pTasks.forEach((t: any) => {
            const key = `${p.id}-${t.id}`;
-           actualTotal += (latestUpdatesMap?.[key]?.progress || 0);
-           
            const plan = schedules?.[key];
            let plannedProg = 0;
            const today = Date.now();
@@ -121,17 +121,77 @@ export default function OwnerAnalyticsDashboard({
              else if (today <= pStart) plannedProg = 0;
              else plannedProg = Math.round(((today - pStart) / (pEnd - pStart)) * 100);
            }
-           plannedTotal += plannedProg;
+           
+           const taskCost = t.cost ? Number(t.cost) : 0;
+           plannedTotalWeight += (plannedProg * taskCost);
+           totalCost += taskCost;
+           naivePlannedTotal += plannedProg;
         });
       });
 
       return {
         name: proj.name,
-        actualAvg: taskCount > 0 ? Math.round(actualTotal / taskCount) : 0,
-        plannedAvg: taskCount > 0 ? Math.round(plannedTotal / taskCount) : 0,
+        actualAvg: Math.round(proj.progress || 0),
+        plannedAvg: totalCost > 0 
+          ? Math.round(plannedTotalWeight / totalCost) 
+          : (taskCount > 0 ? Math.round(naivePlannedTotal / taskCount) : 0),
       };
     });
-  }, [projects, plots, taskTemplates, latestUpdatesMap, schedules]);
+  }, [projects, plots, taskTemplates, schedules]);
+
+  // 5. Contractor Performance Scorecard
+  const contractorPerformance = useMemo(() => {
+    if (!contractors || !assignments) return [];
+    
+    return contractors.map((c: any) => {
+      const cAssignments = assignments.filter((a: any) => a.contractor_name === c.name);
+      let delayedTasks = 0;
+      let totalTasks = 0;
+      let totalReworks = 0;
+      let defectCount = 0;
+
+      cAssignments.forEach((a: any) => {
+        totalTasks++;
+        const key = `${a.plot_id}-${a.task_template_id}`;
+        const plan = schedules?.[key];
+        const actual = latestUpdatesMap?.[key];
+
+        if (actual && actual.progress === 100) {
+          const pEnd = plan && plan.planned_end ? new Date(plan.planned_end).getTime() : 0;
+          const aEnd = actual.created_at ? new Date(actual.created_at).getTime() : 0;
+          if (pEnd > 0 && aEnd > pEnd + 86400000) {
+            delayedTasks++;
+          }
+        }
+      });
+
+      // Count reworks
+      if (allUpdatesRecord) {
+        allUpdatesRecord.forEach((upd: any) => {
+          if (upd.action && (upd.action.includes('แจ้งแก้ไข') || upd.action.includes('ไม่อนุมัติ'))) {
+             const isThisContractor = cAssignments.some((a:any) => String(a.plot_id) === String(upd.plot_id) && String(a.task_template_id) === String(upd.task_template_id));
+             if (isThisContractor) totalReworks++;
+          }
+        });
+      }
+
+      // Count defects
+      defectCount = defects?.filter((d: any) => {
+         return cAssignments.some((a:any) => String(a.plot_id) === String(d.plot_id) && String(a.task_template_id) === String(d.task_id));
+      }).length || 0;
+
+      const onTimeRate = totalTasks > 0 ? Math.round(((totalTasks - delayedTasks) / totalTasks) * 100) : 100;
+
+      return {
+        name: c.name,
+        taskCount: totalTasks,
+        onTimeRate,
+        totalReworks,
+        defectCount
+      };
+    }).sort((a: any, b: any) => b.onTimeRate - a.onTimeRate || a.totalReworks - b.totalReworks);
+
+  }, [contractors, assignments, schedules, latestUpdatesMap, allUpdatesRecord, defects]);
 
   return (
     <div className="space-y-6 sm:space-y-8 mt-8">
@@ -142,27 +202,24 @@ export default function OwnerAnalyticsDashboard({
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* 1. Project S-Curve (Planned vs Actual) */}
-        <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+        <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm hover:shadow-md transition-shadow lg:col-span-2">
           <h3 className="font-black text-lg text-slate-800 mb-6 flex items-center gap-2"><Target className="text-indigo-500" /> Planned vs Actual Progress</h3>
-          <div className="space-y-6">
-            {projectProgressData.map((proj: any, idx: number) => (
-              <div key={idx} className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <span className="font-bold text-slate-700">{proj.name}</span>
-                  <span className={`text-xs font-black px-2 py-1 rounded-lg ${proj.actualAvg >= proj.plannedAvg ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
-                    {proj.actualAvg >= proj.plannedAvg ? 'นำหน้าแผน' : 'ล่าช้ากว่าแผน'}
-                  </span>
-                </div>
-                <div className="relative h-4 bg-slate-100 rounded-full overflow-hidden">
-                  <div className="absolute top-0 left-0 h-full bg-slate-300 opacity-50" style={{ width: `${proj.plannedAvg}%` }}></div>
-                  <div className={`absolute top-0 left-0 h-full ${proj.actualAvg >= proj.plannedAvg ? 'bg-emerald-500' : 'bg-blue-600'}`} style={{ width: `${proj.actualAvg}%`, zIndex: 10 }}></div>
-                </div>
-                <div className="flex justify-between text-[10px] font-bold text-slate-400">
-                  <span className="text-blue-600">Actual: {proj.actualAvg}%</span>
-                  <span>Planned: {proj.plannedAvg}%</span>
-                </div>
-              </div>
-            ))}
+          <div className="h-[350px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={projectProgressData} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fontWeight: 700, fill: '#64748b' }} />
+                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748b' }} domain={[0, 100]} tickFormatter={(val) => `${val}%`} />
+                <RechartsTooltip 
+                  cursor={{ fill: '#f8fafc' }}
+                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                  formatter={(value: any) => [`${value}%`, '']}
+                />
+                <Legend iconType="circle" wrapperStyle={{ paddingTop: '20px', fontSize: '12px', fontWeight: 700 }} />
+                <Bar dataKey="plannedAvg" name="แผนงาน (Planned)" fill="#94a3b8" radius={[4, 4, 0, 0]} maxBarSize={60} />
+                <Bar dataKey="actualAvg" name="ทำได้จริง (Actual)" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={60} />
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         </div>
 
@@ -227,6 +284,38 @@ export default function OwnerAnalyticsDashboard({
                     </td>
                     <td className="p-3 text-center font-bold text-sm text-slate-600">{f.totalReworks}</td>
                     <td className="p-3 text-center font-bold text-sm text-slate-600">{f.defectCount}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* 5. Contractor Scorecard */}
+        <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+          <h3 className="font-black text-lg text-slate-800 mb-6 flex items-center gap-2"><Users className="text-indigo-500" /> Contractor Scorecard</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead className="bg-slate-50 border-b border-slate-100">
+                <tr>
+                  <th className="p-3 text-xs font-black uppercase text-slate-500">Contractor</th>
+                  <th className="p-3 text-xs font-black uppercase text-slate-500 text-center">On-time</th>
+                  <th className="p-3 text-xs font-black uppercase text-slate-500 text-center">Reworks</th>
+                  <th className="p-3 text-xs font-black uppercase text-slate-500 text-center">Defects</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {contractorPerformance.slice(0, 5).map((c: any, idx: number) => (
+                  <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                    <td className="p-3 font-bold text-sm text-slate-700 flex items-center gap-2">
+                      {idx === 0 && <span className="text-yellow-500 text-lg">👑</span>}
+                      {c.name}
+                    </td>
+                    <td className="p-3 text-center">
+                      <span className={`font-black text-xs px-2 py-1 rounded-md ${c.onTimeRate >= 80 ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>{c.onTimeRate}%</span>
+                    </td>
+                    <td className="p-3 text-center font-bold text-sm text-slate-600">{c.totalReworks}</td>
+                    <td className="p-3 text-center font-bold text-sm text-slate-600">{c.defectCount}</td>
                   </tr>
                 ))}
               </tbody>

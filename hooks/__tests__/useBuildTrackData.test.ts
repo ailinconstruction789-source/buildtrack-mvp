@@ -91,7 +91,7 @@ describe('useBuildTrackData Hook', () => {
     expect(result.current.plots[0].type).toBe('Type A');
 
     expect(result.current.latestUpdatesMap['p1-1']).toEqual({
-      plot_id: 'p1', task_template_id: 1, progress: 25
+      plot_id: 'p1', task_template_id: 1, progress: 25, actual_end_date: null
     });
 
     expect(result.current.taskDates['p1-1']).toEqual({

@@ -58,7 +58,7 @@ interface HouseDetailViewProps {
   loading?: boolean;
 }
 
-export default function HouseDetailView(props: HouseDetailViewProps) {
+const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
   const {
     view, setView, selectedPlot, selectedProject, isMobileLayout,
     plotPlanStart, plotPlanEnd, daysElapsed, totalPlannedDays, daysRemaining,
@@ -181,12 +181,12 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                         </div>
                       )}
                       
-                      {isProjectPlanner && (
+                      {(isProjectPlanner || currentUserRole === 'Site Engineer') && (
                         <div className="flex gap-1">
-                          <button onClick={() => setCopyModalOpen(true)} className="bg-slate-700 text-slate-200 px-2 py-1 rounded text-[10px] hover:bg-slate-600 border border-slate-600 font-bold">คัดลอก</button>
+                          {isProjectPlanner && <button onClick={() => setCopyModalOpen(true)} className="bg-slate-700 text-slate-200 px-2 py-1 rounded text-[10px] hover:bg-slate-600 border border-slate-600 font-bold">คัดลอก</button>}
                           <button onClick={handleSaveAllSchedules} disabled={isSubmitting} className="bg-rose-600 text-white px-2 py-1 rounded text-[10px] hover:bg-rose-700 font-bold flex items-center justify-center gap-1 min-w-[50px] disabled:opacity-70 disabled:cursor-not-allowed">
                              {isSubmitting ? <Loader2 className="animate-spin" size={12}/> : null}
-                             {isSubmitting ? 'กำลังบันทึก...' : 'บันทึก'}
+                             {isSubmitting ? 'กำลังบันทึก...' : 'บันทึกแผน'}
                           </button>
                         </div>
                       )}
@@ -558,7 +558,7 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                     </div>
                                  </td>
 
-                                  {currentUserRole === 'Project Planner' && (() => {
+                                   {(currentUserRole === 'Project Planner' || currentUserRole === 'Site Engineer') && (() => {
                                     const currentStart = scheduleInputs[task.id]?.start !== undefined ? scheduleInputs[task.id].start : (plan.planned_start || '');
                                     const currentEnd = scheduleInputs[task.id]?.end !== undefined ? scheduleInputs[task.id].end : (plan.planned_end || '');
                                     
@@ -652,7 +652,7 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
                                     );
                                  })()}
 
-                                  {currentUserRole !== 'Project Planner' && (() => {
+                                  {(currentUserRole !== 'Project Planner' && currentUserRole !== 'Site Engineer') && (() => {
                                     let durationText = '-';
                                     if (plan.planned_start && plan.planned_end) {
                                        const diff = new Date(plan.planned_end).getTime() - new Date(plan.planned_start).getTime();
@@ -753,3 +753,5 @@ export default function HouseDetailView(props: HouseDetailViewProps) {
     </>
   );
 }
+
+export default React.memo(HouseDetailView);

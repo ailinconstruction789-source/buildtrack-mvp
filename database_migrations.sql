@@ -177,3 +177,27 @@ CREATE POLICY "Allow public delete on plot_task_assignments" ON plot_task_assign
 -- ==============================================================================
 -- END OF MIGRATION
 -- ==============================================================================
+
+-- ==========================================
+-- Views for Optimized Data Fetching
+-- ==========================================
+
+-- View to get plot_task_assignments with project_name
+CREATE OR REPLACE VIEW vw_plot_task_assignments_with_project AS
+SELECT pta.*, p.project_name
+FROM plot_task_assignments pta
+JOIN plots p ON pta.plot_id = p.id;
+
+-- View to get plot_task_schedules with project_name
+CREATE OR REPLACE VIEW vw_plot_task_schedules_with_project AS
+SELECT pts.*, p.project_name
+FROM plot_task_schedules pts
+JOIN plots p ON pts.plot_id = p.id;
+
+-- Ensure public access to these views
+GRANT SELECT ON vw_plot_task_assignments_with_project TO public;
+GRANT SELECT ON vw_plot_task_schedules_with_project TO public;
+GRANT SELECT ON vw_plot_task_assignments_with_project TO anon;
+GRANT SELECT ON vw_plot_task_schedules_with_project TO anon;
+GRANT SELECT ON vw_plot_task_assignments_with_project TO authenticated;
+GRANT SELECT ON vw_plot_task_schedules_with_project TO authenticated;
