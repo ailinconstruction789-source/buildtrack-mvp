@@ -156,13 +156,16 @@ const DashboardOverview = function DashboardOverview({
       {/* 🌟 ส่วนหัว: โซนแท็บเมนูและปุ่มเปลี่ยนมุมมอง */}
       <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-4 sm:mb-8 mt-10">
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6">
-            <h2 className="font-semibold text-xl tracking-tight sm:text-2xl text-[#1d1d1f] flex items-center gap-2"><ClipboardList className={isQC ? 'text-purple-500' : 'text-blue-500'} size={24}/> Inspection Queue <span className="bg-[#1d1d1f] text-white text-[11px] px-2.5 py-0.5 rounded-full font-medium">{inspectionQueue.length}</span></h2>
+            <h2 className="font-semibold text-xl tracking-tight sm:text-2xl text-[#1d1d1f] flex items-center gap-2"><ClipboardList className={isForeman ? 'text-orange-500' : (isQC ? 'text-purple-500' : 'text-blue-500')} size={24}/> {isForeman ? '⚠️ งานที่ต้องแก้ไขด่วน' : 'Inspection Queue'} <span className="bg-[#1d1d1f] text-white text-[11px] px-2.5 py-0.5 rounded-full font-medium">{inspectionQueue.length}</span></h2>
             
             {/* 🌟 1. TABS คัดงานด่วน */}
-            <div className="flex bg-black/5 p-1 rounded-xl w-fit backdrop-blur-md">
-              <button onClick={() => setInspectionFilterTab('all')} className={`px-4 py-2 text-xs font-medium rounded-lg transition-all duration-300 ${inspectionFilterTab === 'all' ? 'bg-white shadow-sm text-[#1d1d1f]' : 'text-[#86868b] hover:text-[#1d1d1f]'}`}>ทั้งหมด</button>
-              <button onClick={() => setInspectionFilterTab('urgent')} className={`px-4 py-2 text-xs font-medium rounded-lg transition-all duration-300 flex items-center gap-1.5 ${inspectionFilterTab === 'urgent' ? 'bg-white shadow-sm text-rose-500' : 'text-[#86868b] hover:text-rose-500'}`}><AlertTriangle size={14}/> ด่วน <span className={`${inspectionFilterTab === 'urgent' ? 'bg-rose-100 text-rose-600' : 'bg-rose-50 text-rose-400'} px-1.5 py-0.5 rounded-md text-[10px] leading-none`}>{inspectionQueue.filter(q => (Date.now() - q.time) > 172800000).length}</span></button>
-            </div>
+            {(!isForeman) && (
+              <div className="flex bg-black/5 p-1 rounded-xl w-fit backdrop-blur-md">
+                <button onClick={() => setInspectionFilterTab('all')} className={`px-4 py-2 text-xs font-medium rounded-lg transition-all duration-300 ${inspectionFilterTab === 'all' ? 'bg-white shadow-sm text-[#1d1d1f]' : 'text-[#86868b] hover:text-[#1d1d1f]'}`}>ทั้งหมด</button>
+                <button onClick={() => setInspectionFilterTab('urgent')} className={`px-4 py-2 text-xs font-medium rounded-lg transition-all duration-300 flex items-center gap-1.5 ${inspectionFilterTab === 'urgent' ? 'bg-white shadow-sm text-rose-500' : 'text-[#86868b] hover:text-rose-500'}`}><AlertTriangle size={14}/> ด่วน <span className={`${inspectionFilterTab === 'urgent' ? 'bg-rose-100 text-rose-600' : 'bg-rose-50 text-rose-400'} px-1.5 py-0.5 rounded-md text-[10px] leading-none`}>{inspectionQueue.filter(q => (Date.now() - q.time) > 172800000).length}</span></button>
+                <button onClick={() => setInspectionFilterTab('rework')} className={`px-4 py-2 text-xs font-medium rounded-lg transition-all duration-300 flex items-center gap-1.5 ${inspectionFilterTab === 'rework' ? 'bg-white shadow-sm text-orange-500' : 'text-[#86868b] hover:text-orange-500'}`}>ตีกลับ <span className={`${inspectionFilterTab === 'rework' ? 'bg-orange-100 text-orange-600' : 'bg-orange-50 text-orange-400'} px-1.5 py-0.5 rounded-md text-[10px] leading-none`}>{inspectionQueue.filter(q => q.isRejected).length}</span></button>
+              </div>
+            )}
         </div>
         
         <div className="flex items-center gap-2 w-full xl:w-auto">
@@ -181,7 +184,7 @@ const DashboardOverview = function DashboardOverview({
       </div>
 
       {/* 🌟 พื้นที่แสดงผลคิวงาน */}
-      {inspectionQueue.filter(q => inspectionFilterTab === 'all' || (inspectionFilterTab === 'urgent' && (Date.now() - q.time) > 172800000)).length === 0 ? ( 
+      {inspectionQueue.filter(q => isForeman || inspectionFilterTab === 'all' || (inspectionFilterTab === 'urgent' && (Date.now() - q.time) > 172800000) || (inspectionFilterTab === 'rework' && q.isRejected)).length === 0 ? ( 
         <div className="bg-white/60 backdrop-blur-xl rounded-[2rem] border border-dashed border-black/10 p-10 sm:p-16 text-center flex flex-col items-center justify-center gap-4">
             <div className="w-20 h-20 bg-emerald-50 rounded-full flex items-center justify-center mb-2"><CheckCircle size={36} className="text-emerald-400"/></div>
             <p className="text-[#86868b] font-medium text-sm sm:text-lg">ไม่มีงานรอตรวจสอบในหมวดหมู่นี้</p>
@@ -190,7 +193,7 @@ const DashboardOverview = function DashboardOverview({
         <div className="max-h-[50vh] sm:max-h-[600px] overflow-y-auto custom-scrollbar pr-1 sm:pr-3 pb-4">
           <div className={`${inspectionViewMode === 'card' ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4' : 'flex flex-col gap-3'}`}>
             {(() => {
-              const filteredQ = inspectionQueue.filter(q => inspectionFilterTab === 'all' || (inspectionFilterTab === 'urgent' && (Date.now() - q.time) > 172800000));
+              const filteredQ = inspectionQueue.filter(q => isForeman || inspectionFilterTab === 'all' || (inspectionFilterTab === 'urgent' && (Date.now() - q.time) > 172800000) || (inspectionFilterTab === 'rework' && q.isRejected));
               
               if (inspectionViewMode === 'list') {
                 const grouped = filteredQ.reduce((acc, q) => {
@@ -216,13 +219,14 @@ const DashboardOverview = function DashboardOverview({
                             return (
                               <button key={`${q.plot_id}-${q.task_template_id}`} onClick={clickAction} className={`p-4 sm:p-5 text-left flex flex-col sm:flex-row sm:items-center justify-between gap-4 group transition-all duration-300 ${idx !== items.length - 1 ? 'border-b border-black/5' : ''} hover:bg-black/[0.02] ${isUrgent ? 'border-l-4 border-l-rose-500 bg-rose-50/30' : 'border-l-4 border-l-transparent'}`}>
                                 <div className="flex items-center gap-4 flex-1 overflow-hidden">
-                                    <div className={`w-12 h-12 rounded-2xl flex flex-col items-center justify-center shrink-0 shadow-sm ${q.statusFor === 'QC' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
-                                      <span className="text-[10px] font-bold uppercase tracking-wider">รอ {q.statusFor}</span>
+                                    <div className={`w-12 h-12 rounded-2xl flex flex-col items-center justify-center shrink-0 shadow-sm ${q.statusFor === 'Rework' ? 'bg-orange-100 text-orange-600' : (q.statusFor === 'QC' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600')}`}>
+                                      <span className="text-[10px] font-bold uppercase tracking-wider">{q.statusFor === 'Rework' ? 'แก้ไข' : `รอ ${q.statusFor}`}</span>
                                     </div>
                                     <div className="flex-1 min-w-0">
                                       <div className="flex items-center gap-2 mb-1 flex-wrap">
                                           <p className="text-sm sm:text-base font-semibold text-[#1d1d1f] truncate group-hover:text-blue-600 transition-colors">{q.task_name}</p>
                                           {isUrgent && <span className="bg-rose-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1 shadow-sm whitespace-nowrap shrink-0"><AlertTriangle size={12}/> ด่วนมาก</span>}
+                                          {q.isRejected && <span className="bg-orange-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1 shadow-sm whitespace-nowrap shrink-0">⚠️ ถูกตีกลับ</span>}
                                       </div>
                                       <p className="text-[11px] sm:text-xs text-[#86868b] font-medium flex items-center gap-1.5"><HardHat size={14}/> {q.foreman}</p>
                                     </div>
@@ -250,12 +254,13 @@ const DashboardOverview = function DashboardOverview({
                   <button key={`${q.plot_id}-${q.task_template_id}`} onClick={clickAction} className={`bg-white/80 backdrop-blur-xl p-5 sm:p-6 rounded-[1.5rem] border ${isUrgent ? 'border-rose-400 bg-rose-50/50' : 'border-white'} shadow-[0_4px_20px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] hover:-translate-y-1 active:scale-[0.98] transition-all duration-300 text-left group relative overflow-hidden`}>
                       {isUrgent && <div className="absolute top-0 left-0 w-full h-1.5 bg-rose-500"></div>}
                       <div className="flex justify-between items-start mb-4">
-                        <span className={`text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-lg text-white shadow-sm ${q.statusFor === 'QC' ? 'bg-purple-500' : 'bg-blue-500'}`}>รอ {q.statusFor}</span>
+                        <span className={`text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-lg text-white shadow-sm ${q.statusFor === 'Rework' ? 'bg-orange-500' : (q.statusFor === 'QC' ? 'bg-purple-500' : 'bg-blue-500')}`}>{q.statusFor === 'Rework' ? 'แก้ไข' : `รอ ${q.statusFor}`}</span>
                         <span className={`text-[10px] font-medium flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${isUrgent ? 'bg-rose-100 text-rose-600' : 'bg-black/5 text-[#86868b]'}`}><Clock size={12}/> {new Date(q.time).toLocaleDateString('th-TH',{day:'numeric', month:'short'})} {new Date(q.time).toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'})}</span>
                       </div>
-                      <div className="flex items-center gap-2 mb-2">
+                      <div className="flex items-center gap-2 mb-2 flex-wrap">
                         <h4 className="font-semibold text-[#1d1d1f] text-2xl">{q.plot_id}</h4>
                         {isUrgent && <AlertTriangle size={18} className="text-rose-500"/>}
+                        {q.isRejected && <span className="bg-orange-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1 shadow-sm whitespace-nowrap shrink-0">⚠️ ถูกตีกลับ</span>}
                       </div>
                       <p className="text-xs sm:text-sm font-medium text-[#86868b] line-clamp-2 mb-4 min-h-[32px] sm:min-h-[40px] leading-relaxed">{q.task_name}</p>
                       <div className="flex items-center gap-2 pt-4 border-t border-black/5">

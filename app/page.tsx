@@ -1284,21 +1284,42 @@ export default function ConstructionApp() {
   }), [plots, selectedProject?.name, searchPlot, filterForeman, isForeman, loggedInUser?.username]);
 
   const inspectionQueue = useMemo(() => {
-    if (!(isSiteEngineer || isQC || isAdmin || isOwner)) return [];
+    if (!(isSiteEngineer || isQC || isAdmin || isOwner || isForeman)) return [];
     const queue: any[] = [];
     Object.values(latestUpdatesMap).forEach((upd: any) => {
       const task = taskTemplates.find(t => t.id === upd.task_template_id); const plot = plots.find(p => p.id === upd.plot_id); if (!task || !plot) return;
+      
+      const isRejected = upd.action && (upd.action.includes('แจ้งแก้ไข') || upd.action.includes('ตีกลับ'));
+      
       const isPendingSEItem = isSiteEngineer && upd.progress === 100 && (upd.action === 'ส่งงาน 100%' || upd.role === 'Foreman');
       const isPendingQCItem = isQC && upd.progress === 100 && upd.action === 'Site Engineer อนุมัติ';
       const isAdminView = (isAdmin || isOwner) && upd.progress === 100 && (upd.action === 'ส่งงาน 100%' || upd.action === 'Site Engineer อนุมัติ');
-      if (isPendingSEItem || isPendingQCItem || isAdminView) queue.push({ ...upd, task_name: task.task_name, plot_id: plot.id, project_name: plot.project_name, foreman: plot.foreman, time: new Date(upd.created_at).getTime(), statusFor: isPendingQCItem || (isAdminView && upd.action === 'Site Engineer อนุมัติ') ? 'QC' : 'Site Engineer', isUrgent: (Date.now() - new Date(upd.created_at).getTime()) > 172800000 });
+      
+      const isRejectedSEItem = isSiteEngineer && isRejected;
+      const isRejectedQCItem = isQC && isRejected;
+      const isRejectedAdminView = (isAdmin || isOwner) && isRejected;
+      const isRejectedForemanItem = isForeman && isRejected && plot.foreman === loggedInUser?.username;
+
+      if (isPendingSEItem || isPendingQCItem || isAdminView || isRejectedSEItem || isRejectedQCItem || isRejectedAdminView || isRejectedForemanItem) {
+        queue.push({ 
+          ...upd, 
+          task_name: task.task_name, 
+          plot_id: plot.id, 
+          project_name: plot.project_name, 
+          foreman: plot.foreman, 
+          time: new Date(upd.created_at).getTime(), 
+          statusFor: isRejected ? 'Rework' : (isPendingQCItem || (isAdminView && upd.action === 'Site Engineer อนุมัติ') ? 'QC' : 'Site Engineer'), 
+          isUrgent: (Date.now() - new Date(upd.created_at).getTime()) > 172800000,
+          isRejected: isRejected
+        });
+      }
     });
     queue.sort((a, b) => { if (inspectionSort === 'plot') return a.plot_id.localeCompare(b.plot_id); return b.time - a.time; });
     return queue;
-  }, [latestUpdatesMap, taskTemplates, plots, isSiteEngineer, isQC, isAdmin, isOwner, inspectionSort]);
+  }, [latestUpdatesMap, taskTemplates, plots, isSiteEngineer, isQC, isAdmin, isOwner, isForeman, loggedInUser?.username, inspectionSort]);
 
   const urgentQueueCount = useMemo(() => inspectionQueue.filter(q => q.isUrgent).length, [inspectionQueue]);
-  const displayInspectionQueue = useMemo(() => inspectionQueue.filter(q => inspectionFilterTab === 'all' || (inspectionFilterTab === 'urgent' && q.isUrgent)), [inspectionQueue, inspectionFilterTab]);
+  const displayInspectionQueue = useMemo(() => inspectionQueue.filter(q => inspectionFilterTab === 'all' || (inspectionFilterTab === 'urgent' && q.isUrgent) || (inspectionFilterTab === 'rework' && q.isRejected)), [inspectionQueue, inspectionFilterTab]);
 
   const lastUpd = updates.length > 0 ? updates[updates.length - 1] : null;
   const isPendingSE = lastUpd?.progress === 100 && (lastUpd?.action === 'ส่งงาน 100%' || lastUpd?.role === 'Foreman');
