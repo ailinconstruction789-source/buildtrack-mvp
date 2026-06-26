@@ -2,7 +2,7 @@
 import React from 'react';
 import { supabase } from '@/lib/supabase';
 import { 
-  Activity, Calendar, Camera, HardHat, Loader2, Monitor, Pickaxe, PlusCircle, UserCog, Users, ImageIcon, Truck, XCircle, Send
+  Activity, Calendar, Camera, HardHat, Loader2, Monitor, Pickaxe, PlusCircle, UserCog, Users, ImageIcon, Truck, XCircle, Send, Clock, CheckCircle
 } from 'lucide-react';
 
 interface HouseDetailViewProps {
@@ -84,6 +84,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
   const [requestMaterialNote, setRequestMaterialNote] = React.useState('');
   const [requestMaterialTask, setRequestMaterialTask] = React.useState<any>(null);
   const [isSubmittingMaterial, setIsSubmittingMaterial] = React.useState(false);
+  const [viewImageModalUrl, setViewImageModalUrl] = React.useState<string | null>(null);
 
   const handleRequestMaterial = async () => {
     if (!requestMaterialTask || !selectedPlot) return;
@@ -622,10 +623,33 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                                              <span className="text-[9px] sm:text-[10px] font-bold text-[#86868b]">{tProgress}%</span>
                                           </div>
                                           <div className="flex items-center gap-1 shrink-0">
-                                            {/* 📦 ปุ่มสั่งวัสดุ (แสดงเฉพาะคนที่สั่งได้) */}
-                                            {(currentUserRole === 'Foreman' || currentUserRole === 'Site Engineer' || currentUserRole === 'Project Planner' || currentUserRole === 'Admin' || currentUserRole === 'Owner') && (
-                                              <button onClick={(e) => { e.stopPropagation(); setRequestMaterialTask(task); }} className="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 flex items-center gap-1 transition-colors whitespace-nowrap"><Truck size={10}/> เบิกวัสดุ</button>
-                                            )}
+                                            {/* 📦 ปุ่มสั่งวัสดุ / สถานะการเบิก (แสดงเฉพาะคนที่สั่งได้) */}
+                                            {(currentUserRole === 'Foreman' || currentUserRole === 'Site Engineer' || currentUserRole === 'Project Planner' || currentUserRole === 'Admin' || currentUserRole === 'Owner') && (() => {
+                                              const currentRequest = materialRequests?.find((r: any) => String(r.plot_id) === String(selectedPlot.id) && String(r.task_template_id) === String(task.id));
+                                              if (!currentRequest) {
+                                                return (
+                                                  <button onClick={(e) => { e.stopPropagation(); setRequestMaterialTask(task); }} className="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 flex items-center gap-1 transition-colors whitespace-nowrap"><Truck size={10}/> เบิกวัสดุ</button>
+                                                );
+                                              }
+                                              
+                                              if (currentRequest.status === 'requested') {
+                                                return <span className="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded border border-amber-200 bg-amber-50 text-amber-600 flex items-center gap-1 whitespace-nowrap"><Clock size={10}/> รอสโตร์</span>;
+                                              } else if (currentRequest.status === 'ordered') {
+                                                return <span className="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded border border-orange-200 bg-orange-50 text-orange-600 flex items-center gap-1 whitespace-nowrap"><Truck size={10}/> รอของเข้า</span>;
+                                              } else if (currentRequest.status === 'received') {
+                                                return (
+                                                  <div className="flex items-center gap-1">
+                                                    <span className="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded border border-emerald-200 bg-emerald-50 text-emerald-600 flex items-center gap-1 whitespace-nowrap"><CheckCircle size={10}/> ของครบแล้ว</span>
+                                                    {currentRequest.image_url && (
+                                                      <button onClick={(e) => { e.stopPropagation(); setViewImageModalUrl(currentRequest.image_url); }} className="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 flex items-center gap-1 transition-colors whitespace-nowrap">
+                                                        <ImageIcon size={10}/> รูป
+                                                      </button>
+                                                    )}
+                                                  </div>
+                                                );
+                                              }
+                                              return null;
+                                            })()}
                                             <span className={`text-[8px] sm:text-[9px] font-bold px-1.5 py-0.5 rounded border whitespace-nowrap ${statusObj.color}`}>
                                                {statusObj.label}
                                             </span>
@@ -827,6 +851,13 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                )}
 
                {/* 💬 LEVEL 4: Task Progress */}
+
+      {viewImageModalUrl && (
+        <div onClick={() => setViewImageModalUrl(null)} className="fixed inset-0 bg-black/80 z-[100] flex flex-col items-center justify-center p-4 cursor-pointer">
+          <button onClick={(e) => { e.stopPropagation(); setViewImageModalUrl(null); }} className="absolute top-4 right-4 bg-white/10 hover:bg-white/20 p-2 rounded-full text-white backdrop-blur-sm transition-all cursor-pointer"><XCircle size={28}/></button>
+          <img src={viewImageModalUrl} onClick={(e) => e.stopPropagation()} alt="Material View" className="max-w-full max-h-[80vh] object-contain rounded-xl shadow-2xl border border-white/20 cursor-default"/>
+        </div>
+      )}
 
     </>
   );
