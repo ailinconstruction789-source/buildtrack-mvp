@@ -4,7 +4,7 @@
 CREATE TABLE IF NOT EXISTS task_material_requests (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     plot_id TEXT NOT NULL REFERENCES plots(id) ON DELETE CASCADE,
-    task_template_id TEXT NOT NULL REFERENCES task_templates(id) ON DELETE CASCADE,
+    task_template_id UUID NOT NULL REFERENCES task_templates(id) ON DELETE CASCADE,
     status TEXT NOT NULL DEFAULT 'requested' CHECK (status IN ('requested', 'ordered', 'received')),
     notes TEXT,
     requested_by TEXT, -- Store foreman name/id
