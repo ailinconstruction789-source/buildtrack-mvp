@@ -2,8 +2,9 @@
 import React from 'react';
 import { supabase } from '@/lib/supabase';
 import { 
-  Activity, Calendar, Camera, HardHat, Loader2, Monitor, Pickaxe, PlusCircle, UserCog, Users, ImageIcon, Truck, XCircle, Send, Clock, CheckCircle
+  Activity, Calendar, Camera, HardHat, Loader2, Monitor, Pickaxe, PlusCircle, UserCog, Users, ImageIcon, Truck, XCircle, Send, Clock, CheckCircle, ShieldAlert
 } from 'lucide-react';
+import HouseHandoverView from './HouseHandoverView';
 
 interface HouseDetailViewProps {
   view: string;
@@ -58,6 +59,10 @@ interface HouseDetailViewProps {
   loading?: boolean;
   materialRequests?: any[];
   fetchAllData?: () => void;
+  resetHandoverCycle?: (plotId: string, currentCycle: number) => Promise<boolean>;
+  updateInspectionRound?: (plotId: string, newRound: number) => Promise<boolean>;
+  defects?: any[];
+  setDefects?: (d: any[]) => void;
 }
 
 const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
@@ -76,7 +81,9 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
     setScheduleInputs, allUpdatesRecord,
     handleTogglePlotCustomer, handleTogglePlotCompleted, getPlotOverallStatus,
     handleUploadOverviewImage, togglePlotSaleStatus,
-    materialRequests, fetchAllData
+    materialRequests, fetchAllData,
+    resetHandoverCycle, updateInspectionRound,
+    defects, setDefects
   } = props;
 
   const currentPlotStatus = selectedPlot ? getPlotOverallStatus(selectedPlot.id) : null;
@@ -85,6 +92,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
   const [requestMaterialTask, setRequestMaterialTask] = React.useState<any>(null);
   const [isSubmittingMaterial, setIsSubmittingMaterial] = React.useState(false);
   const [viewImageModalUrl, setViewImageModalUrl] = React.useState<string | null>(null);
+  const [activeHouseTab, setActiveHouseTab] = React.useState('construction');
 
   const handleRequestMaterial = async () => {
     if (!requestMaterialTask || !selectedPlot) return;
@@ -322,6 +330,23 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                             </div>
                          </div>
                      )}            
+                     {/* Tabs for Construction vs Handover */}
+                     <div className="flex bg-white border-b border-slate-200 mt-4 rounded-t-xl overflow-hidden">
+                       <button 
+                         onClick={() => setActiveHouseTab('construction')} 
+                         className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 transition-all ${activeHouseTab === 'construction' ? 'text-blue-600 border-b-4 border-blue-600 bg-blue-50' : 'text-slate-500 hover:bg-slate-50 border-b-4 border-transparent'}`}
+                       >
+                         <HardHat size={18} /> งานก่อสร้าง (Construction)
+                       </button>
+                       <button 
+                         onClick={() => setActiveHouseTab('handover')} 
+                         className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 transition-all ${activeHouseTab === 'handover' ? 'text-purple-600 border-b-4 border-purple-600 bg-purple-50' : 'text-slate-500 hover:bg-slate-50 border-b-4 border-transparent'}`}
+                       >
+                         <ShieldAlert size={18} /> ตรวจรับบ้าน (Handover)
+                       </button>
+                     </div>
+
+                     {activeHouseTab === 'construction' && (
                      <div className="bg-[#f5f5f7] w-full overflow-x-auto custom-scrollbar border-t border-black/5" style={{ maxHeight: '800px', overflowY: 'auto' }}>
                        {isMobileLayout && <div className="text-center text-[10px] text-slate-400 font-bold py-2 bg-[#f5f5f7] border-b border-black/5">↔️ ปัดซ้าย-ขวา เพื่อดูตาราง ↔️</div>}
                          <table className={`text-left border-collapse w-full relative ${isMobileLayout ? 'block' : 'min-w-[1200px]'}`}>
@@ -878,6 +903,19 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                          </tbody>
                        </table>
                      </div>
+                     )}
+
+                     {activeHouseTab === 'handover' && (
+                       <HouseHandoverView 
+                         selectedPlot={selectedPlot} 
+                         defects={defects || []} 
+                         setDefects={setDefects || (() => {})} 
+                         currentUserRole={currentUserRole}
+                         resetHandoverCycle={resetHandoverCycle}
+                         updateInspectionRound={updateInspectionRound}
+                         fetchAllData={fetchAllData}
+                       />
+                     )}
                    </div>
                  
                )}

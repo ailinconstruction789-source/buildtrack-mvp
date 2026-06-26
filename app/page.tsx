@@ -10,6 +10,7 @@ import MapVisualizer from '@/components/MapVisualizer';
 import HouseDetailView from '@/components/HouseDetailView';
 import TaskProgressView from '@/components/TaskProgressView';
 import OwnerAnalyticsDashboard from '@/components/OwnerAnalyticsDashboard';
+import QCPerformanceDashboard from '@/components/QCPerformanceDashboard';
 import ExecutiveAnalytics from '@/components/ExecutiveAnalytics';
 import MasterGanttChart from '@/components/MasterGanttChart';
 import MaterialStoreDashboard from '@/components/MaterialStoreDashboard';
@@ -1838,6 +1839,9 @@ export default function ConstructionApp() {
                     {(isAdmin || isProjectPlanner || isQC || isSiteEngineer || isOwner || isForeman) && (
                       <button onClick={() => setView('reports')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'reports' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><PieChart size={18} /> Reports & Analytics</button>
                     )}
+                    {(isAdmin || isOwner || isProjectPlanner || isQC || isSiteEngineer) && (
+                      <button onClick={() => setView('qc-performance')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'qc-performance' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><ShieldAlert size={18} /> ประเมินผล QC</button>
+                    )}
                     {(isAdmin || isQC || isSiteEngineer || isOwner || isForeman) && (
                       <button onClick={() => setView('defects')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'defects' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><ShieldAlert size={18} /> Defect Tracking</button>
                     )}
@@ -2655,6 +2659,18 @@ export default function ConstructionApp() {
                 </div>
               )}
 
+              {/* 🛡️ View: QC Performance */}
+              {view === 'qc-performance' && (
+                <div className="animate-in slide-in-from-bottom-4 duration-500 w-full mx-auto p-4 sm:p-8">
+                  <QCPerformanceDashboard
+                    defects={defects}
+                    allUpdatesRecord={allUpdatesRecord}
+                    taskTemplates={taskTemplates}
+                    plots={plots}
+                  />
+                </div>
+              )}
+
               {/* ⚠️ View: Defect Tracking (Full Page) ⚠️ */}
               {view === 'defects' && (
                 <div className="animate-in slide-in-from-bottom-4 duration-500 w-full mx-auto h-full p-4 sm:p-8">
@@ -2859,7 +2875,7 @@ export default function ConstructionApp() {
                   isAdmin={isAdmin} isProcurement={isProcurement} setScheduleInputs={setScheduleInputs} allUpdatesRecord={allUpdatesRecord}
                   handleTogglePlotCustomer={handleTogglePlotCustomer} handleTogglePlotCompleted={handleTogglePlotCompleted}
                   getPlotOverallStatus={getPlotOverallStatus} handleUploadOverviewImage={handleUploadOverviewImage}
-                  togglePlotSaleStatus={togglePlotSaleStatus}
+                  togglePlotSaleStatus={togglePlotSaleStatus} materialRequests={materialRequests}
                 />
               )}
 
@@ -3131,11 +3147,19 @@ export default function ConstructionApp() {
                       </div>
                     ) : (
                       <div className="text-center text-slate-400 font-bold py-20 border border-dashed rounded-2xl bg-slate-50">
+                        <button onClick={() => setView('reports')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'reports' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
+                          <PieChart size={20} className={activeView === 'reports' ? 'fill-blue-100' : ''} />
+                          <span className="text-[10px] font-bold mt-1">Reports</span>
+                        </button>
                         ← กรุณาเลือกแบบบ้านที่ด้านบน เพื่อเริ่มต้นกางงวดงานจัดเลเยอร์ภาพครับ
                       </div>
                     )}
                   </div>
                 </div>
+              )}
+              {/* 🌟 หน้าจอ QC Performance Dashboard 🌟 */}
+              {view === 'qc-performance' && (
+                <QCPerformanceDashboard />
               )}
               {/* 🌟 หน้าจอ ADMIN: กำหนดราคาขาย (PLOT PRICING) 🌟 */}
               {view === 'admin-pricing' && isAdmin && (
@@ -3399,6 +3423,12 @@ export default function ConstructionApp() {
                 <button onClick={() => setView('reports')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'reports' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
                   <PieChart size={20} className={activeView === 'reports' ? 'fill-blue-100' : ''} />
                   <span className="text-[9px] font-black mt-1">รายงาน</span>
+                </button>
+              )}
+              {(isAdmin || isOwner || isProjectPlanner || isQC || isSiteEngineer) && (
+                <button onClick={() => setView('qc-performance')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'qc-performance' ? 'text-rose-600' : 'text-slate-400 hover:text-slate-600'}`}>
+                  <ShieldAlert size={20} className={activeView === 'qc-performance' ? 'fill-rose-100' : ''} />
+                  <span className="text-[9px] font-black mt-1">QC</span>
                 </button>
               )}
               {(isAdmin || isProcurement) && (

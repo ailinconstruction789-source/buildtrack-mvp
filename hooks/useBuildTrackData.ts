@@ -408,6 +408,37 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
     }
   };
 
+  const resetHandoverCycle = async (plotId: string, currentCycle: number) => {
+    try {
+      const { error } = await supabase.from('plots').update({
+        handover_cycle: (currentCycle || 1) + 1,
+        inspection_round: 0
+      }).eq('id', plotId);
+      if (error) throw error;
+      await fetchPlotDetails(plotId);
+      await fetchAllData();
+      return true;
+    } catch (e) {
+      console.error("Error resetting handover cycle:", e);
+      return false;
+    }
+  };
+
+  const updateInspectionRound = async (plotId: string, newRound: number) => {
+    try {
+      const { error } = await supabase.from('plots').update({
+        inspection_round: newRound
+      }).eq('id', plotId);
+      if (error) throw error;
+      await fetchPlotDetails(plotId);
+      await fetchAllData();
+      return true;
+    } catch (e) {
+      console.error("Error updating inspection round:", e);
+      return false;
+    }
+  };
+
   return {
     loading, setLoading,
     projects, setProjects,
@@ -429,6 +460,8 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
     fetchOwnerAnalyticsData,
     fetchWithoutLimit,
     togglePlotSaleStatus,
+    resetHandoverCycle,
+    updateInspectionRound,
     materialRequests,
     setMaterialRequests
   };
