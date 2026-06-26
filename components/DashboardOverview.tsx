@@ -69,7 +69,7 @@ const DashboardOverview = function DashboardOverview({
         {isMobileLayout && (
             <div className="flex flex-wrap gap-2 shrink-0 w-full">
             {isProcurement && (<button onClick={() => setView('procurement-contractors')} className="flex-1 items-center justify-center gap-1.5 bg-emerald-500 text-white px-3 py-2.5 rounded-xl font-medium text-[12px] shadow-sm flex active:scale-95 transition-all"><Wrench size={16} /> ช่าง</button>)}
-            {isStore && (<button onClick={() => setView('store-dashboard')} className="flex-1 items-center justify-center gap-1.5 bg-blue-500 text-white px-3 py-2.5 rounded-xl font-medium text-[12px] shadow-sm flex active:scale-95 transition-all"><FolderOpen size={16} /> สโตร์</button>)}
+            {(isStore || isAdmin) && (<button onClick={() => setView('store-dashboard')} className="flex-1 items-center justify-center gap-1.5 bg-blue-500 text-white px-3 py-2.5 rounded-xl font-medium text-[12px] shadow-sm flex active:scale-95 transition-all"><FolderOpen size={16} /> สโตร์</button>)}
             {isAdmin && (
                 <>
                 <button onClick={() => setView('admin-users')} className="flex-1 items-center justify-center gap-1.5 bg-white/70 backdrop-blur-md text-[#1d1d1f] border border-black/5 px-2 py-2.5 rounded-xl font-medium text-[12px] shadow-sm flex whitespace-nowrap active:scale-95 transition-all"><Users size={16} /> ผู้ใช้</button>

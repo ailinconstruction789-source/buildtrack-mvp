@@ -1312,6 +1312,7 @@ export default function ConstructionApp() {
   const isSiteEngineer = currentUserRole?.toLowerCase() === 'site engineer';
   const isForeman = currentUserRole?.toLowerCase() === 'foreman';
   const isOwner = currentUserRole?.toLowerCase() === 'owner';
+  const isStore = currentUserRole?.toLowerCase() === 'store';
 
   const isMobileLayout = isMobilePreview || isRealMobile;
   const unreadNotifs = notifications.filter(n => !n.is_read);
@@ -1864,6 +1865,9 @@ export default function ConstructionApp() {
                       )}
                       {(isAdmin || isProcurement) && (
                         <button onClick={() => setView('procurement-contractors')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'procurement-contractors' ? 'bg-emerald-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Wrench size={18} /> จัดการรายชื่อช่าง</button>
+                      )}
+                      {(isAdmin || isStore) && (
+                        <button onClick={() => setView('store-dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'store-dashboard' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><FolderOpen size={18} /> เบิกจ่ายวัสดุ (Store)</button>
                       )}
                     </nav>
                   </div>
