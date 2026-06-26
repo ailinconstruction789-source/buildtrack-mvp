@@ -316,6 +316,22 @@ export default function ConstructionApp() {
   const [assignModal, setAssignModal] = useState<any>({ isOpen: false, task: null, name: '', phone: '' });
   const [dialogConfig, setDialogConfig] = useState<any>({ isOpen: false, title: '', message: '', type: 'confirm', onConfirm: null });
 
+  // 🌟 Scroll Position Memory for HouseDetailView 🌟
+  const mainScrollRef = React.useRef<HTMLDivElement>(null);
+  const houseDetailScrollPos = React.useRef<number>(0);
+
+  const handleMainScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    if (view === 'house-detail') {
+      houseDetailScrollPos.current = e.currentTarget.scrollTop;
+    }
+  };
+
+  React.useEffect(() => {
+    if (view === 'house-detail' && mainScrollRef.current) {
+      mainScrollRef.current.scrollTop = houseDetailScrollPos.current;
+    }
+  }, [view]);
+
   // 🌟 Infinite Scroll State สำหรับ Live Feed 🌟
   const [visibleFeedCount, setVisibleFeedCount] = useState(50);
 
@@ -1815,37 +1831,54 @@ export default function ConstructionApp() {
                .sidebar-collapsed button svg { margin-right: 0 !important; margin-left: 0 !important; }
              `}</style>
 
-            <div className={`p-8 pb-4 ${isSidebarCollapsed ? 'px-4' : ''}`}>
-              <div className={`flex items-center mb-10 text-white cursor-pointer hover:scale-105 transition-transform ${isSidebarCollapsed ? 'justify-center gap-0' : 'gap-3'}`} onClick={() => setView('dashboard')}>
+            <div className={`flex-1 overflow-y-auto dark-scrollbar p-8 pb-4 ${isSidebarCollapsed ? 'px-4' : ''}`}>
+              <div className={`flex items-center mb-10 text-white cursor-pointer hover:scale-105 transition-transform shrink-0 ${isSidebarCollapsed ? 'justify-center gap-0' : 'gap-3'}`} onClick={() => setView('dashboard')}>
                 <div className="bg-blue-600 p-2 rounded-xl shadow-lg shadow-blue-500/50 shrink-0"><LayoutDashboard size={28} /></div>
                 {!isSidebarCollapsed && <h1 className="font-black text-2xl tracking-tighter uppercase italic">BuildTrack</h1>}
               </div>
 
               <div className="space-y-6">
                 <div>
-                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3 px-2">Main Menu</p>
-                  <nav className="space-y-1">
-                    {/* 📜 เมนูแรกสุด: ไทม์ไลน์รวมหน้าไซต์ (สำหรับ Owner และ Admin) */}
-                    {(isAdmin || isOwner || isSiteEngineer) && (
-                      <button onClick={() => setView('global-feed')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'global-feed' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><ClipboardList size={18} /> Live Feed หน้าไซต์</button>
-                    )}
-                    <button onClick={() => setView('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'dashboard' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Home size={18} /> Dashboard</button>
-                    {(isAdmin || isProjectPlanner || isOwner) && (
-                      <button onClick={() => setView('master-gantt')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'master-gantt' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Grid size={18} /> Master Gantt Chart</button>
-                    )}
-                    {(isAdmin || isProjectPlanner || isQC || isSiteEngineer || isOwner || isForeman) && (
-                      <button onClick={() => setView('contractor-schedule')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'contractor-schedule' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Calendar size={18} /> แผนงานผู้รับเหมา</button>
-                    )}
-                    {(isAdmin || isProjectPlanner || isQC || isSiteEngineer || isOwner || isForeman) && (
-                      <button onClick={() => setView('reports')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'reports' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><PieChart size={18} /> Reports & Analytics</button>
-                    )}
-                    {(isAdmin || isOwner || isProjectPlanner || isQC || isSiteEngineer) && (
-                      <button onClick={() => setView('qc-performance')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'qc-performance' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><ShieldAlert size={18} /> ประเมินผล QC</button>
-                    )}
-                    {(isAdmin || isQC || isSiteEngineer || isOwner || isForeman) && (
-                      <button onClick={() => setView('defects')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'defects' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><ShieldAlert size={18} /> Defect Tracking</button>
-                    )}
-                  </nav>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3 px-2">Overview</p>
+                    <nav className="space-y-1">
+                      {/* 📜 เมนูแรกสุด: ไทม์ไลน์รวมหน้าไซต์ (สำหรับ Owner และ Admin) */}
+                      {(isAdmin || isOwner || isSiteEngineer) && (
+                        <button onClick={() => setView('global-feed')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'global-feed' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><ClipboardList size={18} /> Live Feed หน้าไซต์</button>
+                      )}
+                      <button onClick={() => setView('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'dashboard' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Home size={18} /> Dashboard</button>
+                      {(isAdmin || isProjectPlanner || isQC || isSiteEngineer || isOwner || isForeman) && (
+                        <button onClick={() => setView('reports')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'reports' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><PieChart size={18} /> Reports & Analytics</button>
+                      )}
+                    </nav>
+                  </div>
+
+                  {(isAdmin || isProjectPlanner || isOwner || isQC || isSiteEngineer || isForeman) && (
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3 px-2">Planning & Schedule</p>
+                      <nav className="space-y-1">
+                        {(isAdmin || isProjectPlanner || isOwner) && (
+                          <button onClick={() => setView('master-gantt')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'master-gantt' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Grid size={18} /> Master Gantt Chart</button>
+                        )}
+                        {(isAdmin || isProjectPlanner || isQC || isSiteEngineer || isOwner || isForeman) && (
+                          <button onClick={() => setView('contractor-schedule')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'contractor-schedule' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Calendar size={18} /> แผนงานผู้รับเหมา</button>
+                        )}
+                      </nav>
+                    </div>
+                  )}
+
+                  {(isAdmin || isQC || isSiteEngineer || isOwner || isForeman || isProjectPlanner) && (
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3 px-2">Quality Control</p>
+                      <nav className="space-y-1">
+                        {(isAdmin || isOwner || isProjectPlanner || isQC || isSiteEngineer) && (
+                          <button onClick={() => setView('qc-performance')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'qc-performance' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Activity size={18} /> ประเมินผล QC</button>
+                        )}
+                        {(isAdmin || isQC || isSiteEngineer || isOwner || isForeman) && (
+                          <button onClick={() => setView('defects')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'defects' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><ShieldAlert size={18} /> Defect Tracking</button>
+                        )}
+                      </nav>
+                    </div>
+                  )}
                 </div>
 
                 {(isAdmin || isProcurement) && (
@@ -1877,7 +1910,6 @@ export default function ConstructionApp() {
                   </div>
                 )}
               </div>
-            </div>
 
             <div className="p-8 pt-4 mt-auto">
               {isAdmin && (
@@ -2061,7 +2093,11 @@ export default function ConstructionApp() {
           )}
 
           {/* 🌟 Scrollable Content Area 🌟 */}
-          <main className={`flex-1 overflow-y-auto custom-scrollbar ${isMobileLayout ? 'p-3 pb-24' : 'p-6 sm:p-8 pb-12'} scroll-smooth relative`}>
+          <main 
+            ref={mainScrollRef}
+            onScroll={handleMainScroll}
+            className={`flex-1 overflow-y-auto custom-scrollbar ${isMobileLayout ? 'p-3 pb-24' : 'p-6 sm:p-8 pb-12'} scroll-smooth relative`}
+          >
             <div className="w-full">
               {/* 🌟🌟 MAIN VIEW SWITCHER 🌟🌟 */}
               {loadingView ? (

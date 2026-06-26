@@ -2,7 +2,7 @@
 import React from 'react';
 import { supabase } from '@/lib/supabase';
 import { 
-  Activity, Calendar, Camera, HardHat, Loader2, Monitor, Pickaxe, PlusCircle, UserCog, Users, ImageIcon, Truck, XCircle, Send, Clock, CheckCircle, ShieldAlert
+  Activity, Calendar, Camera, HardHat, Loader2, Monitor, Pickaxe, PlusCircle, UserCog, Users, ImageIcon, Truck, XCircle, Send, Clock, CheckCircle, ShieldAlert, Search
 } from 'lucide-react';
 import HouseHandoverView from './HouseHandoverView';
 
@@ -93,6 +93,25 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
   const [isSubmittingMaterial, setIsSubmittingMaterial] = React.useState(false);
   const [viewImageModalUrl, setViewImageModalUrl] = React.useState<string | null>(null);
   const [activeHouseTab, setActiveHouseTab] = React.useState('construction');
+  const [taskSearchQuery, setTaskSearchQuery] = React.useState('');
+
+  // 🌟 Scroll Position Memory for Task Table 🌟
+  const tableScrollRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (selectedPlot?.id && tableScrollRef.current) {
+      const savedScroll = sessionStorage.getItem(`houseTableScroll-${selectedPlot.id}`);
+      if (savedScroll) {
+        tableScrollRef.current.scrollTop = parseInt(savedScroll, 10);
+      }
+    }
+  }, [selectedPlot?.id]);
+
+  const handleTableScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    if (selectedPlot?.id) {
+      sessionStorage.setItem(`houseTableScroll-${selectedPlot.id}`, e.currentTarget.scrollTop.toString());
+    }
+  };
 
   const handleRequestMaterial = async () => {
     if (!requestMaterialTask || !selectedPlot) return;
@@ -347,7 +366,29 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                      </div>
 
                      {activeHouseTab === 'construction' && (
-                     <div className="bg-[#f5f5f7] w-full overflow-x-auto custom-scrollbar border-t border-black/5" style={{ maxHeight: '800px', overflowY: 'auto' }}>
+                     <div className="bg-[#f5f5f7] w-full border-t border-black/5 flex flex-col">
+                       {/* 🔍 Search Bar */}
+                       <div className="p-3 border-b border-black/5 bg-white shrink-0">
+                         <div className="relative">
+                           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                             <Search size={16} className="text-slate-400" />
+                           </div>
+                           <input
+                             type="text"
+                             className="block w-full pl-10 pr-3 py-2 sm:py-2.5 border border-slate-200 rounded-xl leading-5 bg-slate-50 placeholder-slate-400 focus:outline-none focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 sm:text-sm transition-colors"
+                             placeholder="ค้นหางานก่อสร้าง (เช่น โครงสร้าง, หลังคา, กระเบื้อง)..."
+                             value={taskSearchQuery}
+                             onChange={(e) => setTaskSearchQuery(e.target.value)}
+                           />
+                         </div>
+                       </div>
+                       
+                       <div 
+                         ref={tableScrollRef}
+                         onScroll={handleTableScroll}
+                         className="overflow-x-auto custom-scrollbar flex-1" 
+                         style={{ maxHeight: '800px', overflowY: 'auto' }}
+                       >
                        {isMobileLayout && <div className="text-center text-[10px] text-slate-400 font-bold py-2 bg-[#f5f5f7] border-b border-black/5">↔️ ปัดซ้าย-ขวา เพื่อดูตาราง ↔️</div>}
                          <table className={`text-left border-collapse w-full relative ${isMobileLayout ? 'block' : 'min-w-[1200px]'}`}>
                          {!isMobileLayout && (
@@ -412,7 +453,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                                   )}
                                </React.Fragment>
                             ))
-                          ) : taskTemplates.filter(t => t.house_type_id === selectedPlot.house_type_id).map((task) => {
+                          ) : taskTemplates.filter(t => t.house_type_id === selectedPlot.house_type_id && (!taskSearchQuery || t.task_name.toLowerCase().includes(taskSearchQuery.toLowerCase()))).map((task) => {
                             const key             = `${selectedPlot.id}-${task.id}`;
                                     const isUpdatedToday = latestUpdatesMap[key]?.updated_at && new Date(latestUpdatesMap[key].updated_at).toDateString() === new Date().toDateString();
                                     const assignment      = assignments.find(a => a.task_template_id === task.id && a.plot_id === selectedPlot.id);
@@ -902,6 +943,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                            })}
                          </tbody>
                        </table>
+                     </div>
                      </div>
                      )}
 
