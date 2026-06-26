@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { TrendingUp, AlertTriangle, Target, CheckCircle, Clock, PieChart as PieChartIcon, Calendar, List, X, ShieldAlert } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { TrendingUp, AlertTriangle, Target, CheckCircle, Clock, PieChart as PieChartIcon, Calendar, List, X, ShieldAlert, Printer } from 'lucide-react';
 import { XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
 
 export default function QCPerformanceDashboard({
@@ -166,7 +167,7 @@ export default function QCPerformanceDashboard({
           const plot = plots?.find((p:any) => String(p.id) === String(upd.plot_id));
           const task = taskTemplates?.find((t:any) => String(t.id) === String(upd.task_template_id));
           const detailObj = {
-             plotName: plot ? plot.plot_number : 'ไม่ระบุแปลง',
+             plotName: plot ? plot.id : 'ไม่ระบุแปลง',
              taskName: task ? task.task_name : 'ไม่ระบุงาน',
              time: new Date(upd.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }),
              action: upd.action
@@ -418,7 +419,7 @@ export default function QCPerformanceDashboard({
 
       {/* Daily QC Modal */}
       {showQCDailyModal && qcAnalytics && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6 animate-in fade-in duration-200 print:hidden">
           <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setShowQCDailyModal(false)}></div>
           <div className="relative w-full max-w-2xl bg-white rounded-3xl shadow-2xl flex flex-col max-h-[90vh]">
             <div className="flex items-center justify-between p-6 border-b border-slate-100">
@@ -428,9 +429,22 @@ export default function QCPerformanceDashboard({
                 </h2>
                 <p className="text-sm font-bold text-slate-500 mt-1">ประจำวันที่ {new Date(qcFilterDate).toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
               </div>
-              <button onClick={() => setShowQCDailyModal(false)} className="w-10 h-10 bg-slate-100 text-slate-500 rounded-full flex items-center justify-center hover:bg-slate-200 transition-colors">
-                <X size={20} />
-              </button>
+              <div className="flex gap-2">
+                <button onClick={() => {
+                  const originalTitle = document.title;
+                  const formattedDate = new Date(qcFilterDate).toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' });
+                  document.title = `รายการตรวจQC_${formattedDate}`;
+                  setTimeout(() => {
+                    window.print();
+                    document.title = originalTitle;
+                  }, 100);
+                }} className="h-10 px-4 bg-indigo-600 text-white font-black rounded-xl hover:bg-indigo-700 transition-colors shadow-md flex items-center justify-center gap-2 text-sm">
+                  <Printer size={16} /> Export PDF
+                </button>
+                <button onClick={() => setShowQCDailyModal(false)} className="w-10 h-10 bg-slate-100 text-slate-500 rounded-full flex items-center justify-center hover:bg-slate-200 transition-colors">
+                  <X size={20} />
+                </button>
+              </div>
             </div>
             
             <div className="p-6 overflow-y-auto space-y-8 flex-1">
@@ -443,18 +457,21 @@ export default function QCPerformanceDashboard({
                   <div className="space-y-3">
                     {qcAnalytics.dailyQC.passedList.map((item: any, idx: number) => (
                       <div key={idx} className="bg-emerald-50 border border-emerald-100 p-4 rounded-2xl flex justify-between items-center">
-                        <div>
-                          <p className="font-bold text-slate-800">{item.taskName}</p>
-                          <p className="text-xs font-bold text-emerald-600 mt-0.5">แปลงบ้าน: {item.plotName}</p>
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center shrink-0">
+                            <CheckCircle size={20} />
+                          </div>
+                          <div>
+                            <p className="font-bold text-sm text-slate-800">{item.taskName}</p>
+                            <p className="text-xs font-bold text-emerald-600 mt-0.5">แปลงบ้าน: {item.plotName}</p>
+                          </div>
                         </div>
-                        <div className="text-right">
-                           <span className="text-xs font-bold bg-white text-emerald-700 px-2 py-1 rounded-lg border border-emerald-200 shadow-sm">{item.time}</span>
-                        </div>
+                        <div className="text-xs font-bold bg-emerald-200/50 text-emerald-700 px-2 py-1 rounded-md">{item.time}</div>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <div className="text-center py-6 bg-slate-50 rounded-2xl border border-slate-100 text-slate-400 font-bold text-sm">ไม่มีงานที่ผ่านในวันที่เลือก</div>
+                  <div className="text-center py-6 text-slate-400 font-medium bg-slate-50 rounded-2xl border border-slate-100 border-dashed">ไม่มีงานที่ผ่านในวันนี้</div>
                 )}
               </div>
 
@@ -467,13 +484,16 @@ export default function QCPerformanceDashboard({
                   <div className="space-y-3">
                     {qcAnalytics.dailyQC.rejectedList.map((item: any, idx: number) => (
                       <div key={idx} className="bg-rose-50 border border-rose-100 p-4 rounded-2xl flex justify-between items-center">
-                        <div>
-                          <p className="font-bold text-slate-800">{item.taskName}</p>
-                          <p className="text-xs font-bold text-rose-600 mt-0.5">แปลงบ้าน: {item.plotName}</p>
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center shrink-0">
+                            <AlertTriangle size={20} />
+                          </div>
+                          <div>
+                            <p className="font-bold text-sm text-slate-800">{item.taskName}</p>
+                            <p className="text-xs font-bold text-rose-600 mt-0.5">แปลงบ้าน: {item.plotName}</p>
+                          </div>
                         </div>
-                        <div className="text-right">
-                           <span className="text-xs font-bold bg-white text-rose-700 px-2 py-1 rounded-lg border border-rose-200 shadow-sm">{item.time}</span>
-                        </div>
+                        <div className="text-xs font-bold bg-rose-200/50 text-rose-700 px-2 py-1 rounded-md">{item.time}</div>
                       </div>
                     ))}
                   </div>
@@ -484,6 +504,88 @@ export default function QCPerformanceDashboard({
             </div>
           </div>
         </div>
+      )}
+      {/* Printable A4 Layout for QC Dashboard */}
+      {typeof document !== 'undefined' && showQCDailyModal && qcAnalytics && createPortal(
+        <>
+          <style type="text/css" media="print">
+            {`
+              body > *:not(#qc-print-portal) { display: none !important; }
+              body { display: block !important; }
+              @page { size: A4 portrait; margin: 10mm; }
+            `}
+          </style>
+          <div id="qc-print-portal" className="hidden print:block w-full bg-white text-black font-sans">
+            <div className="flex justify-between items-end mb-6 border-b-2 border-slate-800 pb-4">
+              <div>
+                <h1 className="text-2xl font-black uppercase mb-2">รายงานสรุปผลการเข้าตรวจงาน QC</h1>
+                <p className="text-sm font-bold text-slate-600">ประจำวันที่: {new Date(qcFilterDate).toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+              </div>
+            </div>
+            
+            <div className="mb-6">
+              <h3 className="text-lg font-black text-emerald-600 mb-3 flex items-center gap-2 border-b border-emerald-200 pb-2">
+                <CheckCircle size={20} /> งานที่ตรวจผ่าน ({qcAnalytics.dailyQC.passedList.length})
+              </h3>
+              {qcAnalytics.dailyQC.passedList.length > 0 ? (
+                <table className="w-full text-sm text-left border-collapse">
+                  <thead>
+                    <tr className="bg-emerald-50">
+                      <th className="border border-emerald-200 p-2 font-bold">เวลา</th>
+                      <th className="border border-emerald-200 p-2 font-bold">แปลงบ้าน</th>
+                      <th className="border border-emerald-200 p-2 font-bold">ชื่องาน</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {qcAnalytics.dailyQC.passedList.map((item: any, idx: number) => (
+                      <tr key={idx}>
+                        <td className="border border-emerald-200 p-2 text-emerald-700 font-medium w-24">{item.time}</td>
+                        <td className="border border-emerald-200 p-2 font-bold">{item.plotName}</td>
+                        <td className="border border-emerald-200 p-2">{item.taskName}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="text-sm text-slate-500 italic">ไม่มีรายการที่ตรวจผ่านในวันนี้</p>
+              )}
+            </div>
+
+            <div>
+              <h3 className="text-lg font-black text-rose-600 mb-3 flex items-center gap-2 border-b border-rose-200 pb-2">
+                <AlertTriangle size={20} /> งานที่แจ้งแก้ไข ({qcAnalytics.dailyQC.rejectedList.length})
+              </h3>
+              {qcAnalytics.dailyQC.rejectedList.length > 0 ? (
+                <table className="w-full text-sm text-left border-collapse">
+                  <thead>
+                    <tr className="bg-rose-50">
+                      <th className="border border-rose-200 p-2 font-bold">เวลา</th>
+                      <th className="border border-rose-200 p-2 font-bold">แปลงบ้าน</th>
+                      <th className="border border-rose-200 p-2 font-bold">ชื่องาน</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {qcAnalytics.dailyQC.rejectedList.map((item: any, idx: number) => (
+                      <tr key={idx}>
+                        <td className="border border-rose-200 p-2 text-rose-700 font-medium w-24">{item.time}</td>
+                        <td className="border border-rose-200 p-2 font-bold">{item.plotName}</td>
+                        <td className="border border-rose-200 p-2">{item.taskName}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="text-sm text-slate-500 italic">ไม่มีรายการที่แจ้งแก้ไขในวันนี้</p>
+              )}
+            </div>
+            
+            <div className="mt-8 pt-4 border-t border-slate-300 flex justify-between text-xs text-slate-500">
+              <span>BuildTrack - Construction Progress Tracking</span>
+              <span>พิมพ์เมื่อ: {new Date().toLocaleString('th-TH')}</span>
+            </div>
+          </div>
+        </>,
+        document.body
       )}
     </div>
   );
