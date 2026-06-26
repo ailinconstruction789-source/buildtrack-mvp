@@ -532,6 +532,38 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                                               </div>
                                             </div>
 
+                                            {/* 📦 ปุ่มสั่งวัสดุ / สถานะ (Mobile) */}
+                                            {(currentUserRole === 'Foreman' || currentUserRole === 'Site Engineer' || currentUserRole === 'Project Planner' || currentUserRole === 'Admin' || currentUserRole === 'Owner') && (() => {
+                                              const currentRequest = materialRequests?.find((r: any) => String(r.plot_id) === String(selectedPlot.id) && String(r.task_template_id) === String(task.id));
+                                              if (!currentRequest) {
+                                                return (
+                                                  <button onClick={(e) => { e.stopPropagation(); setRequestMaterialTask(task); }} className="w-full mb-3 py-3 bg-blue-50 border border-blue-200 text-blue-600 hover:bg-blue-100 text-[11px] sm:text-xs font-bold rounded-xl active:scale-95 transition-all flex items-center justify-center gap-1.5 shadow-sm">
+                                                    <Truck size={16}/> เบิกวัสดุ
+                                                  </button>
+                                                );
+                                              }
+                                              
+                                              if (currentRequest.status === 'requested') {
+                                                return <div className="w-full mb-3 py-3 bg-amber-50 border border-amber-200 text-amber-600 text-[11px] sm:text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 shadow-sm"><Clock size={16}/> รอสโตร์</div>;
+                                              } else if (currentRequest.status === 'ordered') {
+                                                return <div className="w-full mb-3 py-3 bg-orange-50 border border-orange-200 text-orange-600 text-[11px] sm:text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 shadow-sm"><Truck size={16}/> รอของเข้า</div>;
+                                              } else if (currentRequest.status === 'received') {
+                                                return (
+                                                  <div className="flex gap-2 mb-3">
+                                                    <div className="flex-[2] py-3 bg-emerald-50 border border-emerald-200 text-emerald-600 text-[11px] sm:text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 shadow-sm">
+                                                      <CheckCircle size={16}/> ของครบแล้ว
+                                                    </div>
+                                                    {currentRequest.image_url && (
+                                                      <button onClick={(e) => { e.stopPropagation(); setViewImageModalUrl(currentRequest.image_url); }} className="flex-[1] py-3 bg-blue-50 border border-blue-200 text-blue-600 hover:bg-blue-100 text-[11px] sm:text-xs font-bold rounded-xl active:scale-95 transition-all flex items-center justify-center gap-1.5 shadow-sm">
+                                                        <ImageIcon size={16}/> รูป
+                                                      </button>
+                                                    )}
+                                                  </div>
+                                                );
+                                              }
+                                              return null;
+                                            })()}
+
                                             {/* ปุ่มกด Action */}
                                             <div className="flex gap-2">
                                               {(currentUserRole === 'Project Planner' || currentUserRole === 'Admin' || currentUserRole === 'Owner' || currentUserRole === 'Procurement') && (
