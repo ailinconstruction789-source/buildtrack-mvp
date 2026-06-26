@@ -3,7 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { 
   Package, Truck, CheckCircle, Clock, 
   Search, Filter, AlertTriangle, Building, 
-  Calendar, Check, User, Loader2, Camera, ImageIcon
+  Calendar, Check, User, Loader2, Camera, ImageIcon, XCircle
 } from 'lucide-react';
 
 interface MaterialStoreDashboardProps {
@@ -29,6 +29,7 @@ export default function MaterialStoreDashboard({
   const [searchQuery, setSearchQuery] = useState('');
   const [isProcessing, setIsProcessing] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState<string | null>(null);
+  const [viewImageModalUrl, setViewImageModalUrl] = useState<string | null>(null);
 
   const handleUploadAndComplete = async (req: any, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -297,9 +298,9 @@ export default function MaterialStoreDashboard({
                       <Check size={18}/> ดำเนินการเสร็จสิ้น
                     </div>
                     {req.image_url && (
-                      <a href={req.image_url} target="_blank" rel="noreferrer" className="w-full bg-blue-50 hover:bg-blue-100 text-blue-600 font-bold py-2 px-4 rounded-xl text-xs flex items-center justify-center gap-2 transition-colors">
+                      <button onClick={() => setViewImageModalUrl(req.image_url)} className="w-full bg-blue-50 hover:bg-blue-100 text-blue-600 font-bold py-2 px-4 rounded-xl text-xs flex items-center justify-center gap-2 transition-colors cursor-pointer">
                         <ImageIcon size={14}/> ดูรูปถ่ายของเข้า
-                      </a>
+                      </button>
                     )}
                   </div>
                 )}
@@ -323,6 +324,12 @@ export default function MaterialStoreDashboard({
           ))
         )}
       </div>
+      {viewImageModalUrl && (
+        <div onClick={() => setViewImageModalUrl(null)} className="fixed inset-0 bg-black/80 z-[100] flex flex-col items-center justify-center p-4 cursor-pointer">
+          <button onClick={(e) => { e.stopPropagation(); setViewImageModalUrl(null); }} className="absolute top-4 right-4 bg-white/10 hover:bg-white/20 p-2 rounded-full text-white backdrop-blur-sm transition-all cursor-pointer"><XCircle size={28}/></button>
+          <img src={viewImageModalUrl} onClick={(e) => e.stopPropagation()} alt="Material View" className="max-w-full max-h-[80vh] object-contain rounded-xl shadow-2xl border border-white/20 cursor-default"/>
+        </div>
+      )}
     </div>
   );
 }
