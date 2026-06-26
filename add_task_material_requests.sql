@@ -31,7 +31,7 @@ CREATE OR REPLACE VIEW vw_task_material_requests AS
 SELECT 
     tmr.*,
     p.project_name,
-    p.plot_number,
+    p.id AS plot_number,
     p.foreman_name,
     tt.task_name,
     tt.cost
