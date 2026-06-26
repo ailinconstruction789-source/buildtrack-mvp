@@ -621,9 +621,15 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                                              </div>
                                              <span className="text-[9px] sm:text-[10px] font-bold text-[#86868b]">{tProgress}%</span>
                                           </div>
-                                          <span className={`text-[8px] sm:text-[9px] font-bold px-1.5 py-0.5 rounded border whitespace-nowrap ${statusObj.color}`}>
-                                             {statusObj.label}
-                                          </span>
+                                          <div className="flex items-center gap-1 shrink-0">
+                                            {/* 📦 ปุ่มสั่งวัสดุ (แสดงเฉพาะคนที่สั่งได้) */}
+                                            {(currentUserRole === 'Foreman' || currentUserRole === 'Site Engineer' || currentUserRole === 'Project Planner' || currentUserRole === 'Admin' || currentUserRole === 'Owner') && (
+                                              <button onClick={(e) => { e.stopPropagation(); setRequestMaterialTask(task); }} className="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 flex items-center gap-1 transition-colors whitespace-nowrap"><Truck size={10}/> เบิกวัสดุ</button>
+                                            )}
+                                            <span className={`text-[8px] sm:text-[9px] font-bold px-1.5 py-0.5 rounded border whitespace-nowrap ${statusObj.color}`}>
+                                               {statusObj.label}
+                                            </span>
+                                          </div>
                                        </div>
                                     </div>
                                  </td>

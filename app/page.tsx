@@ -19,7 +19,7 @@ import {
   LayoutDashboard, Map as MapIcon, Truck, ChevronRight, ClipboardList, Loader2,
   Send, Camera, CheckCircle, XCircle, UserCog, X, Maximize2, HardHat, PlusCircle, Settings, Building, FolderOpen, Users, Trash2, Search, Filter, LogOut, AlertTriangle, Eraser, Grid, Paintbrush, Clock, SortAsc,
   UserPlus, Phone, CalendarDays, Wrench, Bell, CalendarClock, TrendingUp, AlertCircle, BarChartHorizontal, Save, Calendar, Smartphone, Monitor, ZoomIn, ZoomOut,
-  PieChart, Home, Activity, Download, Copy, Pickaxe, ShieldAlert, Printer, CheckSquare, Square, ImageIcon, Tag, Hammer, UserCheck, DollarSign, ArrowLeft
+  PieChart, Home, Activity, Download, Copy, Pickaxe, ShieldAlert, Printer, CheckSquare, Square, ImageIcon, Tag, Hammer, UserCheck, DollarSign, ArrowLeft, Key
 } from 'lucide-react';
 
 // 🌟 ฟังก์ชันบีบอัดรูปภาพ Native — อยู่นอก component เพื่อไม่ให้ถูกสร้างใหม่ทุก render 🌟
@@ -535,6 +535,25 @@ export default function ConstructionApp() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [fullImageUrl, galleryImages.length]);
+  // 🌟 ระบบติดตามสถานะผู้ใช้งาน (Online Tracker)
+  useEffect(() => {
+    if (!loggedInUser?.username) return;
+    
+    const updateLastSeen = async () => {
+      try {
+        await supabase.rpc('update_user_last_seen', { p_username: loggedInUser.username });
+      } catch (e) {
+        console.error('Failed to update last seen', e);
+      }
+    };
+    
+    // อัปเดตทันทีที่ล็อกอิน หรือเข้าใช้งาน
+    updateLastSeen();
+    
+    // อัปเดตสถานะทุกๆ 3 นาที (180000 ms)
+    const intervalId = setInterval(updateLastSeen, 180000);
+    return () => clearInterval(intervalId);
+  }, [loggedInUser?.username]);
 
   // ==========================================
   // 4. HANDLERS
@@ -807,7 +826,13 @@ export default function ConstructionApp() {
     setIsSubmitting(true);
     try {
       if (newUser.role === 'Foreman') await supabase.from('foremen').insert([{ name: newUser.name.trim() }]);
-      await supabase.from('users').insert([{ username: newUser.name.trim(), pin: '1234', role: newUser.role }]);
+      
+      const { error } = await supabase.rpc('admin_create_user', {
+        p_username: newUser.name.trim(),
+        p_role: newUser.role
+      });
+      if (error) throw error;
+
       setNewUser({ ...newUser, name: '' });
       const { data } = await supabase.from('users').select('*').order('role', { ascending: true }).order('username', { ascending: true });
       setAllUsers(data || []);
@@ -819,11 +844,34 @@ export default function ConstructionApp() {
     showConfirm('ยืนยันลบ', `ลบผู้ใช้งาน ${name}?`, async () => {
       try {
         if (role === 'Foreman') await supabase.from('foremen').delete().eq('name', name);
-        await supabase.from('users').delete().eq('username', name);
+        
+        const { error } = await supabase.rpc('admin_delete_user', { p_username: name });
+        if (error) throw error;
+        
         const { data } = await supabase.from('users').select('*').order('role', { ascending: true }).order('username', { ascending: true });
         setAllUsers(data || []); closeDialog();
       } catch (e: any) { showAlert('Error', (e as Error).message); }
     });
+  };
+
+  const handleEditPassword = async (id: string, username: string) => {
+    const newPin = window.prompt(`ตั้งรหัสผ่านใหม่ (PIN 4 หลัก) สำหรับ ${username}:`);
+    if (!newPin) return;
+    if (!/^\d{4}$/.test(newPin)) return showAlert('แจ้งเตือน', 'รหัสผ่านต้องเป็นตัวเลข 4 หลักเท่านั้น');
+    
+    setIsSubmitting(true);
+    try {
+      const { error } = await supabase.rpc('admin_change_user_password', { 
+        p_username: username, 
+        p_new_pin: newPin 
+      });
+      if (error) throw error;
+      showToast(`แก้ไขรหัสผ่านสำหรับ ${username} สำเร็จ!`, "success");
+    } catch (e: any) { 
+      showAlert('Error', (e as Error).message); 
+    } finally { 
+      setIsSubmitting(false); 
+    }
   };
 
   const handleAddProject = async () => {
@@ -2508,7 +2556,7 @@ export default function ConstructionApp() {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 mb-6">
                     <div className="bg-white rounded-2xl sm:rounded-[2rem] border border-amber-200 shadow-sm overflow-hidden">
                       <div className="p-4 sm:p-6 border-b border-amber-100 bg-amber-50">
-                        <h3 className="font-black text-lg sm:text-xl text-amber-800 flex items-center gap-2"><Tag size={20} className="text-amber-600"/> รายชื่อบ้านพร้อมขาย</h3>
+                        <h3 className="font-black text-lg sm:text-xl text-amber-800 flex items-center gap-2"><Tag size={20} className="text-amber-600"/> รายชื่อบ้านพร้อมขาย <span className="text-sm opacity-75 ml-auto md:ml-1">({plots.filter(p => p.sale_status === 'ready_for_sale').length} หลัง)</span></h3>
                       </div>
                       <div className="p-4 sm:p-6 max-h-[400px] overflow-y-auto custom-scrollbar">
                         {plots.filter(p => p.sale_status === 'ready_for_sale').length === 0 ? (
@@ -2528,7 +2576,7 @@ export default function ConstructionApp() {
 
                     <div className="bg-white rounded-2xl sm:rounded-[2rem] border border-purple-200 shadow-sm overflow-hidden">
                       <div className="p-4 sm:p-6 border-b border-purple-100 bg-purple-50">
-                        <h3 className="font-black text-lg sm:text-xl text-purple-800 flex items-center gap-2"><Hammer size={20} className="text-purple-600"/> รายการโอนแล้ว-รอเก็บงาน</h3>
+                        <h3 className="font-black text-lg sm:text-xl text-purple-800 flex items-center gap-2"><Hammer size={20} className="text-purple-600"/> รายการโอนแล้ว-รอเก็บงาน <span className="text-sm opacity-75 ml-auto md:ml-1">({plots.filter(p => p.is_completed && p.progress < 100).length} หลัง)</span></h3>
                       </div>
                       <div className="p-4 sm:p-6 max-h-[400px] overflow-y-auto custom-scrollbar">
                         {plots.filter(p => p.is_completed && p.progress < 100).length === 0 ? (
@@ -2551,7 +2599,7 @@ export default function ConstructionApp() {
 
                     <div className="bg-white rounded-2xl sm:rounded-[2rem] border border-pink-200 shadow-sm overflow-hidden">
                       <div className="p-4 sm:p-6 border-b border-pink-100 bg-pink-50">
-                        <h3 className="font-black text-lg sm:text-xl text-pink-800 flex items-center gap-2"><UserCheck size={20} className="text-pink-600"/> รายชื่อเร่งปิดจ๊อบ (มีลูกค้า)</h3>
+                        <h3 className="font-black text-lg sm:text-xl text-pink-800 flex items-center gap-2"><UserCheck size={20} className="text-pink-600"/> รายชื่อเร่งปิดจ๊อบ (มีลูกค้า) <span className="text-sm opacity-75 ml-auto md:ml-1">({plots.filter(p => p.has_customer && !p.is_completed).length} หลัง)</span></h3>
                       </div>
                       <div className="p-4 sm:p-6 max-h-[400px] overflow-y-auto custom-scrollbar">
                         {plots.filter(p => p.has_customer && !p.is_completed).length === 0 ? (
@@ -2889,12 +2937,26 @@ export default function ConstructionApp() {
                     <div className="space-y-3">
                       <h3 className="text-xs sm:text-sm font-black text-slate-500 uppercase tracking-widest mb-4">รายชื่อในระบบ (รหัสผ่านเริ่มต้น: 1234)</h3>
                       {allUsers.length === 0 ? <p className="text-sm text-slate-400 italic">ไม่มีข้อมูลผู้ใช้</p> : null}
-                      {allUsers.map(u => (
+                      {allUsers.map(u => {
+                        const isOnline = u.last_seen_at && (new Date().getTime() - new Date(u.last_seen_at).getTime()) < 10 * 60 * 1000;
+                        return (
                         <div key={u.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-xl border border-slate-100">
-                          <div><span className="font-bold text-slate-700 block text-sm sm:text-base">{u.username}</span><span className={`text-[9px] sm:text-xs font-black uppercase tracking-widest mt-1 inline-block ${u.role === 'Admin' ? 'text-rose-500' : u.role === 'QC' ? 'text-purple-500' : u.role === 'Site Engineer' ? 'text-blue-500' : u.role === 'Project Planner' ? 'text-pink-500' : u.role === 'Procurement' ? 'text-emerald-500' : 'text-orange-500'}`}>{u.role}</span></div>
-                          <button onClick={() => handleDeleteUser(u.id, u.username, u.role)} className="text-slate-400 hover:text-rose-500 p-2 bg-white rounded-lg shadow-sm"><Trash2 size={16} /></button>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <div className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]' : 'bg-slate-300'}`} title={isOnline ? 'ออนไลน์' : 'ออฟไลน์'}></div>
+                              <span className="font-bold text-slate-700 block text-sm sm:text-base">{u.username}</span>
+                            </div>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className={`text-[9px] sm:text-xs font-black uppercase tracking-widest inline-block ${u.role === 'Admin' ? 'text-rose-500' : u.role === 'QC' ? 'text-purple-500' : u.role === 'Site Engineer' ? 'text-blue-500' : u.role === 'Project Planner' ? 'text-pink-500' : u.role === 'Procurement' ? 'text-emerald-500' : 'text-orange-500'}`}>{u.role}</span>
+                              {u.last_seen_at && !isOnline ? <span className="text-[9px] text-slate-400">ล่าสุด: {new Date(u.last_seen_at).toLocaleString('th-TH', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' })}</span> : null}
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                            <button onClick={() => handleEditPassword(u.id, u.username)} className="text-slate-400 hover:text-blue-500 p-2 bg-white rounded-lg shadow-sm" title="แก้ไขรหัสผ่าน"><Key size={16} /></button>
+                            <button onClick={() => handleDeleteUser(u.id, u.username, u.role)} className="text-slate-400 hover:text-rose-500 p-2 bg-white rounded-lg shadow-sm"><Trash2 size={16} /></button>
+                          </div>
                         </div>
-                      ))}
+                      )})}
                     </div>
                   </div>
                 </div>
