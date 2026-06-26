@@ -3,7 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { 
   Package, Truck, CheckCircle, Clock, 
   Search, Filter, AlertTriangle, Building, 
-  Calendar, Check, User
+  Calendar, Check, User, Loader2, Camera, ImageIcon
 } from 'lucide-react';
 
 interface MaterialStoreDashboardProps {
@@ -28,6 +28,48 @@ export default function MaterialStoreDashboard({
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isProcessing, setIsProcessing] = useState<string | null>(null);
+  const [uploadingImage, setUploadingImage] = useState<string | null>(null);
+
+  const handleUploadAndComplete = async (req: any, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingImage(req.id);
+    try {
+      const fileExt = file.name.split('.').pop() || 'jpg';
+      const path = `${req.plot_id}/receipt-${req.id}-${Date.now()}.${fileExt}`;
+      const { error: uploadError } = await supabase.storage.from('task_images').upload(path, file);
+      if (uploadError) throw uploadError;
+
+      const imageUrl = supabase.storage.from('task_images').getPublicUrl(path).data.publicUrl;
+
+      const { error: dbError } = await supabase
+        .from('task_material_requests')
+        .update({
+          status: 'received',
+          image_url: imageUrl,
+          updated_by: loggedInUser?.username || 'Store',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', req.id);
+        
+      if (dbError) throw dbError;
+
+      if (setMaterialRequests) {
+        setMaterialRequests((prev: any) => 
+          prev.map((r: any) => r.id === req.id ? { ...r, status: 'received', image_url: imageUrl, updated_by: loggedInUser?.username || 'Store', updated_at: new Date().toISOString() } : r)
+        );
+      } else {
+        alert('ปรับสถานะและอัปโหลดรูปภาพสำเร็จ!');
+      }
+
+    } catch (error: any) {
+      console.error('Error uploading material receipt:', error);
+      alert('เกิดข้อผิดพลาดในการอัปโหลดรูป: ' + (error.message || JSON.stringify(error)));
+    } finally {
+      setUploadingImage(null);
+    }
+  };
 
   // Group and format requests
   const enrichedRequests = useMemo(() => {
@@ -240,17 +282,25 @@ export default function MaterialStoreDashboard({
                   </button>
                 )}
                 {req.status === 'ordered' && (
-                  <button 
-                    onClick={() => handleUpdateStatus(req.id, 'received')}
-                    disabled={isProcessing === req.id}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black py-3 px-4 rounded-xl shadow-sm text-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
-                  >
-                    <CheckCircle size={18}/> ของเข้าไซต์แล้ว
-                  </button>
+                  <label className={`w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black py-3 px-4 rounded-xl shadow-sm text-sm flex items-center justify-center gap-2 transition-colors cursor-pointer ${(isProcessing === req.id || uploadingImage === req.id) ? 'opacity-50 pointer-events-none' : ''}`}>
+                    {(isProcessing === req.id || uploadingImage === req.id) ? <Loader2 className="animate-spin" size={18}/> : <Camera size={18}/>}
+                    {uploadingImage === req.id ? 'อัปโหลด...' : 'ของเข้าแล้ว (ถ่ายรูป)'}
+                    <input 
+                      type="file" accept="image/*" className="hidden"
+                      onChange={(e) => handleUploadAndComplete(req, e)}
+                    />
+                  </label>
                 )}
                 {req.status === 'received' && (
-                  <div className="w-full bg-slate-100 text-slate-400 font-black py-3 px-4 rounded-xl text-sm flex items-center justify-center gap-2 text-center">
-                    <Check size={18}/> ดำเนินการเสร็จสิ้น
+                  <div className="flex flex-col gap-2 w-full">
+                    <div className="w-full bg-slate-100 text-slate-400 font-black py-3 px-4 rounded-xl text-sm flex items-center justify-center gap-2 text-center">
+                      <Check size={18}/> ดำเนินการเสร็จสิ้น
+                    </div>
+                    {req.image_url && (
+                      <a href={req.image_url} target="_blank" rel="noreferrer" className="w-full bg-blue-50 hover:bg-blue-100 text-blue-600 font-bold py-2 px-4 rounded-xl text-xs flex items-center justify-center gap-2 transition-colors">
+                        <ImageIcon size={14}/> ดูรูปถ่ายของเข้า
+                      </a>
+                    )}
                   </div>
                 )}
                 
