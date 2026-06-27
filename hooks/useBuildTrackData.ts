@@ -128,6 +128,9 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
            task_template_id: assign.task_template_id,
            progress: assign.current_progress || 0,
            actual_end_date: assign.actual_end_date,
+           action: assign.latest_action,
+           role: assign.latest_role,
+           created_at: assign.latest_update_created_at
         }; 
         tDates[key] = { start: assign.actual_start_date, end: assign.actual_end_date };
       });
