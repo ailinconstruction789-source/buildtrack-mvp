@@ -717,140 +717,125 @@ export default function QCPerformanceDashboard({
             
             {groupBy === 'time' ? (
               <>
-                <div className="mb-6">
-                  <h3 className="text-lg font-black text-emerald-600 mb-3 flex items-center gap-2 border-b border-emerald-200 pb-2">
-                    <CheckCircle size={20} /> งานที่ตรวจผ่าน ({qcAnalytics.dailyQC.passedList.length})
+                <div className="mb-8">
+                  <h3 className="text-xl font-black text-emerald-600 mb-4 flex items-center gap-2 border-b-2 border-emerald-200 pb-2">
+                    <CheckCircle size={24} /> งานที่ตรวจผ่าน ({qcAnalytics.dailyQC.passedList.length})
                   </h3>
                   {qcAnalytics.dailyQC.passedList.length > 0 ? (
-                    <table className="w-full text-sm text-left border-collapse">
-                      <thead>
-                        <tr className="bg-emerald-50">
-                          <th className="border border-emerald-200 p-2 font-bold w-16 text-center">เวลา</th>
-                          <th className="border border-emerald-200 p-2 font-bold w-20 text-center">แปลง</th>
-                          <th className="border border-emerald-200 p-2 font-bold w-48">ชื่องาน</th>
-                          <th className="border border-emerald-200 p-2 font-bold">รายละเอียด & รูปภาพ</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {qcAnalytics.dailyQC.passedList.map((item: any, idx: number) => (
-                          <tr key={idx}>
-                            <td className="border border-emerald-200 p-2 text-emerald-700 font-medium text-center align-top">{item.time}</td>
-                            <td className="border border-emerald-200 p-2 font-bold text-center align-top">{item.plotName}</td>
-                            <td className="border border-emerald-200 p-2 align-top">
-                              <div className="font-bold">{item.taskName}</div>
-                              <div className="text-[10px] text-slate-500 mt-1">โฟร์แมน: {item.foremanName}</div>
-                              <div className="text-[10px] text-slate-500">ช่าง: {item.contractorName}</div>
-                            </td>
-                            <td className="border border-emerald-200 p-2 align-top">
-                              {item.textContent && <div className="text-xs text-slate-700 mb-1 leading-relaxed bg-emerald-50/50 p-1 rounded">💬 {item.textContent}</div>}
-                              {item.imageUrl && (
-                                <div className="flex flex-wrap gap-2 mt-2">
-                                  {item.imageUrl.split(',').slice(0, 3).map((imgUrl: string, imgIdx: number) => (
-                                    <img key={imgIdx} src={imgUrl.trim()} alt="QC" className="h-16 w-16 object-cover rounded border border-emerald-200 shadow-sm" />
-                                  ))}
-                                </div>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                    <div className="space-y-4">
+                      {qcAnalytics.dailyQC.passedList.map((item: any, idx: number) => (
+                        <div key={idx} className="border border-emerald-300 rounded-lg overflow-hidden page-break-inside-avoid shadow-sm">
+                          <div className="bg-emerald-50 p-3 flex justify-between items-center border-b border-emerald-200 text-sm">
+                            <div className="flex items-center gap-3">
+                              <span className="font-bold text-emerald-800 bg-white px-2 py-1 rounded shadow-sm">{item.time}</span>
+                              <span className="font-black text-emerald-900 text-lg">{item.taskName}</span>
+                            </div>
+                            <div className="flex gap-2 text-xs font-bold text-emerald-700">
+                              <span className="bg-white px-2 py-1 rounded shadow-sm border border-emerald-100">แปลง: {item.plotName}</span>
+                              <span className="bg-white px-2 py-1 rounded shadow-sm border border-emerald-100">โฟร์แมน: {item.foremanName}</span>
+                              <span className="bg-white px-2 py-1 rounded shadow-sm border border-emerald-100">ช่าง: {item.contractorName}</span>
+                            </div>
+                          </div>
+                          <div className="p-4 bg-white flex flex-col gap-3">
+                            {item.textContent && <div className="text-sm text-slate-700 bg-slate-50 p-2 rounded border border-slate-200">💬 {item.textContent}</div>}
+                            {item.imageUrl && (
+                              <div className="flex flex-wrap gap-3">
+                                {item.imageUrl.split(',').map((imgUrl: string, imgIdx: number) => (
+                                  <img key={imgIdx} src={imgUrl.trim()} alt="QC" className="h-48 w-auto max-w-[48%] object-contain rounded-md border border-slate-300 shadow-sm" />
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   ) : (
                     <p className="text-sm text-slate-500 italic">ไม่มีรายการที่ตรวจผ่านในวันนี้</p>
                   )}
                 </div>
 
                 <div>
-                  <h3 className="text-lg font-black text-rose-600 mb-3 flex items-center gap-2 border-b border-rose-200 pb-2">
-                    <AlertTriangle size={20} /> งานที่แจ้งแก้ไข ({qcAnalytics.dailyQC.rejectedList.length})
+                  <h3 className="text-xl font-black text-rose-600 mb-4 flex items-center gap-2 border-b-2 border-rose-200 pb-2">
+                    <AlertTriangle size={24} /> งานที่แจ้งแก้ไข ({qcAnalytics.dailyQC.rejectedList.length})
                   </h3>
                   {qcAnalytics.dailyQC.rejectedList.length > 0 ? (
-                    <table className="w-full text-sm text-left border-collapse">
-                      <thead>
-                        <tr className="bg-rose-50">
-                          <th className="border border-rose-200 p-2 font-bold w-16 text-center">เวลา</th>
-                          <th className="border border-rose-200 p-2 font-bold w-20 text-center">แปลง</th>
-                          <th className="border border-rose-200 p-2 font-bold w-48">ชื่องาน</th>
-                          <th className="border border-rose-200 p-2 font-bold">รายละเอียด & รูปภาพ</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {qcAnalytics.dailyQC.rejectedList.map((item: any, idx: number) => (
-                          <tr key={idx}>
-                            <td className="border border-rose-200 p-2 text-rose-700 font-medium text-center align-top">{item.time}</td>
-                            <td className="border border-rose-200 p-2 font-bold text-center align-top">{item.plotName}</td>
-                            <td className="border border-rose-200 p-2 align-top">
-                              <div className="font-bold">{item.taskName}</div>
-                              <div className="text-[10px] text-slate-500 mt-1">โฟร์แมน: {item.foremanName}</div>
-                              <div className="text-[10px] text-slate-500">ช่าง: {item.contractorName}</div>
-                            </td>
-                            <td className="border border-rose-200 p-2 align-top">
-                              {item.textContent && <div className="text-xs text-slate-700 mb-1 leading-relaxed bg-rose-50/50 p-1 rounded">💬 {item.textContent}</div>}
-                              {item.imageUrl && (
-                                <div className="flex flex-wrap gap-2 mt-2">
-                                  {item.imageUrl.split(',').slice(0, 3).map((imgUrl: string, imgIdx: number) => (
-                                    <img key={imgIdx} src={imgUrl.trim()} alt="QC" className="h-16 w-16 object-cover rounded border border-rose-200 shadow-sm" />
-                                  ))}
-                                </div>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                    <div className="space-y-4">
+                      {qcAnalytics.dailyQC.rejectedList.map((item: any, idx: number) => (
+                        <div key={idx} className="border border-rose-300 rounded-lg overflow-hidden page-break-inside-avoid shadow-sm">
+                          <div className="bg-rose-50 p-3 flex justify-between items-center border-b border-rose-200 text-sm">
+                            <div className="flex items-center gap-3">
+                              <span className="font-bold text-rose-800 bg-white px-2 py-1 rounded shadow-sm">{item.time}</span>
+                              <span className="font-black text-rose-900 text-lg">{item.taskName}</span>
+                            </div>
+                            <div className="flex gap-2 text-xs font-bold text-rose-700">
+                              <span className="bg-white px-2 py-1 rounded shadow-sm border border-rose-100">แปลง: {item.plotName}</span>
+                              <span className="bg-white px-2 py-1 rounded shadow-sm border border-rose-100">โฟร์แมน: {item.foremanName}</span>
+                              <span className="bg-white px-2 py-1 rounded shadow-sm border border-rose-100">ช่าง: {item.contractorName}</span>
+                            </div>
+                          </div>
+                          <div className="p-4 bg-white flex flex-col gap-3">
+                            {item.textContent && <div className="text-sm text-slate-700 bg-slate-50 p-2 rounded border border-slate-200">💬 {item.textContent}</div>}
+                            {item.imageUrl && (
+                              <div className="flex flex-wrap gap-3">
+                                {item.imageUrl.split(',').map((imgUrl: string, imgIdx: number) => (
+                                  <img key={imgIdx} src={imgUrl.trim()} alt="QC" className="h-48 w-auto max-w-[48%] object-contain rounded-md border border-slate-300 shadow-sm" />
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   ) : (
                     <p className="text-sm text-slate-500 italic">ไม่มีรายการที่แจ้งแก้ไขในวันนี้</p>
                   )}
                 </div>
               </>
             ) : (
-              <div className="space-y-6">
+              <div className="space-y-8">
                 {groupedDailyQC && Object.keys(groupedDailyQC).length > 0 ? (
                   Object.entries(groupedDailyQC).map(([groupKey, tasks], gIdx) => (
-                    <div key={gIdx} className="mb-6 page-break-inside-avoid">
-                      <h3 className="text-lg font-black text-slate-800 mb-2 border-b-2 border-slate-200 pb-1 flex items-center gap-2">
+                    <div key={gIdx} className="mb-8">
+                      <h3 className="text-2xl font-black text-slate-800 mb-4 border-b-2 border-slate-300 pb-2 flex items-center gap-2 page-break-after-avoid">
                         {groupBy === 'contractor' ? 'ช่างรับเหมา:' : 'แปลงบ้าน:'} <span className="text-indigo-600">{groupKey}</span>
-                        <span className="ml-2 text-xs font-bold text-slate-500">({tasks.length} งาน)</span>
+                        <span className="ml-2 text-sm font-bold text-slate-500">({tasks.length} งาน)</span>
                       </h3>
-                      <table className="w-full text-sm text-left border-collapse mt-2">
-                        <thead>
-                          <tr className="bg-slate-100">
-                            <th className="border border-slate-300 p-2 font-bold w-16 text-center">เวลา</th>
-                            <th className="border border-slate-300 p-2 font-bold w-20 text-center">สถานะ</th>
-                            <th className="border border-slate-300 p-2 font-bold w-48">รายละเอียดงาน</th>
-                            <th className="border border-slate-300 p-2 font-bold">คอมเมนต์ & รูปภาพ</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {tasks.map((item: any, idx: number) => {
-                            const isPassed = item.status === 'passed';
-                            const statusColor = isPassed ? 'text-emerald-700 bg-emerald-50' : 'text-rose-700 bg-rose-50';
-                            const statusText = isPassed ? 'ผ่าน' : 'แก้ไข';
-                            return (
-                              <tr key={idx}>
-                                <td className="border border-slate-300 p-2 font-medium text-center align-top">{item.time}</td>
-                                <td className={`border border-slate-300 p-2 font-black text-center align-top ${statusColor}`}>{statusText}</td>
-                                <td className="border border-slate-300 p-2 align-top">
-                                  <div className="font-bold">{item.taskName}</div>
-                                  <div className="text-[10px] text-slate-500 mt-1">แปลง: <span className="font-bold text-slate-700">{item.plotName}</span></div>
-                                  <div className="text-[10px] text-slate-500">โฟร์แมน: {item.foremanName}</div>
-                                  <div className="text-[10px] text-slate-500">ช่าง: {item.contractorName}</div>
-                                </td>
-                                <td className="border border-slate-300 p-2 align-top">
-                                  {item.textContent && <div className="text-xs text-slate-700 mb-2 leading-relaxed bg-slate-50 p-1.5 rounded border border-slate-200">💬 {item.textContent}</div>}
-                                  {item.imageUrl && (
-                                    <div className="flex flex-wrap gap-2">
-                                      {item.imageUrl.split(',').slice(0, 3).map((imgUrl: string, imgIdx: number) => (
-                                        <img key={imgIdx} src={imgUrl.trim()} alt="QC" className="h-16 w-16 object-cover rounded border border-slate-300 shadow-sm" />
-                                      ))}
-                                    </div>
-                                  )}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+                      <div className="space-y-4">
+                        {tasks.map((item: any, idx: number) => {
+                          const isPassed = item.status === 'passed';
+                          const statusColor = isPassed ? 'text-emerald-800 bg-emerald-100 border-emerald-300' : 'text-rose-800 bg-rose-100 border-rose-300';
+                          const statusText = isPassed ? 'ผ่าน' : 'แก้ไข';
+                          const borderColor = isPassed ? 'border-emerald-300' : 'border-rose-300';
+                          const headerBg = isPassed ? 'bg-emerald-50' : 'bg-rose-50';
+
+                          return (
+                            <div key={idx} className={`border ${borderColor} rounded-lg overflow-hidden page-break-inside-avoid shadow-sm`}>
+                              <div className={`${headerBg} p-3 flex justify-between items-center border-b ${borderColor} text-sm`}>
+                                <div className="flex items-center gap-3">
+                                  <span className="font-bold text-slate-700 bg-white px-2 py-1 rounded shadow-sm border border-slate-200">{item.time}</span>
+                                  <span className={`font-black px-3 py-1 rounded shadow-sm border ${statusColor}`}>{statusText}</span>
+                                  <span className="font-black text-slate-900 text-lg">{item.taskName}</span>
+                                </div>
+                                <div className="flex gap-2 text-xs font-bold text-slate-600">
+                                  <span className="bg-white px-2 py-1 rounded shadow-sm border border-slate-200">แปลง: {item.plotName}</span>
+                                  <span className="bg-white px-2 py-1 rounded shadow-sm border border-slate-200">โฟร์แมน: {item.foremanName}</span>
+                                  <span className="bg-white px-2 py-1 rounded shadow-sm border border-slate-200">ช่าง: {item.contractorName}</span>
+                                </div>
+                              </div>
+                              <div className="p-4 bg-white flex flex-col gap-3">
+                                {item.textContent && <div className="text-sm text-slate-700 bg-slate-50 p-2 rounded border border-slate-200">💬 {item.textContent}</div>}
+                                {item.imageUrl && (
+                                  <div className="flex flex-wrap gap-3">
+                                    {item.imageUrl.split(',').map((imgUrl: string, imgIdx: number) => (
+                                      <img key={imgIdx} src={imgUrl.trim()} alt="QC" className="h-48 w-auto max-w-[48%] object-contain rounded-md border border-slate-300 shadow-sm" />
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   ))
                 ) : (
