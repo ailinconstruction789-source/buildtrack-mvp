@@ -4,7 +4,7 @@ import { TrendingUp, AlertTriangle, Target, CheckCircle, Clock, PieChart as PieC
 import { XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
 
 export default function QCPerformanceDashboard({
-  plots, taskTemplates, defects, allUpdatesRecord
+  plots, taskTemplates, defects, allUpdatesRecord, assignments
 }: any) {
   const [qcFilterDate, setQcFilterDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [showQCDailyModal, setShowQCDailyModal] = useState(false);
@@ -166,11 +166,18 @@ export default function QCPerformanceDashboard({
        if (new Date(upd.created_at).toDateString() === filterDateStr) {
           const plot = plots?.find((p:any) => String(p.id) === String(upd.plot_id));
           const task = taskTemplates?.find((t:any) => String(t.id) === String(upd.task_template_id));
+          const assign = assignments?.find((a:any) => String(a.plot_id) === String(upd.plot_id) && String(a.task_template_id) === String(upd.task_template_id));
+          const foremanName = plot?.foreman || 'ไม่ระบุ';
+          const contractorName = assign?.contractor_name || 'ไม่ระบุ';
           const detailObj = {
              plotName: plot ? plot.id : 'ไม่ระบุแปลง',
              taskName: task ? task.task_name : 'ไม่ระบุงาน',
              time: new Date(upd.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }),
-             action: upd.action
+             action: upd.action,
+             textContent: upd.text_content || '',
+             imageUrl: upd.image_url || '',
+             foremanName: foremanName,
+             contractorName: contractorName
           };
 
           if (upd.action === 'QC อนุมัติผ่าน' || upd.action === 'QC อนุมัติ') {
@@ -456,17 +463,31 @@ export default function QCPerformanceDashboard({
                 {qcAnalytics.dailyQC.passedList.length > 0 ? (
                   <div className="space-y-3">
                     {qcAnalytics.dailyQC.passedList.map((item: any, idx: number) => (
-                      <div key={idx} className="bg-emerald-50 border border-emerald-100 p-4 rounded-2xl flex justify-between items-center">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center shrink-0">
-                            <CheckCircle size={20} />
+                      <div key={idx} className="bg-emerald-50 border border-emerald-100 p-4 rounded-2xl flex flex-col gap-3">
+                        <div className="flex justify-between items-start">
+                          <div className="flex items-start gap-3">
+                            <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center shrink-0 mt-0.5">
+                              <CheckCircle size={20} />
+                            </div>
+                            <div>
+                              <p className="font-bold text-sm text-slate-800">{item.taskName}</p>
+                              <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                <p className="text-xs font-bold text-emerald-600">แปลงบ้าน: {item.plotName}</p>
+                                <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">โฟร์แมน: {item.foremanName}</span>
+                                <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">ช่าง: {item.contractorName}</span>
+                              </div>
+                              {item.textContent && <p className="text-xs text-slate-600 mt-2 bg-white/60 p-2 rounded-lg border border-emerald-100/50">💬 {item.textContent}</p>}
+                            </div>
                           </div>
-                          <div>
-                            <p className="font-bold text-sm text-slate-800">{item.taskName}</p>
-                            <p className="text-xs font-bold text-emerald-600 mt-0.5">แปลงบ้าน: {item.plotName}</p>
-                          </div>
+                          <div className="text-xs font-bold bg-emerald-200/50 text-emerald-700 px-2 py-1 rounded-md shrink-0">{item.time}</div>
                         </div>
-                        <div className="text-xs font-bold bg-emerald-200/50 text-emerald-700 px-2 py-1 rounded-md">{item.time}</div>
+                        {item.imageUrl && (
+                          <div className="flex gap-2 mt-1 overflow-x-auto custom-scrollbar pb-1">
+                            {item.imageUrl.split(',').map((imgUrl: string, imgIdx: number) => (
+                              <img key={imgIdx} src={imgUrl.trim()} alt="QC Image" className="h-16 w-16 object-cover rounded-lg border border-emerald-200 shadow-sm" />
+                            ))}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -483,17 +504,31 @@ export default function QCPerformanceDashboard({
                 {qcAnalytics.dailyQC.rejectedList.length > 0 ? (
                   <div className="space-y-3">
                     {qcAnalytics.dailyQC.rejectedList.map((item: any, idx: number) => (
-                      <div key={idx} className="bg-rose-50 border border-rose-100 p-4 rounded-2xl flex justify-between items-center">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center shrink-0">
-                            <AlertTriangle size={20} />
+                      <div key={idx} className="bg-rose-50 border border-rose-100 p-4 rounded-2xl flex flex-col gap-3">
+                        <div className="flex justify-between items-start">
+                          <div className="flex items-start gap-3">
+                            <div className="w-10 h-10 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center shrink-0 mt-0.5">
+                              <AlertTriangle size={20} />
+                            </div>
+                            <div>
+                              <p className="font-bold text-sm text-slate-800">{item.taskName}</p>
+                              <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                <p className="text-xs font-bold text-rose-600">แปลงบ้าน: {item.plotName}</p>
+                                <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">โฟร์แมน: {item.foremanName}</span>
+                                <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">ช่าง: {item.contractorName}</span>
+                              </div>
+                              {item.textContent && <p className="text-xs text-slate-600 mt-2 bg-white/60 p-2 rounded-lg border border-rose-100/50">💬 {item.textContent}</p>}
+                            </div>
                           </div>
-                          <div>
-                            <p className="font-bold text-sm text-slate-800">{item.taskName}</p>
-                            <p className="text-xs font-bold text-rose-600 mt-0.5">แปลงบ้าน: {item.plotName}</p>
-                          </div>
+                          <div className="text-xs font-bold bg-rose-200/50 text-rose-700 px-2 py-1 rounded-md shrink-0">{item.time}</div>
                         </div>
-                        <div className="text-xs font-bold bg-rose-200/50 text-rose-700 px-2 py-1 rounded-md">{item.time}</div>
+                        {item.imageUrl && (
+                          <div className="flex gap-2 mt-1 overflow-x-auto custom-scrollbar pb-1">
+                            {item.imageUrl.split(',').map((imgUrl: string, imgIdx: number) => (
+                              <img key={imgIdx} src={imgUrl.trim()} alt="QC Image" className="h-16 w-16 object-cover rounded-lg border border-rose-200 shadow-sm" />
+                            ))}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -531,17 +566,32 @@ export default function QCPerformanceDashboard({
                 <table className="w-full text-sm text-left border-collapse">
                   <thead>
                     <tr className="bg-emerald-50">
-                      <th className="border border-emerald-200 p-2 font-bold">เวลา</th>
-                      <th className="border border-emerald-200 p-2 font-bold">แปลงบ้าน</th>
-                      <th className="border border-emerald-200 p-2 font-bold">ชื่องาน</th>
+                      <th className="border border-emerald-200 p-2 font-bold w-16 text-center">เวลา</th>
+                      <th className="border border-emerald-200 p-2 font-bold w-20 text-center">แปลง</th>
+                      <th className="border border-emerald-200 p-2 font-bold w-48">ชื่องาน</th>
+                      <th className="border border-emerald-200 p-2 font-bold">รายละเอียด & รูปภาพ</th>
                     </tr>
                   </thead>
                   <tbody>
                     {qcAnalytics.dailyQC.passedList.map((item: any, idx: number) => (
                       <tr key={idx}>
-                        <td className="border border-emerald-200 p-2 text-emerald-700 font-medium w-24">{item.time}</td>
-                        <td className="border border-emerald-200 p-2 font-bold">{item.plotName}</td>
-                        <td className="border border-emerald-200 p-2">{item.taskName}</td>
+                        <td className="border border-emerald-200 p-2 text-emerald-700 font-medium text-center align-top">{item.time}</td>
+                        <td className="border border-emerald-200 p-2 font-bold text-center align-top">{item.plotName}</td>
+                        <td className="border border-emerald-200 p-2 align-top">
+                          <div className="font-bold">{item.taskName}</div>
+                          <div className="text-[10px] text-slate-500 mt-1">โฟร์แมน: {item.foremanName}</div>
+                          <div className="text-[10px] text-slate-500">ช่าง: {item.contractorName}</div>
+                        </td>
+                        <td className="border border-emerald-200 p-2 align-top">
+                          {item.textContent && <div className="text-xs text-slate-700 mb-1 leading-relaxed">{item.textContent}</div>}
+                          {item.imageUrl && (
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {item.imageUrl.split(',').slice(0, 4).map((imgUrl: string, imgIdx: number) => (
+                                <img key={imgIdx} src={imgUrl.trim()} alt="QC" className="h-10 w-10 object-cover rounded border border-emerald-200" />
+                              ))}
+                            </div>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -559,17 +609,32 @@ export default function QCPerformanceDashboard({
                 <table className="w-full text-sm text-left border-collapse">
                   <thead>
                     <tr className="bg-rose-50">
-                      <th className="border border-rose-200 p-2 font-bold">เวลา</th>
-                      <th className="border border-rose-200 p-2 font-bold">แปลงบ้าน</th>
-                      <th className="border border-rose-200 p-2 font-bold">ชื่องาน</th>
+                      <th className="border border-rose-200 p-2 font-bold w-16 text-center">เวลา</th>
+                      <th className="border border-rose-200 p-2 font-bold w-20 text-center">แปลง</th>
+                      <th className="border border-rose-200 p-2 font-bold w-48">ชื่องาน</th>
+                      <th className="border border-rose-200 p-2 font-bold">รายละเอียด & รูปภาพ</th>
                     </tr>
                   </thead>
                   <tbody>
                     {qcAnalytics.dailyQC.rejectedList.map((item: any, idx: number) => (
                       <tr key={idx}>
-                        <td className="border border-rose-200 p-2 text-rose-700 font-medium w-24">{item.time}</td>
-                        <td className="border border-rose-200 p-2 font-bold">{item.plotName}</td>
-                        <td className="border border-rose-200 p-2">{item.taskName}</td>
+                        <td className="border border-rose-200 p-2 text-rose-700 font-medium text-center align-top">{item.time}</td>
+                        <td className="border border-rose-200 p-2 font-bold text-center align-top">{item.plotName}</td>
+                        <td className="border border-rose-200 p-2 align-top">
+                          <div className="font-bold">{item.taskName}</div>
+                          <div className="text-[10px] text-slate-500 mt-1">โฟร์แมน: {item.foremanName}</div>
+                          <div className="text-[10px] text-slate-500">ช่าง: {item.contractorName}</div>
+                        </td>
+                        <td className="border border-rose-200 p-2 align-top">
+                          {item.textContent && <div className="text-xs text-slate-700 mb-1 leading-relaxed">{item.textContent}</div>}
+                          {item.imageUrl && (
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {item.imageUrl.split(',').slice(0, 4).map((imgUrl: string, imgIdx: number) => (
+                                <img key={imgIdx} src={imgUrl.trim()} alt="QC" className="h-10 w-10 object-cover rounded border border-rose-200" />
+                              ))}
+                            </div>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

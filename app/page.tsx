@@ -2703,6 +2703,7 @@ export default function ConstructionApp() {
                     allUpdatesRecord={allUpdatesRecord}
                     taskTemplates={taskTemplates}
                     plots={plots}
+                    assignments={assignments}
                   />
                 </div>
               )}
