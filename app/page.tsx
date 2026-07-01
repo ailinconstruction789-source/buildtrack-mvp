@@ -3,6 +3,9 @@
 import React, { useState, useEffect, useMemo, useCallback, useTransition } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useBuildTrackData } from '@/hooks/useBuildTrackData';
+import { useWeather } from '@/hooks/useWeather';
+import { useSessionTimeout } from '@/hooks/useSessionTimeout';
+import WeatherWidget from '@/components/WeatherWidget';
 import LoginView from '@/components/LoginView';
 import DashboardOverview from '@/components/DashboardOverview';
 import ContractorScheduleView from '@/components/ContractorScheduleView';
@@ -192,106 +195,9 @@ export default function ConstructionApp() {
   const [currentWeather, setCurrentWeather] = useState<any>(null);
 
   // 🌤️ Weather Widget 2.0 States
-  const [weatherInfo, setWeatherInfo] = useState<any>(null);
   const [showWeatherWidget, setShowWeatherWidget] = useState(false);
 
-  // 🌟 ฟังก์ชันแปลรหัสสภาพอากาศ (WMO Code) เป็นภาษาไทย + ไอคอน
-  const getWeatherDetails = (code: number) => {
-    if (code === 0) return { icon: '☀️', text: 'ฟ้าใส แดดแรง' };
-    if (code === 1 || code === 2) return { icon: '🌤️', text: 'มีเมฆบางส่วน' };
-    if (code === 3) return { icon: '☁️', text: 'เมฆหนาตึบ' };
-    if (code >= 45 && code <= 48) return { icon: '🌫️', text: 'มีหมอก' };
-    if (code >= 51 && code <= 67) return { icon: '🌧️', text: 'ฝนตก' };
-    if (code >= 80 && code <= 82) return { icon: '⛈️', text: 'ฝนตกหนัก' };
-    if (code >= 95) return { icon: '🌩️', text: 'พายุฝนฟ้าคะนอง' };
-    return { icon: '🌡️', text: 'สภาพอากาศปกติ' };
-  };
-
-  // 🌟 ฟังก์ชันดึงข้อมูลพยากรณ์และสถานที่
-  useEffect(() => {
-    let isMounted = true;
-    const controller = new AbortController();
-    const { signal } = controller;
-
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(async (position) => {
-        if (!isMounted) return;
-        const { latitude, longitude } = position.coords;
-        try {
-          // 1. ดึงชื่อสถานที่ฟรี (Reverse Geocoding)
-          const locRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=th`, { signal });
-          const locData = await locRes.json();
-          const placeName = locData.locality || locData.city || "หน้าไซต์งาน";
-
-          // 2. ดึงสภาพอากาศ (ปัจจุบัน + ล่วงหน้ารายชั่วโมง + UV)
-          const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code&hourly=temperature_2m,weather_code,precipitation_probability,uv_index&timezone=auto&forecast_days=1`, { signal });
-          const wData = await weatherRes.json();
-
-          // คำนวณพยากรณ์ 4 ชั่วโมงข้างหน้า
-          const currentHour = new Date().getHours();
-          const nextHours = wData.hourly?.time?.slice(currentHour + 1, currentHour + 5).map((time: string, idx: number) => ({
-            time: new Date(time).getHours() + ":00",
-            temp: Math.round(wData.hourly.temperature_2m[currentHour + 1 + idx]),
-            details: getWeatherDetails(wData.hourly.weather_code[currentHour + 1 + idx]),
-            rainProb: wData.hourly.precipitation_probability[currentHour + 1 + idx]
-          })) || [];
-
-          // ระบบเตือนภัยหน้างาน (UV & Rain)
-          const currentUV = wData.hourly?.uv_index?.[currentHour] || 0;
-          const willRain = nextHours.some((h: any) => h.rainProb > 50);
-
-          let alert = null;
-          if (willRain) alert = { type: 'rain', msg: '🔵 มีโอกาสฝนตกในอีกไม่กี่ชั่วโมง เตรียมคลุมวัสดุ!' };
-          else if (currentUV > 8) alert = { type: 'uv-high', msg: '🔴 UV รุนแรงมาก! หลีกเลี่ยงการตากแดดต่อเนื่อง' };
-          else if (currentUV > 5) alert = { type: 'uv-med', msg: '🟠 แดดแรง ทาครีมกันแดดและดื่มน้ำบ่อยๆ นะครับ' };
-
-          if (isMounted) {
-            setWeatherInfo({
-              location: placeName,
-              currentTemp: Math.round(wData.current?.temperature_2m || 0),
-              currentDetails: getWeatherDetails(wData.current?.weather_code || 0),
-              hourly: nextHours,
-              alert: alert
-            });
-          }
-        } catch (e: any) {
-          if (e?.name !== 'AbortError') {
-            console.error("ดึงข้อมูลอากาศไม่สำเร็จ:", e);
-            if (isMounted) {
-              setWeatherInfo({
-                location: "ข้อมูลไม่พร้อม",
-                currentTemp: 0,
-                currentDetails: { icon: '🌤️', text: 'ไม่สามารถดึงข้อมูลได้' },
-                hourly: [],
-                alert: null
-              });
-            }
-          }
-        }
-      }, (error) => {
-        if (!isMounted) return;
-        console.warn("Geolocation access denied or failed:", error);
-        setWeatherInfo({
-          location: "Bangkok (ค่าเริ่มต้น)",
-          currentTemp: 30,
-          currentDetails: { icon: '☀️', text: 'ไม่ได้ระบุตำแหน่ง' },
-          hourly: [],
-          alert: null
-        });
-      }, { timeout: 10000, maximumAge: 60000 });
-    } else {
-      if (isMounted) {
-        setWeatherInfo({
-          location: "Bangkok (ค่าเริ่มต้น)",
-          currentTemp: 30,
-          currentDetails: { icon: '☀️', text: 'เบราว์เซอร์ไม่รองรับ GPS' },
-          hourly: [],
-          alert: null
-        });
-      }
-    }
-    return () => { isMounted = false; controller.abort(); };
-  }, []);
+  const weatherInfo = useWeather();
   const [progressValue, setProgressValue] = useState(0);
   const [isSending, setIsSending] = useState(false);
 
@@ -446,60 +352,7 @@ export default function ConstructionApp() {
   }, []);
 
   // 🌟 ระบบจำการล็อกอิน และตรวจจับเวลาหมดอายุ (ตั้งไว้ 60 นาที)
-  useEffect(() => {
-    const TIMEOUT_MS = 60 * 60 * 1000;
-    
-    // 🛡️ เช็ค Session จาก Supabase Auth โดยตรง
-    const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      const lastActive = localStorage.getItem('buildtrack_last_active');
-      
-      if (session && lastActive) {
-        if (Date.now() - parseInt(lastActive) < TIMEOUT_MS) {
-          setLoggedInUser(session.user.user_metadata);
-          localStorage.setItem('buildtrack_last_active', Date.now().toString());
-        } else {
-          await supabase.auth.signOut();
-          setLoggedInUser(null);
-          localStorage.removeItem('buildtrack_last_active');
-        }
-      }
-    };
-    checkSession();
-
-    const updateActivity = () => {
-      if (localStorage.getItem('buildtrack_last_active')) {
-        // 🌟 Throttle: อัปเดตทุก 30 วินาทีเท่านั้น ป้องกัน write ถี่เกินไปบน touchscreen / keyboard
-        const last = parseInt(localStorage.getItem('buildtrack_last_active') || '0');
-        if (Date.now() - last > 30000) {
-          localStorage.setItem('buildtrack_last_active', Date.now().toString());
-        }
-      }
-    };
-
-    window.addEventListener('mousemove', updateActivity);
-    window.addEventListener('keydown', updateActivity);
-    window.addEventListener('click', updateActivity);
-    window.addEventListener('touchstart', updateActivity);
-
-    const interval = setInterval(async () => {
-      const lastAct = localStorage.getItem('buildtrack_last_active');
-      if (lastAct && (Date.now() - parseInt(lastAct) > TIMEOUT_MS)) {
-        await supabase.auth.signOut();
-        setLoggedInUser(null);
-        localStorage.removeItem('buildtrack_last_active');
-        alert('เซสชันหมดอายุเนื่องจากไม่ได้ใช้งานเกิน 60 นาที กรุณาล็อกอินใหม่ครับ 🔒');
-      }
-    }, 60000);
-
-    return () => {
-      window.removeEventListener('mousemove', updateActivity);
-      window.removeEventListener('keydown', updateActivity);
-      window.removeEventListener('click', updateActivity);
-      window.removeEventListener('touchstart', updateActivity);
-      clearInterval(interval);
-    };
-  }, []);
+  useSessionTimeout(setLoggedInUser);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   // loggedInUser fetchAllData extracted
   useEffect(() => { if (loggedInUser?.role === 'Owner') setView('global-feed'); }, [loggedInUser]);
@@ -2038,45 +1891,7 @@ export default function ConstructionApp() {
                 </button>
 
                 {/* 🔽 Dropdown แสดงรายละเอียดพยากรณ์ (ปล่อยไว้เหมือนเดิมได้เลยครับ) */}
-                {showWeatherWidget && weatherInfo && (
-                  <div className="absolute right-0 top-full mt-3 w-[280px] bg-white rounded-2xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.2)] border border-slate-100 p-4 animate-in fade-in slide-in-from-top-2">
-                    <div className="flex justify-between items-start mb-3">
-                      <div>
-                        <h4 className="text-sm font-black text-slate-800 flex items-center gap-1"><MapIcon size={14} className="text-rose-500" /> {weatherInfo.location}</h4>
-                        <p className="text-[10px] text-slate-500 font-bold">{new Date().toLocaleDateString('th-TH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
-                      </div>
-                      <button onClick={() => setShowWeatherWidget(false)} className="text-slate-400 hover:text-slate-700"><X size={16} /></button>
-                    </div>
-
-                    <div className="flex items-center gap-3 bg-blue-50/50 p-3 rounded-xl mb-3 border border-blue-50">
-                      <span className="text-4xl">{weatherInfo.currentDetails.icon}</span>
-                      <div>
-                        <div className="text-2xl font-black text-blue-700 leading-none">{weatherInfo.currentTemp}°C</div>
-                        <div className="text-xs font-bold text-blue-600/80 mt-1">{weatherInfo.currentDetails.text}</div>
-                      </div>
-                    </div>
-
-                    {weatherInfo.alert && (
-                      <div className={`p-2.5 rounded-lg mb-4 text-[10px] font-bold border ${weatherInfo.alert.type === 'rain' ? 'bg-blue-100 text-blue-800 border-blue-200' : weatherInfo.alert.type === 'uv-high' ? 'bg-rose-100 text-rose-800 border-rose-200' : 'bg-orange-100 text-orange-800 border-orange-200'}`}>
-                        {weatherInfo.alert.msg}
-                      </div>
-                    )}
-
-                    <div className="border-t border-slate-100 pt-3">
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">พยากรณ์ 4 ชม. ข้างหน้า</p>
-                      <div className="flex justify-between gap-1">
-                        {weatherInfo.hourly.map((h: any, i: number) => (
-                          <div key={i} className="flex flex-col items-center justify-center bg-slate-50 rounded-lg p-2 flex-1 border border-slate-100">
-                            <span className="text-[10px] font-bold text-slate-500">{h.time}</span>
-                            <span className="text-lg my-1">{h.details.icon}</span>
-                            <span className="text-[11px] font-black text-slate-700">{h.temp}°</span>
-                            {h.rainProb > 20 && <span className="text-[8px] font-bold text-blue-500 mt-0.5">{h.rainProb}%</span>}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
+                <WeatherWidget weatherInfo={weatherInfo} showWeatherWidget={showWeatherWidget} setShowWeatherWidget={setShowWeatherWidget} />
               </div>
               {/* 👤 User Profile */}
               <div className="flex items-center gap-3 border-l border-slate-200 pl-4">

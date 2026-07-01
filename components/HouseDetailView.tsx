@@ -94,18 +94,39 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
   const [viewImageModalUrl, setViewImageModalUrl] = React.useState<string | null>(null);
   const [activeHouseTab, setActiveHouseTab] = React.useState('construction');
   const [taskSearchQuery, setTaskSearchQuery] = React.useState('');
+  const [hideCompletedTasks, setHideCompletedTasks] = React.useState(false);
 
   // 🌟 Scroll Position Memory for Task Table 🌟
   const tableScrollRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
     if (selectedPlot?.id && tableScrollRef.current) {
+      // 1. Restore Vertical Scroll Memory
       const savedScroll = sessionStorage.getItem(`houseTableScroll-${selectedPlot.id}`);
       if (savedScroll) {
         tableScrollRef.current.scrollTop = parseInt(savedScroll, 10);
       }
+           // 2. Auto-Scroll Horizontally to "Today"
+      if (activeHouseTab === 'construction') {
+        setTimeout(() => {
+          const container = tableScrollRef.current;
+          if (container && typeof todayTs !== 'undefined' && typeof chartStart !== 'undefined') {
+            if (todayTs > chartEnd) {
+              container.scrollTo({ left: container.scrollWidth, behavior: 'smooth' });
+            } else if (todayTs < chartStart) {
+              container.scrollTo({ left: 0, behavior: 'smooth' });
+            } else {
+              const dayDiff = Math.floor((todayTs - chartStart) / (1000 * 60 * 60 * 24));
+              const isMobile = window.innerWidth < 640;
+              const fixedWidth = isMobile ? 520 : 660; // Approximate width of sticky columns
+              const targetLeft = fixedWidth + (dayDiff * 36) - (container.clientWidth / 2);
+              container.scrollTo({ left: Math.max(0, targetLeft), behavior: 'smooth' });
+            }
+          }
+        }, 500);
+      }
     }
-  }, [selectedPlot?.id]);
+  }, [selectedPlot?.id, activeHouseTab]);
 
   const handleTableScroll = (e: React.UIEvent<HTMLDivElement>) => {
     if (selectedPlot?.id) {
@@ -367,9 +388,9 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
 
                      {activeHouseTab === 'construction' && (
                      <div className="bg-[#f5f5f7] w-full border-t border-black/5 flex flex-col">
-                       {/* 🔍 Search Bar */}
-                       <div className="p-3 border-b border-black/5 bg-white shrink-0">
-                         <div className="relative">
+                       {/* 🔍 Search Bar & Filters */}
+                       <div className="p-3 border-b border-black/5 bg-white shrink-0 flex flex-col sm:flex-row gap-3 items-center">
+                         <div className="relative flex-1 w-full">
                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                              <Search size={16} className="text-slate-400" />
                            </div>
@@ -381,6 +402,15 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                              onChange={(e) => setTaskSearchQuery(e.target.value)}
                            />
                          </div>
+                         <label className="flex items-center gap-2 text-sm font-semibold text-slate-600 cursor-pointer w-full sm:w-auto bg-slate-50 px-3 py-2 sm:py-2.5 rounded-xl border border-slate-200 hover:bg-slate-100 transition-colors select-none">
+                           <input 
+                             type="checkbox" 
+                             className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500"
+                             checked={hideCompletedTasks}
+                             onChange={(e) => setHideCompletedTasks(e.target.checked)}
+                           />
+                           ซ่อนงานที่เสร็จแล้ว (100%)
+                         </label>
                        </div>
                        
                        <div 
@@ -453,7 +483,16 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                                   )}
                                </React.Fragment>
                             ))
-                          ) : taskTemplates.filter(t => t.house_type_id === selectedPlot.house_type_id && (!taskSearchQuery || t.task_name.toLowerCase().includes(taskSearchQuery.toLowerCase()))).map((task) => {
+                          ) : taskTemplates.filter(t => {
+                            if (t.house_type_id !== selectedPlot.house_type_id) return false;
+                            if (taskSearchQuery && !t.task_name.toLowerCase().includes(taskSearchQuery.toLowerCase())) return false;
+                            if (hideCompletedTasks) {
+                                const key = `${selectedPlot.id}-${t.id}`;
+                                const tProgress = latestUpdatesMap[key]?.progress || 0;
+                                if (tProgress === 100) return false;
+                            }
+                            return true;
+                          }).map((task) => {
                             const key             = `${selectedPlot.id}-${task.id}`;
                                     const isUpdatedToday = latestUpdatesMap[key]?.updated_at && new Date(latestUpdatesMap[key].updated_at).toDateString() === new Date().toDateString();
                                     const assignment      = assignments.find(a => a.task_template_id === task.id && a.plot_id === selectedPlot.id);
