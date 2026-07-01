@@ -1337,7 +1337,7 @@ export default function ConstructionApp() {
 
   const todayDateString = new Date().toLocaleDateString('en-CA');
   const plotsActiveToday = useMemo(() => {
-    if (!allUpdatesRecord || !Array.isArray(allUpdatesRecord)) return new Set();
+    if (!allUpdatesRecord || !Array.isArray(allUpdatesRecord)) return new Set<string>();
     return new Set<string>(allUpdatesRecord.filter(u => new Date(u.created_at).toLocaleDateString('en-CA') === todayDateString).map(u => u.plot_id));
   }, [allUpdatesRecord, todayDateString]);
 
