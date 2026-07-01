@@ -1191,7 +1191,7 @@ export default function ConstructionApp() {
   const todayDateString = new Date().toLocaleDateString('en-CA');
   const plotsActiveToday = useMemo(() => {
     if (!allUpdatesRecord || !Array.isArray(allUpdatesRecord)) return new Set();
-    return new Set(allUpdatesRecord.filter(u => new Date(u.created_at).toLocaleDateString('en-CA') === todayDateString).map(u => u.plot_id));
+    return new Set<string>(allUpdatesRecord.filter(u => new Date(u.created_at).toLocaleDateString('en-CA') === todayDateString).map(u => u.plot_id));
   }, [allUpdatesRecord, todayDateString]);
 
   const displayPlots = useMemo(() => plots.filter(p => {
@@ -3161,7 +3161,7 @@ export default function ConstructionApp() {
                                     </div>
                                   </div>
                                   <div className="flex gap-1.5 shrink-0 opacity-100 lg:opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <button onClick={() => { setTaskForm({ id: task.id, task_name: task.task_name, task_order: task.task_order, cost: task.cost || '' }); setIsEditingTask(true); }} className="p-2 bg-slate-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"><Settings size={16} /></button>
+                                    <button onClick={() => { setTaskForm({ id: String(task.id), task_name: task.task_name, task_order: String(task.task_order), cost: String(task.cost || '') }); setIsEditingTask(true); }} className="p-2 bg-slate-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"><Settings size={16} /></button>
                                     <button onClick={() => handleDeleteTask(task)} className="p-2 bg-slate-50 text-rose-500 rounded-lg hover:bg-rose-100 transition-colors"><Trash2 size={16} /></button>
                                   </div>
                                 </div>
@@ -3501,7 +3501,7 @@ export default function ConstructionApp() {
               );
 
               if (matchedAssign) {
-                contractorName = matchedAssign.contractor_name;
+                contractorName = matchedAssign.contractor_name || 'ช่างประจำแปลง';
               } else {
                 // สเต็ป 2: ถ้ายังไม่เจอ (เพราะชื่อยาว/สั้นไป) ให้ดักจับด้วยคำสำคัญหลักๆ ในชื่องาน (เช่น โครงสร้าง, ฐานราก, ผัง)
                 const plotContracts = assignments.filter(a => a.plot_id === currentPlot.id);
@@ -3512,7 +3512,7 @@ export default function ConstructionApp() {
                     (cleanAction.includes('ฐานราก') && cleanTask.includes('ฐานราก')) ||
                     (cleanAction.includes('โครงสร้าง') && cleanTask.includes('โครงสร้าง'));
                 });
-                if (keywordFind) contractorName = keywordFind.contractor_name;
+                if (keywordFind) contractorName = keywordFind.contractor_name || 'ช่างประจำแปลง';
               }
             }
 
