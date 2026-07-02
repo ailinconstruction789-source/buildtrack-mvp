@@ -1346,6 +1346,51 @@ export default function ConstructionApp() {
     } catch (e: any) { showAlert('Error', (e as Error).message); } setIsSending(false);
   };
 
+  const handleAdminRollback = async (taskTemplateId: string, plotId: string) => {
+    showConfirm(
+      'แอดมิน: ยืนยันการย้อนสถานะงาน ⚠️',
+      'คุณแน่ใจหรือไม่ว่าต้องการย้อนสถานะงานนี้กลับไปที่ 0% ? ระบบจะเคลียร์วันที่เสร็จสิ้นและคำนวณ % บ้านใหม่',
+      async () => {
+        setIsSending(true);
+        try {
+          await supabase.from('plot_task_assignments').upsert({
+            plot_id: plotId,
+            task_template_id: taskTemplateId,
+            current_progress: 0,
+            actual_end_date: null
+          }, { onConflict: 'plot_id,task_template_id' });
+
+          await supabase.from('task_updates').insert([{ 
+            plot_id: plotId, 
+            task_template_id: taskTemplateId, 
+            user_name: loggedInUser.username, 
+            role: 'Admin', 
+            action: 'แอดมินย้อนสถานะงาน (Rollback)', 
+            text_content: 'ย้อนความคืบหน้ากลับเป็น 0%', 
+            progress: 0, 
+            is_completed: false 
+          }]);
+
+          const { data } = await supabase.from('task_updates')
+            .select('*')
+            .eq('task_template_id', taskTemplateId)
+            .eq('plot_id', plotId)
+            .order('created_at', { ascending: true });
+          
+          setUpdates(data || []);
+          setProgressValue(0);
+
+          fetchAllData();
+          
+          showAlert('สำเร็จ ✨', 'ย้อนสถานะงานกลับไปที่ 0% เรียบร้อยแล้วครับ');
+        } catch (e: any) {
+          showAlert('Error', (e as Error).message);
+        }
+        setIsSending(false);
+      }
+    );
+  };
+
   // 🌟 Print Export Logic 🌟
   const handleOpenExportModal = () => {
     let imgs: any[] = [];
@@ -2980,7 +3025,7 @@ export default function ConstructionApp() {
                   isLockedForForeman={isLockedForForeman} isSiteEngineer={isSiteEngineer}
                   isPendingSE={isPendingSE} handleReviewAction={handleReviewAction} isQC={isQC}
                   isPendingQC={isPendingQC} isProcurement={isProcurement} isOwner={isOwner}
-                  handleSendPost={handleSendPost}
+                  handleSendPost={handleSendPost} handleAdminRollback={handleAdminRollback}
                 />
               )}
 

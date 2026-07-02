@@ -41,6 +41,7 @@ interface TaskProgressViewProps {
   isProcurement: boolean;
   isOwner: boolean;
   handleSendPost: () => void;
+  handleAdminRollback?: (taskTemplateId: string, plotId: string) => void;
 }
 
 const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps) {
@@ -53,7 +54,7 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
     selectedFiles, setSelectedFiles,
     isTaskCompleted, handleOpenExportModal, setDefectModal, defects, loggedInUser,
     isLockedForForeman, isSiteEngineer, isPendingSE, handleReviewAction, isQC,
-    isPendingQC, isProcurement, isOwner, handleSendPost
+    isPendingQC, isProcurement, isOwner, handleSendPost, handleAdminRollback
   } = props;
 
   useEffect(() => {
@@ -102,6 +103,16 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                              {defects.filter(d => d.plot_id === selectedPlot.id && d.task_id === selectedTask.id && d.status === 'pending').length}
                                           </span>
                                        )}
+                                    </button>
+                                 )}
+                                 {/* ⏪ ปุ่ม Admin: ย้อนสถานะงาน (Rollback) */}
+                                 {isAdmin && progressValue > 0 && handleAdminRollback && (
+                                    <button 
+                                       onClick={() => handleAdminRollback(selectedTask.id, selectedPlot.id)}
+                                       className={`bg-orange-500 hover:bg-orange-600 text-white font-bold flex items-center gap-1.5 shadow-md border border-orange-400 transition-all ${isMobileLayout ? 'ml-2 px-2.5 py-2 text-[10px] rounded-lg' : 'ml-3 px-4 py-3 text-sm rounded-xl'}`}
+                                    >
+                                       <span className="hidden sm:inline">แอดมิน: ย้อนสถานะงาน</span>
+                                       <span className="inline sm:hidden">ย้อนสถานะ</span>
                                     </button>
                                  )}
                                </div>
