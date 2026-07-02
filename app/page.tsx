@@ -648,17 +648,62 @@ export default function ConstructionApp() {
 
     setIsSubmitting(true);
     try {
+      const newOrder = parseInt(taskForm.task_order);
+      
+      // ดึงงานทั้งหมดของแบบบ้านนี้
+      const { data: existingTasks, error: fetchError } = await supabase
+        .from('task_templates')
+        .select('id, task_order')
+        .eq('house_type_id', editingTaskHouseId)
+        .order('task_order', { ascending: true });
+        
+      if (fetchError) throw fetchError;
+
+      const conflictTask = existingTasks?.find(t => t.task_order === newOrder && t.id !== taskForm.id);
+      
+      if (conflictTask) {
+        const tasksToUpdate: { id: string, task_order: number }[] = [];
+        
+        if (isEditingTask) {
+          const oldOrder = existingTasks?.find(t => t.id === taskForm.id)?.task_order;
+          if (oldOrder) {
+            existingTasks.forEach(t => {
+              if (t.id === taskForm.id) return;
+              if (newOrder < oldOrder && t.task_order >= newOrder && t.task_order < oldOrder) {
+                tasksToUpdate.push({ id: t.id, task_order: t.task_order + 1 });
+              } else if (newOrder > oldOrder && t.task_order > oldOrder && t.task_order <= newOrder) {
+                tasksToUpdate.push({ id: t.id, task_order: t.task_order - 1 });
+              }
+            });
+          }
+        } else {
+          existingTasks.forEach(t => {
+            if (t.task_order >= newOrder) {
+              tasksToUpdate.push({ id: t.id, task_order: t.task_order + 1 });
+            }
+          });
+        }
+        
+        if (tasksToUpdate.length > 0) {
+          // ต้องทำเรียงลำดับจากบนลงล่าง หรือล่างขึ้นบนให้ถูกต้องเพื่อเลี่ยงปัญหาลำดับซ้ำกันชั่วคราว
+          // แม้ว่า Supabase update จะไม่ได้มี constraint แต่เซฟไว้ก่อน
+          await Promise.all(tasksToUpdate.map(t => 
+            supabase.from('task_templates').update({ task_order: t.task_order }).eq('id', t.id)
+          ));
+        }
+      }
+
       if (isEditingTask) {
         // อัปเดตงานเดิม
         const { error } = await supabase.from('task_templates')
-          .update({ task_name: taskForm.task_name.trim(), task_order: parseInt(taskForm.task_order), cost: parseFloat(taskForm.cost) || 0 })
+          .update({ task_name: taskForm.task_name.trim(), task_order: newOrder, cost: parseFloat(taskForm.cost) || 0 })
           .eq('id', taskForm.id);
         if (error) throw error;
         showToast('แก้ไขงวดงานเรียบร้อยแล้ว', "success");
       } else {
         // เพิ่มงานใหม่
         const { error } = await supabase.from('task_templates')
-          .insert([{ house_type_id: editingTaskHouseId, task_name: taskForm.task_name.trim(), task_order: parseInt(taskForm.task_order), cost: parseFloat(taskForm.cost) || 0 }]);
+          .insert([{ house_type_id: editingTaskHouseId, task_name: taskForm.task_name.trim(), task_order: newOrder, cost: parseFloat(taskForm.cost) || 0 }]);
         if (error) throw error;
         showToast('เพิ่มงวดงานใหม่เรียบร้อยแล้ว', "success");
       }
