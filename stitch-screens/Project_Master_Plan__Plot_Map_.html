@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Master Plan View - ConstructMaster AI</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&amp;family=Hanken+Grotesk:wght@600;700&amp;family=JetBrains+Mono:wght@500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "on-primary-container": "#8393b5",
+                      "surface-dim": "#d8dadc",
+                      "surface-container": "#eceef0",
+                      "primary-fixed-dim": "#b7c7eb",
+                      "on-tertiary-container": "#8393ac",
+                      "on-secondary-fixed": "#351000",
+                      "surface-container-high": "#e6e8ea",
+                      "on-primary": "#ffffff",
+                      "secondary-fixed": "#ffdbcc",
+                      "primary": "#041632",
+                      "inverse-surface": "#2d3133",
+                      "secondary-container": "#fe6b00",
+                      "background": "#f7f9fb",
+                      "on-secondary-fixed-variant": "#7a3000",
+                      "outline-variant": "#c5c6ce",
+                      "surface-variant": "#e0e3e5",
+                      "surface-container-low": "#f2f4f6",
+                      "primary-fixed": "#d7e2ff",
+                      "on-tertiary-fixed": "#0b1c30",
+                      "tertiary-container": "#1c2c40",
+                      "on-background": "#191c1e",
+                      "inverse-primary": "#b7c7eb",
+                      "on-secondary-container": "#572000",
+                      "surface-container-lowest": "#ffffff",
+                      "outline": "#75777e",
+                      "error": "#ba1a1a",
+                      "tertiary-fixed": "#d3e4fe",
+                      "surface-bright": "#f7f9fb",
+                      "secondary": "#a04100",
+                      "on-tertiary": "#ffffff",
+                      "error-container": "#ffdad6",
+                      "on-tertiary-fixed-variant": "#38485d",
+                      "surface-tint": "#4f5e7e",
+                      "tertiary": "#06172a",
+                      "on-surface": "#191c1e",
+                      "on-error-container": "#93000a",
+                      "on-primary-fixed-variant": "#374765",
+                      "surface-container-highest": "#e0e3e5",
+                      "on-primary-fixed": "#091b37",
+                      "on-error": "#ffffff",
+                      "on-secondary": "#ffffff",
+                      "secondary-fixed-dim": "#ffb693",
+                      "primary-container": "#1b2b48",
+                      "surface": "#f7f9fb",
+                      "on-surface-variant": "#44474d",
+                      "inverse-on-surface": "#eff1f3",
+                      "tertiary-fixed-dim": "#b7c8e1"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.125rem",
+                      "lg": "0.25rem",
+                      "xl": "0.5rem",
+                      "full": "0.75rem"
+              },
+              "spacing": {
+                      "lg": "40px",
+                      "xs": "8px",
+                      "base": "4px",
+                      "sm": "16px",
+                      "gutter": "20px",
+                      "xl": "64px",
+                      "margin-mobile": "16px",
+                      "md": "24px",
+                      "margin-desktop": "32px"
+              },
+              "fontFamily": {
+                      "data-mono": ["JetBrains Mono"],
+                      "body-sm": ["Inter"],
+                      "body-md": ["Inter"],
+                      "headline-lg-mobile": ["Hanken Grotesk"],
+                      "headline-xl": ["Hanken Grotesk"],
+                      "headline-lg": ["Hanken Grotesk"],
+                      "label-caps": ["Inter"]
+              },
+              "fontSize": {
+                      "data-mono": ["13px", {"lineHeight": "16px", "letterSpacing": "0.02em", "fontWeight": "500"}],
+                      "body-sm": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                      "body-md": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
+                      "headline-lg-mobile": ["24px", {"lineHeight": "32px", "fontWeight": "600"}],
+                      "headline-xl": ["48px", {"lineHeight": "56px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                      "headline-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                      "label-caps": ["12px", {"lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "700"}]
+              }
+            }
+          }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .icon-fill {
+            font-variation-settings: 'FILL' 1;
+        }
+        
+        /* Map Plot Specific Styles based on design system mapping */
+        .plot-status-foundation { @apply bg-surface-container-highest text-on-surface border-outline-variant; }
+        .plot-status-structure { @apply bg-secondary-container text-on-secondary-container border-secondary-container; }
+        .plot-status-finishing { @apply bg-primary-fixed text-on-primary-fixed-variant border-primary-fixed-dim; }
+        .plot-status-qc { @apply bg-tertiary-container text-on-tertiary-container border-tertiary-container; }
+        .plot-status-ready { @apply bg-primary text-on-primary border-primary; }
+        
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background font-body-md h-screen overflow-hidden flex">
+<!-- TopAppBar (Visible primarily on mobile or as global header) -->
+<header class="fixed top-0 w-full z-50 flex justify-between items-center px-gutter h-16 bg-surface-container-lowest border-b border-outline-variant md:hidden">
+<div class="flex items-center gap-sm">
+<span class="material-symbols-outlined text-primary cursor-pointer">menu</span>
+<span class="text-headline-lg-mobile font-headline-lg-mobile text-primary">ConstructMaster AI</span>
+</div>
+<div class="flex items-center gap-sm text-primary">
+<span class="material-symbols-outlined cursor-pointer">notifications</span>
+<span class="material-symbols-outlined cursor-pointer">account_circle</span>
+</div>
+</header>
+<!-- SideNavBar (Desktop) -->
+<nav class="hidden md:flex fixed left-0 top-0 h-full flex-col pt-20 pb-md px-base w-64 z-40 bg-surface-container-low border-r border-outline-variant text-body-sm font-body-sm">
+<div class="px-sm mb-xl">
+<div class="text-headline-lg font-headline-lg font-bold text-primary mb-2 truncate">ConstructMaster AI</div>
+<div class="flex items-center gap-xs mt-sm p-2 bg-surface-container-lowest rounded-lg border border-outline-variant">
+<div class="w-10 h-10 rounded-full bg-primary-fixed flex items-center justify-center text-primary font-bold">PL</div>
+<div class="overflow-hidden">
+<div class="text-label-caps font-label-caps text-on-surface-variant truncate">Project Lead</div>
+<div class="text-body-sm font-body-sm font-bold text-on-surface truncate">East Valley Site</div>
+</div>
+</div>
+</div>
+<div class="flex-1 overflow-y-auto px-xs flex flex-col gap-1">
+<a class="flex items-center gap-sm px-sm py-2 rounded-xl text-on-surface-variant hover:text-primary hover:bg-surface-variant/50 transition-all duration-200" href="#">
+<span class="material-symbols-outlined">dashboard</span> Dashboard
+            </a>
+<a class="flex items-center gap-sm px-sm py-2 rounded-xl bg-secondary-container text-on-secondary-container font-bold opacity-80 transition-all duration-150" href="#">
+<span class="material-symbols-outlined icon-fill">map</span> Master Plan
+            </a>
+<a class="flex items-center gap-sm px-sm py-2 rounded-xl text-on-surface-variant hover:text-primary hover:bg-surface-variant/50 transition-all duration-200" href="#">
+<span class="material-symbols-outlined">assignment</span> Tasks
+            </a>
+<a class="flex items-center gap-sm px-sm py-2 rounded-xl text-on-surface-variant hover:text-primary hover:bg-surface-variant/50 transition-all duration-200" href="#">
+<span class="material-symbols-outlined">fact_check</span> Inspections
+            </a>
+<a class="flex items-center gap-sm px-sm py-2 rounded-xl text-on-surface-variant hover:text-primary hover:bg-surface-variant/50 transition-all duration-200" href="#">
+<span class="material-symbols-outlined">event_note</span> Planning
+            </a>
+<a class="flex items-center gap-sm px-sm py-2 rounded-xl text-on-surface-variant hover:text-primary hover:bg-surface-variant/50 transition-all duration-200" href="#">
+<span class="material-symbols-outlined">engineering</span> Contractors
+            </a>
+</div>
+<div class="px-xs mt-auto flex flex-col gap-1">
+<button class="w-full flex items-center justify-center gap-xs bg-secondary-container text-on-secondary-container py-2 rounded-xl font-bold mb-sm hover:opacity-90 transition-opacity">
+<span class="material-symbols-outlined">add</span> Start Inspection
+            </button>
+<a class="flex items-center gap-sm px-sm py-2 rounded-xl text-on-surface-variant hover:text-primary hover:bg-surface-variant/50 transition-all duration-200" href="#">
+<span class="material-symbols-outlined">settings</span> Settings
+            </a>
+<a class="flex items-center gap-sm px-sm py-2 rounded-xl text-on-surface-variant hover:text-primary hover:bg-surface-variant/50 transition-all duration-200" href="#">
+<span class="material-symbols-outlined">contact_support</span> Support
+            </a>
+</div>
+</nav>
+<!-- Main Content Canvas -->
+<main class="flex-1 flex flex-col md:ml-64 pt-16 md:pt-0 h-screen overflow-hidden relative">
+<!-- Header & Controls -->
+<div class="bg-surface-container-lowest border-b border-outline-variant p-md md:p-margin-desktop flex flex-col md:flex-row justify-between items-start md:items-center gap-sm z-10 relative shadow-sm">
+<div>
+<h1 class="text-headline-lg font-headline-lg text-primary">Master Plan</h1>
+<p class="text-body-sm font-body-sm text-on-surface-variant mt-1">Phase 2 Development Overview • Live Status</p>
+</div>
+<div class="flex flex-wrap items-center gap-xs">
+<!-- Legend -->
+<div class="flex items-center gap-sm mr-md border border-outline-variant rounded-full px-sm py-1 bg-surface">
+<div class="flex items-center gap-1"><div class="w-3 h-3 rounded-full bg-surface-container-highest border border-outline-variant"></div><span class="text-label-caps font-label-caps text-on-surface-variant">Foundation</span></div>
+<div class="flex items-center gap-1"><div class="w-3 h-3 rounded-full bg-secondary-container"></div><span class="text-label-caps font-label-caps text-on-surface-variant">Structure</span></div>
+<div class="flex items-center gap-1"><div class="w-3 h-3 rounded-full bg-primary-fixed"></div><span class="text-label-caps font-label-caps text-on-surface-variant">Finishing</span></div>
+<div class="flex items-center gap-1"><div class="w-3 h-3 rounded-full bg-tertiary-container"></div><span class="text-label-caps font-label-caps text-on-surface-variant">QC Passed</span></div>
+<div class="flex items-center gap-1"><div class="w-3 h-3 rounded-full bg-primary"></div><span class="text-label-caps font-label-caps text-on-surface-variant">Ready</span></div>
+</div>
+<button class="flex items-center gap-xs px-sm py-2 border border-outline-variant rounded-xl hover:bg-surface-container-low transition-colors text-body-sm font-body-sm">
+<span class="material-symbols-outlined text-on-surface-variant">filter_list</span> Filter
+                </button>
+<div class="relative">
+<span class="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-on-surface-variant">search</span>
+<input class="pl-8 pr-4 py-2 border border-outline-variant rounded-xl bg-surface focus:ring-2 focus:ring-primary focus:border-primary text-body-sm font-body-sm w-48" placeholder="Search Plot (e.g. A12)" type="text"/>
+</div>
+</div>
+</div>
+<!-- Interactive Map Area -->
+<div class="flex-1 bg-surface-container p-md md:p-margin-desktop overflow-auto relative map-container" id="mapCanvas">
+<!-- Map Grid Overlay -->
+<div class="min-w-[800px] bg-surface-container-lowest border border-outline-variant rounded-xl p-md shadow-sm relative">
+<!-- Decorative map grid lines background -->
+<div class="absolute inset-0 opacity-[0.03] pointer-events-none" style="background-image: linear-gradient(#041632 1px, transparent 1px), linear-gradient(90deg, #041632 1px, transparent 1px); background-size: 20px 20px;"></div>
+<div class="grid grid-cols-12 gap-base relative z-10">
+<!-- Row 1 -->
+<div class="col-span-12 mb-2"><span class="text-label-caps font-label-caps text-on-surface-variant">Sector A - North Ridge</span></div>
+<button class="plot-item plot-status-ready aspect-[4/3] rounded border flex items-center justify-center font-data-mono text-data-mono hover:scale-105 transition-transform shadow-sm relative" data-foreman="Sarah Jenkins" data-model="The Aspen" data-plot="A1" data-progress="100%" data-status="Ready">A1</button>
+<button class="plot-item plot-status-ready aspect-[4/3] rounded border flex items-center justify-center font-data-mono text-data-mono hover:scale-105 transition-transform shadow-sm" data-foreman="Sarah Jenkins" data-model="The Aspen" data-plot="A2" data-progress="100%" data-status="Ready">A2</button>
+<button class="plot-item plot-status-qc aspect-[4/3] rounded border flex items-center justify-center font-data-mono text-data-mono hover:scale-105 transition-transform shadow-sm" data-foreman="Sarah Jenkins" data-model="The Birch" data-plot="A3" data-progress="95%" data-status="QC Passed">A3</button>
+<button class="plot-item plot-status-finishing aspect-[4/3] rounded border flex items-center justify-center font-data-mono text-data-mono hover:scale-105 transition-transform shadow-sm" data-foreman="Mark Torres" data-model="The Cedar" data-plot="A4" data-progress="82%" data-status="Finishing">A4</button>
+<div class="col-span-1"></div> <!-- Street Gap -->
+<button class="plot-item plot-status-finishing aspect-[4/3] rounded border flex items-center justify-center font-data-mono text-data-mono hover:scale-105 transition-transform shadow-sm" data-foreman="Mark Torres" data-model="The Cedar" data-plot="A5" data-progress="78%" data-status="Finishing">A5</button>
+<button class="plot-item plot-status-structure aspect-[4/3] rounded border flex items-center justify-center font-data-mono text-data-mono hover:scale-105 transition-transform shadow-sm relative" data-foreman="David Kim" data-model="The Elm" data-plot="A6" data-progress="45%" data-status="Structure">A6
+                        <span class="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-error animate-ping" title="Critical Path Delay"></span>
+</button>
+<button class="plot-item plot-status-structure aspect-[4/3] rounded border flex items-center justify-center font-data-mono text-data-mono hover:scale-105 transition-transform shadow-sm" data-foreman="David Kim" data-model="The Elm" data-plot="A7" data-progress="40%" data-status="Structure">A7</button>
+<!-- Row 2 -->
+<div class="col-span-12 h-sm"></div> <!-- Main Street -->
+<!-- Row 3 -->
+<div class="col-span-12 mb-2"><span class="text-label-caps font-label-caps text-on-surface-variant">Sector B - Valley View</span></div>
+<button class="plot-item plot-status-finishing aspect-[4/3] rounded border flex items-center justify-center font-data-mono text-data-mono hover:scale-105 transition-transform shadow-sm" data-foreman="Sarah Jenkins" data-model="The Aspen" data-plot="B1" data-progress="88%" data-status="Finishing">B1</button>
+<button class="plot-item plot-status-structure aspect-[4/3] rounded border flex items-center justify-center font-data-mono text-data-mono hover:scale-105 transition-transform shadow-sm" data-foreman="Sarah Jenkins" data-model="The Aspen" data-plot="B2" data-progress="60%" data-status="Structure">B2</button>
+<div class="col-span-1"></div>
+<button class="plot-item plot-status-structure aspect-[4/3] rounded border flex items-center justify-center font-data-mono text-data-mono hover:scale-105 transition-transform shadow-sm" data-foreman="Sarah Jenkins" data-model="The Birch" data-plot="B3" data-progress="55%" data-status="Structure">B3</button>
+<button class="plot-item plot-status-foundation aspect-[4/3] rounded border flex items-center justify-center font-data-mono text-data-mono hover:scale-105 transition-transform shadow-sm" data-foreman="Mark Torres" data-model="The Cedar" data-plot="B4" data-progress="15%" data-status="Foundation">B4</button>
+<button class="plot-item plot-status-foundation aspect-[4/3] rounded border flex items-center justify-center font-data-mono text-data-mono hover:scale-105 transition-transform shadow-sm" data-foreman="Mark Torres" data-model="The Cedar" data-plot="B5" data-progress="10%" data-status="Foundation">B5</button>
+<div class="col-span-2"></div>
+<!-- Row 4 -->
+<div class="col-span-12 h-sm"></div> <!-- Street -->
+<!-- Row 5 -->
+<div class="col-span-12 mb-2"><span class="text-label-caps font-label-caps text-on-surface-variant">Sector C - East Loop</span></div>
+<div class="col-span-3 bg-surface-variant/20 rounded border border-dashed border-outline-variant flex items-center justify-center text-label-caps font-label-caps text-on-surface-variant aspect-[12/3]">Community Park Area</div>
+<div class="col-span-1"></div>
+<button class="plot-item plot-status-foundation aspect-[4/3] rounded border flex items-center justify-center font-data-mono text-data-mono hover:scale-105 transition-transform shadow-sm" data-foreman="David Kim" data-model="The Elm" data-plot="C1" data-progress="5%" data-status="Foundation">C1</button>
+<button class="plot-item plot-status-foundation aspect-[4/3] rounded border flex items-center justify-center font-data-mono text-data-mono hover:scale-105 transition-transform shadow-sm" data-foreman="David Kim" data-model="The Elm" data-plot="C2" data-progress="5%" data-status="Foundation">C2</button>
+<button class="plot-item plot-status-foundation aspect-[4/3] rounded border flex items-center justify-center font-data-mono text-data-mono hover:scale-105 transition-transform shadow-sm opacity-50" data-foreman="Unassigned" data-model="TBD" data-plot="C3" data-progress="0%" data-status="Planned">C3</button>
+<button class="plot-item plot-status-foundation aspect-[4/3] rounded border flex items-center justify-center font-data-mono text-data-mono hover:scale-105 transition-transform shadow-sm opacity-50" data-foreman="Unassigned" data-model="TBD" data-plot="C4" data-progress="0%" data-status="Planned">C4</button>
+</div>
+</div>
+<!-- Floating Summary Panel (Bento Style) - Hidden by default, shown via JS -->
+<div class="hidden absolute top-md right-md w-80 glass-panel border border-outline-variant rounded-xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] p-md flex flex-col gap-sm z-50 transform transition-all duration-300 translate-x-4 opacity-0" id="summaryPanel">
+<div class="flex justify-between items-start">
+<div>
+<h2 class="text-headline-lg font-headline-lg text-primary" id="panelPlotId">Plot A1</h2>
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-label-caps font-label-caps mt-1" id="panelStatusBadge">
+<span class="w-2 h-2 rounded-full bg-current"></span>
+<span id="panelStatusText">Ready</span>
+</span>
+</div>
+<button class="text-on-surface-variant hover:text-primary transition-colors" id="closePanelBtn">
+<span class="material-symbols-outlined">close</span>
+</button>
+</div>
+<div class="h-px bg-outline-variant w-full my-1"></div>
+<div class="grid grid-cols-2 gap-sm">
+<div class="bg-surface-container-lowest border border-outline-variant rounded-lg p-2 flex flex-col justify-center">
+<span class="text-label-caps font-label-caps text-on-surface-variant mb-1">House Model</span>
+<span class="text-body-sm font-body-sm font-bold text-primary" id="panelModel">The Aspen</span>
+</div>
+<div class="bg-surface-container-lowest border border-outline-variant rounded-lg p-2 flex flex-col justify-center">
+<span class="text-label-caps font-label-caps text-on-surface-variant mb-1">Progress</span>
+<span class="text-data-mono font-data-mono font-bold text-primary" id="panelProgress">100%</span>
+</div>
+</div>
+<div class="bg-surface-container-lowest border border-outline-variant rounded-lg p-3 flex items-center gap-sm">
+<div class="w-10 h-10 rounded-full bg-surface-variant flex items-center justify-center text-on-surface-variant overflow-hidden">
+<span class="material-symbols-outlined">person</span>
+</div>
+<div>
+<span class="text-label-caps font-label-caps text-on-surface-variant block">Site Foreman</span>
+<span class="text-body-sm font-body-sm font-bold text-on-surface" id="panelForeman">Sarah Jenkins</span>
+</div>
+</div>
+<div class="mt-2 flex gap-2">
+<button class="flex-1 bg-surface-container border border-outline-variant text-primary py-2 rounded-lg text-body-sm font-body-sm font-bold hover:bg-surface-variant transition-colors">View Log</button>
+<button class="flex-1 bg-secondary-container text-on-secondary-container py-2 rounded-lg text-body-sm font-body-sm font-bold hover:opacity-90 transition-opacity flex items-center justify-center gap-1">
+<span class="material-symbols-outlined text-[18px]">add_a_photo</span> Insp.
+                    </button>
+</div>
+</div>
+</div>
+</main>
+<script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const plots = document.querySelectorAll('.plot-item');
+            const summaryPanel = document.getElementById('summaryPanel');
+            const closeBtn = document.getElementById('closePanelBtn');
+            
+            // Panel elements
+            const pId = document.getElementById('panelPlotId');
+            const pStatusText = document.getElementById('panelStatusText');
+            const pStatusBadge = document.getElementById('panelStatusBadge');
+            const pModel = document.getElementById('panelModel');
+            const pProgress = document.getElementById('panelProgress');
+            const pForeman = document.getElementById('panelForeman');
+
+            // Status color mapping for the badge
+            const statusColors = {
+                'Foundation': 'bg-surface-container-highest text-on-surface',
+                'Structure': 'bg-secondary-container text-on-secondary-container',
+                'Finishing': 'bg-primary-fixed text-on-primary-fixed-variant',
+                'QC Passed': 'bg-tertiary-container text-on-tertiary-container',
+                'Ready': 'bg-primary text-on-primary',
+                'Planned': 'bg-surface-variant text-on-surface-variant'
+            };
+
+            plots.forEach(plot => {
+                plot.addEventListener('click', (e) => {
+                    // Update content
+                    const status = plot.dataset.status;
+                    pId.textContent = `Plot ${plot.dataset.plot}`;
+                    pStatusText.textContent = status;
+                    pModel.textContent = plot.dataset.model;
+                    pProgress.textContent = plot.dataset.progress;
+                    pForeman.textContent = plot.dataset.foreman;
+
+                    // Update badge style
+                    pStatusBadge.className = `inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-label-caps font-label-caps mt-1 ${statusColors[status] || 'bg-surface text-on-surface'}`;
+
+                    // Show panel with animation
+                    summaryPanel.classList.remove('hidden');
+                    // Small delay to allow display:block to apply before transition
+                    setTimeout(() => {
+                        summaryPanel.classList.remove('opacity-0', 'translate-x-4');
+                        summaryPanel.classList.add('opacity-100', 'translate-x-0');
+                    }, 10);
+                });
+            });
+
+            closeBtn.addEventListener('click', () => {
+                summaryPanel.classList.remove('opacity-100', 'translate-x-0');
+                summaryPanel.classList.add('opacity-0', 'translate-x-4');
+                setTimeout(() => {
+                    summaryPanel.classList.add('hidden');
+                }, 300);
+            });
+        });
+    </script>
+</body></html>
