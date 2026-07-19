@@ -107,7 +107,8 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
         defectsData,
         { data: materialReqData },
         { data: materialReceiptData },
-        { data: inspectionQueueData }
+        { data: inspectionQueueData },
+        { data: plotStatusesData }
       ] = await Promise.all([
         supabase.from('projects').select('*').order('created_at', { ascending: true }),
         supabase.from('house_types').select('*'),
@@ -624,6 +625,7 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
     materialReceipts,
     setMaterialReceipts,
     inspectionQueueView,
-    setInspectionQueueView
+    setInspectionQueueView,
+    plotStatuses
   };
 }

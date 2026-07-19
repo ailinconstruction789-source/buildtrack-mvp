@@ -18,7 +18,8 @@ interface DashboardOverviewProps {
   plots: any[];
   taskTemplates: any[];
   assignments: any[];
-  schedules?: any;
+    schedules?: any;
+    plotStatuses?: any[];
   latestUpdatesMap?: any;
   loggedInUser: any;
   inspectionQueue: any[];
@@ -50,7 +51,7 @@ const DashboardOverview = function DashboardOverview({
   view, setView,
   isSiteEngineer, isQC, isAdmin, isOwner, isForeman, isProcurement, isStore, isProjectPlanner,
   isMobileLayout,
-  projects, plots, taskTemplates, assignments, schedules, latestUpdatesMap, loggedInUser,
+  projects, plots, taskTemplates, assignments, schedules, plotStatuses, latestUpdatesMap, loggedInUser,
   inspectionQueue, inspectionFilterTab, setInspectionFilterTab,
   inspectionViewMode, setInspectionViewMode,
   inspectionSort, setInspectionSort,
@@ -104,44 +105,21 @@ const DashboardOverview = function DashboardOverview({
       <div className={`grid gap-4 sm:gap-6 ${isMobileLayout ? 'grid-cols-1' : 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'}`}>
         {projects.filter(p => (showClosedProjects ? p.is_closed : !p.is_closed)).map((proj) => {
           let plannedAvg = 0;
-          if (schedules && taskTemplates && plots) {
-            const pPlots = plots.filter((p: any) => p.project_name === proj.name);
-              let plannedTotalWeight = 0;
-              let totalCost = 0;
-              let naivePlannedTotal = 0;
-              let taskCount = 0;
-              pPlots.forEach((p: any) => {
-                const pTasks = taskTemplates.filter((t: any) => {
-                   if (t.house_type_id !== p.house_type_id) return false;
-                   if (t.is_progress_counted === false) return false;
-                   const assign = assignments?.find((a: any) => a.plot_id === p.id && a.task_template_id === t.id);
-                   if (assign && assign.is_excluded === true) return false;
-                   return true;
-                });
-                taskCount += pTasks.length;
-                pTasks.forEach((t: any) => {
-                   const key = `${p.id}-${t.id}`;
-                   const plan = schedules?.[key];
-                   let plannedProg = 0;
-                   const today = Date.now();
-                   if (plan && plan.planned_start && plan.planned_end) {
-                     const pStart = new Date(plan.planned_start).getTime();
-                     const pEnd = new Date(plan.planned_end).getTime();
-                     if (today >= pEnd) plannedProg = 100;
-                     else if (today <= pStart) plannedProg = 0;
-                     else plannedProg = Math.round(((today - pStart) / (pEnd - pStart)) * 100);
-                   }
-                   
-                   const taskCost = t.cost ? Number(t.cost) : 0;
-                   plannedTotalWeight += (plannedProg * taskCost);
-                   totalCost += taskCost;
-                   naivePlannedTotal += plannedProg;
-                });
-              });
-              plannedAvg = totalCost > 0 
-                ? Math.round(plannedTotalWeight / totalCost) 
-                : (taskCount > 0 ? Math.round(naivePlannedTotal / taskCount) : 0);
-            }
+          if (plotStatuses && plots) {
+             const pPlots = plots.filter((p: any) => p.project_name === proj.name);
+             if (pPlots.length > 0) {
+                 let totalPlanned = 0;
+                 let validCount = 0;
+                 pPlots.forEach((p: any) => {
+                     const pStat = plotStatuses.find((s: any) => String(s.plot_id) === String(p.id));
+                     if (pStat && pStat.planned !== undefined) {
+                         totalPlanned += pStat.planned;
+                         validCount++;
+                     }
+                 });
+                 if (validCount > 0) plannedAvg = Math.round(totalPlanned / validCount);
+             }
+          }
 
           return (
           <div key={proj.name} onClick={() => { 
