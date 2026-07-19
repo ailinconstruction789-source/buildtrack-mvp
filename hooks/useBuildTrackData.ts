@@ -24,6 +24,7 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
   const [latestUpdatesMap, setLatestUpdatesMap] = useState<any>({});
   const [taskDates, setTaskDates] = useState<any>({});
   const [allUpdatesRecord, setAllUpdatesRecord] = useState<any[]>([]);
+  const [inspectionQueueView, setInspectionQueueView] = useState<any[]>([]);
 
   const fetchWithoutLimit = async (table: string, projectName?: string | null, orderBy: string = 'id', ascending: boolean = true, selectQuery: string = '*', secondaryOrderBy: string | null = 'id') => {
     let allData: any[] = [];
@@ -105,7 +106,8 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
         recentUpdates,
         defectsData,
         { data: materialReqData },
-        { data: materialReceiptData }
+        { data: materialReceiptData },
+        { data: inspectionQueueData }
       ] = await Promise.all([
         supabase.from('projects').select('*').order('created_at', { ascending: true }),
         supabase.from('house_types').select('*'),
@@ -117,16 +119,18 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
         supabase.from('vw_project_progress').select('*'),
         fetchWithoutLimit('vw_active_plot_task_assignments', selectedProjectName),
         fetchWithoutLimit('plot_task_schedules', selectedProjectName),
-        fetchWithoutLimit('task_updates', null, 'created_at', false),
-        fetchWithoutLimit('defects', null, 'created_at', false),
+        supabase.from('task_updates').select('*').order('created_at', { ascending: false }).limit(1000).then(res => res.data || []),
+        supabase.from('defects').select('*').order('created_at', { ascending: false }).limit(500).then(res => res.data || []),
         supabase.from('vw_task_material_requests').select('*'),
-        supabase.from('task_material_receipts').select('*').order('created_at', { ascending: true })
+        supabase.from('task_material_receipts').select('*').order('created_at', { ascending: true }),
+        supabase.from('vw_inspection_queue').select('*')
       ]);
 
       setNotifications(notifData || []);
       setDefects(defectsData || []);
       setMaterialRequests(materialReqData || []);
       setMaterialReceipts(materialReceiptData || []);
+      setInspectionQueueView(inspectionQueueData || []);
       setAssignments((prev: any) => {
         const newMap = new Map(assignData?.map((a: any) => [a.id, a]) || []);
         prev?.forEach((p: any) => { if (!newMap.has(p.id)) newMap.set(p.id, p); });
@@ -485,6 +489,11 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
               }
             };
           });
+          
+          // Refresh the queue when an update arrives
+          supabase.from('vw_inspection_queue').select('*').then(({data}) => {
+             if (data) setInspectionQueueView(data);
+          });
         }
       )
       .on(
@@ -613,6 +622,8 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
     materialRequests,
     setMaterialRequests,
     materialReceipts,
-    setMaterialReceipts
+    setMaterialReceipts,
+    inspectionQueueView,
+    setInspectionQueueView
   };
 }
