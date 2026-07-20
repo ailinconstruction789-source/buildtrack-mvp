@@ -72,9 +72,18 @@ STRICT CONSTRAINTS:
     try {
       parsedData = JSON.parse(text);
     } catch (e) {
-      // In case Gemini returns ```json ... ``` despite instructions
-      const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
-      parsedData = JSON.parse(cleaned);
+      // In case Gemini returns ```json ... ``` despite instructions or trailing texts
+      let cleaned = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+      const startIdx = cleaned.indexOf('[');
+      const endIdx = cleaned.lastIndexOf(']');
+      if (startIdx !== -1 && endIdx !== -1) {
+          cleaned = cleaned.substring(startIdx, endIdx + 1);
+      }
+      try {
+        parsedData = JSON.parse(cleaned);
+      } catch (parseError: any) {
+        throw new Error("Failed to parse AI response: " + parseError.message + "\nRaw AI Text: " + text.substring(0, 100) + "...");
+      }
     }
 
     return NextResponse.json(parsedData);
