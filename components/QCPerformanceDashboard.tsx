@@ -267,12 +267,12 @@ export default function QCPerformanceDashboard({
     const dailyValueTrend = Object.values(dailyValueMap);
 
     // 6.5. Today's Activities List
-    const todayStr = new Date().toLocaleDateString('en-CA');
+    const targetDateStr = qcFilterDate;
     const todayActivities: any[] = [];
     allUpdatesRecord.forEach((upd: any) => {
       const d = new Date(upd.created_at);
       const dateStr = d.toLocaleDateString('en-CA');
-      if (dateStr === todayStr) {
+      if (dateStr === targetDateStr) {
         if (upd.progress === 100 && (upd.action === 'ส่งงาน 100%' || !upd.action?.includes('QC'))) {
           todayActivities.push({ type: 'se', action: upd.action, plot_id: upd.plot_id, task_template_id: upd.task_template_id, time: d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) });
         }
@@ -518,14 +518,24 @@ export default function QCPerformanceDashboard({
 
                 {/* Today's Activities Summary */}
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 mt-6">
-                  <h5 className="font-bold text-slate-700 mb-3 text-sm flex items-center gap-2">
-                    <Calendar size={16} className="text-blue-500" /> สรุปงานวันนี้ ({new Date().toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: 'numeric'})})
-                  </h5>
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4 border-b border-slate-200 pb-3">
+                    <h5 className="font-bold text-slate-700 text-sm flex items-center gap-2">
+                      <Calendar size={16} className="text-blue-500" /> สรุปงานประจำวันที่
+                    </h5>
+                    <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-300 shadow-sm">
+                       <input 
+                         type="date" 
+                         value={qcFilterDate}
+                         onChange={(e) => setQcFilterDate(e.target.value)}
+                         className="bg-transparent text-sm font-bold text-slate-700 focus:outline-none"
+                       />
+                    </div>
+                  </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <h6 className="text-xs font-bold text-blue-600 mb-2 border-b border-blue-200 pb-1">SE ส่งงาน ({qcAnalytics.todayActivities.filter((a: any) => a.type === 'se').length} รายการ)</h6>
                       <ul className="space-y-2 max-h-32 overflow-y-auto pr-2 custom-scrollbar">
-                        {qcAnalytics.todayActivities.filter((a: any) => a.type === 'se').length === 0 ? <li className="text-xs text-slate-400 italic">ไม่มีข้อมูลวันนี้</li> : 
+                        {qcAnalytics.todayActivities.filter((a: any) => a.type === 'se').length === 0 ? <li className="text-xs text-slate-400 italic">ไม่มีข้อมูลในวันที่เลือก</li> : 
                          qcAnalytics.todayActivities.filter((a: any) => a.type === 'se').map((act: any, i: number) => (
                           <li key={i} className="text-xs text-slate-600 flex justify-between items-start gap-2">
                             <span className="truncate flex-1" title={`${act.plotName} - ${act.taskName}`}>🏠 {act.plotName} - {act.taskName}</span>
@@ -537,7 +547,7 @@ export default function QCPerformanceDashboard({
                     <div>
                       <h6 className="text-xs font-bold text-emerald-600 mb-2 border-b border-emerald-200 pb-1">QC ตรวจงาน ({qcAnalytics.todayActivities.filter((a: any) => a.type === 'qc').length} รายการ)</h6>
                       <ul className="space-y-2 max-h-32 overflow-y-auto pr-2 custom-scrollbar">
-                        {qcAnalytics.todayActivities.filter((a: any) => a.type === 'qc').length === 0 ? <li className="text-xs text-slate-400 italic">ไม่มีข้อมูลวันนี้</li> : 
+                        {qcAnalytics.todayActivities.filter((a: any) => a.type === 'qc').length === 0 ? <li className="text-xs text-slate-400 italic">ไม่มีข้อมูลในวันที่เลือก</li> : 
                          qcAnalytics.todayActivities.filter((a: any) => a.type === 'qc').map((act: any, i: number) => (
                           <li key={i} className="text-xs text-slate-600 flex justify-between items-start gap-2">
                             <span className="truncate flex-1" title={`${act.plotName} - ${act.taskName}`}>
