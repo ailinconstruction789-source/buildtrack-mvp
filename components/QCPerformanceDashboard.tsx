@@ -266,6 +266,29 @@ export default function QCPerformanceDashboard({
     
     const dailyValueTrend = Object.values(dailyValueMap);
 
+    // 6.5. Today's Activities List
+    const todayStr = new Date().toLocaleDateString('en-CA');
+    const todayActivities: any[] = [];
+    allUpdatesRecord.forEach((upd: any) => {
+      const d = new Date(upd.created_at);
+      const dateStr = d.toLocaleDateString('en-CA');
+      if (dateStr === todayStr) {
+        if (upd.progress === 100 && (upd.action === 'ส่งงาน 100%' || !upd.action?.includes('QC'))) {
+          todayActivities.push({ type: 'se', action: upd.action, plot_id: upd.plot_id, task_template_id: upd.task_template_id, time: d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) });
+        }
+        if (upd.action === 'QC อนุมัติผ่าน' || upd.action === 'QC อนุมัติ' || upd.action === 'QC แจ้งแก้ไข') {
+          todayActivities.push({ type: 'qc', action: upd.action, plot_id: upd.plot_id, task_template_id: upd.task_template_id, time: d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) });
+        }
+      }
+    });
+
+    todayActivities.forEach(act => {
+       const plot = plots?.find((p:any) => String(p.id) === String(act.plot_id));
+       const task = taskTemplates?.find((t:any) => String(t.id) === String(act.task_template_id));
+       act.plotName = plot?.plot_name || plot?.id || 'ไม่ระบุแปลง';
+       act.taskName = task?.task_name || 'ไม่ระบุงาน';
+    });
+
     // 7. Pending Value and Tier Breakdown
     let pendingValue = 0;
     const tierBreakdown = { A: { count: 0, value: 0 }, B: { count: 0, value: 0 }, C: { count: 0, value: 0 } };
@@ -347,7 +370,8 @@ export default function QCPerformanceDashboard({
       dailyValueTrend,
       pendingValue,
       tierBreakdown,
-      suspectApprovals
+      suspectApprovals,
+      todayActivities
     };
   }, [defects, allUpdatesRecord, taskTemplates, plots, qcFilterDate, assignments, valueChartRange, inspectionQueue]);
 
@@ -491,6 +515,42 @@ export default function QCPerformanceDashboard({
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
+
+                {/* Today's Activities Summary */}
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 mt-6">
+                  <h5 className="font-bold text-slate-700 mb-3 text-sm flex items-center gap-2">
+                    <Calendar size={16} className="text-blue-500" /> สรุปงานวันนี้ ({new Date().toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: 'numeric'})})
+                  </h5>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <h6 className="text-xs font-bold text-blue-600 mb-2 border-b border-blue-200 pb-1">SE ส่งงาน ({qcAnalytics.todayActivities.filter((a: any) => a.type === 'se').length} รายการ)</h6>
+                      <ul className="space-y-2 max-h-32 overflow-y-auto pr-2 custom-scrollbar">
+                        {qcAnalytics.todayActivities.filter((a: any) => a.type === 'se').length === 0 ? <li className="text-xs text-slate-400 italic">ไม่มีข้อมูลวันนี้</li> : 
+                         qcAnalytics.todayActivities.filter((a: any) => a.type === 'se').map((act: any, i: number) => (
+                          <li key={i} className="text-xs text-slate-600 flex justify-between items-start gap-2">
+                            <span className="truncate flex-1" title={`${act.plotName} - ${act.taskName}`}>🏠 {act.plotName} - {act.taskName}</span>
+                            <span className="text-slate-400 whitespace-nowrap bg-white px-1.5 py-0.5 rounded-md border border-slate-200 text-[10px]">{act.time} น.</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div>
+                      <h6 className="text-xs font-bold text-emerald-600 mb-2 border-b border-emerald-200 pb-1">QC ตรวจงาน ({qcAnalytics.todayActivities.filter((a: any) => a.type === 'qc').length} รายการ)</h6>
+                      <ul className="space-y-2 max-h-32 overflow-y-auto pr-2 custom-scrollbar">
+                        {qcAnalytics.todayActivities.filter((a: any) => a.type === 'qc').length === 0 ? <li className="text-xs text-slate-400 italic">ไม่มีข้อมูลวันนี้</li> : 
+                         qcAnalytics.todayActivities.filter((a: any) => a.type === 'qc').map((act: any, i: number) => (
+                          <li key={i} className="text-xs text-slate-600 flex justify-between items-start gap-2">
+                            <span className="truncate flex-1" title={`${act.plotName} - ${act.taskName}`}>
+                              {act.action === 'QC แจ้งแก้ไข' ? '❌' : '✅'} {act.plotName} - {act.taskName}
+                            </span>
+                            <span className="text-slate-400 whitespace-nowrap bg-white px-1.5 py-0.5 rounded-md border border-slate-200 text-[10px]">{act.time} น.</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+
               </div>
             </div>
 
