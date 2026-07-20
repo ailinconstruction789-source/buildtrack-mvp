@@ -285,6 +285,7 @@ export default function QCPerformanceDashboard({
     todayActivities.forEach(act => {
        const plot = plots?.find((p:any) => String(p.id) === String(act.plot_id));
        const task = taskTemplates?.find((t:any) => String(t.id) === String(act.task_template_id));
+       act.projectName = plot?.project_name || 'ไม่ระบุโครงการ';
        act.plotName = plot?.plot_name || plot?.id || 'ไม่ระบุแปลง';
        act.taskName = task?.task_name || 'ไม่ระบุงาน';
     });
@@ -538,7 +539,7 @@ export default function QCPerformanceDashboard({
                         {qcAnalytics.todayActivities.filter((a: any) => a.type === 'se').length === 0 ? <li className="text-xs text-slate-400 italic">ไม่มีข้อมูลในวันที่เลือก</li> : 
                          qcAnalytics.todayActivities.filter((a: any) => a.type === 'se').map((act: any, i: number) => (
                           <li key={i} className="text-xs text-slate-600 flex justify-between items-start gap-2">
-                            <span className="truncate flex-1" title={`${act.plotName} - ${act.taskName}`}>🏠 {act.plotName} - {act.taskName}</span>
+                            <span className="truncate flex-1" title={`${act.projectName} | ${act.plotName} - ${act.taskName}`}>🏢 {act.projectName} | 🏠 {act.plotName} - {act.taskName}</span>
                             <span className="text-slate-400 whitespace-nowrap bg-white px-1.5 py-0.5 rounded-md border border-slate-200 text-[10px]">{act.time} น.</span>
                           </li>
                         ))}
@@ -550,8 +551,8 @@ export default function QCPerformanceDashboard({
                         {qcAnalytics.todayActivities.filter((a: any) => a.type === 'qc').length === 0 ? <li className="text-xs text-slate-400 italic">ไม่มีข้อมูลในวันที่เลือก</li> : 
                          qcAnalytics.todayActivities.filter((a: any) => a.type === 'qc').map((act: any, i: number) => (
                           <li key={i} className="text-xs text-slate-600 flex justify-between items-start gap-2">
-                            <span className="truncate flex-1" title={`${act.plotName} - ${act.taskName}`}>
-                              {act.action === 'QC แจ้งแก้ไข' ? '❌' : '✅'} {act.plotName} - {act.taskName}
+                            <span className="truncate flex-1" title={`${act.projectName} | ${act.plotName} - ${act.taskName}`}>
+                              {act.action === 'QC แจ้งแก้ไข' ? '❌' : '✅'} 🏢 {act.projectName} | 🏠 {act.plotName} - {act.taskName}
                             </span>
                             <span className="text-slate-400 whitespace-nowrap bg-white px-1.5 py-0.5 rounded-md border border-slate-200 text-[10px]">{act.time} น.</span>
                           </li>
