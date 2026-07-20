@@ -25,6 +25,7 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
   const [taskDates, setTaskDates] = useState<any>({});
   const [allUpdatesRecord, setAllUpdatesRecord] = useState<any[]>([]);
   const [inspectionQueueView, setInspectionQueueView] = useState<any[]>([]);
+  const [plotStatuses, setPlotStatuses] = useState<any[]>([]);
 
   const fetchWithoutLimit = async (table: string, projectName?: string | null, orderBy: string = 'id', ascending: boolean = true, selectQuery: string = '*', secondaryOrderBy: string | null = 'id') => {
     let allData: any[] = [];
@@ -124,7 +125,8 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
         supabase.from('defects').select('*').order('created_at', { ascending: false }).limit(500).then(res => res.data || []),
         supabase.from('vw_task_material_requests').select('*'),
         supabase.from('task_material_receipts').select('*').order('created_at', { ascending: true }),
-        supabase.from('vw_inspection_queue').select('*')
+        supabase.from('vw_inspection_queue').select('*'),
+        supabase.from('vw_plot_status_dashboard').select('*')
       ]);
 
       setNotifications(notifData || []);
@@ -132,6 +134,7 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
       setMaterialRequests(materialReqData || []);
       setMaterialReceipts(materialReceiptData || []);
       setInspectionQueueView(inspectionQueueData || []);
+      setPlotStatuses(plotStatusesData || []);
       setAssignments((prev: any) => {
         const newMap = new Map(assignData?.map((a: any) => [a.id, a]) || []);
         prev?.forEach((p: any) => { if (!newMap.has(p.id)) newMap.set(p.id, p); });
