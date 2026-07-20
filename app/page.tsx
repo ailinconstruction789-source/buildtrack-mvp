@@ -114,7 +114,7 @@ export default function ConstructionApp() {
     fetchOwnerAnalyticsData,
     togglePlotSaleStatus,
     materialRequests, setMaterialRequests,
-    materialReceipts, setMaterialReceipts, inspectionQueueView } = useBuildTrackData(loggedInUser, selectedProject?.name);
+    materialReceipts, setMaterialReceipts, inspectionQueueView, plotStatuses } = useBuildTrackData(loggedInUser, selectedProject?.name);
 
 
   const [view, setViewInternal] = useState('dashboard');
