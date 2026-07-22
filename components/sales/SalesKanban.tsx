@@ -563,9 +563,17 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
           return;
         }
 
+        const { data: allProjectsData } = await supabase.from('projects').select('name');
+        const validProjectNames = allProjectsData?.map(p => p.name) || [];
+
         // Clean data: remove completely empty rows or rows without Customer Name
         const cleanData = data.filter((row: any) => row && row['Customer Name'] && String(row['Customer Name']).trim() !== '').map((row: any) => {
-          if (!row['Project Name'] || String(row['Project Name']).trim() === '') {
+          const pName = String(row['Project Name'] || '').trim();
+          if (!pName || pName === '') {
+            row['Project Name'] = 'ลูกค้าทั่วไป';
+          } else if (!validProjectNames.includes(pName) && pName !== 'ลูกค้าทั่วไป') {
+            const existingInterest = row['Interest'] ? String(row['Interest']).trim() : '';
+            row['Interest'] = existingInterest ? `${existingInterest} (สนใจ: ${pName})` : `สนใจ: ${pName}`;
             row['Project Name'] = 'ลูกค้าทั่วไป';
           }
           return row;
@@ -820,7 +828,7 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
           updatedCount++;
         } else {
           // INSERT NEW LEAD
-          const { data: newLeadsData } = await supabase.from('leads').insert([{
+          const { data: newLeadsData, error: newLeadsError } = await supabase.from('leads').insert([{
             project_name: projName,
             customer_name: customerName,
             phone: phone,
@@ -831,6 +839,12 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
             created_at: visitDate
           }]).select();
           
+          if (newLeadsError) {
+             console.error("Insert Lead Error:", newLeadsError);
+             alert(`เกิดข้อผิดพลาดในการบันทึกข้อมูลลูกค้า ${customerName}: ${newLeadsError.message}`);
+             continue; // Skip this row to prevent further errors
+          }
+
           if (newLeadsData && newLeadsData.length > 0) {
             const newLead = newLeadsData[0];
             
@@ -882,8 +896,6 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
               }
             }
             insertedCount++;
-          } else {
-             console.error("Insert Lead Error:", newLeadsData);
           }
         }
       }
