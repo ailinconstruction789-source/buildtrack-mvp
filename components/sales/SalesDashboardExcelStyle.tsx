@@ -98,11 +98,25 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
       const price = Number(p.selling_price || 0);
       projectGroups[proj].total++;
       
-      const status = p.sale_status;
+      const plotRecords = validRecords.filter((r: any) => r.plot?.id === p.id).sort((a: any, b: any) => (b.createdDate || '').localeCompare(a.createdDate || ''));
+      const currentRecord = plotRecords[0];
+
+      let status = 'Available';
+      if (currentRecord) {
+        if (currentRecord.transferDate && currentRecord.transferDate <= targetDate.toISOString().split('T')[0]) {
+          status = 'Transferred';
+        } else if (currentRecord.bookDate && currentRecord.bookDate <= targetDate.toISOString().split('T')[0] && (!currentRecord.cancelDate || currentRecord.cancelDate > targetDate.toISOString().split('T')[0])) {
+          status = 'Waiting';
+        }
+      } else {
+         if (p.sale_status === 'Transferred' || p.sale_status === 'Sold' || p.sale_status === 'Handover') { status = 'Transferred'; }
+         else if (p.sale_status === 'Booked' || p.sale_status === 'Contracted' || p.sale_status === 'Reserved') { status = 'Waiting'; }
+      }
+
       if (status === 'Transferred') {
          projectGroups[proj].transferred++;
          projectGroups[proj].transVal += price;
-      } else if (status === 'Booked' || status === 'Contracted') {
+      } else if (status === 'Waiting') {
          projectGroups[proj].waiting++;
          projectGroups[proj].waitVal += price;
       } else {
