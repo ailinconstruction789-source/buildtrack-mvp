@@ -1304,6 +1304,8 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
               </div>
             )}
 
+
+
             {/* REPORTS TAB */}
             {activeTab === 'reports' && (
               <div className="h-full p-4 md:p-6 overflow-hidden">

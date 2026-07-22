@@ -12,6 +12,7 @@ import HouseDetailView from '@/components/HouseDetailView';
 import TaskProgressView from '@/components/TaskProgressView';
 import OwnerAnalyticsDashboard from '@/components/OwnerAnalyticsDashboard';
 import SalesReportsView from '@/components/sales/SalesReportsView';
+import SalesDashboardExcelStyle from '@/components/sales/SalesDashboardExcelStyle';
 import SalesIntelligenceView from '@/components/sales/SalesIntelligenceView';
 import QCPerformanceDashboard from '@/components/QCPerformanceDashboard';
 import ExecutiveAnalytics from '@/components/ExecutiveAnalytics';
@@ -2644,6 +2645,7 @@ export default function ConstructionApp() {
                       )}
                       {(isAdmin || isOwner || isSales) && (
                         <>
+                          <button onClick={() => setView('sales-dashboard-excel')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-dashboard-excel' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><BarChartHorizontal size={18} /> Dashboard (Excel)</button>
                           <button onClick={() => setView('sales-dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-dashboard' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><LayoutDashboard size={18} /> ระบบฝ่ายขาย (Kanban)</button>
                           <button onClick={() => setView('sales-reports')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-reports' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><TrendingUp size={18} /> รายงานสรุปยอด (Sales)</button>
                           <button onClick={() => setView('agent-performance')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'agent-performance' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><Users size={18} /> สรุปผลงานเซลล์</button>
@@ -3746,6 +3748,11 @@ export default function ConstructionApp() {
                 </div>
               )}
 
+
+              {/* 📊 View: Sales Dashboard Excel */}
+              {view === 'sales-dashboard-excel' && (
+                <SalesDashboardExcelStyle project={selectedProject} />
+              )}
 
               {/* 📊 View: Sales Dashboard */}
               {view === 'sales-dashboard' && (
