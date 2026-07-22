@@ -257,7 +257,7 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
 
             {/* MONTHLY DETAILS CARD (3 COLUMNS) */}
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-              <div className="grid grid-cols-3 gap-4 text-left">
+              <div className="grid grid-cols-3 gap-2 text-left">
                 {/* Column 1: Booked */}
                 <div>
                   <div className="text-xs font-bold text-slate-700 mb-3 leading-tight text-center">
@@ -270,7 +270,7 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
                           const nameB = b.plot?.project_name && b.plot?.plot_name ? `${b.plot.project_name}-${b.plot.plot_name}` : '-';
                           return nameA.localeCompare(nameB, 'th', { numeric: true });
                         }).map((r: any) => (
-                          <div key={r.id} className="w-full pl-2 md:pl-6">
+                          <div key={r.id} className="w-full pl-1 md:pl-4 whitespace-nowrap truncate">
                             {r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : '-'}
                           </div>
                         ))
@@ -291,7 +291,7 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
                           const nameB = b.plot?.project_name && b.plot?.plot_name ? `${b.plot.project_name}-${b.plot.plot_name}` : '-';
                           return nameA.localeCompare(nameB, 'th', { numeric: true });
                         }).map((r: any) => (
-                          <div key={r.id} className="w-full pl-2 md:pl-6">
+                          <div key={r.id} className="w-full pl-1 md:pl-4 whitespace-nowrap truncate">
                             {r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : '-'}
                           </div>
                         ))
@@ -312,7 +312,7 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
                           const nameB = b.plot?.project_name && b.plot?.plot_name ? `${b.plot.project_name}-${b.plot.plot_name}` : '-';
                           return nameA.localeCompare(nameB, 'th', { numeric: true });
                         }).map((r: any) => (
-                          <div key={r.id} className="w-full pl-2 md:pl-6">
+                          <div key={r.id} className="w-full pl-1 md:pl-4 whitespace-nowrap truncate">
                             {r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : '-'}
                           </div>
                         ))
