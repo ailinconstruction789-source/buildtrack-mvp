@@ -840,8 +840,8 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
           }]).select();
           
           if (newLeadsError) {
-             console.error("Insert Lead Error:", newLeadsError);
-             alert(`เกิดข้อผิดพลาดในการบันทึกข้อมูลลูกค้า ${customerName}: ${newLeadsError.message}`);
+             console.error("Insert Lead Error Detailed:", JSON.stringify(newLeadsError, Object.getOwnPropertyNames(newLeadsError)));
+             alert(`เกิดข้อผิดพลาดในการบันทึกข้อมูลลูกค้า ${customerName}: ` + JSON.stringify(newLeadsError, Object.getOwnPropertyNames(newLeadsError)));
              continue; // Skip this row to prevent further errors
           }
 

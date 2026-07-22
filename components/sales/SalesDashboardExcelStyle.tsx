@@ -248,6 +248,10 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
                   <span className="text-gray-600 text-sm font-medium">ยอดโอน</span>
                   <span className="text-lg font-bold text-emerald-600">{metrics.transferMonth.length}</span>
                 </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-600 text-sm font-medium">ยอดยกเลิก</span>
+                  <span className="text-lg font-bold text-red-600">{metrics.cancelMonth.length}</span>
+                </div>
               </div>
             </div>
 
