@@ -255,6 +255,67 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
               </div>
             </div>
 
+            {/* MONTHLY DETAILS CARD */}
+            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 max-h-80 overflow-y-auto">
+              <h3 className="font-bold text-gray-800 mb-3 text-sm border-b border-gray-100 pb-2">
+                รายละเอียดประจำเดือน
+              </h3>
+              
+              <div className="space-y-4">
+                {metrics.transferMonth.length > 0 && (
+                  <div>
+                    <div className="text-xs font-bold text-emerald-600 mb-1">รายการโอน ({metrics.transferMonth.length})</div>
+                    <ul className="text-xs space-y-1.5">
+                      {metrics.transferMonth.map((r: any) => (
+                        <li key={r.id} className="flex justify-between items-center gap-2">
+                          <span className="text-gray-600 truncate flex-1">{r.customer_name}</span>
+                          <span className="font-medium text-gray-900 shrink-0 bg-emerald-50 px-1.5 py-0.5 rounded">
+                            {r.plot?.project_name || 'ไม่ระบุ'} {r.plot?.plot_name || ''}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                
+                {metrics.bookedMonth.length > 0 && (
+                  <div>
+                    <div className="text-xs font-bold text-blue-600 mb-1">รายการจอง ({metrics.bookedMonth.length})</div>
+                    <ul className="text-xs space-y-1.5">
+                      {metrics.bookedMonth.map((r: any) => (
+                        <li key={r.id} className="flex justify-between items-center gap-2">
+                          <span className="text-gray-600 truncate flex-1">{r.customer_name}</span>
+                          <span className="font-medium text-gray-900 shrink-0 bg-blue-50 px-1.5 py-0.5 rounded">
+                            {r.plot?.project_name || 'ไม่ระบุ'} {r.plot?.plot_name || ''}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {metrics.cancelMonth.length > 0 && (
+                  <div>
+                    <div className="text-xs font-bold text-red-600 mb-1">รายการยกเลิก ({metrics.cancelMonth.length})</div>
+                    <ul className="text-xs space-y-1.5">
+                      {metrics.cancelMonth.map((r: any) => (
+                        <li key={r.id} className="flex justify-between items-center gap-2">
+                          <span className="text-gray-600 truncate flex-1">{r.customer_name}</span>
+                          <span className="font-medium text-gray-900 shrink-0 bg-red-50 px-1.5 py-0.5 rounded">
+                            {r.plot?.project_name || 'ไม่ระบุ'} {r.plot?.plot_name || ''}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                
+                {metrics.transferMonth.length === 0 && metrics.bookedMonth.length === 0 && metrics.cancelMonth.length === 0 && (
+                  <div className="text-xs text-gray-400 text-center py-2">ไม่มีรายการในเดือนนี้</div>
+                )}
+              </div>
+            </div>
+
             <div className="bg-gradient-to-br from-blue-900 to-indigo-900 p-5 rounded-2xl shadow-md text-white">
               <div className="text-blue-100 text-sm font-medium mb-1">คาดว่าจะโอนเดือนนี้</div>
               <div className="flex items-end gap-2 mb-2">
