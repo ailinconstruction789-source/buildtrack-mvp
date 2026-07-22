@@ -78,11 +78,10 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
     });
 
     const validRecords = records.filter((r: any) => r.createdDate <= targetDate.toISOString().split('T')[0]);
-    
-    const viewsAcc = validRecords.length;
-    const bookedAcc = validRecords.filter((r: any) => r.bookDate && r.bookDate <= targetDate.toISOString().split('T')[0] && (!r.cancelDate || r.cancelDate > targetDate.toISOString().split('T')[0]));
-    const cancelAcc = validRecords.filter((r: any) => r.cancelDate && r.cancelDate <= targetDate.toISOString().split('T')[0]);
-    const transferAcc = validRecords.filter((r: any) => r.transferDate && r.transferDate <= targetDate.toISOString().split('T')[0]);
+    const viewsAcc = records.filter((r: any) => r.createdDate && r.createdDate.startsWith(selectedYear) && r.createdDate <= targetDate.toISOString().split('T')[0]).length;
+    const bookedAcc = records.filter((r: any) => r.bookDate && r.bookDate.startsWith(selectedYear) && r.bookDate <= targetDate.toISOString().split('T')[0] && (!r.cancelDate || r.cancelDate > targetDate.toISOString().split('T')[0]));
+    const cancelAcc = records.filter((r: any) => r.cancelDate && r.cancelDate.startsWith(selectedYear) && r.cancelDate <= targetDate.toISOString().split('T')[0]);
+    const transferAcc = records.filter((r: any) => r.transferDate && r.transferDate.startsWith(selectedYear) && r.transferDate <= targetDate.toISOString().split('T')[0]);
 
     const viewsMonth = validRecords.filter((r: any) => r.createdDate.startsWith(targetMonthPrefix));
     const bookedMonth = validRecords.filter((r: any) => r.bookDate?.startsWith(targetMonthPrefix));
@@ -171,15 +170,6 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
             </div>
           </div>
           <div className="mt-4 md:mt-0 flex items-center gap-3">
-            <div className="flex bg-gray-50 p-1 rounded-lg border border-gray-200">
-              <select className="bg-transparent border-none text-sm font-semibold text-gray-700 focus:ring-0 cursor-pointer" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}>
-                {Array.from({length:12}, (_,i) => <option key={i} value={String(i+1).padStart(2,'0')}>{['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'][i]}</option>)}
-              </select>
-              <div className="w-px bg-gray-300 mx-1"></div>
-              <select className="bg-transparent border-none text-sm font-bold text-blue-900 focus:ring-0 cursor-pointer" value={selectedYear} onChange={e => setSelectedYear(e.target.value)}>
-                {['2023','2024','2025','2026'].map(y => <option key={y} value={y}>{y}</option>)}
-              </select>
-            </div>
           </div>
         </div>
 
@@ -187,6 +177,12 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
           {/* LEFT METRICS */}
           <div className="lg:col-span-1 space-y-4">
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col gap-4">
+              <div className="flex justify-between items-center mb-1">
+                 <span className="font-bold text-gray-800 text-base">ยอดสะสมประจำปี</span>
+                 <select className="bg-gray-50 border border-gray-200 rounded text-sm font-bold text-blue-900 focus:ring-0 cursor-pointer px-2 py-1" value={selectedYear} onChange={e => setSelectedYear(e.target.value)}>
+                   {['2023','2024','2025','2026'].map(y => <option key={y} value={y}>{y}</option>)}
+                 </select>
+              </div>
               <div className="flex justify-between items-center">
                 <span className="font-bold text-gray-600 text-sm">ยอดลูกค้าเข้าชมสะสม</span>
                 <span className="text-2xl font-black text-blue-900">{metrics.viewsAcc}</span>
@@ -202,9 +198,20 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
             </div>
 
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
-              <div className="flex items-center gap-2 mb-4 pb-3 border-b border-gray-100">
-                <Calendar className="w-5 h-5 text-blue-600" />
-                <span className="font-bold text-gray-800">ประจำเดือน {selectedMonth}/{selectedYear}</span>
+              <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-100">
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-5 h-5 text-blue-600" />
+                  <span className="font-bold text-gray-800">ประจำเดือน</span>
+                </div>
+                <div className="flex bg-gray-50 p-1 rounded border border-gray-200">
+                  <select className="bg-transparent border-none text-xs font-semibold text-gray-700 focus:ring-0 cursor-pointer py-1 pl-2 pr-6" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}>
+                    {Array.from({length:12}, (_,i) => <option key={i} value={String(i+1).padStart(2,'0')}>{String(i+1).padStart(2,'0')}</option>)}
+                  </select>
+                  <div className="w-px bg-gray-300 mx-1"></div>
+                  <select className="bg-transparent border-none text-xs font-bold text-blue-900 focus:ring-0 cursor-pointer py-1 pl-2 pr-6" value={selectedYear} onChange={e => setSelectedYear(e.target.value)}>
+                    {['2023','2024','2025','2026'].map(y => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                </div>
               </div>
               <div className="space-y-3">
                 <div className="flex justify-between items-center">
