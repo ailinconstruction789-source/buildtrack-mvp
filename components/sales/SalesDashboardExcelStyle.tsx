@@ -7,7 +7,7 @@ import { ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip as Recha
 
 export default function SalesDashboardExcelStyle({ project }: { project?: any }) {
   const [loading, setLoading] = useState(true);
-  const [data, setData] = useState<any>({ leads: [], sales: [], plots: [], history: [] });
+  const [data, setData] = useState<any>({ leads: [], sales: [], plots: [], history: [], houseTypes: [] });
   
   const [selectedDateStr, setSelectedDateStr] = useState<string>(new Date().toISOString().split('T')[0]);
   const selectedYear = selectedDateStr.split('-')[0];
@@ -22,6 +22,7 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
       try {
         const { data: pData } = await supabase.from('plots').select('*');
         const { data: lData } = await supabase.from('leads').select('*');
+        const { data: hTypeData } = await supabase.from('house_types').select('*');
         
         let salesData: any[] = [];
         let historyData: any[] = [];
@@ -40,7 +41,7 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
           }
         }
         
-        setData({ plots: pData || [], leads: lData || [], sales: salesData, history: historyData });
+        setData({ plots: pData || [], leads: lData || [], sales: salesData, history: historyData, houseTypes: hTypeData || [] });
 
       } catch (err) {
         console.error("Dashboard error:", err);
@@ -92,19 +93,23 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
     const projectGroups: Record<string, { total: number, transferred: number, waiting: number, available: number, transVal: number, waitVal: number, availVal: number }> = {};
     
     data.plots.forEach((p: any) => {
+      const isInfra = data.houseTypes?.find((h: any) => h.id === p.house_type_id)?.is_infrastructure;
+      if (isInfra) return;
+
       const proj = p.project_name || 'ไม่ระบุ';
       if (!projectGroups[proj]) { projectGroups[proj] = { total: 0, transferred: 0, waiting: 0, available: 0, transVal: 0, waitVal: 0, availVal: 0 }; }
       
       const price = Number(p.selling_price || 0);
-      projectGroups[proj].total++;
       
       const plotRecords = validRecords.filter((r: any) => r.plot?.id === p.id).sort((a: any, b: any) => (b.createdDate || '').localeCompare(a.createdDate || ''));
       const currentRecord = plotRecords[0];
 
       let status = 'Available';
+      let tDate = '';
       if (currentRecord) {
         if (currentRecord.transferDate && currentRecord.transferDate <= targetDate.toISOString().split('T')[0]) {
           status = 'Transferred';
+          tDate = currentRecord.transferDate;
         } else if (currentRecord.bookDate && currentRecord.bookDate <= targetDate.toISOString().split('T')[0] && (!currentRecord.cancelDate || currentRecord.cancelDate > targetDate.toISOString().split('T')[0])) {
           status = 'Waiting';
         }
@@ -112,6 +117,13 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
          if (p.sale_status === 'Transferred' || p.sale_status === 'Sold' || p.sale_status === 'Handover') { status = 'Transferred'; }
          else if (p.sale_status === 'Booked' || p.sale_status === 'Contracted' || p.sale_status === 'Reserved') { status = 'Waiting'; }
       }
+
+      const yearStart = `${selectedYear}-01-01`;
+      if (status === 'Transferred' && (!tDate || tDate < yearStart)) {
+         return; 
+      }
+
+      projectGroups[proj].total++;
 
       if (status === 'Transferred') {
          projectGroups[proj].transferred++;
