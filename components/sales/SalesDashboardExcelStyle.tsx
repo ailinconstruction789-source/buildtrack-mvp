@@ -9,10 +9,9 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<any>({ leads: [], sales: [], plots: [], history: [] });
   
-  const currentYear = new Date().getFullYear();
-  const currentMonth = new Date().getMonth() + 1;
-  const [selectedYear, setSelectedYear] = useState<string>(currentYear.toString());
-  const [selectedMonth, setSelectedMonth] = useState<string>(currentMonth.toString().padStart(2, '0'));
+  const [selectedDateStr, setSelectedDateStr] = useState<string>(new Date().toISOString().split('T')[0]);
+  const selectedYear = selectedDateStr.split('-')[0];
+  const selectedMonth = selectedDateStr.split('-')[1];
 
   // Format currency
   const fmtM = (val: number) => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(val);
@@ -55,7 +54,7 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
   const metrics = useMemo(() => {
     if (!data.leads.length) return null;
 
-    const targetDate = new Date(parseInt(selectedYear), parseInt(selectedMonth), 0);
+    const targetDate = new Date(selectedDateStr);
     const targetMonthPrefix = `${selectedYear}-${selectedMonth.padStart(2, '0')}`;
 
     const records = data.leads.map((l: any) => {
@@ -151,7 +150,7 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
       lineChartViews: buildLineData('createdDate'),
       rawValidRecords: validRecords
     };
-  }, [data, selectedYear, selectedMonth]);
+  }, [data, selectedDateStr]);
 
   if (loading) return <div className="flex items-center justify-center h-full"><Loader2 className="animate-spin text-blue-600" size={48} /></div>;
   if (!metrics) return <div className="p-8 text-center text-gray-500">No data available</div>;
@@ -170,6 +169,15 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
             </div>
           </div>
           <div className="mt-4 md:mt-0 flex items-center gap-3">
+            <div className="flex items-center gap-2 bg-gray-50 p-1.5 px-3 rounded-lg border border-gray-200 shadow-sm">
+              <Calendar className="w-5 h-5 text-blue-600" />
+              <input 
+                type="date" 
+                value={selectedDateStr} 
+                onChange={e => setSelectedDateStr(e.target.value)}
+                className="bg-transparent border-none text-sm font-bold text-gray-800 focus:ring-0 cursor-pointer outline-none"
+              />
+            </div>
           </div>
         </div>
 
@@ -177,11 +185,8 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
           {/* LEFT METRICS */}
           <div className="lg:col-span-1 space-y-4">
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col gap-4">
-              <div className="flex justify-between items-center mb-1">
-                 <span className="font-bold text-gray-800 text-base">ยอดสะสมประจำปี</span>
-                 <select className="bg-gray-50 border border-gray-200 rounded text-sm font-bold text-blue-900 focus:ring-0 cursor-pointer px-2 py-1" value={selectedYear} onChange={e => setSelectedYear(e.target.value)}>
-                   {['2023','2024','2025','2026'].map(y => <option key={y} value={y}>{y}</option>)}
-                 </select>
+              <div className="flex justify-between items-center mb-1 pb-3 border-b border-gray-100">
+                 <span className="font-bold text-gray-800 text-base">ยอดสะสมประจำปี {selectedYear}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="font-bold text-gray-600 text-sm">ยอดลูกค้าเข้าชมสะสม</span>
@@ -201,16 +206,7 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
               <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-100">
                 <div className="flex items-center gap-2">
                   <Calendar className="w-5 h-5 text-blue-600" />
-                  <span className="font-bold text-gray-800">ประจำเดือน</span>
-                </div>
-                <div className="flex bg-gray-50 p-1 rounded border border-gray-200">
-                  <select className="bg-transparent border-none text-xs font-semibold text-gray-700 focus:ring-0 cursor-pointer py-1 pl-2 pr-6" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}>
-                    {Array.from({length:12}, (_,i) => <option key={i} value={String(i+1).padStart(2,'0')}>{String(i+1).padStart(2,'0')}</option>)}
-                  </select>
-                  <div className="w-px bg-gray-300 mx-1"></div>
-                  <select className="bg-transparent border-none text-xs font-bold text-blue-900 focus:ring-0 cursor-pointer py-1 pl-2 pr-6" value={selectedYear} onChange={e => setSelectedYear(e.target.value)}>
-                    {['2023','2024','2025','2026'].map(y => <option key={y} value={y}>{y}</option>)}
-                  </select>
+                  <span className="font-bold text-gray-800">ประจำเดือน {selectedMonth}/{selectedYear}</span>
                 </div>
               </div>
               <div className="space-y-3">
