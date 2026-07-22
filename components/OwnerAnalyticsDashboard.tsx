@@ -2,9 +2,11 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { TrendingUp, AlertTriangle, Target, ShieldAlert, Award, Users, Activity, CloudRain, Clock } from 'lucide-react';
 import { LineChart, Line, BarChart, Bar, ComposedChart, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
+import WeeklyHeatmap from './Analytics/WeeklyHeatmap';
+import BillingCycleHeatmap from './Analytics/BillingCycleHeatmap';
 
 export default function OwnerAnalyticsDashboard({
-  projects, plots, taskTemplates, schedules: rawSchedules, defects, allUpdatesRecord: rawAllUpdatesRecord, foremenList, latestUpdatesMap: rawLatestUpdatesMap, contractors, assignments, weatherInfo
+  projects, plots, taskTemplates, schedules: rawSchedules, defects, allUpdatesRecord: rawAllUpdatesRecord, foremenList, latestUpdatesMap: rawLatestUpdatesMap, contractors, assignments, weatherInfo, qcSePerformance
 }: any) {
 
   const [selectedProjectId, setSelectedProjectId] = useState<string>('all');
@@ -1076,6 +1078,17 @@ export default function OwnerAnalyticsDashboard({
               </tbody>
             </table>
           </div>
+        </div>
+
+        {/* 5. Performance Heatmaps (Weekly & Billing Cycle) */}
+        <div className="lg:col-span-2 space-y-6">
+           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <WeeklyHeatmap data={qcSePerformance} roleFilter="se" title="Weekly Work Habits (SE)" colorScheme="blue" />
+              <WeeklyHeatmap data={qcSePerformance} roleFilter="qc" title="Weekly Work Habits (QC)" colorScheme="purple" />
+           </div>
+           <div className="grid grid-cols-1 gap-6">
+              <BillingCycleHeatmap data={qcSePerformance} />
+           </div>
         </div>
 
       </div>

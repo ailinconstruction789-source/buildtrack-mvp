@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useTransition } from 'react';
 import { 
   Map as MapIcon, Monitor, Search, ZoomOut, ZoomIn, Loader2, Paintbrush, 
   Eraser, Pickaxe, HardHat, Activity, Trash2, Settings, PlusCircle, Grid, Filter, X, TreePine, Check, Flag
@@ -29,6 +29,7 @@ interface MapVisualizerProps {
   isSubmitting: boolean;
   handleSaveMap: () => void;
   mapGrid: any[];
+  gridMap?: Map<string, any>;
   getAdjacency: (x: number, y: number, type: string, plotId: string | null) => any;
   handleMouseDown: (x: number, y: number) => void;
   handleMouseEnter: (x: number, y: number) => void;
@@ -60,6 +61,7 @@ interface MapVisualizerProps {
   handleLegacyProjectComplete?: () => void;
   handleLegacyProjectUndoTransfer?: () => void;
   loading: boolean;
+  houseTypes?: any[];
 }
 
 const TaskSearchRadar = ({ 
@@ -141,8 +143,22 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
     plotsActiveToday, searchPlot, setSearchPlot, filterForeman, setFilterForeman,
     foremenList, displayPlots, handleDeletePlot, handleEditPlot, handleMarkPlot,
     setIsPresentationOpen, setCurrentSlideIndex,
-    handleTogglePlotCompleted, handleLegacyProjectComplete, handleLegacyProjectUndoTransfer, loading
+    handleTogglePlotCustomer, handleTogglePlotCompleted,
+    handleLegacyProjectComplete, handleLegacyProjectUndoTransfer,
+    loading, houseTypes, gridMap
   } = props;
+
+  const [isUtilityMode, setIsUtilityMode] = useState(false);
+  const [isPending, startTransition] = useTransition();
+
+  // 🚀 Performance Fix: Memoize Plot Statuses
+  const plotStatusCache = useMemo(() => {
+    const cache: Record<string, any> = {};
+    plots?.forEach((p: any) => {
+      cache[p.id] = getPlotOverallStatus(p.id);
+    });
+    return cache;
+  }, [plots, getPlotOverallStatus]);
 
   // 🚀 Performance Fix: Memoize the Task List for the Dropdown
   const uniqueTaskNamesList = useMemo(() => {
@@ -168,8 +184,8 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                             <button onClick={handleLegacyProjectComplete} className="flex items-center gap-1 sm:gap-2 px-2.5 sm:px-5 py-1.5 sm:py-3 rounded-lg sm:rounded-full font-bold text-[10px] sm:text-sm bg-white text-emerald-600 border border-emerald-200 hover:bg-emerald-50 transition-colors shadow-sm sm:shadow-md"><Check size={14} className="sm:w-4 sm:h-4"/> สร้างเสร็จทั้งโครงการ</button>
                           )}
                           <button onClick={() => setView('admin-plot')} className="flex items-center gap-1 sm:gap-2 px-2.5 sm:px-5 py-1.5 sm:py-3 rounded-lg sm:rounded-full font-bold text-[10px] sm:text-sm bg-white text-blue-600 border border-blue-200 hover:bg-blue-50 transition-colors shadow-sm sm:shadow-md"><PlusCircle size={14} className="sm:w-4 sm:h-4"/> เพิ่มแปลง</button>
-                          <button onClick={() => setIsEditMapMode(!isEditMapMode)} className={`flex items-center gap-1 sm:gap-2 px-2.5 sm:px-5 py-1.5 sm:py-3 rounded-lg sm:rounded-full font-bold text-[10px] sm:text-sm transition-colors shadow-sm sm:shadow-md ${isEditMapMode ? 'bg-orange-500 text-white' : 'bg-slate-800 text-white hover:bg-slate-700'}`}>
-                            <Grid size={14} className="sm:w-4 sm:h-4"/> {isEditMapMode ? 'ปิดจัดผัง' : 'จัดผัง'}
+                          <button onClick={() => startTransition(() => setIsEditMapMode(!isEditMapMode))} className={`flex items-center gap-1 sm:gap-2 px-2.5 sm:px-5 py-1.5 sm:py-3 rounded-lg sm:rounded-full font-bold text-[10px] sm:text-sm transition-colors shadow-sm sm:shadow-md ${isEditMapMode ? 'bg-orange-500 text-white' : 'bg-slate-800 text-white hover:bg-slate-700'}`}>
+                            {isPending ? <Loader2 size={14} className="sm:w-4 sm:h-4 animate-spin"/> : <Grid size={14} className="sm:w-4 sm:h-4"/>} {isEditMapMode ? 'ปิดจัดผัง' : 'จัดผัง'}
                           </button>
                         </div>
                       )}
@@ -194,6 +210,15 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                           <TaskSearchRadar uniqueTaskNamesList={uniqueTaskNamesList} searchTask={searchTask} setSearchTask={setSearchTask} />
 
                           <div className="flex bg-[#f5f5f7] rounded-lg border border-black/5 shadow-sm p-1">
+                             
+                           {/* 🌟 โหมดสาธารณูปโภค (Utility Mode) */}
+                           <button 
+                             onClick={() => startTransition(() => setIsUtilityMode(!isUtilityMode))} 
+                             className={`px-3 py-2 sm:px-4 sm:py-2.5 rounded-lg sm:rounded-xl font-bold text-xs sm:text-sm shadow-sm transition-all flex items-center gap-1.5 ${isUtilityMode ? 'bg-cyan-600 text-white hover:bg-cyan-700' : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'}`}
+                           >
+                             {isPending ? <Loader2 size={16} className="animate-spin" /> : (isUtilityMode ? '🛣️ โหมดสาธารณูปโภค' : '🏡 โหมดบ้าน')}
+                           </button>
+
                              <button onClick={handleZoomOut} className="p-1.5 sm:p-2.5 text-[#86868b] hover:text-blue-600 hover:bg-white rounded-md sm:rounded-lg transition-colors"><ZoomOut size={16} className="sm:w-5 sm:h-5"/></button>
                              <button onClick={handleZoomReset} className="px-2 sm:px-4 text-[10px] sm:text-sm font-bold text-[#86868b] hover:text-blue-600 hover:bg-white rounded-md sm:rounded-lg transition-colors">{Math.round(mapZoom * 100)}%</button>
                              <button onClick={handleZoomIn} className="p-1.5 sm:p-2.5 text-[#86868b] hover:text-blue-600 hover:bg-white rounded-md sm:rounded-lg transition-colors"><ZoomIn size={16} className="sm:w-5 sm:h-5"/></button>
@@ -233,7 +258,10 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                      )}
 
                      {/* 🌟 UX Blueprint Map 🌟 */}
-                     <div className="w-full overflow-auto pb-4 custom-scrollbar bg-slate-300 rounded-xl sm:rounded-3xl border-2 sm:border-4 border-slate-400 shadow-inner relative" style={{ height: isMobileLayout ? '350px' : '75vh' }}>
+                     {(() => {
+                       const isDrawingInfraGlobal = isEditMapMode && mapTool === 'plot' && mapSelectedPlot && houseTypes?.find((h: any) => String(h.id) === String(plots.find((p: any) => String(p.id) === String(mapSelectedPlot))?.house_type_id))?.is_infrastructure;
+                       return (
+                       <div className="w-full overflow-auto pb-4 custom-scrollbar bg-slate-300 rounded-xl sm:rounded-3xl border-2 sm:border-4 border-slate-400 shadow-inner relative" style={{ height: isMobileLayout ? '350px' : '75vh' }}>
 
                        <div 
                           className={`relative mx-auto bg-slate-300 select-none origin-top-left transition-transform duration-200 shrink-0 ${isEditMapMode ? 'cursor-crosshair' : 'cursor-grab'}`} 
@@ -248,7 +276,7 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                           onMouseLeave={handleMouseUp} onMouseUp={handleMouseUp}
                        >
                          <div 
-                           className="absolute inset-0 grid" 
+                           className={`absolute inset-0 grid transition-all ${isDrawingInfraGlobal ? 'opacity-40 grayscale' : ''}`} 
                            style={{ gridTemplateColumns: `repeat(${gridCols}, 1fr)`, gridTemplateRows: `repeat(${gridRows}, 1fr)` }}
                            onMouseDown={(e) => {
                              const t = (e.target as HTMLElement).closest('[data-x]');
@@ -270,7 +298,7 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                          >
                            {Array.from({length: gridCols * gridRows}).map((_, i) => {
                              const x = i % gridCols, y = Math.floor(i / gridCols);
-                             const cellData = mapGrid.find(c => c.x === x && c.y === y && (c.type === 'plot' || c.type === 'road' || c.type === 'park'));
+                             const cellData = gridMap ? gridMap.get(`${x}-${y}`) : mapGrid.find((c: any) => c.x === x && c.y === y && (c.type === 'plot' || c.type === 'road' || c.type === 'park'));
                              
                              let baseStyles = 'border-r border-b border-transparent '; // Remove solid grid lines
                              if (isEditMapMode && !cellData) baseStyles += 'hover:bg-slate-400/30 ';
@@ -281,7 +309,7 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                                // Remove inner borders for contiguous plots
                                if (adj.hasTop) baseStyles += '!border-t-0 '; if (adj.hasBottom) baseStyles += '!border-b-0 '; if (adj.hasLeft) baseStyles += '!border-l-0 '; if (adj.hasRight) baseStyles += '!border-r-0 ';
                              } else if (cellData?.type === 'road') { 
-                               baseStyles = 'bg-slate-500 flex items-center justify-center border-slate-600 '; 
+                               baseStyles = 'bg-slate-200 flex items-center justify-center border-slate-300 '; 
                              } else if (cellData?.type === 'park') {
                                const adj = getAdjacency(x, y, 'park', null);
                                baseStyles = 'bg-emerald-50 border-emerald-200 flex items-center justify-center relative overflow-hidden ';
@@ -308,14 +336,112 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                              );
                            })}
                          </div>
-                         {mapGrid.filter((c: any) => c.type === 'fence-h').map((c: any) => (<div key={c.id} className="absolute border-t-4 border-dashed border-orange-500 z-20 pointer-events-none" style={{ left: `${(c.x / gridCols) * 100}%`, top: `${(c.y / gridRows) * 100}%`, width: `${(1 / gridCols) * 100}%`, height: '6px', transform: 'translateY(-50%)' }} />))}
-                         {mapGrid.filter((c: any) => c.type === 'fence-v').map((c: any) => (<div key={c.id} className="absolute border-l-4 border-dashed border-orange-500 z-20 pointer-events-none" style={{ left: `${(c.x / gridCols) * 100}%`, top: `${(c.y / gridRows) * 100}%`, width: '6px', height: `${(1 / gridRows) * 100}%`, transform: 'translateX(-50%)' }} />))}
+                         {mapGrid.filter((c: any) => c.type === 'fence-h').map((c: any) => (<div key={c.id} className={`absolute border-t-4 border-dashed ${isEditMapMode ? 'border-slate-300' : 'border-orange-500'} z-20 pointer-events-none transition-all ${isDrawingInfraGlobal ? 'opacity-40 grayscale' : ''} ${isUtilityMode ? 'hidden' : ''}`} style={{ left: `${(c.x / gridCols) * 100}%`, top: `${(c.y / gridRows) * 100}%`, width: `${(1 / gridCols) * 100}%`, height: '6px', transform: 'translateY(-50%)' }} />))}
+                         {mapGrid.filter((c: any) => c.type === 'fence-v').map((c: any) => (<div key={c.id} className={`absolute border-l-4 border-dashed ${isEditMapMode ? 'border-slate-300' : 'border-orange-500'} z-20 pointer-events-none transition-all ${isDrawingInfraGlobal ? 'opacity-40 grayscale' : ''} ${isUtilityMode ? 'hidden' : ''}`} style={{ left: `${(c.x / gridCols) * 100}%`, top: `${(c.y / gridRows) * 100}%`, width: '6px', height: `${(1 / gridRows) * 100}%`, transform: 'translateX(-50%)' }} />))}
                          
-                         {/* 🌟 UX Blueprint: Smart Hover Tooltips & Contractor Filter 🌟 */}
+                         
+                         {/* 🌟 Infrastructure Edge Lines 🌟 */}
+                         {mapGrid.filter((c: any) => c.type === 'infra-h').map((c: any) => {
+                              const plotInfo = plots.find((p: any) => p.id === c.plotId);
+                              const statusInfo = !isEditMapMode && plotInfo && plotStatusCache[plotInfo.id] ? plotStatusCache[plotInfo.id] : { status: 'on-track', actual: 0 };
+                              
+                              let infraColor = "bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.6)]"; // default
+                              if (plotInfo) {
+                                  if (isEditMapMode) {
+                                      const hName = houseTypes?.find((h: any) => h.id === plotInfo.house_type_id)?.name || '';
+                                      if (hName.includes('ทางเท้า')) infraColor = "bg-slate-600";
+                                      else if (hName.includes('ประปา') || hName.includes('น้ำ')) infraColor = "bg-sky-500";
+                                      else if (hName.includes('ไฟ')) infraColor = "bg-yellow-400";
+                                      else if (hName.includes('ท่อ')) infraColor = "bg-stone-500";
+                                      else infraColor = "bg-indigo-400";
+                                  } else if (isUtilityMode) {
+                                      if (plotInfo.is_completed || statusInfo.actual === 100) infraColor = "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]";
+                                      else if (statusInfo.status === 'delayed') infraColor = "bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.8)]";
+                                      else if (statusInfo.actual > 0) infraColor = "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.8)]";
+                                      else infraColor = "bg-slate-500 shadow-[0_0_8px_rgba(100,116,139,0.8)]";
+                                  }
+                              }
+                              
+                              return (
+                                 <div 
+                                     key={c.id} 
+                                     className={`absolute z-[55] ${infraColor} ${!isEditMapMode ? 'cursor-pointer hover:bg-cyan-400 hover:scale-110' : 'pointer-events-none'} ${!isUtilityMode && !isEditMapMode ? 'hidden' : ''}`} 
+                                     style={{ left: `${(c.x / gridCols) * 100}%`, top: `${(c.y / gridRows) * 100}%`, width: `${(1 / gridCols) * 100}%`, height: '8px', transform: 'translateY(-50%)', borderRadius: '4px' }} 
+                                     onClick={(e) => {
+                                         if (!isEditMapMode && plotInfo) {
+                                             e.stopPropagation();
+                                             setSelectedPlot(plotInfo);
+                                             setView('house-detail');
+                                         }
+                                     }}
+                                 />
+                              );
+                         })}
+                         {mapGrid.filter((c: any) => c.type === 'infra-v').map((c: any) => {
+                              const plotInfo = plots.find((p: any) => p.id === c.plotId);
+                              const statusInfo = !isEditMapMode && plotInfo && plotStatusCache[plotInfo.id] ? plotStatusCache[plotInfo.id] : { status: 'on-track', actual: 0 };
+                              
+                              let infraColor = "bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.6)]"; // default
+                              if (plotInfo) {
+                                  if (isEditMapMode) {
+                                      const hName = houseTypes?.find((h: any) => h.id === plotInfo.house_type_id)?.name || '';
+                                      if (hName.includes('ทางเท้า')) infraColor = "bg-slate-600";
+                                      else if (hName.includes('ประปา') || hName.includes('น้ำ')) infraColor = "bg-sky-500";
+                                      else if (hName.includes('ไฟ')) infraColor = "bg-yellow-400";
+                                      else if (hName.includes('ท่อ')) infraColor = "bg-stone-500";
+                                      else infraColor = "bg-indigo-400";
+                                  } else if (isUtilityMode) {
+                                      if (plotInfo.is_completed || statusInfo.actual === 100) infraColor = "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]";
+                                      else if (statusInfo.status === 'delayed') infraColor = "bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.8)]";
+                                      else if (statusInfo.actual > 0) infraColor = "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.8)]";
+                                      else infraColor = "bg-slate-500 shadow-[0_0_8px_rgba(100,116,139,0.8)]";
+                                  }
+                              }
+                              
+                              return (
+                                 <div 
+                                     key={c.id} 
+                                     className={`absolute z-[55] ${infraColor} ${!isEditMapMode ? 'cursor-pointer hover:bg-cyan-400 hover:scale-110' : 'pointer-events-none'} ${!isUtilityMode && !isEditMapMode ? 'hidden' : ''}`} 
+                                     style={{ left: `${(c.x / gridCols) * 100}%`, top: `${(c.y / gridRows) * 100}%`, width: '8px', height: `${(1 / gridRows) * 100}%`, transform: 'translateX(-50%)', borderRadius: '4px' }} 
+                                     onClick={(e) => {
+                                         if (!isEditMapMode && plotInfo) {
+                                             e.stopPropagation();
+                                             setSelectedPlot(plotInfo);
+                                             setView('house-detail');
+                                         }
+                                     }}
+                                 />
+                              );
+                         })}
+
+
+                          {/* 🌟 UX Blueprint: Smart Hover Tooltips & Contractor Filter 🌟 */}
                          {Object.entries(plotBounds).map(([plotId, bounds]:any) => {
                            const plotInfo = plots.find((p: any) => p.id === plotId); if (!plotInfo) return null;
                            const w = bounds.maxX - bounds.minX + 1, h = bounds.maxY - bounds.minY + 1;
-                           const statusInfo = getPlotOverallStatus(plotInfo.id);
+
+                           const isInfra = houseTypes?.find((h: any) => h.id === plotInfo.house_type_id)?.is_infrastructure || false;
+                           
+                           let utilityModeClass = '';
+                           
+                           if (isDrawingInfraGlobal) {
+                               if (!isInfra) {
+                                   utilityModeClass = "opacity-40 grayscale pointer-events-none";
+                               }
+                           } else if (isUtilityMode) {
+                              if (isInfra) {
+                                  utilityModeClass = "ring-4 ring-cyan-500 shadow-[0_0_15px_rgba(6,182,212,0.8)] z-[55] bg-cyan-100/90";
+                              } else {
+                                  utilityModeClass = "opacity-20 grayscale pointer-events-none";
+                              }
+                           } else {
+                              if (isInfra && !isEditMapMode) {
+                                  utilityModeClass = "opacity-50 grayscale"; // wait, why were we dimming infra previously? if it's not edit map mode?
+                                  // actually, infra is now drawn as edges, so infra cards are not really needed to be visible, but we can leave it.
+                              }
+                           }
+
+                           const statusInfo = isEditMapMode ? { planned: 0, actual: 0, status: 'on-track', label: '' } : (plotStatusCache[plotInfo.id] || { planned: 0, actual: 0, status: 'on-track', label: '' });
 
                            // 🌟 หางานล่าสุดที่มีการอัปเดตของแปลงนี้
                            const plotUpdates = allUpdatesRecord?.filter((u: any) => u.plot_id === plotInfo.id) || [];
@@ -435,7 +561,7 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                               }
                            }
 
-                            const highlightRingClass = plotInfo.highlight_color ? {
+                            let highlightRingClass = !(isEditMapMode || isUtilityMode) && plotInfo.highlight_color ? {
                               'red': 'ring-[3px] sm:ring-[4px] ring-rose-500 ring-offset-2 ring-offset-white',
                               'orange': 'ring-[3px] sm:ring-[4px] ring-orange-500 ring-offset-2 ring-offset-white',
                               'yellow': 'ring-[3px] sm:ring-[4px] ring-yellow-400 ring-offset-2 ring-offset-white',
@@ -445,17 +571,35 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                               'pink': 'ring-[3px] sm:ring-[4px] ring-pink-500 ring-offset-2 ring-offset-white',
                             }[plotInfo.highlight_color as string] || '' : '';
 
+                             if (isEditMapMode && isDrawingInfraGlobal && !isInfra) {
+                                 cardBorderClass = "bg-slate-200 border-slate-300 text-slate-400 border-[2px]";
+                                 highlightRingClass = "";
+                             } else if (isEditMapMode && !isDrawingInfraGlobal) {
+                                 cardBorderClass = "bg-white border-slate-200 text-slate-500 border-[2px]";
+                             }
+
                            return (
-                             <div key={`label-${plotId}`} className={`absolute flex items-center justify-center p-1 transition-all ${isEditMapMode ? 'opacity-50 pointer-events-none' : 'hover:z-50 cursor-pointer group'} ${searchHighlightClass}`} style={{ left: `${(bounds.minX / gridCols) * 100}%`, top: `${(bounds.minY / gridRows) * 100}%`, width: `${(w / gridCols) * 100}%`, height: `${(h / gridRows) * 100}%` }} onClick={() => { if (!isEditMapMode) { setSelectedPlot(plotInfo); setView('house-detail'); } }}>
+                             <div key={`label-${plotId}`} className={`absolute flex items-center justify-center p-1 transition-all ${isEditMapMode ? 'opacity-50 pointer-events-none' : 'hover:z-50 cursor-pointer group'} ${searchHighlightClass} ${utilityModeClass}`} style={{ left: `${(bounds.minX / gridCols) * 100}%`, top: `${(bounds.minY / gridRows) * 100}%`, width: `${(w / gridCols) * 100}%`, height: `${(h / gridRows) * 100}%` }} onClick={() => { if (!isEditMapMode) { setSelectedPlot(plotInfo); setView('house-detail'); } }}>
                              
                                 {/* ✅ โค้ดใหม่: จัดวางไอคอน Pickaxe ไว้ที่จุดกึ่งกลางของแปลงพอดี */}
-                                {isActiveToday && (
+                                {isActiveToday && !isEditMapMode && !isUtilityMode && (
                                    <div className="absolute top-1/5 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-yellow-400 text-slate-900 rounded-full p-1 sm:p-1.5 shadow-lg animate-bounce z-[60] border-2 border-white" title="มีการทำงานในแปลงนี้วันนี้">
                                       <Pickaxe size={14} className="w-3 h-3 sm:w-4 sm:h-4"/>
                                    </div>
                                 )}
 
                                 <div className={`w-full h-full border-[2px] sm:border-[3px] rounded-md sm:rounded-lg shadow-sm backdrop-blur-sm flex flex-col items-center justify-center relative transition-all group-hover:shadow-md group-hover:scale-[1.02] ${cardBorderClass} ${highlightRingClass} overflow-hidden`}>
+                                     {/* 🌟 LITE MODE สำหรับ Edit Map 🌟 */}
+                                     {(isEditMapMode || isUtilityMode) && (
+                                       <div className="flex flex-col items-center justify-center w-full h-full relative z-10 opacity-70">
+                                         <span className="font-bold text-xs sm:text-lg text-slate-800">{plotInfo.plot_name || plotInfo.id}</span>
+                                       </div>
+                                     )}
+                                     
+                                     {/* 🌟 FULL MODE สำหรับ View ปกติ 🌟 */}
+                                     {!(isEditMapMode || isUtilityMode) && (
+                                       <>
+
                                    
                                     {/* 🌿 ลาย Grass Hatch ของ AutoCAD (งานปูหญ้าเสร็จ 100%) */}
                                     {isGrassPlanted && (
@@ -494,10 +638,12 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                                       }
                                       return null;
                                    })()}
-                                   
-                                </div>
-                                
-                                {/* Tooltip รายละเอียดเมื่อเอาเมาส์ชี้ (คงเดิมไว้ทั้งหมด) */}
+                                   </>
+                                 )}
+                                 </div>
+                                 
+                                 {/* Tooltip รายละเอียดเมื่อเอาเมาส์ชี้ (คงเดิมไว้ทั้งหมด) */}
+                                 {!isEditMapMode && (
                                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-[160px] sm:w-[180px] bg-slate-900 text-white rounded-xl sm:rounded-2xl shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all p-3 sm:p-4 pointer-events-none z-[100] border border-slate-700">
                                       <div className="flex justify-between items-center w-full mb-1 sm:mb-2">
                                          <div className="flex items-center gap-1">
@@ -529,6 +675,7 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                                       </div>
                                       <div className="absolute top-full left-1/2 -translate-x-1/2 border-[5px] sm:border-[6px] border-transparent border-t-slate-900"></div>
                                    </div>
+                                 )}
                              </div>
                            )
                          })}
@@ -610,6 +757,8 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                          })}
                        </div>
                      </div>
+                   );
+                 })()}
                    </div>
 
                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 sm:mb-6 mt-8 sm:mt-12 gap-3 sm:gap-4">
@@ -625,7 +774,7 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                    <div className={`grid gap-3 sm:gap-6 ${isMobileLayout ? 'grid-cols-2' : 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 2xl:grid-cols-6'}`}>
                         {displayPlots.map((plot: any) => {
                         // 🌟 ดึงข้อมูล Status ของแปลงนั้นๆ เพื่อเอา % แผนงาน (planned) และ % งานจริง (actual) 🌟
-                        const statusInfo = getPlotOverallStatus(plot.id);
+                        const statusInfo = plotStatusCache[plot.id] || { actual: 0, planned: 0, status: 'none' };
                         
                         // 🌟 หางานล่าสุดที่มีการอัปเดตของการ์ดแปลงนี้
                         const plotUpdates = allUpdatesRecord?.filter((u: any) => u.plot_id === plot.id) || [];
@@ -731,9 +880,10 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
 
                             </div>
                             
-                            {/* ไอคอนจอบสีเหลืองในการ์ด (ผมปรับให้อยู่ตรงกลางบนเหมือนกันเพื่อความสวยงามครับ) */}
-                            {plotsActiveToday.has(plot.id) && ( 
-                              <div className="absolute -top-2 left-1/2 -translate-x-1/2 sm:-top-3 bg-yellow-400 text-slate-900 rounded-full p-1 sm:p-1.5 shadow-sm sm:shadow-md animate-bounce border-2 border-white">
+                                 {/* ไอคอนจอบสีเหลืองในการ์ด (ผมปรับให้อยู่ตรงกลางบนเหมือนกันเพื่อความสวยงามครับ) */}
+
+                            {plotsActiveToday.has(plot.id) && !isEditMapMode && ( 
+<div className="absolute -top-2 left-1/2 -translate-x-1/2 sm:-top-3 bg-yellow-400 text-slate-900 rounded-full p-1 sm:p-1.5 shadow-sm sm:shadow-md animate-bounce border-2 border-white">
                                   <Pickaxe size={isMobileLayout ? 12 : 16} />
                               </div> 
                             )}
@@ -741,7 +891,7 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                         );
                       })}
                    </div>
-                 </div>
+                  </div>
                )}
 
                

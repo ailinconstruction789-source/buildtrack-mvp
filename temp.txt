@@ -114,7 +114,7 @@ export default function ConstructionApp() {
     fetchOwnerAnalyticsData,
     togglePlotSaleStatus,
     materialRequests, setMaterialRequests,
-    materialReceipts, setMaterialReceipts, inspectionQueueView, plotStatuses, plotOverallStatuses, qcSePerformance } = useBuildTrackData(loggedInUser, selectedProject?.name);
+    materialReceipts, setMaterialReceipts, inspectionQueueView, plotStatuses } = useBuildTrackData(loggedInUser, selectedProject?.name);
 
 
   const [view, setViewInternal] = useState('dashboard');
@@ -148,6 +148,9 @@ export default function ConstructionApp() {
   const [markPlotModal, setMarkPlotModal] = useState<any>({ isOpen: false, plot: null, color: '', note: '' });
   const [confirmDialog, setConfirmDialog] = useState<any>({ isOpen: false, title: '', message: '', onConfirm: null, isDestructive: true });
   const [errorDialog, setErrorDialog] = useState<any>({ isOpen: false, title: '', message: '' });
+  const [globalUploadState, setGlobalUploadState] = useState<{isUploading: boolean, isSuccess: boolean, message: string}>({ isUploading: false, isSuccess: false, message: '' });
+
+  const [exclusionModal, setExclusionModal] = useState<any>({ isOpen: false, task: null, plots: [] });
 
   const [toastConfig, setToastConfig] = useState<{message: string, type: 'success'|'error', visible: boolean}>({ message: '', type: 'success', visible: false });
   const showToast = useCallback((message: string, type: 'success'|'error' = 'success') => {
@@ -155,58 +158,7 @@ export default function ConstructionApp() {
     setTimeout(() => setToastConfig(prev => ({ ...prev, visible: false })), 4000);
   }, []);
 
-  // 🌟 State สำหรับ Popup Upload
-  const [globalUploadState, setGlobalUploadState] = useState<{isUploading: boolean, isSuccess: boolean, message: string}>({ isUploading: false, isSuccess: false, message: '' });
 
-  // 🌟 State สำหรับระบบ 2.5D แบบเจาะจงรายงวดงาน (0-99% และ 100%)
-  const [editingHouseType, setEditingHouseType] = useState<any>(null);
-  const [visualConfig, setVisualConfig] = useState<Record<string, any>>({}); // เก็บค่าแบบ Map { [taskId]: { progress_image, progress_z, done_image, done_z } }
-  const [isUploadingLayer, setIsUploadingLayer] = useState(false);
-  const [simulatedStatus, setSimulatedStatus] = useState<Record<string, any>>({}); // 🎮 สำหรับกล่องลองเล่นพรีวิวในหน้าตั้งค่า { [taskId]: 'none' | 'progress' | 'done' }
-  const [exclusionModal, setExclusionModal] = useState<any>({ isOpen: false, task: null, plots: [] });
-
-  // ฟังก์ชันอัปโหลดรูปเฉพาะช่อง
-  const handleUploadSlot = async (taskId: string, type: string, file: File | undefined | null) => {
-    if (!file || !editingHouseType) return;
-    setGlobalUploadState({ isUploading: true, isSuccess: false, message: 'กำลังอัปโหลดรูปภาพ 2.5D... ห้ามปิดหน้าต่าง' });
-    try {
-      const path = `visualizer/${editingHouseType.id}/${taskId}-${type}-${Date.now()}`;
-      const { error } = await supabase.storage.from('task_images').upload(path, file);
-      if (error) throw error;
-      const url = supabase.storage.from('task_images').getPublicUrl(path).data.publicUrl;
-
-      setVisualConfig(prev => ({
-        ...prev,
-        [taskId]: {
-          ...prev[taskId],
-          [`${type}_image`]: url,
-          [`${type}_z`]: prev[taskId]?.[`${type}_z`] || 10 // ค่าเริ่มต้น Z-index เป็น 10
-        }
-      }));
-      setGlobalUploadState({ isUploading: false, isSuccess: true, message: 'อัปโหลดรูปภาพเสร็จสิ้น!' });
-      setTimeout(() => setGlobalUploadState({ isUploading: false, isSuccess: false, message: '' }), 1500);
-    } catch (err: any) {
-      setGlobalUploadState({ isUploading: false, isSuccess: false, message: '' });
-      showAlert('อัปโหลดล้มเหลว', err.message);
-    }
-  };
-
-  // ฟังก์ชันบันทึกการตั้งค่าลง Supabase
-  const handleSave25DConfig = async () => {
-    if (!editingHouseType) return;
-    setIsSubmitting(true);
-    try {
-      const { error } = await supabase.from('house_types')
-        .update({ visual_config: visualConfig })
-        .eq('id', editingHouseType.id);
-      if (error) throw error;
-      await fetchAllData();
-      showToast('บันทึกการจัดเลเยอร์ 2.5D แบบรายงวดงานเรียบร้อยแล้วครับ', "success");
-    } catch (e: any) {
-      showAlert('ผิดพลาด', e.message);
-    }
-    setIsSubmitting(false);
-  };
 
   const [updates, setUpdates] = useState<any[]>([]);
   // Extracted: [allUpdatesRecord, 
@@ -483,26 +435,51 @@ export default function ConstructionApp() {
     }
   };
 
-  const getPlotOverallStatus = useCallback((plotId: any) => {
-    // 🌟 Phase 2 Optimization: Fetch pre-calculated status directly from Database View!
-    const statusRecord = plotOverallStatuses?.find((s: any) => s.plot_id === plotId);
-    
-    if (!statusRecord) {
-      return { actual: 0, planned: 0, status: 'none', label: 'รอดำเนินการ', colors: 'bg-white border-slate-300 text-slate-500' };
-    }
+  const getPlotOverallStatus = (plotId: any) => {
+    const plotInfo = plots.find(p => p.id === plotId); 
+    const plotTasks = taskTemplates.filter(t => t.house_type_id === plotInfo?.house_type_id);
+    const countedTasks = plotTasks.filter(t => {
+       if (t.is_progress_counted === false) return false;
+       const assign = assignments?.find((a: any) => a.plot_id === plotId && a.task_template_id === t.id);
+       if (assign && assign.is_excluded === true) return false;
+       return true;
+    });
 
-    const actualAvg = Number(statusRecord.actual_avg) || 0;
-    const plannedAvg = Number(statusRecord.planned_avg) || 0;
-    const statusCode = statusRecord.status_code || 'none';
-
-    if (statusCode === 'ready_for_sale') return { actual: actualAvg, planned: plannedAvg, status: 'ready_for_sale', label: 'พร้อมขาย/รอโอน', colors: 'bg-amber-100/90 border-amber-500 text-amber-800' };
-    if (statusCode === 'completed') return { actual: actualAvg, planned: plannedAvg, status: 'completed', label: 'เสร็จสมบูรณ์', colors: 'bg-emerald-100/90 border-emerald-500 text-emerald-800' };
-    if (statusCode === 'delayed') return { actual: actualAvg, planned: plannedAvg, status: 'delayed', label: 'ล่าช้ากว่าแผน', colors: 'bg-rose-100/90 border-rose-500 text-rose-800' };
-    if (statusCode === 'ahead') return { actual: actualAvg, planned: plannedAvg, status: 'ahead', label: 'เร็วกว่าแผน', colors: 'bg-indigo-100/90 border-indigo-500 text-indigo-800' };
-    if (statusCode === 'on-track') return { actual: actualAvg, planned: plannedAvg, status: 'on-track', label: 'ตามแผน', colors: 'bg-blue-100/90 border-blue-500 text-blue-800' };
+    if (!plotTasks.length) return { actual: 0, planned: 0, status: 'none', label: 'ยังไม่มีงาน', colors: 'bg-white border-slate-300 text-slate-500' };
+    if (!countedTasks.length) return { actual: 0, planned: 0, status: 'none', label: 'N/A', colors: 'bg-slate-50 border-slate-300 text-slate-400' };
     
-    return { actual: actualAvg, planned: plannedAvg, status: 'none', label: 'รอดำเนินการ', colors: 'bg-white/90 border-slate-300 text-slate-500' };
-  }, [plotOverallStatuses]);
+    // 🌟 Override "today" if plot is paused for sale
+    const today = plotInfo?.sale_status === 'ready_for_sale' && plotInfo?.paused_for_sale_at ? new Date(plotInfo.paused_for_sale_at).getTime() : Date.now();
+      
+    let totalPlanned = 0; 
+    let totalCost = 0;
+    let naivePlanned = 0;
+
+    countedTasks.forEach(task => {
+      const key = `${plotId}-${task.id}`; 
+      const plan = schedules[key]; let plannedProg = 0;
+      if (plan && plan.planned_start && plan.planned_end) {
+        const pStart = new Date(plan.planned_start).getTime(); const pEnd = new Date(plan.planned_end).getTime();
+        if (today >= pEnd) plannedProg = 100; else if (today <= pStart) plannedProg = 0; else plannedProg = Math.round(((today - pStart) / (pEnd - pStart)) * 100);
+      } 
+      const tCost = task.cost ? Number(task.cost) : 0;
+      totalPlanned += (plannedProg * tCost);
+      totalCost += tCost;
+      naivePlanned += plannedProg;
+    });
+
+    const actualAvg = plotInfo?.progress ? Math.round(plotInfo.progress) : 0;
+    const plannedAvg = totalCost > 0 ? Math.round(totalPlanned / totalCost) : (countedTasks.length > 0 ? Math.round(naivePlanned / countedTasks.length) : 0);
+    
+    // 🌟 Override status if ready for sale
+    if (plotInfo?.sale_status === 'ready_for_sale') return { actual: actualAvg, planned: plannedAvg, status: 'ready_for_sale', label: 'พร้อมขาย/รอโอน', colors: 'bg-amber-100/90 border-amber-500 text-amber-800' };
+
+    if (actualAvg === 0 && plannedAvg === 0) return { actual: actualAvg, planned: plannedAvg, status: 'none', label: 'รอดำเนินการ', colors: 'bg-white/90 border-slate-300 text-slate-500' };
+    if (actualAvg >= 100 && plannedAvg >= 100) return { actual: actualAvg, planned: plannedAvg, status: 'completed', label: 'เสร็จสมบูรณ์', colors: 'bg-emerald-100/90 border-emerald-500 text-emerald-800' };
+    if (actualAvg < plannedAvg - 10) return { actual: actualAvg, planned: plannedAvg, status: 'delayed', label: 'ล่าช้ากว่าแผน', colors: 'bg-rose-100/90 border-rose-500 text-rose-800' };
+    if (actualAvg > plannedAvg + 10) return { actual: actualAvg, planned: plannedAvg, status: 'ahead', label: 'เร็วกว่าแผน', colors: 'bg-indigo-100/90 border-indigo-500 text-indigo-800' };
+    return { actual: actualAvg, planned: plannedAvg, status: 'on-track', label: 'ตามแผน', colors: 'bg-blue-100/90 border-blue-500 text-blue-800' };
+  };
 
   const getAdjacency = useCallback((x: number, y: number, type: string, plotId: string | null) => ({ hasTop: mapGrid.some(c => c.x === x && c.y === y - 1 && c.type === type && (type !== 'plot' || c.plotId === plotId)), hasBottom: mapGrid.some(c => c.x === x && c.y === y + 1 && c.type === type && (type !== 'plot' || c.plotId === plotId)), hasLeft: mapGrid.some(c => c.x === x - 1 && c.y === y && c.type === type && (type !== 'plot' || c.plotId === plotId)), hasRight: mapGrid.some(c => c.x === x + 1 && c.y === y && c.type === type && (type !== 'plot' || c.plotId === plotId)) }), [mapGrid]);
 
@@ -689,20 +666,20 @@ export default function ConstructionApp() {
       if (isEditingType) {
         // อัปเดตแบบบ้านเดิม
         const { error } = await supabase.from('house_types')
-          .update({ type_name: houseTypeForm.type_name.trim(), memo: houseTypeForm.memo })
+          .update({ type_name: houseTypeForm.type_name.trim(), memo: houseTypeForm.memo, is_infrastructure: houseTypeForm.is_infrastructure })
           .eq('id', houseTypeForm.id);
         if (error) throw error;
         showToast('แก้ไขข้อมูลแบบบ้านเรียบร้อยแล้ว', "success");
       } else {
         // เพิ่มแบบบ้านใหม่
         const { error } = await supabase.from('house_types')
-          .insert([{ type_name: houseTypeForm.type_name.trim(), memo: houseTypeForm.memo }]);
+          .insert([{ type_name: houseTypeForm.type_name.trim(), memo: houseTypeForm.memo, is_infrastructure: houseTypeForm.is_infrastructure }]);
         if (error) throw error;
         showToast('เพิ่มแบบบ้านใหม่เข้าสู่ระบบเรียบร้อยแล้ว', "success");
       }
 
       // ล้างค่าฟอร์มและโหลดข้อมูลใหม่
-      setHouseTypeForm({ id: '', type_name: '', memo: '' });
+      setHouseTypeForm({ id: '', type_name: '', memo: '', is_infrastructure: false });
       setIsEditingType(false);
       await fetchAllData();
     } catch (e: any) {
@@ -1796,20 +1773,7 @@ export default function ConstructionApp() {
 
           setUpdates(data || []);
           // คำนวณค่า progress ปัจจุบันใหม่จากแถวสุดท้ายที่เหลืออยู่ (ถ้าไม่เหลือเลยให้เป็น 0)
-          const newProgress = data?.length ? data[data.length - 1].progress : 0;
-          setProgressValue(newProgress);
-          
-          // 2.5: MUST UPDATE plot_task_assignments so the inspection queue stays consistent!
-          const newLatestUpdate = data?.length ? data[data.length - 1] : null;
-          await supabase.from('plot_task_assignments')
-            .update({
-              progress: newProgress,
-              latest_action: newLatestUpdate?.action || null,
-              latest_role: newLatestUpdate?.role || null,
-              latest_update_time: newLatestUpdate?.created_at || null
-            })
-            .eq('plot_id', plotId)
-            .eq('task_template_id', taskTemplateId);
+          setProgressValue(data?.length ? data[data.length - 1].progress : 0);
 
           // 3. สั่งโหลดข้อมูลภาพรวมใหม่ทั้งหมดอยู่เบื้องหลัง (Background refresh) เพื่อรีเซ็ต % แผนผังและแดชบอร์ด
           fetchAllData();
@@ -2697,8 +2661,6 @@ export default function ConstructionApp() {
                           <button onClick={() => setView('admin-tasks')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'admin-tasks' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><ClipboardList size={18} /> จัดการงวดงาน (Tasks)</button>
                           {/* ✅ ปุ่มเมนูกำหนดราคาขาย (Desktop) */}
                           <button onClick={() => setView('admin-pricing')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'admin-pricing' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><DollarSign size={18} /> กำหนดราคาขาย</button>
-                          {/* ✅ ปุ่มเมนูตั้งค่า 2.5D สำหรับ Admin (Desktop) */}
-                          <button onClick={() => setView('admin-visualizer')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'admin-visualizer' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Monitor size={18} /> ตั้งค่า 2.5D แบบบ้าน</button>
                         </>
                       )}
                       {(isAdmin || isProcurement) && (
@@ -3558,7 +3520,6 @@ export default function ConstructionApp() {
                         contractors={contractors}
                         assignments={assignments}
                         weatherInfo={weatherInfo}
-                        qcSePerformance={qcSePerformance}
                       />
                       <ExecutiveAnalytics
                         loading={loading}
@@ -3811,9 +3772,9 @@ export default function ConstructionApp() {
                   getTaskStatus={getTaskStatus} latestUpdatesMap={latestUpdatesMap} schedules={schedules}
                   scheduleInputs={scheduleInputs}
 
-                  isUploadingLayer={isUploadingLayer} setSelectedTask={setSelectedTask} setDefectModal={setDefectModal}
+                  setSelectedTask={setSelectedTask} setDefectModal={setDefectModal}
                   setTaskReturnView={setTaskReturnView}
-                  setAssignModal={setAssignModal} simulatedStatus={simulatedStatus} editingHouseType={editingHouseType}
+                  setAssignModal={setAssignModal}
                   currentUserRole={currentUserRole}
                   totalChartDays={totalChartDays} timeMarkers={timeMarkers} todayTs={todayTs}
                   chartStart={chartStart} chartEnd={chartEnd} getChartLeft={getChartLeft} getChartWidth={getChartWidth}
@@ -3978,182 +3939,6 @@ export default function ConstructionApp() {
                   </div>
                 </div>
               )}
-              {/* 🌟 ADMIN: ตั้งค่า 2.5D แบบรายงวดงาน (Task-Driven 2.5D Config) 🌟 */}
-              {view === 'admin-visualizer' && isAdmin && (
-                <div className="animate-in slide-in-from-bottom duration-300 max-w-6xl mx-auto mt-4 sm:mt-8 px-4 sm:px-0">
-                  <button onClick={() => { setView('dashboard'); setSelectedProject(null); }} className="mb-4 sm:mb-6 text-xs sm:text-base font-bold text-blue-600 flex items-center gap-1.5">← BACK TO DASHBOARD</button>
-
-                  <div className="bg-white p-4 sm:p-8 rounded-3xl border border-slate-200 shadow-xl">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b pb-4 mb-6 gap-4">
-                      <div>
-                        <h2 className="text-xl sm:text-2xl font-black text-slate-800 uppercase italic tracking-tight flex items-center gap-2"><Monitor className="text-rose-600" /> 2.5D Task-Linked Visualizer</h2>
-                        <p className="text-xs text-slate-400 font-bold mt-1">กางงวดงานทั้งหมดเพื่อผูกรูปภาพตามสถานะงานจริง</p>
-                      </div>
-
-                      {/* เมนูเลือกแบบบ้าน */}
-                      <div className="w-full sm:w-64">
-                        <select
-                          value={editingHouseType?.id || ''}
-                          onChange={(e) => {
-                            const type = houseTypes.find(t => t.id === e.target.value);
-                            setEditingHouseType(type);
-                            setVisualConfig(type?.visual_config || {});
-                            setSimulatedStatus({}); // รีเซ็ตกล่องลองเล่นพรีวิว
-                          }}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-black text-xs sm:text-sm text-slate-700 outline-none focus:border-rose-500 shadow-sm"
-                        >
-                          <option value="">-- เลือกแบบบ้านเพื่อตั้งค่า --</option>
-                          {houseTypes.map(t => <option key={t.id} value={t.id}>{t.type_name}</option>)}
-                        </select>
-                      </div>
-                    </div>
-
-                    {editingHouseType ? (
-                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-
-                        {/* 🖥️ ฝั่งซ้าย (4 ส่วน): กล่อง Live Preview + แผงสวิตช์ลองเล่นจำลองสถานะ */}
-                        <div className="lg:col-span-4 space-y-4">
-                          <div className="sticky top-4 space-y-4">
-                            <div className="bg-slate-950 p-4 rounded-2xl aspect-square border-2 border-slate-800 shadow-2xl flex items-center justify-center relative overflow-hidden">
-                              <span className="absolute top-2 left-2 text-[9px] font-bold text-slate-500 tracking-widest uppercase bg-slate-900/80 px-2 py-0.5 rounded-md border border-slate-800 z-30">Live 2.5D Preview</span>
-
-                              {/* วนลูปรูปภาพมาซ้อนทับกันตาม Z-Index ที่ตั้งไว้ */}
-                              <div className="relative w-full h-full flex items-center justify-center">
-                                {taskTemplates
-                                  .filter(t => t.house_type_id === editingHouseType.id)
-                                  .flatMap(task => {
-                                    const config = visualConfig[task.id] || {};
-                                    const status = simulatedStatus[task.id] || 'none';
-                                    const layers = [];
-
-                                    if (status === 'progress' && config.progress_image) {
-                                      layers.push({ url: config.progress_image, z: Number(config.progress_z || 10) });
-                                    }
-                                    if (status === 'done' && config.done_image) {
-                                      layers.push({ url: config.done_image, z: Number(config.done_z || 10) });
-                                    }
-                                    return layers;
-                                  })
-                                  .sort((a, b) => a.z - b.z) // เรียงลำดับจากล่างขึ้นบนตาม Z-Index
-                                  .map((layer, index) => (
-                                    <img key={index} src={layer.url} className="absolute inset-0 w-full h-full object-contain transition-all duration-300" style={{ zIndex: layer.z }} alt="Preview layer" />
-                                  ))
-                                }
-                              </div>
-                            </div>
-
-                            {/* ปุ่มเซฟใหญ่ */}
-                            <button
-                              onClick={handleSave25DConfig}
-                              disabled={isSubmitting || isUploadingLayer}
-                              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black py-3 rounded-xl shadow-lg transition-all flex justify-center items-center gap-2 text-sm uppercase tracking-wider"
-                            >
-                              {isSubmitting ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />} บันทึกโครงสร้างเลเยอร์นี้
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* 📋 ฝั่งขวา (8 ส่วน): รายการ Task งวดงานทั้งหมดที่ดึงขึ้นมาอัตโนมัติ */}
-                        <div className="lg:col-span-8 space-y-4 max-h-[70vh] overflow-y-auto pr-2 custom-scrollbar">
-                          {taskTemplates.filter(t => t.house_type_id === editingHouseType.id).length === 0 ? (
-                            <p className="text-center text-slate-400 italic py-10 font-bold">ยังไม่มีงวดงานถูกผูกไว้กับแบบบ้านนี้ กรุณาไปเพิ่มงวดงานก่อนครับ</p>
-                          ) : (
-                            taskTemplates
-                              .filter(t => t.house_type_id === editingHouseType.id)
-                              .sort((a, b) => a.task_order - b.task_order)
-                              .map((task: any) => {
-                                const config = visualConfig[task.id] || {};
-                                const currentSimStatus = simulatedStatus[task.id] || 'none';
-
-                                return (
-                                  <div key={task.id} className="bg-slate-50 p-4 rounded-2xl border border-slate-200 shadow-sm space-y-4 hover:border-blue-300 transition-colors">
-                                    {/* ส่วนหัวของชื่องาน */}
-                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b pb-2 border-slate-200">
-                                      <div className="flex items-center gap-2">
-                                        <span className="w-6 h-6 rounded-lg bg-slate-800 text-white font-black text-[10px] flex items-center justify-center">{task.task_order}</span>
-                                        <h4 className="font-black text-slate-700 text-sm">{task.task_name}</h4>
-                                      </div>
-                                      {/* 🎮 สวิตช์จำลองสถานะสำหรับช่อง Preview */}
-                                      <div className="flex bg-slate-200 p-0.5 rounded-lg text-[9px] font-bold w-fit self-end">
-                                        <button onClick={() => setSimulatedStatus({ ...simulatedStatus, [task.id]: 'none' })} className={`px-2 py-1 rounded-md transition-colors ${currentSimStatus === 'none' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}`}>ยังไม่เริ่ม</button>
-                                        <button onClick={() => setSimulatedStatus({ ...simulatedStatus, [task.id]: 'progress' })} className={`px-2 py-1 rounded-md transition-colors ${currentSimStatus === 'progress' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-500'}`}>กำลังทำ (0-99%)</button>
-                                        <button onClick={() => setSimulatedStatus({ ...simulatedStatus, [task.id]: 'done' })} className={`px-2 py-1 rounded-md transition-colors ${currentSimStatus === 'done' ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-500'}`}>เสร็จสิ้น (100%)</button>
-                                      </div>
-                                    </div>
-
-                                    {/* ตารางแบ่ง 2 สล็อตสำหรับรูปภาพ */}
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-
-                                      {/* สล็อต 1: ช่วงกำลังดำเนินการ (0-99%) */}
-                                      <div className="bg-white p-3 rounded-xl border border-slate-200 flex flex-col justify-between gap-3">
-                                        <div className="flex items-center justify-between">
-                                          <span className="text-[10px] font-black text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 uppercase tracking-wider">🚧 ช่วงกำลังทำ (0-99%)</span>
-                                          <div className="flex items-center gap-1">
-                                            <span className="text-[9px] text-slate-400 font-bold">Z-Index:</span>
-                                            <input type="number" value={config.progress_z ?? 10} onChange={(e) => setVisualConfig({ ...visualConfig, [task.id]: { ...config, progress_z: Number(e.target.value) } })} className="w-12 text-center border rounded p-0.5 text-xs font-black bg-slate-50" title="ลำดับการวางซ้อนภาพ เลขมากจะทับเลขน้อย" />
-                                          </div>
-                                        </div>
-                                        <div className="flex items-center gap-3">
-                                          <div className="w-14 h-14 bg-slate-100 border rounded-lg flex items-center justify-center overflow-hidden shrink-0">
-                                            {config.progress_image ? <img src={config.progress_image} className="w-full h-full object-contain" /> : <ImageIcon className="text-slate-300" size={20} />}
-                                          </div>
-                                          <div className="flex-1 space-y-1">
-                                            <label className="block text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold py-1.5 px-2 rounded-md text-center cursor-pointer border transition-colors">
-                                              <input type="file" accept="image/png" className="hidden" onChange={(e) => handleUploadSlot(task.id, 'progress', e.target.files?.[0])} disabled={isUploadingLayer} />
-                                              {isUploadingLayer ? 'อัปโหลด...' : 'เลือกไฟล์ PNG'}
-                                            </label>
-                                            {config.progress_image && (
-                                              <button onClick={() => setVisualConfig({ ...visualConfig, [task.id]: { ...config, progress_image: '' } })} className="w-full text-[9px] text-rose-500 font-bold text-center block hover:underline">ลบรูปออก</button>
-                                            )}
-                                          </div>
-                                        </div>
-                                      </div>
-
-                                      {/* สล็อต 2: ช่วงเสร็จสมบูรณ์ (100%) */}
-                                      <div className="bg-white p-3 rounded-xl border border-slate-200 flex flex-col justify-between gap-3">
-                                        <div className="flex items-center justify-between">
-                                          <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 uppercase tracking-wider">✅ เสร็จสิ้น (100%)</span>
-                                          <div className="flex items-center gap-1">
-                                            <span className="text-[9px] text-slate-400 font-bold">Z-Index:</span>
-                                            <input type="number" value={config.done_z ?? 10} onChange={(e) => setVisualConfig({ ...visualConfig, [task.id]: { ...config, done_z: Number(e.target.value) } })} className="w-12 text-center border rounded p-0.5 text-xs font-black bg-slate-50" title="ลำดับการวางซ้อนภาพ เลขมากจะทับเลขน้อย" />
-                                          </div>
-                                        </div>
-                                        <div className="flex items-center gap-3">
-                                          <div className="w-14 h-14 bg-slate-100 border rounded-lg flex items-center justify-center overflow-hidden shrink-0">
-                                            {config.done_image ? <img src={config.done_image} className="w-full h-full object-contain" /> : <ImageIcon className="text-slate-300" size={20} />}
-                                          </div>
-                                          <div className="flex-1 space-y-1">
-                                            <label className="block text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold py-1.5 px-2 rounded-md text-center cursor-pointer border transition-colors">
-                                              <input type="file" accept="image/png" className="hidden" onChange={(e) => handleUploadSlot(task.id, 'done', e.target.files?.[0])} disabled={isUploadingLayer} />
-                                              {isUploadingLayer ? 'อัปโหลด...' : 'เลือกไฟล์ PNG'}
-                                            </label>
-                                            {config.done_image && (
-                                              <button onClick={() => setVisualConfig({ ...visualConfig, [task.id]: { ...config, done_image: '' } })} className="w-full text-[9px] text-rose-500 font-bold text-center block hover:underline">ลบรูปออก</button>
-                                            )}
-                                          </div>
-                                        </div>
-                                      </div>
-
-                                    </div>
-                                  </div>
-                                );
-                              })
-                          )}
-                        </div>
-
-                      </div>
-                    ) : (
-                      <div className="text-center text-slate-400 font-bold py-20 border border-dashed rounded-2xl bg-slate-50">
-                        <button onClick={() => setView('reports')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'reports' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
-                          <PieChart size={20} className={activeView === 'reports' ? 'fill-blue-100' : ''} />
-                          <span className="text-[10px] font-bold mt-1">Reports</span>
-                        </button>
-                        ← กรุณาเลือกแบบบ้านที่ด้านบน เพื่อเริ่มต้นกางงวดงานจัดเลเยอร์ภาพครับ
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
               {/* 🌟 หน้าจอ QC Performance Dashboard 🌟 */}
               {view === 'qc-performance' && (
                 <QCPerformanceDashboard />
@@ -4188,9 +3973,18 @@ export default function ConstructionApp() {
                           <textarea placeholder="คำอธิบายเพิ่มเติม..." value={houseTypeForm.memo} onChange={(e) => setHouseTypeForm({ ...houseTypeForm, memo: e.target.value })} rows={3} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-bold text-sm outline-none focus:border-rose-500 resize-none" />
                         </div>
 
+                        <label className="flex items-center gap-2 cursor-pointer mt-2 bg-blue-50 p-3 rounded-xl border border-blue-100 hover:bg-blue-100 transition-colors">
+                          <input 
+                            type="checkbox" 
+                            checked={houseTypeForm.is_infrastructure || false} 
+                            onChange={(e) => setHouseTypeForm({ ...houseTypeForm, is_infrastructure: e.target.checked })}
+                            className="w-4 h-4 text-rose-600 rounded focus:ring-rose-500"
+                          />
+                          <span className="text-xs font-bold text-slate-700">เป็นงานส่วนกลาง/สาธารณูปโภค (Infrastructure)</span>
+                        </label>
                         <div className="flex gap-2 pt-2">
                           {isEditingType && (
-                            <button onClick={() => { setHouseTypeForm({ id: '', type_name: '', memo: '' }); setIsEditingType(false); }} className="bg-slate-100 text-slate-500 px-3 py-2 rounded-xl font-bold text-xs hover:bg-slate-200">ยกเลิก</button>
+                            <button onClick={() => { setHouseTypeForm({ id: '', type_name: '', memo: '', is_infrastructure: false }); setIsEditingType(false); }} className="bg-slate-100 text-slate-500 px-3 py-2 rounded-xl font-bold text-xs hover:bg-slate-200">ยกเลิก</button>
                           )}
                           <button onClick={handleSaveHouseType} disabled={isSubmitting} className="flex-1 bg-rose-600 text-white font-black py-2.5 rounded-xl text-xs shadow-md hover:bg-rose-700 flex justify-center items-center gap-1.5">
                             {isSubmitting ? <Loader2 className="animate-spin" size={14} /> : (isEditingType ? 'บันทึกการแก้ไข' : 'เพิ่มแบบบ้าน')}
@@ -4213,7 +4007,7 @@ export default function ConstructionApp() {
                             <div className="flex gap-1.5 shrink-0">
                               <button
                                 onClick={() => {
-                                  setHouseTypeForm({ id: t.id, type_name: t.type_name, memo: t.memo || '' });
+                                  setHouseTypeForm({ id: t.id, type_name: t.type_name, memo: t.memo || '', is_infrastructure: t.is_infrastructure || false });
                                   setIsEditingType(true);
                                 }}
                                 className="bg-white border border-slate-200 text-slate-600 p-2 rounded-lg font-bold text-xs hover:bg-slate-100 hover:text-blue-600 transition-colors shadow-sm"

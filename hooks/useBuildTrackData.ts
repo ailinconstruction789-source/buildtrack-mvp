@@ -26,6 +26,8 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
   const [allUpdatesRecord, setAllUpdatesRecord] = useState<any[]>([]);
   const [inspectionQueueView, setInspectionQueueView] = useState<any[]>([]);
   const [plotStatuses, setPlotStatuses] = useState<any[]>([]);
+  const [plotOverallStatuses, setPlotOverallStatuses] = useState<any[]>([]);
+  const [qcSePerformance, setQcSePerformance] = useState<any[]>([]);
 
   const fetchWithoutLimit = async (table: string, projectName?: string | null, orderBy: string = 'id', ascending: boolean = true, selectQuery: string = '*', secondaryOrderBy: string | null = 'id') => {
     let allData: any[] = [];
@@ -40,7 +42,7 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
           .select(`${selectQuery}, plots!inner(project_name)`)
           .eq('plots.project_name', projectName)
           .order(orderBy, { ascending });
-      } else if (projectName && projectName !== 'all' && (table === 'plots' || table === 'vw_plot_progress')) {
+      } else if (projectName && projectName !== 'all' && (table === 'plots' || table === 'vw_plot_progress' || table === 'vw_plot_overall_status')) {
         query = supabase.from(table)
           .select(selectQuery)
           .eq('project_name', projectName)
@@ -109,7 +111,9 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
         { data: materialReqData },
         { data: materialReceiptData },
         { data: inspectionQueueData },
-        { data: plotStatusesData }
+        { data: plotStatusesData },
+        plotOverallStatusesData,
+        { data: qcSePerformanceData }
       ] = await Promise.all([
         supabase.from('projects').select('*').order('created_at', { ascending: true }),
         supabase.from('house_types').select('*'),
@@ -126,7 +130,9 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
         supabase.from('vw_task_material_requests').select('*'),
         supabase.from('task_material_receipts').select('*').order('created_at', { ascending: true }),
         supabase.from('vw_inspection_queue').select('*'),
-        supabase.from('vw_plot_status_dashboard').select('*')
+        supabase.from('vw_plot_status_dashboard').select('*'),
+        fetchWithoutLimit('vw_plot_overall_status', selectedProjectName, 'plot_id', true, '*', null),
+        supabase.from('vw_qc_se_performance').select('*')
       ]);
 
       setNotifications(notifData || []);
@@ -135,6 +141,8 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
       setMaterialReceipts(materialReceiptData || []);
       setInspectionQueueView(inspectionQueueData || []);
       setPlotStatuses(plotStatusesData || []);
+      setPlotOverallStatuses(plotOverallStatusesData || []);
+      setQcSePerformance(qcSePerformanceData || []);
       setAssignments((prev: any) => {
         const newMap = new Map(assignData?.map((a: any) => [a.id, a]) || []);
         prev?.forEach((p: any) => { if (!newMap.has(p.id)) newMap.set(p.id, p); });
@@ -629,6 +637,10 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
     setMaterialReceipts,
     inspectionQueueView,
     setInspectionQueueView,
-    plotStatuses
+    plotStatuses,
+    plotOverallStatuses,
+    setPlotOverallStatuses,
+    qcSePerformance,
+    setQcSePerformance
   };
 }

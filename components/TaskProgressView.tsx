@@ -143,8 +143,8 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                     {/* สังเกตตรงนี้: ผมแอบเติม pr-8 เข้าไปท้ายสุดของบรรทัดเพื่อไม่ให้ข้อความไปบังปุ่มลบครับ */}
                                    <div className={`flex-1 bg-white ${isMobileLayout ? 'p-3 rounded-2xl' : 'p-5 sm:p-6 rounded-[1.5rem] sm:rounded-[2rem]'} border border-black/5 shadow-sm relative pr-8`}>
                                        
-                                       {/* 🗑️ ปุ่มลบรายงาน (สิทธิ์: คนส่งรายงานชิ้นนี้เอง หรือ Admin) และงานนั้นต้องยังไม่จบ 100% */}
-                                       {(update.user_name === loggedInUser?.username || isAdmin) && !isTaskCompleted && (
+                                       {/* 🗑️ ปุ่มลบรายงาน (สิทธิ์: เฉพาะ Admin เท่านั้น) และงานนั้นต้องยังไม่จบ 100% */}
+                                       {isAdmin && !isTaskCompleted && (
                                           <button
                                              onClick={() => handleDeleteUpdate(update.id, selectedTask.id, selectedPlot.id)}
                                              className="absolute top-3 right-3 text-slate-400 hover:text-rose-500 p-1.5 hover:bg-rose-50 rounded-xl transition-all hover:scale-105"

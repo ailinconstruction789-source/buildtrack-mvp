@@ -29,13 +29,10 @@ interface HouseDetailViewProps {
   latestUpdatesMap: any;
   schedules: any;
   scheduleInputs: any;
-  isUploadingLayer: boolean;
   setSelectedTask: (t: any) => void;
   setDefectModal: (o: any) => void;
   setTaskReturnView: (v: string) => void;
   setAssignModal: (o: any) => void;
-  simulatedStatus: any;
-  editingHouseType: any;
   currentUserRole: string;
   totalChartDays: number;
   timeMarkers: any[];
@@ -70,6 +67,9 @@ interface HouseDetailViewProps {
   setDefects?: (d: any[]) => void;
   showAlert?: (title: string, message: string) => void;
   showToast?: (message: string, type: 'success' | 'error') => void;
+  isUploadingLayer?: boolean;
+  simulatedStatus?: any;
+  editingHouseType?: any;
 }
 
 const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
@@ -79,9 +79,9 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
     isSummaryDelayed, isProjectPlanner, setCopyModalOpen, handleSaveAllSchedules,
     isSubmitting, houseTypes, taskTemplates, getTaskStatus, latestUpdatesMap,
     schedules, scheduleInputs, 
-    isUploadingLayer, setSelectedTask, setDefectModal,
+    setSelectedTask, setDefectModal,
     setTaskReturnView, setAssignModal,
-    simulatedStatus, editingHouseType, currentUserRole,
+    currentUserRole,
     totalChartDays, timeMarkers, todayTs, chartStart, chartEnd,
     getChartLeft, getChartWidth, assignments, taskDates,
     setUpdates, setProgressValue, isAdmin, isProcurement,
@@ -92,7 +92,8 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
     resetHandoverCycle, updateInspectionRound,
     defects, setDefects,
     showAlert, showToast,
-    materialReceipts, setMaterialReceipts, handleForceCompleteAllTasks
+    materialReceipts, setMaterialReceipts, handleForceCompleteAllTasks,
+    isUploadingLayer, simulatedStatus, editingHouseType
   } = props;
 
   const currentPlotStatus = selectedPlot ? getPlotOverallStatus(selectedPlot.id) : null;
