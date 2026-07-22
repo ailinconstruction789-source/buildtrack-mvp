@@ -514,9 +514,12 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
   // Excel Import Handlers
   const handleDownloadTemplate = () => {
     const ws = XLSX.utils.json_to_sheet([
-      { 'Customer Name': 'สมชาย ใจดี', 'Phone': '0812345678', 'Occupation': 'เจ้าของธุรกิจ', 'Interest': 'แบบบ้าน A', 'Status': 'Visit', 'Plot': '1', 'Sale Price': 3500000, 'Land Price': 50000, 'Sales Agent': user?.username || 'Jane', 'Visit Date': '25/12/2026', 'Booking Date': '', 'Transfer Date': '', 'Cancel Date': '' }
+      { 'Project Name': 'ไอลิน 3', 'Customer Name': 'สมชาย ใจดี', 'Phone': '0812345678', 'Occupation': 'เจ้าของธุรกิจ', 'Interest': 'แบบบ้าน A', 'Status': 'Visit', 'Plot': 'A1', 'Sale Price': 3500000, 'Land Price': 50000, 'Sales Agent': user?.username || 'Jane', 'Visit Date': '25/12/2026', 'Booking Date': '', 'Transfer Date': '', 'Cancel Date': '' },
+      { 'Project Name': 'ไอลิน 4', 'Customer Name': 'สมหญิง สวยงาม', 'Phone': '0898765432', 'Occupation': 'พนักงานบริษัท', 'Interest': 'แบบบ้าน B', 'Status': 'Reserved', 'Plot': 'B5', 'Sale Price': 4200000, 'Land Price': 60000, 'Sales Agent': user?.username || 'John', 'Visit Date': '20/12/2026', 'Booking Date': '22/12/2026', 'Transfer Date': '', 'Cancel Date': '' },
+      { 'Project Name': 'ไอลิน 6', 'Customer Name': 'มานะ อดทน', 'Phone': '0833334444', 'Occupation': 'ข้าราชการ', 'Interest': 'แบบบ้าน C', 'Status': 'Transferred', 'Plot': 'C10', 'Sale Price': 5500000, 'Land Price': 80000, 'Sales Agent': user?.username || 'Jane', 'Visit Date': '01/10/2026', 'Booking Date': '05/10/2026', 'Transfer Date': '15/12/2026', 'Cancel Date': '' }
     ]);
     const guideWs = XLSX.utils.json_to_sheet([
+      { 'Status (ภาษาอังกฤษเท่านั้น)': 'Project Name', 'ความหมาย': 'ชื่อโครงการ (ต้องระบุให้ตรงกับในระบบเป๊ะๆ เช่น ไอลิน 6)' },
       { 'Status (ภาษาอังกฤษเท่านั้น)': 'Visit', 'ความหมาย': 'เยี่ยมชมโครงการ (ค่าเริ่มต้น)' },
       { 'Status (ภาษาอังกฤษเท่านั้น)': 'Negotiation', 'ความหมาย': 'กำลังเจรจา' },
       { 'Status (ภาษาอังกฤษเท่านั้น)': 'Reserved', 'ความหมาย': 'จองแล้ว' },
@@ -546,7 +549,7 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const bstr = event.target?.result;
         const wb = XLSX.read(bstr, { type: 'binary' });
@@ -555,13 +558,15 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
         const data = XLSX.utils.sheet_to_json(ws);
         
         // Get headers from first row to check if the column exists
-        if (data.length > 0 && !Object.keys(data[0] as object).some(k => k.trim() === 'Customer Name')) {
-          alert("รูปแบบไฟล์ไม่ถูกต้อง ต้องมีคอลัมน์ Customer Name (กรุณาตรวจสอบว่าพิมพ์ชื่อคอลัมน์ถูกต้องและไม่มีเว้นวรรคเกิน)");
+        if (data.length > 0 && (!Object.keys(data[0] as object).some(k => k.trim() === 'Customer Name') || !Object.keys(data[0] as object).some(k => k.trim() === 'Project Name'))) {
+          alert("รูปแบบไฟล์ไม่ถูกต้อง ต้องมีคอลัมน์ Project Name และ Customer Name (กรุณาตรวจสอบว่าพิมพ์ชื่อคอลัมน์ถูกต้อง)");
           return;
         }
 
         // Clean data: remove completely empty rows or rows without Customer Name
-        const cleanData = data.filter((row: any) => row && row['Customer Name'] && String(row['Customer Name']).trim() !== '');
+        const cleanData = data.filter((row: any) => row && row['Customer Name'] && String(row['Customer Name']).trim() !== '' && row['Project Name'] && String(row['Project Name']).trim() !== '');
+
+        const { data: allPlotsData } = await supabase.from('plots').select('id, plot_name, project_name');
 
         if (cleanData.length === 0) {
           alert("ไม่พบข้อมูลลูกค้าในไฟล์ กรุณาตรวจสอบการกรอกข้อมูล");
@@ -589,24 +594,28 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
               break;
             }
           }
-          if (row['Plot']) {
-            const plotStr = row['Plot'].toString().trim();
-            const normalizedPlotStr = plotStr.replace(/\s+/g, '');
-            const projPrefix = project?.name ? project.name.replace(/\s+/g, '') : '';
-            const matched = projectPlotsData.find(p => {
-              const pName = p.plot_name.replace(/\s+/g, '');
-              return pName === normalizedPlotStr || 
-                     `${projPrefix}-${pName}` === normalizedPlotStr || 
-                     `${projPrefix}${pName}` === normalizedPlotStr ||
-                     pName === normalizedPlotStr.replace(new RegExp(`^${projPrefix}-?`), '');
-            });
-            if (!matched) {
-              hasError = true;
-              errorMsg = `บรรทัดที่ ${rowNum} (${row['Customer Name']}): รหัสแปลง "${plotStr}" ไม่มีอยู่ในระบบของโครงการนี้`;
-              break;
+          if (row['Project Name']) {
+            const projNameCol = row['Project Name'].toString().trim();
+            if (row['Plot']) {
+              const plotStr = row['Plot'].toString().trim();
+              const normalizedPlotStr = plotStr.replace(/\s+/g, '');
+              const projPrefix = projNameCol.replace(/\s+/g, '');
+              const matched = allPlotsData?.find(p => {
+                if (p.project_name !== projNameCol) return false;
+                const pName = p.plot_name.replace(/\s+/g, '');
+                return pName === normalizedPlotStr || 
+                       `${projPrefix}-${pName}` === normalizedPlotStr || 
+                       `${projPrefix}${pName}` === normalizedPlotStr ||
+                       pName === normalizedPlotStr.replace(new RegExp(`^${projPrefix}-?`), '');
+              });
+              if (!matched) {
+                hasError = true;
+                errorMsg = `บรรทัดที่ ${rowNum} (${row['Customer Name']}): รหัสแปลง "${plotStr}" ไม่มีอยู่ในระบบของโครงการ "${projNameCol}"`;
+                break;
+              }
+              // Update the row to use the matched plot id to avoid issues later
+              row['PlotId'] = matched.id;
             }
-            // Update the row to use the matched plot id to avoid issues later
-            row['Plot'] = matched.id;
           }
         }
 
@@ -666,6 +675,7 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
       const cancelDate = l.history.find((h: any) => h.status === 'Cancelled')?.timestamp?.split('T')[0] || '';
       const plotName = l.plot ? projectPlotsData.find(p => p.id === l.plot)?.plot_name || l.plot : '';
       return {
+        'Project Name': project?.name || '',
         'Customer Name': l.name,
         'Phone': l.phone,
         'Occupation': l.occupation,
@@ -683,7 +693,7 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
     });
 
     const ws = XLSX.utils.json_to_sheet(exportRows.length > 0 ? exportRows : [{
-      'Customer Name': '', 'Phone': '', 'Occupation': '', 'Interest': '', 'Status': '', 'Plot': '', 'Sale Price': '', 'Land Price': '', 'Sales Agent': '', 'Visit Date': '', 'Booking Date': '', 'Transfer Date': '', 'Cancel Date': ''
+      'Project Name': project?.name || '', 'Customer Name': '', 'Phone': '', 'Occupation': '', 'Interest': '', 'Status': '', 'Plot': '', 'Sale Price': '', 'Land Price': '', 'Sales Agent': '', 'Visit Date': '', 'Booking Date': '', 'Transfer Date': '', 'Cancel Date': ''
     }]);
     
     const guideWs = XLSX.utils.json_to_sheet([
@@ -715,21 +725,24 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
   const handleConfirmImport = async () => {
     if (importData.length === 0) return;
     setIsImporting(true);
-    const projName = project?.name || 'ไอลิน6';
-    
     try {
       const validStatuses = ['Visit', 'Negotiation', 'Reserved', 'DownPayment', 'DocumentPrep', 'LoanProcessing', 'Approved', 'Contracted', 'Transferred', 'Handover', 'Cancelled'];
       
       let updatedCount = 0;
       let insertedCount = 0;
 
+      // Fetch all leads to match across all projects
+      const { data: allLeadsData } = await supabase.from('leads').select('id, customer_name, phone, project_name, status, agent_name, created_at');
+      const { data: allSalesData } = await supabase.from('sales').select('id, lead_id, plot_id');
+
       for (const row of importData) {
+        const projName = row['Project Name']?.toString().trim() || project?.name || 'ไอลิน6';
         const rawStatus = row['Status']?.toString().trim();
         const status = validStatuses.includes(rawStatus) ? rawStatus : 'Visit';
         const visitDate = parseDateStr(row['Visit Date']) || new Date().toISOString();
         const customerName = row['Customer Name']?.toString().trim() || 'Unknown';
         const phone = row['Phone']?.toString().trim() || '';
-        let plotId = row['Plot']?.toString().trim() || null;
+        let plotId = row['PlotId'] || null;
         // plotId is already matched to UUID in handleFileUpload
         
         const parseMoney = (val: any) => {
@@ -745,10 +758,10 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
         const transferDate = parseDateStr(row['Transfer Date']);
         const cancelDate = parseDateStr(row['Cancel Date']);
         
-        // Find if this lead already exists
-        const existingLead = leads.find(l => 
-          (plotId && l.plot === plotId) || 
-          (l.name.toLowerCase() === customerName.toLowerCase() && l.phone === phone)
+        // Find if this lead already exists in ALL projects
+        const existingLead = allLeadsData?.find(l => 
+          (l.customer_name?.toLowerCase() === customerName.toLowerCase() && l.phone === phone && l.project_name === projName) ||
+          (plotId && allSalesData?.find(s => s.plot_id === plotId && s.lead_id === l.id))
         );
 
         if (existingLead) {
@@ -759,7 +772,7 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
             occupation: row['Occupation']?.toString() || '',
             interest: row['Interest']?.toString() || 'Any',
             status: status,
-            agent_name: row['Sales Agent']?.toString() || existingLead.agentName || user?.username || 'Unknown'
+            agent_name: row['Sales Agent']?.toString() || existingLead.agent_name || user?.username || 'Unknown'
           }).eq('id', existingLead.id);
 
           if (['Reserved', 'Contracted', 'DownPayment', 'DocumentPrep', 'LoanProcessing', 'Approved', 'Transferred', 'Handover', 'Cancelled'].includes(status)) {
@@ -1880,6 +1893,7 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
                     <table className="w-full text-left text-sm whitespace-nowrap">
                       <thead className="bg-white sticky top-0 shadow-sm z-10">
                         <tr>
+                          <th className="px-4 py-3 font-semibold text-gray-600 border-b border-gray-100">โครงการ</th>
                           <th className="px-4 py-3 font-semibold text-gray-600 border-b border-gray-100">ชื่อลูกค้า</th>
                           <th className="px-4 py-3 font-semibold text-gray-600 border-b border-gray-100">เบอร์โทร</th>
                           <th className="px-4 py-3 font-semibold text-gray-600 border-b border-gray-100">สถานะ</th>
@@ -1893,6 +1907,7 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
                       <tbody className="divide-y divide-gray-100 bg-white">
                         {importData.slice(0, 100).map((row, idx) => (
                           <tr key={idx} className="hover:bg-gray-50">
+                            <td className="px-4 py-2">{row['Project Name'] || '-'}</td>
                             <td className="px-4 py-2">{row['Customer Name'] || '-'}</td>
                             <td className="px-4 py-2">{row['Phone'] || '-'}</td>
                             <td className="px-4 py-2">
