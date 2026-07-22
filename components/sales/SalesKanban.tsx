@@ -758,10 +758,9 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
         const transferDate = parseDateStr(row['Transfer Date']);
         const cancelDate = parseDateStr(row['Cancel Date']);
         
-        // Find if this lead already exists in ALL projects
+        // Find if this lead already exists in ALL projects by Name, Phone and Project
         const existingLead = allLeadsData?.find(l => 
-          (l.customer_name?.toLowerCase() === customerName.toLowerCase() && l.phone === phone && l.project_name === projName) ||
-          (plotId && allSalesData?.find(s => s.plot_id === plotId && s.lead_id === l.id))
+          l.customer_name?.toLowerCase() === customerName.toLowerCase() && l.phone === phone && l.project_name === projName
         );
 
         if (existingLead) {
