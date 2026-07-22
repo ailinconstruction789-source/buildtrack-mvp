@@ -564,7 +564,12 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
         }
 
         // Clean data: remove completely empty rows or rows without Customer Name
-        const cleanData = data.filter((row: any) => row && row['Customer Name'] && String(row['Customer Name']).trim() !== '' && row['Project Name'] && String(row['Project Name']).trim() !== '');
+        const cleanData = data.filter((row: any) => row && row['Customer Name'] && String(row['Customer Name']).trim() !== '').map((row: any) => {
+          if (!row['Project Name'] || String(row['Project Name']).trim() === '') {
+            row['Project Name'] = 'ลูกค้าทั่วไป';
+          }
+          return row;
+        });
 
         const { data: allPlotsData } = await supabase.from('plots').select('id, plot_name, project_name');
 
@@ -736,7 +741,7 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
       const { data: allSalesData } = await supabase.from('sales').select('id, lead_id, plot_id');
 
       for (const row of importData) {
-        const projName = row['Project Name']?.toString().trim() || project?.name || 'ไอลิน6';
+        const projName = row['Project Name']?.toString().trim() || 'ลูกค้าทั่วไป';
         const rawStatus = row['Status']?.toString().trim();
         const status = validStatuses.includes(rawStatus) ? rawStatus : 'Visit';
         const visitDate = parseDateStr(row['Visit Date']) || new Date().toISOString();
