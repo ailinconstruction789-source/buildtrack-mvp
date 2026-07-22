@@ -207,9 +207,9 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* LEFT METRICS */}
-          <div className="lg:col-span-1 space-y-4">
+          <div className="lg:col-span-4 space-y-4">
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col gap-4">
               <div className="flex justify-between items-center mb-1 pb-3 border-b border-gray-100">
                  <span className="font-bold text-gray-800 text-base">ยอดสะสมประจำปี {selectedYear}</span>
@@ -256,8 +256,8 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
             </div>
 
             {/* MONTHLY DETAILS CARD (3 COLUMNS) */}
-            <div className="bg-white p-4 lg:p-5 rounded-2xl shadow-sm border border-gray-100 overflow-hidden overflow-x-auto">
-              <div className="grid grid-cols-3 gap-2 min-w-[280px]">
+            <div className="bg-white p-4 lg:p-5 rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+              <div className="grid grid-cols-3 gap-2">
                 {/* Column 1: Booked */}
                 <div>
                   <div className="text-[11px] lg:text-xs font-bold text-slate-700 mb-3 leading-tight text-center">
@@ -342,7 +342,7 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
           </div>
 
           {/* MAIN CONTENT */}
-          <div className="lg:col-span-3 flex flex-col gap-6">
+          <div className="lg:col-span-8 flex flex-col gap-6">
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col xl:flex-row">
               <div className="flex-1 p-0 overflow-x-auto border-r border-gray-100">
                 <table className="w-full text-sm">
