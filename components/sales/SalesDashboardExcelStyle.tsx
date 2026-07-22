@@ -256,68 +256,74 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
             </div>
 
             {/* MONTHLY DETAILS CARD (3 COLUMNS) */}
-            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-              <div className="grid grid-cols-3 gap-2 text-left">
+            <div className="bg-white p-4 lg:p-5 rounded-2xl shadow-sm border border-gray-100 overflow-hidden overflow-x-auto">
+              <div className="grid grid-cols-3 gap-2 min-w-[280px]">
                 {/* Column 1: Booked */}
                 <div>
-                  <div className="text-xs font-bold text-slate-700 mb-3 leading-tight text-center">
+                  <div className="text-[11px] lg:text-xs font-bold text-slate-700 mb-3 leading-tight text-center">
                     รายการที่<br/>จองในเดือน
                   </div>
-                  <div className="text-sm font-medium text-sky-700 space-y-1 flex flex-col items-center">
-                    {metrics.bookedMonth.length > 0 
-                      ? [...metrics.bookedMonth].sort((a: any, b: any) => {
-                          const nameA = a.plot?.project_name && a.plot?.plot_name ? `${a.plot.project_name}-${a.plot.plot_name}` : '-';
-                          const nameB = b.plot?.project_name && b.plot?.plot_name ? `${b.plot.project_name}-${b.plot.plot_name}` : '-';
-                          return nameA.localeCompare(nameB, 'th', { numeric: true });
-                        }).map((r: any) => (
-                          <div key={r.id} className="w-full pl-1 md:pl-4 whitespace-nowrap truncate">
-                            {r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : '-'}
-                          </div>
-                        ))
-                      : <div className="text-center w-full">-</div>
-                    }
+                  <div className="flex justify-center">
+                    <div className="text-[11px] lg:text-xs font-medium text-sky-700 space-y-1 text-left whitespace-nowrap">
+                      {metrics.bookedMonth.length > 0 
+                        ? [...metrics.bookedMonth].sort((a: any, b: any) => {
+                            const nameA = a.plot?.project_name && a.plot?.plot_name ? `${a.plot.project_name}-${a.plot.plot_name}` : '-';
+                            const nameB = b.plot?.project_name && b.plot?.plot_name ? `${b.plot.project_name}-${b.plot.plot_name}` : '-';
+                            return nameA.localeCompare(nameB, 'th', { numeric: true });
+                          }).map((r: any) => (
+                            <div key={r.id}>
+                              {r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : '-'}
+                            </div>
+                          ))
+                        : <div className="text-center">-</div>
+                      }
+                    </div>
                   </div>
                 </div>
 
                 {/* Column 2: Transferred */}
                 <div>
-                  <div className="text-xs font-bold text-slate-700 mb-3 leading-tight text-center">
+                  <div className="text-[11px] lg:text-xs font-bold text-slate-700 mb-3 leading-tight text-center">
                     รายการโอน<br/>ภายในเดือน
                   </div>
-                  <div className="text-sm font-medium text-sky-700 space-y-1 flex flex-col items-center">
-                    {metrics.transferMonth.length > 0 
-                      ? [...metrics.transferMonth].sort((a: any, b: any) => {
-                          const nameA = a.plot?.project_name && a.plot?.plot_name ? `${a.plot.project_name}-${a.plot.plot_name}` : '-';
-                          const nameB = b.plot?.project_name && b.plot?.plot_name ? `${b.plot.project_name}-${b.plot.plot_name}` : '-';
-                          return nameA.localeCompare(nameB, 'th', { numeric: true });
-                        }).map((r: any) => (
-                          <div key={r.id} className="w-full pl-1 md:pl-4 whitespace-nowrap truncate">
-                            {r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : '-'}
-                          </div>
-                        ))
-                      : <div className="text-center w-full">-</div>
-                    }
+                  <div className="flex justify-center">
+                    <div className="text-[11px] lg:text-xs font-medium text-sky-700 space-y-1 text-left whitespace-nowrap">
+                      {metrics.transferMonth.length > 0 
+                        ? [...metrics.transferMonth].sort((a: any, b: any) => {
+                            const nameA = a.plot?.project_name && a.plot?.plot_name ? `${a.plot.project_name}-${a.plot.plot_name}` : '-';
+                            const nameB = b.plot?.project_name && b.plot?.plot_name ? `${b.plot.project_name}-${b.plot.plot_name}` : '-';
+                            return nameA.localeCompare(nameB, 'th', { numeric: true });
+                          }).map((r: any) => (
+                            <div key={r.id}>
+                              {r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : '-'}
+                            </div>
+                          ))
+                        : <div className="text-center">-</div>
+                      }
+                    </div>
                   </div>
                 </div>
 
                 {/* Column 3: Cancelled */}
                 <div>
-                  <div className="text-xs font-bold text-red-600 mb-3 leading-tight text-center">
+                  <div className="text-[11px] lg:text-xs font-bold text-red-600 mb-3 leading-tight text-center">
                     รายการยกเลิก<br/>ในเดือน
                   </div>
-                  <div className="text-sm font-medium text-red-600 space-y-1 flex flex-col items-center">
-                    {metrics.cancelMonth.length > 0 
-                      ? [...metrics.cancelMonth].sort((a: any, b: any) => {
-                          const nameA = a.plot?.project_name && a.plot?.plot_name ? `${a.plot.project_name}-${a.plot.plot_name}` : '-';
-                          const nameB = b.plot?.project_name && b.plot?.plot_name ? `${b.plot.project_name}-${b.plot.plot_name}` : '-';
-                          return nameA.localeCompare(nameB, 'th', { numeric: true });
-                        }).map((r: any) => (
-                          <div key={r.id} className="w-full pl-1 md:pl-4 whitespace-nowrap truncate">
-                            {r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : '-'}
-                          </div>
-                        ))
-                      : <div className="text-center w-full">-</div>
-                    }
+                  <div className="flex justify-center">
+                    <div className="text-[11px] lg:text-xs font-medium text-red-600 space-y-1 text-left whitespace-nowrap">
+                      {metrics.cancelMonth.length > 0 
+                        ? [...metrics.cancelMonth].sort((a: any, b: any) => {
+                            const nameA = a.plot?.project_name && a.plot?.plot_name ? `${a.plot.project_name}-${a.plot.plot_name}` : '-';
+                            const nameB = b.plot?.project_name && b.plot?.plot_name ? `${b.plot.project_name}-${b.plot.plot_name}` : '-';
+                            return nameA.localeCompare(nameB, 'th', { numeric: true });
+                          }).map((r: any) => (
+                            <div key={r.id}>
+                              {r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : '-'}
+                            </div>
+                          ))
+                        : <div className="text-center">-</div>
+                      }
+                    </div>
                   </div>
                 </div>
               </div>
