@@ -346,28 +346,57 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
               </div>
             </div>
 
-            <div className="bg-gradient-to-br from-blue-900 to-indigo-900 p-5 rounded-2xl shadow-md text-white">
-              <div className="text-blue-100 text-sm font-medium mb-1">คาดว่าจะโอนเดือนนี้</div>
+            <div className="bg-gradient-to-br from-blue-900 to-indigo-900 p-5 rounded-2xl shadow-md text-white flex flex-col h-full">
+              <div className="text-blue-100 text-sm font-medium mb-1">ภาพรวมการโอนเดือนนี้ (สำเร็จ + คาดการณ์)</div>
               <div className="flex items-end gap-2 mb-2">
-                <span className="text-4xl font-black">{metrics.expectingTransfer.length}</span>
+                <span className="text-4xl font-black">{metrics.expectingTransfer.length + metrics.transferMonth.length}</span>
                 <span className="text-blue-200 font-medium mb-1">หลัง</span>
               </div>
-              <div className="text-sm text-blue-200 font-medium bg-white/10 p-2 rounded inline-block mt-2">
-                {fmtM(metrics.expectingTransfer.reduce((sum: number, r: any) => sum + r.salePrice, 0))}
+              <div className="text-sm text-blue-200 font-medium bg-white/10 p-2 rounded inline-block mt-2 self-start">
+                {fmtM([...metrics.expectingTransfer, ...metrics.transferMonth].reduce((sum: number, r: any) => sum + r.salePrice, 0))}
               </div>
-              {metrics.expectingTransfer.length > 0 && (
-                <div className="mt-4 pt-4 border-t border-white/20 text-blue-200 text-xs font-medium grid grid-cols-2 gap-1.5">
-                  {[...metrics.expectingTransfer].sort((a: any, b: any) => {
-                    const nameA = a.plot?.project_name && a.plot?.plot_name ? `${a.plot.project_name}-${a.plot.plot_name}` : '-';
-                    const nameB = b.plot?.project_name && b.plot?.plot_name ? `${b.plot.project_name}-${b.plot.plot_name}` : '-';
-                    return nameA.localeCompare(nameB, 'th', { numeric: true });
-                  }).map((r: any) => (
-                    <div key={r.id} className="truncate" title={r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : '-'}>
-                      • {r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : '-'}
+              
+              <div className="mt-4 pt-4 border-t border-white/20 flex-1">
+                <div className="grid grid-cols-2 gap-4">
+                  {/* โอนแล้ว */}
+                  <div>
+                    <div className="text-emerald-400 text-xs font-bold mb-2 flex items-center gap-1">
+                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-400"></div>
+                      โอนแล้ว ({metrics.transferMonth.length})
                     </div>
-                  ))}
+                    <div className="text-blue-200 text-xs font-medium space-y-1">
+                      {metrics.transferMonth.length > 0 ? [...metrics.transferMonth].sort((a: any, b: any) => {
+                        const nameA = a.plot?.project_name && a.plot?.plot_name ? `${a.plot.project_name}-${a.plot.plot_name}` : '-';
+                        const nameB = b.plot?.project_name && b.plot?.plot_name ? `${b.plot.project_name}-${b.plot.plot_name}` : '-';
+                        return nameA.localeCompare(nameB, 'th', { numeric: true });
+                      }).map((r: any) => (
+                        <div key={r.id} className="truncate text-emerald-100/90" title={r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : '-'}>
+                          • {r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : '-'}
+                        </div>
+                      )) : <div className="text-blue-300/50 italic">- ไม่มี -</div>}
+                    </div>
+                  </div>
+                  
+                  {/* คาดว่าจะโอน */}
+                  <div>
+                    <div className="text-amber-400 text-xs font-bold mb-2 flex items-center gap-1">
+                      <div className="w-1.5 h-1.5 rounded-full bg-amber-400"></div>
+                      รอโอน ({metrics.expectingTransfer.length})
+                    </div>
+                    <div className="text-blue-200 text-xs font-medium space-y-1">
+                      {metrics.expectingTransfer.length > 0 ? [...metrics.expectingTransfer].sort((a: any, b: any) => {
+                        const nameA = a.plot?.project_name && a.plot?.plot_name ? `${a.plot.project_name}-${a.plot.plot_name}` : '-';
+                        const nameB = b.plot?.project_name && b.plot?.plot_name ? `${b.plot.project_name}-${b.plot.plot_name}` : '-';
+                        return nameA.localeCompare(nameB, 'th', { numeric: true });
+                      }).map((r: any) => (
+                        <div key={r.id} className="truncate text-amber-100/90" title={r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : '-'}>
+                          • {r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : '-'}
+                        </div>
+                      )) : <div className="text-blue-300/50 italic">- ไม่มี -</div>}
+                    </div>
+                  </div>
                 </div>
-              )}
+              </div>
             </div>
           </div>
 
