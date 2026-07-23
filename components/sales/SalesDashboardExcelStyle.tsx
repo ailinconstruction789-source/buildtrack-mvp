@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Loader2, Calendar, TrendingUp, Users, BarChart } from 'lucide-react';
-import { ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
+import { ComposedChart, Bar, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
 
 export default function SalesDashboardExcelStyle({ project }: { project?: any }) {
   const [loading, setLoading] = useState(true);
@@ -421,15 +421,19 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80">
               <h3 className="text-center font-bold text-gray-700 mb-4">ยอดโอน ปี 2023 - 2026 (หลัง)</h3>
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={metrics.lineChartTransfers}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis dataKey="month" tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false} />
-                  <YAxis allowDecimals={false} tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false} />
-                  <RechartsTooltip contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} />
-                  <Line type="monotone" dataKey="y2023" name="2023" stroke="#cbd5e1" strokeWidth={2} dot={{r: 3}} />
-                  <Line type="monotone" dataKey="y2024" name="2024" stroke="#818cf8" strokeWidth={2} dot={{r: 3}} />
-                  <Line type="monotone" dataKey="y2025" name="2025" stroke="#f43f5e" strokeWidth={2} dot={{r: 3}} />
-                  <Line type="monotone" dataKey="y2026" name="2026" stroke="#0ea5e9" strokeWidth={3} dot={{r: 4}} />
+                <ComposedChart data={metrics.lineChartTransfers} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis dataKey="month" tick={{fontSize: 12, fill: '#64748b', fontWeight: 600}} axisLine={false} tickLine={false} dy={10} />
+                  <YAxis allowDecimals={false} tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false} dx={-10} />
+                  <RechartsTooltip 
+                    contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} 
+                    labelStyle={{ fontWeight: 'bold', color: '#1e293b', marginBottom: '8px' }}
+                  />
+                  <Legend wrapperStyle={{ paddingTop: '20px' }} />
+                  <Line type="monotone" dataKey="y2023" name="ปี 2023" stroke="#e2e8f0" strokeWidth={2} strokeDasharray="5 5" dot={{r: 3, fill: '#f8fafc', stroke: '#e2e8f0', strokeWidth: 1}} activeDot={{r: 5, strokeWidth: 0}} />
+                  <Line type="monotone" dataKey="y2024" name="ปี 2024" stroke="#e2e8f0" strokeWidth={2} strokeDasharray="5 5" dot={{r: 3, fill: '#f8fafc', stroke: '#e2e8f0', strokeWidth: 1}} activeDot={{r: 5, strokeWidth: 0}} />
+                  <Area type="monotone" dataKey="y2025" name="ปี 2025 (ปีที่แล้ว)" fill="#f1f5f9" stroke="#cbd5e1" strokeWidth={2} dot={{r: 3, fill: '#cbd5e1', strokeWidth: 0}} activeDot={{r: 5, fill: '#94a3b8', strokeWidth: 0}} />
+                  <Line type="monotone" dataKey="y2026" name="ปี 2026 (ปัจจุบัน)" stroke="#6366f1" strokeWidth={4} dot={{r: 5, fill: '#ffffff', stroke: '#6366f1', strokeWidth: 2}} activeDot={{r: 8, strokeWidth: 0}} />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
@@ -437,15 +441,19 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80">
               <h3 className="text-center font-bold text-gray-700 mb-4">ยอดจอง ปี 2023 - 2026 (หลัง)</h3>
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={metrics.lineChartBookings}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis dataKey="month" tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false} />
-                  <YAxis allowDecimals={false} tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false} />
-                  <RechartsTooltip contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} />
-                  <Line type="monotone" dataKey="y2023" name="2023" stroke="#cbd5e1" strokeWidth={2} dot={{r: 3}} />
-                  <Line type="monotone" dataKey="y2024" name="2024" stroke="#818cf8" strokeWidth={2} dot={{r: 3}} />
-                  <Line type="monotone" dataKey="y2025" name="2025" stroke="#f43f5e" strokeWidth={2} dot={{r: 3}} />
-                  <Line type="monotone" dataKey="y2026" name="2026" stroke="#0ea5e9" strokeWidth={3} dot={{r: 4}} />
+                <ComposedChart data={metrics.lineChartBookings} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis dataKey="month" tick={{fontSize: 12, fill: '#64748b', fontWeight: 600}} axisLine={false} tickLine={false} dy={10} />
+                  <YAxis allowDecimals={false} tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false} dx={-10} />
+                  <RechartsTooltip 
+                    contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} 
+                    labelStyle={{ fontWeight: 'bold', color: '#1e293b', marginBottom: '8px' }}
+                  />
+                  <Legend wrapperStyle={{ paddingTop: '20px' }} />
+                  <Line type="monotone" dataKey="y2023" name="ปี 2023" stroke="#e2e8f0" strokeWidth={2} strokeDasharray="5 5" dot={{r: 3, fill: '#f8fafc', stroke: '#e2e8f0', strokeWidth: 1}} activeDot={{r: 5, strokeWidth: 0}} />
+                  <Line type="monotone" dataKey="y2024" name="ปี 2024" stroke="#e2e8f0" strokeWidth={2} strokeDasharray="5 5" dot={{r: 3, fill: '#f8fafc', stroke: '#e2e8f0', strokeWidth: 1}} activeDot={{r: 5, strokeWidth: 0}} />
+                  <Area type="monotone" dataKey="y2025" name="ปี 2025 (ปีที่แล้ว)" fill="#f1f5f9" stroke="#cbd5e1" strokeWidth={2} dot={{r: 3, fill: '#cbd5e1', strokeWidth: 0}} activeDot={{r: 5, fill: '#94a3b8', strokeWidth: 0}} />
+                  <Line type="monotone" dataKey="y2026" name="ปี 2026 (ปัจจุบัน)" stroke="#6366f1" strokeWidth={4} dot={{r: 5, fill: '#ffffff', stroke: '#6366f1', strokeWidth: 2}} activeDot={{r: 8, strokeWidth: 0}} />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
@@ -454,15 +462,19 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80">
             <h3 className="text-center font-bold text-gray-700 mb-4">ยอดเข้าชม ปี 2023 - 2026 (ครั้ง)</h3>
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={metrics.lineChartViews}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="month" tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false} />
-                <YAxis allowDecimals={false} tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false} />
-                <RechartsTooltip contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} />
-                <Line type="monotone" dataKey="y2023" name="2023" stroke="#cbd5e1" strokeWidth={2} dot={{r: 3}} />
-                <Line type="monotone" dataKey="y2024" name="2024" stroke="#818cf8" strokeWidth={2} dot={{r: 3}} />
-                <Line type="monotone" dataKey="y2025" name="2025" stroke="#f43f5e" strokeWidth={2} dot={{r: 3}} />
-                <Line type="monotone" dataKey="y2026" name="2026" stroke="#0ea5e9" strokeWidth={3} dot={{r: 4}} />
+              <ComposedChart data={metrics.lineChartViews} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis dataKey="month" tick={{fontSize: 12, fill: '#64748b', fontWeight: 600}} axisLine={false} tickLine={false} dy={10} />
+                <YAxis allowDecimals={false} tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false} dx={-10} />
+                <RechartsTooltip 
+                  contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} 
+                  labelStyle={{ fontWeight: 'bold', color: '#1e293b', marginBottom: '8px' }}
+                />
+                <Legend wrapperStyle={{ paddingTop: '20px' }} />
+                <Line type="monotone" dataKey="y2023" name="ปี 2023" stroke="#e2e8f0" strokeWidth={2} strokeDasharray="5 5" dot={{r: 3, fill: '#f8fafc', stroke: '#e2e8f0', strokeWidth: 1}} activeDot={{r: 5, strokeWidth: 0}} />
+                <Line type="monotone" dataKey="y2024" name="ปี 2024" stroke="#e2e8f0" strokeWidth={2} strokeDasharray="5 5" dot={{r: 3, fill: '#f8fafc', stroke: '#e2e8f0', strokeWidth: 1}} activeDot={{r: 5, strokeWidth: 0}} />
+                <Area type="monotone" dataKey="y2025" name="ปี 2025 (ปีที่แล้ว)" fill="#f1f5f9" stroke="#cbd5e1" strokeWidth={2} dot={{r: 3, fill: '#cbd5e1', strokeWidth: 0}} activeDot={{r: 5, fill: '#94a3b8', strokeWidth: 0}} />
+                <Line type="monotone" dataKey="y2026" name="ปี 2026 (ปัจจุบัน)" stroke="#6366f1" strokeWidth={4} dot={{r: 5, fill: '#ffffff', stroke: '#6366f1', strokeWidth: 2}} activeDot={{r: 8, strokeWidth: 0}} />
               </ComposedChart>
             </ResponsiveContainer>
           </div>
