@@ -466,18 +466,43 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
                   </tbody>
                 </table>
               </div>
-              <div className="xl:w-72 p-6 bg-gray-50 flex flex-col justify-center gap-5">
-                <div>
+              <div className="xl:w-80 p-6 bg-gray-50 flex flex-col justify-center gap-5 border-l border-gray-100">
+                <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100">
+                  <div className="text-indigo-800 text-xs font-bold uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                    <div className="w-1.5 h-1.5 rounded-full bg-indigo-500"></div> ยอดขายรวม (โอน + จอง)
+                  </div>
+                  <div className="text-2xl font-black text-indigo-700">{fmtM(metrics.sumTransVal + metrics.sumWaitVal)}</div>
+                  <div className="flex justify-between items-center mt-2 text-xs font-medium text-indigo-600/80">
+                    <span>{metrics.sumTransCnt + metrics.sumWaitCnt} หลัง</span>
+                    <span>เฉลี่ย {fmtM((metrics.sumTransVal + metrics.sumWaitVal) / (metrics.sumTransCnt + metrics.sumWaitCnt || 1))}/หลัง</span>
+                  </div>
+                </div>
+
+                <div className="px-2">
                   <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">ยอดโอนสะสม</div>
                   <div className="text-xl font-black text-emerald-600">{fmtM(metrics.sumTransVal)}</div>
+                  <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
+                    <span>{metrics.sumTransCnt} หลัง</span>
+                    <span>เฉลี่ย {fmtM(metrics.sumTransVal / (metrics.sumTransCnt || 1))}/หลัง</span>
+                  </div>
                 </div>
-                <div>
+
+                <div className="px-2">
                   <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">ยอดรอโอน</div>
                   <div className="text-xl font-black text-blue-600">{fmtM(metrics.sumWaitVal)}</div>
+                  <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
+                    <span>{metrics.sumWaitCnt} หลัง</span>
+                    <span>เฉลี่ย {fmtM(metrics.sumWaitVal / (metrics.sumWaitCnt || 1))}/หลัง</span>
+                  </div>
                 </div>
-                <div>
+
+                <div className="px-2">
                   <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">ยอดคงเหลือ (ว่าง)</div>
                   <div className="text-xl font-black text-gray-800">{fmtM(metrics.sumAvailVal)}</div>
+                  <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
+                    <span>{metrics.sumAvailCnt} หลัง</span>
+                    <span>เฉลี่ย {fmtM(metrics.sumAvailVal / (metrics.sumAvailCnt || 1))}/หลัง</span>
+                  </div>
                 </div>
               </div>
             </div>
