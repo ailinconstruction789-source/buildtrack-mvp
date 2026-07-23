@@ -101,14 +101,14 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
 
     const expectingTransfer = validRecords.filter((r: any) => r.expectedTransfer && r.expectedTransfer.startsWith(targetMonthPrefix) && !r.transferDate && (!r.cancelDate || r.cancelDate > targetMonthPrefix));
 
-    const projectGroups: Record<string, { total: number, transferred: number, waiting: number, available: number, transVal: number, waitVal: number, availVal: number }> = {};
+    const projectGroups: Record<string, { total: number, transferred: number, waiting: number, available: number, transVal: number, waitVal: number, availVal: number, transferredPlots: any[], waitingPlots: any[], availablePlots: any[] }> = {};
     
     data.plots.forEach((p: any) => {
       const isInfra = data.houseTypes?.find((h: any) => h.id === p.house_type_id)?.is_infrastructure;
       if (isInfra) return;
 
       const proj = p.project_name || 'ไม่ระบุ';
-      if (!projectGroups[proj]) { projectGroups[proj] = { total: 0, transferred: 0, waiting: 0, available: 0, transVal: 0, waitVal: 0, availVal: 0 }; }
+      if (!projectGroups[proj]) { projectGroups[proj] = { total: 0, transferred: 0, waiting: 0, available: 0, transVal: 0, waitVal: 0, availVal: 0, transferredPlots: [], waitingPlots: [], availablePlots: [] }; }
       
       const price = Number(p.selling_price || 0);
       
@@ -139,12 +139,15 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
       if (status === 'Transferred') {
          projectGroups[proj].transferred++;
          projectGroups[proj].transVal += price;
+         projectGroups[proj].transferredPlots.push(p);
       } else if (status === 'Waiting') {
          projectGroups[proj].waiting++;
          projectGroups[proj].waitVal += price;
+         projectGroups[proj].waitingPlots.push(p);
       } else {
          projectGroups[proj].available++;
          projectGroups[proj].availVal += price;
+         projectGroups[proj].availablePlots.push(p);
       }
     });
 
@@ -390,17 +393,17 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
                                 <div className="grid grid-cols-5 divide-x divide-gray-100">
                                   <div className="p-3 text-xs font-bold text-gray-400 text-right pr-4 self-start pt-4">รายชื่อแปลง:</div>
                                   <div className="p-3 text-xs text-emerald-600 flex flex-col gap-1 items-end">
-                                    {data.plots.filter((p: any) => p.project_name === proj && p.status === 'Transferred').map((p: any) => (
+                                    {stats.transferredPlots.map((p: any) => (
                                       <div key={p.id}>{p.plot_name}</div>
                                     ))}
                                   </div>
                                   <div className="p-3 text-xs text-blue-600 flex flex-col gap-1 items-end">
-                                    {data.plots.filter((p: any) => p.project_name === proj && !['Transferred', 'Available'].includes(p.status)).map((p: any) => (
+                                    {stats.waitingPlots.map((p: any) => (
                                       <div key={p.id}>{p.plot_name}</div>
                                     ))}
                                   </div>
                                   <div className="p-3 text-xs text-gray-500 flex flex-col gap-1 items-end">
-                                    {data.plots.filter((p: any) => p.project_name === proj && p.status === 'Available').map((p: any) => (
+                                    {stats.availablePlots.map((p: any) => (
                                       <div key={p.id}>{p.plot_name}</div>
                                     ))}
                                   </div>
