@@ -388,28 +388,24 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
                             <td className="p-3 text-right font-bold bg-gray-50 text-gray-900">{stats.total}</td>
                           </tr>
                           {isExpanded && (
-                            <tr className="bg-slate-50/50">
-                              <td colSpan={5} className="p-0 border-b border-gray-100">
-                                <div className="grid grid-cols-5 divide-x divide-gray-100">
-                                  <div className="p-3 text-xs font-bold text-gray-400 text-right pr-4 self-start pt-4">รายชื่อแปลง:</div>
-                                  <div className="p-3 text-xs text-emerald-600 flex flex-col gap-1 items-end">
-                                    {stats.transferredPlots.map((p: any) => (
-                                      <div key={p.id}>{p.plot_name}</div>
-                                    ))}
-                                  </div>
-                                  <div className="p-3 text-xs text-blue-600 flex flex-col gap-1 items-end">
-                                    {stats.waitingPlots.map((p: any) => (
-                                      <div key={p.id}>{p.plot_name}</div>
-                                    ))}
-                                  </div>
-                                  <div className="p-3 text-xs text-gray-500 flex flex-col gap-1 items-end">
-                                    {stats.availablePlots.map((p: any) => (
-                                      <div key={p.id}>{p.plot_name}</div>
-                                    ))}
-                                  </div>
-                                  <div className="p-3 bg-gray-50/50"></div>
-                                </div>
+                            <tr className="bg-slate-50/50 border-b border-gray-100">
+                              <td className="p-3 text-xs font-bold text-gray-400 text-right align-top pt-4">รายชื่อแปลง:</td>
+                              <td className="p-3 text-xs text-emerald-600 align-top text-right pt-4 space-y-1">
+                                {[...stats.transferredPlots].sort((a: any, b: any) => (a.plot_name || '').localeCompare(b.plot_name || '', 'th', { numeric: true })).map((p: any) => (
+                                  <div key={p.id}>{p.plot_name}</div>
+                                ))}
                               </td>
+                              <td className="p-3 text-xs text-blue-600 align-top text-right pt-4 space-y-1">
+                                {[...stats.waitingPlots].sort((a: any, b: any) => (a.plot_name || '').localeCompare(b.plot_name || '', 'th', { numeric: true })).map((p: any) => (
+                                  <div key={p.id}>{p.plot_name}</div>
+                                ))}
+                              </td>
+                              <td className="p-3 text-xs text-gray-500 align-top text-right pt-4 space-y-1">
+                                {[...stats.availablePlots].sort((a: any, b: any) => (a.plot_name || '').localeCompare(b.plot_name || '', 'th', { numeric: true })).map((p: any) => (
+                                  <div key={p.id}>{p.plot_name}</div>
+                                ))}
+                              </td>
+                              <td className="p-3 bg-gray-50/50 border-l border-white"></td>
                             </tr>
                           )}
                         </React.Fragment>
