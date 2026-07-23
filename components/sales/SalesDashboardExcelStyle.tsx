@@ -118,11 +118,14 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
       let status = 'Available';
       let tDate = '';
       if (currentRecord) {
-        if (currentRecord.transferDate && currentRecord.transferDate <= targetDate.toISOString().split('T')[0]) {
+        const isTransferredStatus = currentRecord.status === 'Transferred' || currentRecord.status === 'Handover';
+        if ((currentRecord.transferDate && currentRecord.transferDate <= targetDate.toISOString().split('T')[0]) || isTransferredStatus) {
           status = 'Transferred';
-          tDate = currentRecord.transferDate;
-        } else if (currentRecord.bookDate && currentRecord.bookDate <= targetDate.toISOString().split('T')[0] && (!currentRecord.cancelDate || currentRecord.cancelDate > targetDate.toISOString().split('T')[0])) {
-          status = 'Waiting';
+          tDate = currentRecord.transferDate || currentRecord.bookDate || currentRecord.createdDate;
+        } else if ((currentRecord.bookDate && currentRecord.bookDate <= targetDate.toISOString().split('T')[0]) || ['Reserved', 'Contracted', 'DownPayment', 'DocumentPrep', 'LoanProcessing', 'Approved'].includes(currentRecord.status)) {
+          if (!currentRecord.cancelDate || currentRecord.cancelDate > targetDate.toISOString().split('T')[0]) {
+            status = 'Waiting';
+          }
         }
       } else {
          if (p.sale_status === 'Transferred' || p.sale_status === 'Sold' || p.sale_status === 'Handover') { status = 'Transferred'; }
