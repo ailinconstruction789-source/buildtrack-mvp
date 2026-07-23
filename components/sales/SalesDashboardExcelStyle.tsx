@@ -355,6 +355,19 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
               <div className="text-sm text-blue-200 font-medium bg-white/10 p-2 rounded inline-block mt-2">
                 {fmtM(metrics.expectingTransfer.reduce((sum: number, r: any) => sum + r.salePrice, 0))}
               </div>
+              {metrics.expectingTransfer.length > 0 && (
+                <div className="mt-4 pt-4 border-t border-white/20 text-blue-200 text-xs font-medium grid grid-cols-2 gap-1.5">
+                  {[...metrics.expectingTransfer].sort((a: any, b: any) => {
+                    const nameA = a.plot?.project_name && a.plot?.plot_name ? `${a.plot.project_name}-${a.plot.plot_name}` : '-';
+                    const nameB = b.plot?.project_name && b.plot?.plot_name ? `${b.plot.project_name}-${b.plot.plot_name}` : '-';
+                    return nameA.localeCompare(nameB, 'th', { numeric: true });
+                  }).map((r: any) => (
+                    <div key={r.id} className="truncate" title={r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : '-'}>
+                      • {r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : '-'}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
