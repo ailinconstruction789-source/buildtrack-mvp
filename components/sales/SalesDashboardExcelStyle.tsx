@@ -346,7 +346,7 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
               </div>
             </div>
 
-            <div className="bg-gradient-to-br from-blue-900 to-indigo-900 p-5 rounded-2xl shadow-md text-white flex flex-col h-full">
+            <div className="bg-gradient-to-br from-blue-900 to-indigo-900 p-5 rounded-2xl shadow-md text-white flex flex-col">
               <div className="text-blue-100 text-sm font-medium mb-1">ภาพรวมการโอนเดือนนี้ (สำเร็จ + คาดการณ์)</div>
               <div className="flex items-end gap-2 mb-2">
                 <span className="text-4xl font-black">{metrics.expectingTransfer.length + metrics.transferMonth.length}</span>
@@ -356,7 +356,7 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
                 {fmtM([...metrics.expectingTransfer, ...metrics.transferMonth].reduce((sum: number, r: any) => sum + r.salePrice, 0))}
               </div>
               
-              <div className="mt-4 pt-4 border-t border-white/20 flex-1">
+              <div className="mt-4 pt-4 border-t border-white/20">
                 <div className="grid grid-cols-2 gap-4">
                   {/* โอนแล้ว */}
                   <div>
