@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Loader2, Calendar, TrendingUp, Users, BarChart } from 'lucide-react';
+import { Loader2, Calendar, TrendingUp, Users, BarChart, ChevronDown, ChevronUp } from 'lucide-react';
 import { ComposedChart, Bar, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
 
 export default function SalesDashboardExcelStyle({ project }: { project?: any }) {
@@ -12,6 +12,17 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
   const [selectedDateStr, setSelectedDateStr] = useState<string>(new Date().toISOString().split('T')[0]);
   const selectedYear = selectedDateStr.split('-')[0];
   const selectedMonth = selectedDateStr.split('-')[1];
+
+  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
+
+  const toggleProjectExpand = (proj: string) => {
+    setExpandedProjects(prev => {
+      const next = new Set(prev);
+      if (next.has(proj)) next.delete(proj);
+      else next.add(proj);
+      return next;
+    });
+  };
 
   // Format currency
   const fmtM = (val: number) => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(val);
@@ -356,15 +367,51 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
                     </tr>
                   </thead>
                   <tbody>
-                    {metrics.activeProjects.map(([proj, stats]) => (
-                      <tr key={proj} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-                        <td className="p-3 font-semibold text-gray-800">{proj}</td>
-                        <td className="p-3 text-right font-medium text-emerald-600">{stats.transferred}</td>
-                        <td className="p-3 text-right font-medium text-blue-600">{stats.waiting}</td>
-                        <td className="p-3 text-right text-gray-500">{stats.available}</td>
-                        <td className="p-3 text-right font-bold bg-gray-50 text-gray-900">{stats.total}</td>
-                      </tr>
-                    ))}
+                    {metrics.activeProjects.map(([proj, stats]) => {
+                      const isExpanded = expandedProjects.has(proj);
+                      return (
+                        <React.Fragment key={proj}>
+                          <tr 
+                            onClick={() => toggleProjectExpand(proj)}
+                            className="border-b border-gray-100 hover:bg-gray-50 transition-colors cursor-pointer"
+                          >
+                            <td className="p-3 font-semibold text-gray-800 flex items-center gap-2">
+                              {isExpanded ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+                              {proj}
+                            </td>
+                            <td className="p-3 text-right font-medium text-emerald-600">{stats.transferred}</td>
+                            <td className="p-3 text-right font-medium text-blue-600">{stats.waiting}</td>
+                            <td className="p-3 text-right text-gray-500">{stats.available}</td>
+                            <td className="p-3 text-right font-bold bg-gray-50 text-gray-900">{stats.total}</td>
+                          </tr>
+                          {isExpanded && (
+                            <tr className="bg-slate-50/50">
+                              <td colSpan={5} className="p-0 border-b border-gray-100">
+                                <div className="grid grid-cols-5 divide-x divide-gray-100">
+                                  <div className="p-3 text-xs font-bold text-gray-400 text-right pr-4 self-start pt-4">รายชื่อแปลง:</div>
+                                  <div className="p-3 text-xs text-emerald-600 flex flex-col gap-1 items-end">
+                                    {data.plots.filter((p: any) => p.project_name === proj && p.status === 'Transferred').map((p: any) => (
+                                      <div key={p.id}>{p.plot_name}</div>
+                                    ))}
+                                  </div>
+                                  <div className="p-3 text-xs text-blue-600 flex flex-col gap-1 items-end">
+                                    {data.plots.filter((p: any) => p.project_name === proj && !['Transferred', 'Available'].includes(p.status)).map((p: any) => (
+                                      <div key={p.id}>{p.plot_name}</div>
+                                    ))}
+                                  </div>
+                                  <div className="p-3 text-xs text-gray-500 flex flex-col gap-1 items-end">
+                                    {data.plots.filter((p: any) => p.project_name === proj && p.status === 'Available').map((p: any) => (
+                                      <div key={p.id}>{p.plot_name}</div>
+                                    ))}
+                                  </div>
+                                  <div className="p-3 bg-gray-50/50"></div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
                     <tr className="bg-blue-50 border-t-2 border-blue-200">
                       <td className="p-3 font-black text-blue-900">Grand Total</td>
                       <td className="p-3 text-right font-black text-emerald-700">{metrics.sumTransCnt}</td>
