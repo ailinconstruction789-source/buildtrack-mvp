@@ -211,7 +211,19 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
               <p className="text-sm font-semibold text-gray-500 tracking-wide uppercase mt-0.5">SOMSAMAI PROPERTY COMPANY LIMITED</p>
             </div>
           </div>
-          <div className="mt-4 md:mt-0 flex items-center gap-3">
+          <div className="mt-4 md:mt-0 flex flex-col md:flex-row items-start md:items-center gap-4 lg:gap-8">
+            <div className="bg-indigo-50 p-3 px-5 rounded-xl border border-indigo-100 shadow-sm">
+              <div className="text-indigo-800 text-xs font-bold uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-indigo-500"></div> ยอดขายรวม (โอน + จอง)
+              </div>
+              <div className="flex items-baseline gap-3">
+                <div className="text-2xl font-black text-indigo-700">{fmtM(metrics.sumTransVal + metrics.sumWaitVal)}</div>
+                <div className="text-xs font-medium text-indigo-600/80">
+                  {metrics.sumTransCnt + metrics.sumWaitCnt} หลัง • เฉลี่ย {fmtM((metrics.sumTransVal + metrics.sumWaitVal) / (metrics.sumTransCnt + metrics.sumWaitCnt || 1))}/หลัง
+                </div>
+              </div>
+            </div>
+            
             <div className="flex items-center gap-2 bg-gray-50 p-1.5 px-3 rounded-lg border border-gray-200 shadow-sm">
               <Calendar className="w-5 h-5 text-blue-600" />
               <input 
@@ -466,15 +478,13 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
                   </tbody>
                 </table>
               </div>
-              <div className="xl:w-80 p-6 bg-gray-50 flex flex-col justify-center gap-5 border-l border-gray-100">
-                <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100">
-                  <div className="text-indigo-800 text-xs font-bold uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                    <div className="w-1.5 h-1.5 rounded-full bg-indigo-500"></div> ยอดขายรวม (โอน + จอง)
-                  </div>
-                  <div className="text-2xl font-black text-indigo-700">{fmtM(metrics.sumTransVal + metrics.sumWaitVal)}</div>
-                  <div className="flex justify-between items-center mt-2 text-xs font-medium text-indigo-600/80">
-                    <span>{metrics.sumTransCnt + metrics.sumWaitCnt} หลัง</span>
-                    <span>เฉลี่ย {fmtM((metrics.sumTransVal + metrics.sumWaitVal) / (metrics.sumTransCnt + metrics.sumWaitCnt || 1))}/หลัง</span>
+              <div className="xl:w-72 p-6 bg-gray-50 flex flex-col justify-center gap-5 border-l border-gray-100">
+                <div className="px-2">
+                  <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">บ้านทั้งหมด (ปี {selectedYear})</div>
+                  <div className="text-xl font-black text-gray-800">{fmtM(metrics.sumTransVal + metrics.sumWaitVal + metrics.sumAvailVal)}</div>
+                  <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
+                    <span>{metrics.sumTotalCnt} หลัง</span>
+                    <span>เฉลี่ย {fmtM((metrics.sumTransVal + metrics.sumWaitVal + metrics.sumAvailVal) / (metrics.sumTotalCnt || 1))}/หลัง</span>
                   </div>
                 </div>
 
