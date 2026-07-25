@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Loader2, Calendar, TrendingUp, Users, BarChart, ChevronDown, ChevronUp } from 'lucide-react';
+import WaitingForTransferDetails from './WaitingForTransferDetails';
 import { ComposedChart, Bar, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
 
 export default function SalesDashboardExcelStyle({ project }: { project?: any }) {
@@ -31,7 +32,7 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
     const fetchAllData = async () => {
       setLoading(true);
       try {
-        const { data: pData } = await supabase.from('plots').select('*');
+        const { data: pData } = await supabase.from('plots').select('*, house_types(type_name)');
         const { data: lData } = await supabase.from('leads').select('*');
         const { data: hTypeData } = await supabase.from('house_types').select('*');
         
@@ -101,19 +102,29 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
 
     const expectingTransfer = validRecords.filter((r: any) => r.expectedTransfer && r.expectedTransfer.startsWith(targetMonthPrefix) && !r.transferDate && (!r.cancelDate || r.cancelDate > targetMonthPrefix));
 
-    const projectGroups: Record<string, { total: number, transferred: number, waiting: number, available: number, transVal: number, waitVal: number, availVal: number, transferredPlots: any[], waitingPlots: any[], availablePlots: any[] }> = {};
+    const projectGroups: Record<string, { total: number, transferred: number, waiting: number, available: number, transVal: number, waitVal: number, availVal: number, transAppraisal: number, waitAppraisal: number, transferredPlots: any[], waitingPlots: any[], availablePlots: any[] }> = {};
     
     data.plots.forEach((p: any) => {
       const isInfra = data.houseTypes?.find((h: any) => h.id === p.house_type_id)?.is_infrastructure;
       if (isInfra) return;
 
+      if (p.created_at) {
+        const pCreated = new Date(p.created_at).toISOString().split('T')[0];
+        const targetStr = targetDate.toISOString().split('T')[0];
+        if (pCreated > targetStr) return;
+      }
+
       const proj = p.project_name || 'ไม่ระบุ';
-      if (!projectGroups[proj]) { projectGroups[proj] = { total: 0, transferred: 0, waiting: 0, available: 0, transVal: 0, waitVal: 0, availVal: 0, transferredPlots: [], waitingPlots: [], availablePlots: [] }; }
+      if (!projectGroups[proj]) { projectGroups[proj] = { total: 0, transferred: 0, waiting: 0, available: 0, transVal: 0, waitVal: 0, availVal: 0, transAppraisal: 0, waitAppraisal: 0, transferredPlots: [], waitingPlots: [], availablePlots: [] }; }
       
       const price = Number(p.selling_price || 0);
       
       const plotRecords = validRecords.filter((r: any) => r.plot?.id === p.id).sort((a: any, b: any) => (b.createdDate || '').localeCompare(a.createdDate || ''));
       const currentRecord = plotRecords[0];
+
+      const rawAppraisalPrice = currentRecord ? Number(currentRecord.sale?.land_office_price || p.land_appraisal_price || 0) : Number(p.land_appraisal_price || 0);
+      const activeSalePrice = currentRecord ? (currentRecord.salePrice || price) : price;
+      const appraisalPrice = rawAppraisalPrice > 0 ? rawAppraisalPrice : activeSalePrice;
 
       let status = 'Available';
       let tDate = '';
@@ -142,10 +153,12 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
       if (status === 'Transferred') {
          projectGroups[proj].transferred++;
          projectGroups[proj].transVal += price;
+         projectGroups[proj].transAppraisal += appraisalPrice;
          projectGroups[proj].transferredPlots.push(p);
       } else if (status === 'Waiting') {
          projectGroups[proj].waiting++;
          projectGroups[proj].waitVal += price;
+         projectGroups[proj].waitAppraisal += appraisalPrice;
          projectGroups[proj].waitingPlots.push(p);
       } else {
          projectGroups[proj].available++;
@@ -157,10 +170,12 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
     const activeProjects = Object.entries(projectGroups).filter(([_, stats]) => stats.available > 0);
     
     let sumTransVal = 0, sumWaitVal = 0, sumAvailVal = 0;
+    let sumTransAppraisal = 0, sumWaitAppraisal = 0;
     let sumTransCnt = 0, sumWaitCnt = 0, sumAvailCnt = 0, sumTotalCnt = 0;
     
     activeProjects.forEach(([_, stats]) => {
       sumTransVal += stats.transVal; sumWaitVal += stats.waitVal; sumAvailVal += stats.availVal;
+      sumTransAppraisal += stats.transAppraisal; sumWaitAppraisal += stats.waitAppraisal;
       sumTransCnt += stats.transferred; sumWaitCnt += stats.waiting; sumAvailCnt += stats.available; sumTotalCnt += stats.total;
     });
 
@@ -186,6 +201,7 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
       viewsAcc, bookedAcc, cancelAcc, transferAcc,
       viewsMonth, bookedMonth, transferMonth, cancelMonth, expectingTransfer,
       activeProjects, sumTransVal, sumWaitVal, sumAvailVal,
+      sumTransAppraisal, sumWaitAppraisal,
       sumTransCnt, sumWaitCnt, sumAvailCnt, sumTotalCnt,
       projChartData,
       lineChartTransfers: buildLineData('transferDate'),
@@ -212,15 +228,23 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
             </div>
           </div>
           <div className="mt-4 md:mt-0 flex flex-col md:flex-row items-start md:items-center gap-4 lg:gap-8">
-            <div className="bg-indigo-50 p-3 px-5 rounded-xl border border-indigo-100 shadow-sm">
-              <div className="text-indigo-800 text-xs font-bold uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-indigo-500"></div> ยอดขายรวม (โอน + จอง)
-              </div>
-              <div className="flex items-baseline gap-3">
-                <div className="text-2xl font-black text-indigo-700">{fmtM(metrics.sumTransVal + metrics.sumWaitVal)}</div>
-                <div className="text-xs font-medium text-indigo-600/80">
-                  {metrics.sumTransCnt + metrics.sumWaitCnt} หลัง • เฉลี่ย {fmtM((metrics.sumTransVal + metrics.sumWaitVal) / (metrics.sumTransCnt + metrics.sumWaitCnt || 1))}/หลัง
+            <div className="bg-indigo-50 p-3 px-5 rounded-xl border border-indigo-100 shadow-sm flex flex-col sm:flex-row gap-4 sm:gap-6">
+              <div>
+                <div className="text-indigo-800 text-xs font-bold uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-indigo-500"></div> ยอดขายรวม (โอน + จอง)
                 </div>
+                <div className="flex items-baseline gap-3">
+                  <div className="text-2xl font-black text-indigo-700">{fmtM(metrics.sumTransVal + metrics.sumWaitVal)}</div>
+                  <div className="text-xs font-medium text-indigo-600/80 hidden xl:block">
+                    {metrics.sumTransCnt + metrics.sumWaitCnt} หลัง
+                  </div>
+                </div>
+              </div>
+              <div className="border-t sm:border-t-0 sm:border-l border-indigo-200/60 pt-3 sm:pt-0 sm:pl-6">
+                <div className="text-rose-600 text-xs font-bold uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-rose-500"></div> ยอด ท.ด. (โอน + จอง)
+                </div>
+                <div className="text-2xl font-black text-rose-600">{fmtM(metrics.sumTransAppraisal + metrics.sumWaitAppraisal)}</div>
               </div>
             </div>
             
@@ -236,10 +260,9 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* LEFT METRICS */}
-          <div className="lg:col-span-3 space-y-4">
-            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col gap-4">
+                {/* ROW 1: KPI SUMMARY CARDS */}
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+                      <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col gap-4">
               <div className="flex justify-between items-center mb-1 pb-3 border-b border-gray-100">
                  <span className="font-bold text-gray-800 text-base">ยอดสะสมประจำปี {selectedYear}</span>
               </div>
@@ -256,8 +279,7 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
                 <span className="text-2xl font-black text-red-600">{metrics.cancelAcc.length}</span>
               </div>
             </div>
-
-            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
               <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-100">
                 <div className="flex items-center gap-2">
                   <Calendar className="w-5 h-5 text-blue-600" />
@@ -283,7 +305,187 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
                 </div>
               </div>
             </div>
+          <div className="bg-gradient-to-br from-blue-900 to-indigo-900 p-5 rounded-2xl shadow-md text-white flex flex-col">
+              <div className="text-blue-100 text-sm font-medium mb-1">ภาพรวมการโอนเดือนนี้ (สำเร็จ + คาดการณ์)</div>
+              <div className="flex items-end gap-2 mb-2">
+                <span className="text-4xl font-black">{metrics.expectingTransfer.length + metrics.transferMonth.length}</span>
+                <span className="text-blue-200 font-medium mb-1">หลัง</span>
+              </div>
+              <div className="text-sm text-blue-200 font-medium bg-white/10 p-2 rounded inline-block mt-2 self-start">
+                {fmtM([...metrics.expectingTransfer, ...metrics.transferMonth].reduce((sum: number, r: any) => sum + r.salePrice, 0))}
+              </div>
+              
+              <div className="mt-4 pt-4 border-t border-white/20">
+                <div className="grid grid-cols-2 gap-4">
+                  {/* โอนแล้ว */}
+                  <div>
+                    <div className="text-emerald-400 text-xs font-bold mb-2 flex items-center gap-1">
+                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-400"></div>
+                      โอนแล้ว ({metrics.transferMonth.length})
+                    </div>
+                    <div className="text-blue-200 text-xs font-medium space-y-1">
+                      {metrics.transferMonth.length > 0 ? [...metrics.transferMonth].sort((a: any, b: any) => {
+                        const nameA = a.plot?.project_name && a.plot?.plot_name ? `${a.plot.project_name}-${a.plot.plot_name}` : '-';
+                        const nameB = b.plot?.project_name && b.plot?.plot_name ? `${b.plot.project_name}-${b.plot.plot_name}` : '-';
+                        return nameA.localeCompare(nameB, 'th', { numeric: true });
+                      }).map((r: any) => (
+                        <div key={r.id} className="truncate text-emerald-100/90" title={r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : '-'}>
+                          • {r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : '-'}
+                        </div>
+                      )) : <div className="text-blue-300/50 italic">- ไม่มี -</div>}
+                    </div>
+                  </div>
+                  
+                  {/* คาดว่าจะโอน */}
+                  <div>
+                    <div className="text-amber-400 text-xs font-bold mb-2 flex items-center gap-1">
+                      <div className="w-1.5 h-1.5 rounded-full bg-amber-400"></div>
+                      รอโอน ({metrics.expectingTransfer.length})
+                    </div>
+                    <div className="text-blue-200 text-xs font-medium space-y-1">
+                      {metrics.expectingTransfer.length > 0 ? [...metrics.expectingTransfer].sort((a: any, b: any) => {
+                        const nameA = a.plot?.project_name && a.plot?.plot_name ? `${a.plot.project_name}-${a.plot.plot_name}` : '-';
+                        const nameB = b.plot?.project_name && b.plot?.plot_name ? `${b.plot.project_name}-${b.plot.plot_name}` : '-';
+                        return nameA.localeCompare(nameB, 'th', { numeric: true });
+                      }).map((r: any) => (
+                        <div key={r.id} className="truncate text-amber-100/90" title={r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : '-'}>
+                          • {r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : '-'}
+                        </div>
+                      )) : <div className="text-blue-300/50 italic">- ไม่มี -</div>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between h-full">
+                <div className="px-2">
+                  <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">บ้านทั้งหมด (ปี {selectedYear})</div>
+                  <div className="text-xl font-black text-gray-800">{fmtM(metrics.sumTransVal + metrics.sumWaitVal + metrics.sumAvailVal)}</div>
+                  <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
+                    <span>{metrics.sumTotalCnt} หลัง</span>
+                    <span>เฉลี่ย {fmtM((metrics.sumTransVal + metrics.sumWaitVal + metrics.sumAvailVal) / (metrics.sumTotalCnt || 1))}/หลัง</span>
+                  </div>
+                </div>
 
+                <div className="px-2">
+                  <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">ยอดโอนสะสม</div>
+                  <div className="text-xl font-black text-emerald-600">{fmtM(metrics.sumTransVal)}</div>
+                  <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
+                    <span>{metrics.sumTransCnt} หลัง</span>
+                    <span className="text-rose-500">ท.ด. {fmtM(metrics.sumTransAppraisal)}</span>
+                  </div>
+                </div>
+
+                <div className="px-2">
+                  <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">ยอดรอโอน</div>
+                  <div className="text-xl font-black text-blue-600">{fmtM(metrics.sumWaitVal)}</div>
+                  <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
+                    <span>{metrics.sumWaitCnt} หลัง</span>
+                    <span className="text-rose-500">ท.ด. {fmtM(metrics.sumWaitAppraisal)}</span>
+                  </div>
+                </div>
+
+                <div className="px-2">
+                  <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">ยอดคงเหลือ (ว่าง)</div>
+                  <div className="text-xl font-black text-gray-800">{fmtM(metrics.sumAvailVal)}</div>
+                  <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
+                    <span>{metrics.sumAvailCnt} หลัง</span>
+                    <span>เฉลี่ย {fmtM(metrics.sumAvailVal / (metrics.sumAvailCnt || 1))}/หลัง</span>
+                  </div>
+                </div>
+              </div>
+        </div>
+
+        {/* ROW 2: CHARTS */}
+        <div className="grid grid-cols-1 gap-6 mt-6">
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+              <h3 className="text-base font-bold text-gray-800 mb-6 flex items-center gap-2"><BarChart className="w-5 h-5 text-blue-600"/> ยอดจองและโอนประจำเดือน แต่ละโครงการ</h3>
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={metrics.projChartData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="project" tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false} />
+                    <YAxis allowDecimals={false} tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false} />
+                    <RechartsTooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} />
+                    <Legend iconType="circle" wrapperStyle={{fontSize: 12, paddingTop: '20px'}} />
+                    <Bar dataKey="booking" name="ยอดจองประจำเดือน" fill="#93c5fd" radius={[4,4,0,0]} barSize={24} />
+                    <Bar dataKey="transfer" name="ยอดโอนประจำเดือน" fill="#3b82f6" radius={[4,4,0,0]} barSize={24} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+        </div>
+
+        {/* ROW 3: DETAILED TABLES */}
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 mt-6">
+          <div className="xl:col-span-8">
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden h-full flex flex-col">
+  <div className="flex-1 p-0 overflow-x-auto ">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-200">
+                      <th className="p-3 text-left font-bold text-gray-700">โครงการ</th>
+                      <th className="p-3 text-right font-bold text-emerald-600">โอน</th>
+                      <th className="p-3 text-right font-bold text-blue-600">รอโอน</th>
+                      <th className="p-3 text-right font-bold text-gray-500">ว่าง</th>
+                      <th className="p-3 text-right font-bold text-gray-900 bg-gray-100">ทั้งหมด</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {metrics.activeProjects.map(([proj, stats]) => {
+                      const isExpanded = expandedProjects.has(proj);
+                      return (
+                        <React.Fragment key={proj}>
+                          <tr 
+                            onClick={() => toggleProjectExpand(proj)}
+                            className="border-b border-gray-100 hover:bg-gray-50 transition-colors cursor-pointer"
+                          >
+                            <td className="p-3 font-semibold text-gray-800 flex items-center gap-2">
+                              {isExpanded ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+                              {proj}
+                            </td>
+                            <td className="p-3 text-right font-medium text-emerald-600">{stats.transferred}</td>
+                            <td className="p-3 text-right font-medium text-blue-600">{stats.waiting}</td>
+                            <td className="p-3 text-right text-gray-500">{stats.available}</td>
+                            <td className="p-3 text-right font-bold bg-gray-50 text-gray-900">{stats.total}</td>
+                          </tr>
+                          {isExpanded && (
+                            <tr className="bg-slate-50/50 border-b border-gray-100">
+                              <td className="p-3 text-xs font-bold text-gray-400 text-right align-top pt-4">รายชื่อแปลง:</td>
+                              <td className="p-3 text-xs text-emerald-600 align-top text-right pt-4 space-y-1">
+                                {[...stats.transferredPlots].sort((a: any, b: any) => (a.plot_name || '').localeCompare(b.plot_name || '', 'th', { numeric: true })).map((p: any) => (
+                                  <div key={p.id}>{p.plot_name}</div>
+                                ))}
+                              </td>
+                              <td className="p-3 text-xs text-blue-600 align-top text-right pt-4 space-y-1">
+                                {[...stats.waitingPlots].sort((a: any, b: any) => (a.plot_name || '').localeCompare(b.plot_name || '', 'th', { numeric: true })).map((p: any) => (
+                                  <div key={p.id}>{p.plot_name}</div>
+                                ))}
+                              </td>
+                              <td className="p-3 text-xs text-gray-500 align-top text-right pt-4 space-y-1">
+                                {[...stats.availablePlots].sort((a: any, b: any) => (a.plot_name || '').localeCompare(b.plot_name || '', 'th', { numeric: true })).map((p: any) => (
+                                  <div key={p.id}>{p.plot_name}</div>
+                                ))}
+                              </td>
+                              <td className="p-3 bg-gray-50/50 border-l border-white"></td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                    <tr className="bg-blue-50 border-t-2 border-blue-200">
+                      <td className="p-3 font-black text-blue-900">Grand Total</td>
+                      <td className="p-3 text-right font-black text-emerald-700">{metrics.sumTransCnt}</td>
+                      <td className="p-3 text-right font-black text-blue-700">{metrics.sumWaitCnt}</td>
+                      <td className="p-3 text-right font-bold text-gray-700">{metrics.sumAvailCnt}</td>
+                      <td className="p-3 text-right font-black text-blue-900">{metrics.sumTotalCnt}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div className="xl:col-span-4">
             {/* MONTHLY DETAILS CARD (3 COLUMNS) */}
             <div className="bg-white p-4 lg:p-5 rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
               <div className="grid grid-cols-3 gap-2">
@@ -357,182 +559,6 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
                 </div>
               </div>
             </div>
-
-            <div className="bg-gradient-to-br from-blue-900 to-indigo-900 p-5 rounded-2xl shadow-md text-white flex flex-col">
-              <div className="text-blue-100 text-sm font-medium mb-1">ภาพรวมการโอนเดือนนี้ (สำเร็จ + คาดการณ์)</div>
-              <div className="flex items-end gap-2 mb-2">
-                <span className="text-4xl font-black">{metrics.expectingTransfer.length + metrics.transferMonth.length}</span>
-                <span className="text-blue-200 font-medium mb-1">หลัง</span>
-              </div>
-              <div className="text-sm text-blue-200 font-medium bg-white/10 p-2 rounded inline-block mt-2 self-start">
-                {fmtM([...metrics.expectingTransfer, ...metrics.transferMonth].reduce((sum: number, r: any) => sum + r.salePrice, 0))}
-              </div>
-              
-              <div className="mt-4 pt-4 border-t border-white/20">
-                <div className="grid grid-cols-2 gap-4">
-                  {/* โอนแล้ว */}
-                  <div>
-                    <div className="text-emerald-400 text-xs font-bold mb-2 flex items-center gap-1">
-                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-400"></div>
-                      โอนแล้ว ({metrics.transferMonth.length})
-                    </div>
-                    <div className="text-blue-200 text-xs font-medium space-y-1">
-                      {metrics.transferMonth.length > 0 ? [...metrics.transferMonth].sort((a: any, b: any) => {
-                        const nameA = a.plot?.project_name && a.plot?.plot_name ? `${a.plot.project_name}-${a.plot.plot_name}` : '-';
-                        const nameB = b.plot?.project_name && b.plot?.plot_name ? `${b.plot.project_name}-${b.plot.plot_name}` : '-';
-                        return nameA.localeCompare(nameB, 'th', { numeric: true });
-                      }).map((r: any) => (
-                        <div key={r.id} className="truncate text-emerald-100/90" title={r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : '-'}>
-                          • {r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : '-'}
-                        </div>
-                      )) : <div className="text-blue-300/50 italic">- ไม่มี -</div>}
-                    </div>
-                  </div>
-                  
-                  {/* คาดว่าจะโอน */}
-                  <div>
-                    <div className="text-amber-400 text-xs font-bold mb-2 flex items-center gap-1">
-                      <div className="w-1.5 h-1.5 rounded-full bg-amber-400"></div>
-                      รอโอน ({metrics.expectingTransfer.length})
-                    </div>
-                    <div className="text-blue-200 text-xs font-medium space-y-1">
-                      {metrics.expectingTransfer.length > 0 ? [...metrics.expectingTransfer].sort((a: any, b: any) => {
-                        const nameA = a.plot?.project_name && a.plot?.plot_name ? `${a.plot.project_name}-${a.plot.plot_name}` : '-';
-                        const nameB = b.plot?.project_name && b.plot?.plot_name ? `${b.plot.project_name}-${b.plot.plot_name}` : '-';
-                        return nameA.localeCompare(nameB, 'th', { numeric: true });
-                      }).map((r: any) => (
-                        <div key={r.id} className="truncate text-amber-100/90" title={r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : '-'}>
-                          • {r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : '-'}
-                        </div>
-                      )) : <div className="text-blue-300/50 italic">- ไม่มี -</div>}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* MAIN CONTENT */}
-          <div className="lg:col-span-9 flex flex-col gap-6">
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col xl:flex-row">
-              <div className="flex-1 p-0 overflow-x-auto border-r border-gray-100">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-gray-50 border-b border-gray-200">
-                      <th className="p-3 text-left font-bold text-gray-700">โครงการ</th>
-                      <th className="p-3 text-right font-bold text-emerald-600">โอน</th>
-                      <th className="p-3 text-right font-bold text-blue-600">รอโอน</th>
-                      <th className="p-3 text-right font-bold text-gray-500">ว่าง</th>
-                      <th className="p-3 text-right font-bold text-gray-900 bg-gray-100">ทั้งหมด</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {metrics.activeProjects.map(([proj, stats]) => {
-                      const isExpanded = expandedProjects.has(proj);
-                      return (
-                        <React.Fragment key={proj}>
-                          <tr 
-                            onClick={() => toggleProjectExpand(proj)}
-                            className="border-b border-gray-100 hover:bg-gray-50 transition-colors cursor-pointer"
-                          >
-                            <td className="p-3 font-semibold text-gray-800 flex items-center gap-2">
-                              {isExpanded ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
-                              {proj}
-                            </td>
-                            <td className="p-3 text-right font-medium text-emerald-600">{stats.transferred}</td>
-                            <td className="p-3 text-right font-medium text-blue-600">{stats.waiting}</td>
-                            <td className="p-3 text-right text-gray-500">{stats.available}</td>
-                            <td className="p-3 text-right font-bold bg-gray-50 text-gray-900">{stats.total}</td>
-                          </tr>
-                          {isExpanded && (
-                            <tr className="bg-slate-50/50 border-b border-gray-100">
-                              <td className="p-3 text-xs font-bold text-gray-400 text-right align-top pt-4">รายชื่อแปลง:</td>
-                              <td className="p-3 text-xs text-emerald-600 align-top text-right pt-4 space-y-1">
-                                {[...stats.transferredPlots].sort((a: any, b: any) => (a.plot_name || '').localeCompare(b.plot_name || '', 'th', { numeric: true })).map((p: any) => (
-                                  <div key={p.id}>{p.plot_name}</div>
-                                ))}
-                              </td>
-                              <td className="p-3 text-xs text-blue-600 align-top text-right pt-4 space-y-1">
-                                {[...stats.waitingPlots].sort((a: any, b: any) => (a.plot_name || '').localeCompare(b.plot_name || '', 'th', { numeric: true })).map((p: any) => (
-                                  <div key={p.id}>{p.plot_name}</div>
-                                ))}
-                              </td>
-                              <td className="p-3 text-xs text-gray-500 align-top text-right pt-4 space-y-1">
-                                {[...stats.availablePlots].sort((a: any, b: any) => (a.plot_name || '').localeCompare(b.plot_name || '', 'th', { numeric: true })).map((p: any) => (
-                                  <div key={p.id}>{p.plot_name}</div>
-                                ))}
-                              </td>
-                              <td className="p-3 bg-gray-50/50 border-l border-white"></td>
-                            </tr>
-                          )}
-                        </React.Fragment>
-                      );
-                    })}
-                    <tr className="bg-blue-50 border-t-2 border-blue-200">
-                      <td className="p-3 font-black text-blue-900">Grand Total</td>
-                      <td className="p-3 text-right font-black text-emerald-700">{metrics.sumTransCnt}</td>
-                      <td className="p-3 text-right font-black text-blue-700">{metrics.sumWaitCnt}</td>
-                      <td className="p-3 text-right font-bold text-gray-700">{metrics.sumAvailCnt}</td>
-                      <td className="p-3 text-right font-black text-blue-900">{metrics.sumTotalCnt}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-              <div className="xl:w-72 p-6 bg-gray-50 flex flex-col justify-center gap-5 border-l border-gray-100">
-                <div className="px-2">
-                  <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">บ้านทั้งหมด (ปี {selectedYear})</div>
-                  <div className="text-xl font-black text-gray-800">{fmtM(metrics.sumTransVal + metrics.sumWaitVal + metrics.sumAvailVal)}</div>
-                  <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
-                    <span>{metrics.sumTotalCnt} หลัง</span>
-                    <span>เฉลี่ย {fmtM((metrics.sumTransVal + metrics.sumWaitVal + metrics.sumAvailVal) / (metrics.sumTotalCnt || 1))}/หลัง</span>
-                  </div>
-                </div>
-
-                <div className="px-2">
-                  <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">ยอดโอนสะสม</div>
-                  <div className="text-xl font-black text-emerald-600">{fmtM(metrics.sumTransVal)}</div>
-                  <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
-                    <span>{metrics.sumTransCnt} หลัง</span>
-                    <span>เฉลี่ย {fmtM(metrics.sumTransVal / (metrics.sumTransCnt || 1))}/หลัง</span>
-                  </div>
-                </div>
-
-                <div className="px-2">
-                  <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">ยอดรอโอน</div>
-                  <div className="text-xl font-black text-blue-600">{fmtM(metrics.sumWaitVal)}</div>
-                  <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
-                    <span>{metrics.sumWaitCnt} หลัง</span>
-                    <span>เฉลี่ย {fmtM(metrics.sumWaitVal / (metrics.sumWaitCnt || 1))}/หลัง</span>
-                  </div>
-                </div>
-
-                <div className="px-2">
-                  <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">ยอดคงเหลือ (ว่าง)</div>
-                  <div className="text-xl font-black text-gray-800">{fmtM(metrics.sumAvailVal)}</div>
-                  <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
-                    <span>{metrics.sumAvailCnt} หลัง</span>
-                    <span>เฉลี่ย {fmtM(metrics.sumAvailVal / (metrics.sumAvailCnt || 1))}/หลัง</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-              <h3 className="text-base font-bold text-gray-800 mb-6 flex items-center gap-2"><BarChart className="w-5 h-5 text-blue-600"/> ยอดจองและโอนประจำเดือน แต่ละโครงการ</h3>
-              <div className="h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={metrics.projChartData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis dataKey="project" tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false} />
-                    <YAxis allowDecimals={false} tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false} />
-                    <RechartsTooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} />
-                    <Legend iconType="circle" wrapperStyle={{fontSize: 12, paddingTop: '20px'}} />
-                    <Bar dataKey="booking" name="ยอดจองประจำเดือน" fill="#93c5fd" radius={[4,4,0,0]} barSize={24} />
-                    <Bar dataKey="transfer" name="ยอดโอนประจำเดือน" fill="#3b82f6" radius={[4,4,0,0]} barSize={24} />
-                  </ComposedChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
           </div>
         </div>
 
@@ -604,6 +630,17 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
               </ComposedChart>
             </ResponsiveContainer>
           </div>
+        </div>
+
+        {/* WAITING FOR TRANSFER DETAILS */}
+        <div className="mt-8 pt-6 border-t-2 border-gray-200">
+          <WaitingForTransferDetails 
+            plots={[...metrics.expectingTransfer, ...metrics.transferMonth]
+              .map((r: any) => r.plot)
+              .filter(Boolean)
+              .filter((plot: any, index: number, self: any[]) => self.findIndex((p: any) => p.id === plot.id) === index)}
+            validRecords={metrics.rawValidRecords} 
+          />
         </div>
 
         {/* DETAILED TABLE LIST */}

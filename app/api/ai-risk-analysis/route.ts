@@ -19,6 +19,7 @@ export async function POST(request: Request) {
       model: "gemini-3.5-flash",
       generationConfig: {
         responseMimeType: "application/json",
+        maxOutputTokens: 4096,
       }
     });
 

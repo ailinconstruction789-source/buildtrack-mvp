@@ -14,6 +14,7 @@ import OwnerAnalyticsDashboard from '@/components/OwnerAnalyticsDashboard';
 import SalesReportsView from '@/components/sales/SalesReportsView';
 import SalesDashboardExcelStyle from '@/components/sales/SalesDashboardExcelStyle';
 import SalesIntelligenceView from '@/components/sales/SalesIntelligenceView';
+import SalesSummaryTable from '@/components/sales/SalesSummaryTable';
 import QCPerformanceDashboard from '@/components/QCPerformanceDashboard';
 import ExecutiveAnalytics from '@/components/ExecutiveAnalytics';
 import MasterGanttChart from '@/components/MasterGanttChart';
@@ -27,7 +28,7 @@ import {
   LayoutDashboard, Map as MapIcon, Truck, ChevronRight, ClipboardList, Loader2,
   Send, Camera, CheckCircle, XCircle, UserCog, X, Maximize2, HardHat, PlusCircle, Settings, Building, FolderOpen, Users, Trash2, Search, Filter, LogOut, AlertTriangle, Eraser, Grid, Paintbrush, Clock, SortAsc,
   UserPlus, Phone, CalendarDays, Wrench, FileSpreadsheet, Bell, CalendarClock, TrendingUp, AlertCircle, BarChartHorizontal, Save, Calendar, Smartphone, Monitor, ZoomIn, ZoomOut,
-  PieChart, Home, Activity, Download, Copy, Pickaxe, ShieldAlert, Printer, CheckSquare, Square, ImageIcon, Tag, Hammer, UserCheck, DollarSign, ArrowLeft, Key, Ban, Edit2, Check, Plus, Upload, Calculator, ChevronDown, ChevronUp, Lightbulb
+  PieChart, Home, Activity, Download, Copy, Pickaxe, ShieldAlert, Printer, CheckSquare, Square, ImageIcon, Tag, Hammer, UserCheck, DollarSign, ArrowLeft, Key, Ban, Edit2, Check, Plus, Upload, Calculator, ChevronDown, ChevronUp, Lightbulb, Building2
 } from 'lucide-react';
 
 // 🌟 ฟังก์ชันบีบอัดรูปภาพ Native — อยู่นอก component เพื่อไม่ให้ถูกสร้างใหม่ทุก render 🌟
@@ -1800,17 +1801,7 @@ export default function ConstructionApp() {
           const newProgress = data?.length ? data[data.length - 1].progress : 0;
           setProgressValue(newProgress);
           
-          // 2.5: MUST UPDATE plot_task_assignments so the inspection queue stays consistent!
-          const newLatestUpdate = data?.length ? data[data.length - 1] : null;
-          await supabase.from('plot_task_assignments')
-            .update({
-              progress: newProgress,
-              latest_action: newLatestUpdate?.action || null,
-              latest_role: newLatestUpdate?.role || null,
-              latest_update_time: newLatestUpdate?.created_at || null
-            })
-            .eq('plot_id', plotId)
-            .eq('task_template_id', taskTemplateId);
+          // 2.5: Database Trigger จะจัดการ plot_task_assignments อัตโนมัติเมื่อมีการลบแชท
 
           // 3. สั่งโหลดข้อมูลภาพรวมใหม่ทั้งหมดอยู่เบื้องหลัง (Background refresh) เพื่อรีเซ็ต % แผนผังและแดชบอร์ด
           fetchAllData();
@@ -1850,25 +1841,7 @@ export default function ConstructionApp() {
         if (notifPayload.length > 0) await supabase.from('notifications').insert(notifPayload);
       }
 
-      // 🌟 Restore original logic: Update Actual Start and Finish for QC Review 🌟
-      const revAssignment = assignments.find((a: any) => a.plot_id === selectedPlot.id && a.task_template_id === selectedTask.id);
-      const revPayload: any = { current_progress: finalP };
-      if (finalP > 0 && (!revAssignment || !revAssignment.actual_start_date)) {
-        revPayload.actual_start_date = new Date().toISOString();
-      }
-      if (finalP === 100 && (!revAssignment || !revAssignment.actual_end_date)) {
-        revPayload.actual_end_date = new Date().toISOString();
-      } else if (finalP < 100) {
-        revPayload.actual_end_date = null;
-      }
-      await supabase.from('plot_task_assignments').upsert({
-        plot_id: selectedPlot.id,
-        task_template_id: selectedTask.id,
-        latest_action: actionLabel,
-        latest_role: currentUserRole,
-        latest_update_created_at: new Date().toISOString(),
-        ...revPayload
-      }, { onConflict: 'plot_id,task_template_id' });
+      // 🌟 Database Trigger จะจัดการ plot_task_assignments อัตโนมัติ (Single Source of Truth) 🌟
 
       // 🌟 อัปเดตสถานะ Defect เป็น resolved และบันทึกเวลา 🌟
       if (isApproved) {
@@ -1926,29 +1899,7 @@ export default function ConstructionApp() {
 
           if (deleteError) throw deleteError;
 
-          // 3. Revert plot_task_assignments to previous state
-          if (previousUpdate) {
-            await supabase.from('plot_task_assignments').upsert({
-              plot_id: plotId,
-              task_template_id: taskTemplateId,
-              current_progress: previousUpdate.progress,
-              actual_end_date: previousUpdate.progress === 100 && previousUpdate.action !== 'แอดมินย้อนสถานะงาน (Rollback)' ? previousUpdate.created_at : null,
-              latest_action: previousUpdate.action,
-              latest_role: previousUpdate.role,
-              latest_update_created_at: previousUpdate.created_at
-            }, { onConflict: 'plot_id,task_template_id' });
-          } else {
-            await supabase.from('plot_task_assignments').upsert({
-              plot_id: plotId,
-              task_template_id: taskTemplateId,
-              current_progress: 0,
-              actual_start_date: null,
-              actual_end_date: null,
-              latest_action: null,
-              latest_role: null,
-              latest_update_created_at: null
-            }, { onConflict: 'plot_id,task_template_id' });
-          }
+          // 3. Database Trigger จะจัดการ plot_task_assignments อัตโนมัติเมื่อมีการลบ row ใน task_updates
 
           // 4. Refresh updates for UI
           const { data: newUpdatesData } = await supabase.from('task_updates')
@@ -1990,16 +1941,7 @@ export default function ConstructionApp() {
             is_completed: false 
           }]);
 
-          // 2. Upsert final state to force Dates to NULL (Overwriting any flawed DB trigger logic)
-          await supabase.from('plot_task_assignments').upsert({
-            plot_id: plotId,
-            task_template_id: taskTemplateId,
-            current_progress: 0,
-            actual_start_date: null,
-            actual_end_date: null,
-            latest_action: 'แอดมินย้อนสถานะงาน (Reset)',
-            latest_role: 'Admin'
-          }, { onConflict: 'plot_id,task_template_id' });
+          // 2. Database Trigger จะจัดการเคลียร์ Date และ Progress เป็น 0 ให้เองอัตโนมัติ
 
           const { data } = await supabase.from('task_updates')
             .select('*')
@@ -2648,6 +2590,7 @@ export default function ConstructionApp() {
                           <button onClick={() => setView('sales-dashboard-excel')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-dashboard-excel' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><BarChartHorizontal size={18} /> Dashboard (Excel)</button>
                           <button onClick={() => setView('sales-dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-dashboard' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><LayoutDashboard size={18} /> ระบบฝ่ายขาย (Kanban)</button>
                           <button onClick={() => setView('sales-reports')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-reports' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><TrendingUp size={18} /> รายงานสรุปยอด (Sales)</button>
+                          <button onClick={() => setView('sales-summary-table')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-summary-table' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><Building2 size={18} /> ตารางสรุปฝั่งขาย</button>
                           <button onClick={() => setView('agent-performance')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'agent-performance' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><Users size={18} /> สรุปผลงานเซลล์</button>
                           <button onClick={() => setView('sales-intelligence')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-intelligence' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><Lightbulb size={18} /> Strategic Report</button>
                         </>
@@ -3771,9 +3714,14 @@ export default function ConstructionApp() {
               {view === 'agent-performance' && (
                 <SalesReportsView project={null} viewType="agent" />
               )}
-              {/* ?? View: Sales Strategic Report */}
+              {/* 💡 View: Sales Strategic Report */}
               {view === 'sales-intelligence' && (
                 <SalesIntelligenceView project={selectedProject} />
+              )}
+
+              {/* 🏢 View: Sales Summary Table */}
+              {view === 'sales-summary-table' && (
+                <SalesSummaryTable />
               )}
 
               {/* 🗺️ View: Project Detail & Map Builder */}

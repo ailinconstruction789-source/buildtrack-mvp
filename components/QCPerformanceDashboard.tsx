@@ -417,6 +417,58 @@ export default function QCPerformanceDashboard({
         <h2 className="text-xl sm:text-3xl font-black text-slate-800 italic uppercase">QC Performance <span className="text-slate-400 text-sm sm:text-base font-bold ml-2">แดชบอร์ดประเมินผล QC</span></h2>
       </div>
 
+      {/* 📊 Daily QC Clearance Rate */}
+      {(() => {
+        const pendingQC = inspectionQueue?.filter((item: any) => item.statusFor === 'QC' && !item.isRejected).length || 0;
+        const qcInspected = qcAnalytics?.dailyQC?.total || 0;
+        const qcWorkload = pendingQC + qcInspected;
+        const qcClearanceRate = qcWorkload > 0 ? Math.round((qcInspected / qcWorkload) * 100) : 0;
+        
+        return (
+          <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm animate-in fade-in duration-500 hover:shadow-md transition-shadow">
+            <h3 className="font-black text-xl text-slate-800 flex items-center gap-2 mb-6">
+              <Target className="text-indigo-500" /> Daily QC Clearance Rate
+              <span className="bg-indigo-100 text-indigo-700 text-xs px-2 py-1 rounded-full ml-2">ประสิทธิภาพการเคลียร์งานวันนี้</span>
+            </h3>
+
+            {/* Stats Row */}
+            <div className="grid grid-cols-3 gap-4 mb-6">
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 text-center flex flex-col items-center justify-center">
+                <p className="text-slate-500 font-bold text-xs sm:text-sm mb-1">งานในมือ QC ทั้งหมด</p>
+                <p className="text-3xl font-black text-slate-800">{qcWorkload}</p>
+              </div>
+              <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100 text-center flex flex-col items-center justify-center">
+                <p className="text-emerald-600 font-bold text-xs sm:text-sm mb-1">QC ตรวจแล้ว</p>
+                <p className="text-3xl font-black text-emerald-700">{qcInspected}</p>
+              </div>
+              <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100 text-center flex flex-col items-center justify-center">
+                <p className="text-amber-600 font-bold text-xs sm:text-sm mb-1">รอ QC ตรวจ</p>
+                <p className="text-3xl font-black text-amber-700">{pendingQC}</p>
+              </div>
+            </div>
+
+            {/* Progress Bar */}
+            <div className="relative pt-1">
+              <div className="flex mb-2 items-center justify-between">
+                <div>
+                  <span className="text-xs font-bold inline-block py-1 px-2 uppercase rounded-full text-indigo-600 bg-indigo-100">
+                    Clearance Rate
+                  </span>
+                </div>
+                <div className="text-right">
+                  <span className="text-xs font-black inline-block text-indigo-600">
+                    {qcClearanceRate}%
+                  </span>
+                </div>
+              </div>
+              <div className="overflow-hidden h-4 text-xs flex rounded-full bg-slate-100 shadow-inner">
+                <div style={{ width: `${qcClearanceRate}%` }} className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-gradient-to-r from-indigo-500 to-emerald-400 transition-all duration-1000"></div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* 👑 Owner/Admin Exclusive: Value & Tier Analytics */}
       {(isAdmin || isOwner) && (
         <div className="space-y-6 animate-in fade-in duration-500">
@@ -727,6 +779,97 @@ export default function QCPerformanceDashboard({
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* 🚀 Inspection Pipeline Tracking */}
+          <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm lg:col-span-2 hover:shadow-md transition-shadow">
+            <h3 className="font-black text-xl text-slate-800 flex items-center gap-2 mb-6">
+              <List className="text-blue-500" /> ติดตามสถานะการตรวจงาน
+              <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded-full ml-2">{inspectionQueue?.length || 0} รายการ</span>
+            </h3>
+            
+            {(!inspectionQueue || inspectionQueue.length === 0) ? (
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-8 text-center text-slate-500 font-medium">
+                ไม่มีรายการรอตรวจในขณะนี้
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3">
+                {[...inspectionQueue]
+                  .sort((a: any, b: any) => {
+                    // 1. Sort by Status/Urgency
+                    const getPriority = (item: any) => {
+                      if (item.isRejected) return 1; // Rework (Urgent)
+                      if (item.statusFor === 'Site Engineer') return 2; // Waiting SE
+                      if (item.statusFor === 'QC') return 3; // Waiting QC
+                      return 4;
+                    };
+                    const priorityA = getPriority(a);
+                    const priorityB = getPriority(b);
+                    if (priorityA !== priorityB) return priorityA - priorityB;
+
+                    // 2. Sort by Project Name + Plot Name (A-Z)
+                    const plotA = plots?.find((p: any) => String(p.id) === String(a.plot_id));
+                    const plotB = plots?.find((p: any) => String(p.id) === String(b.plot_id));
+                    const nameA = `${plotA?.project_name || ''} ${plotA?.plot_name || ''}`;
+                    const nameB = `${plotB?.project_name || ''} ${plotB?.plot_name || ''}`;
+                    
+                    if (nameA !== nameB) return nameA.localeCompare(nameB, 'th');
+                    
+                    // 3. Fallback: Sort by Time (oldest first)
+                    return new Date(a.time).getTime() - new Date(b.time).getTime();
+                  })
+                  .map((item: any, idx: number) => {
+                  const isWaitingSE = item.statusFor === 'Site Engineer' && !item.isRejected;
+                  const isWaitingQC = item.statusFor === 'QC' && !item.isRejected;
+                  const isRework = item.isRejected;
+                  
+                  const plot = plots?.find((p: any) => String(p.id) === String(item.plot_id));
+                  const task = taskTemplates?.find((t: any) => String(t.id) === String(item.task_template_id));
+                  
+                  return (
+                    <div key={idx} className={`bg-white border ${isRework ? 'border-rose-300 shadow-rose-100' : 'border-slate-200'} rounded-xl p-4 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4`}>
+                      
+                      {/* Left: Info */}
+                      <div className="flex flex-col">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-bold text-slate-800">{plot?.project_name || 'ไม่ระบุโครงการ'} - {plot?.plot_name || 'ไม่ระบุแปลง'}</span>
+                          <span className="bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded-full">{task?.task_name || 'ไม่ระบุงาน'}</span>
+                        </div>
+                        <div className="text-xs text-slate-500 font-medium flex gap-3">
+                          <span>โฟร์แมน: {item.foreman || 'ไม่ระบุ'}</span>
+                          <span>ส่งเมื่อ: {new Date(item.time).toLocaleString('th-TH')}</span>
+                        </div>
+                      </div>
+                      
+                      {/* Right: Pipeline Flow */}
+                      <div className="flex items-center text-xs sm:text-sm font-bold bg-slate-50 p-2 rounded-lg border border-slate-100 self-start md:self-center overflow-x-auto max-w-full">
+                        
+                        {/* Step 1: Foreman */}
+                        <div className={`flex items-center gap-1 shrink-0 ${isRework ? 'text-rose-600' : 'text-emerald-600'}`}>
+                          {isRework ? '❌ ตีกลับ' : '✅ โฟร์แมนส่ง 100%'}
+                        </div>
+                        
+                        <span className="mx-1 sm:mx-2 text-slate-300 shrink-0">➔</span>
+                        
+                        {/* Step 2: SE */}
+                        <div className={`flex items-center gap-1 shrink-0 ${isWaitingSE ? 'text-amber-600 bg-amber-50 px-2 py-1 rounded-md' : (isWaitingQC ? 'text-emerald-600' : 'text-slate-400')}`}>
+                          {isWaitingSE ? '⏳ SE กำลังตรวจ' : (isWaitingQC ? '✅ SE ตรวจผ่าน' : (isRework ? '⚪ รอดำเนินการ' : '⚪ รอ SE ตรวจ'))}
+                        </div>
+                        
+                        <span className="mx-1 sm:mx-2 text-slate-300 shrink-0">➔</span>
+                        
+                        {/* Step 3: QC */}
+                        <div className={`flex items-center gap-1 shrink-0 ${isWaitingQC ? 'text-amber-600 bg-amber-50 px-2 py-1 rounded-md' : 'text-slate-400'}`}>
+                          {isWaitingQC ? '⏳ QC กำลังตรวจ' : '⚪ รอ QC ตรวจ'}
+                        </div>
+                        
+                      </div>
+                      
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           {/* Worst Offenders */}
           <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm lg:col-span-2 hover:shadow-md transition-shadow">
             <h3 className="font-black text-lg text-slate-800 mb-6 flex items-center gap-2"><AlertTriangle className="text-rose-500" /> QC Bottlenecks Matrix (จุดวิกฤต)</h3>

@@ -157,14 +157,14 @@ export default function SalesIntelligence({ leads, projectName, projectsData }: 
       const dbProject = projectsData?.find(proj => proj.name === name);
       const absoluteTotalPlots = dbProject?.plotCount > 0 ? dbProject.plotCount : p.totalPlots;
       
-      const threshold90 = Math.max(1, Math.floor(absoluteTotalPlots * 0.9));
-      let monthsTo90 = 0;
+      const threshold100 = Math.max(1, absoluteTotalPlots);
+      let monthsTo100 = 0;
       
-      const isCompleted = dbProject ? dbProject.is_closed : (p.transfers >= threshold90);
+      const isCompleted = dbProject ? dbProject.is_closed : (p.transfers >= threshold100);
 
-      if (p.transfers >= threshold90 && p.firstBookingDate) {
-        const date90 = p.transferDates[threshold90 - 1];
-        monthsTo90 = (date90 - p.firstBookingDate) / (1000 * 3600 * 24 * 30.44); 
+      if (p.transfers >= threshold100 && p.firstBookingDate) {
+        const date100 = p.transferDates[threshold100 - 1];
+        monthsTo100 = (date100 - p.firstBookingDate) / (1000 * 3600 * 24 * 30.44); 
       }
 
       return {
@@ -174,20 +174,20 @@ export default function SalesIntelligence({ leads, projectName, projectsData }: 
         transfers: p.transfers,
         firstBookingDate: p.firstBookingDate,
         isCompleted,
-        monthsTo90: Math.max(0, monthsTo90),
-        predicted90Date: null as number | null
+        monthsTo100: Math.max(0, monthsTo100),
+        predicted100Date: null as number | null
       };
     }).filter(p => p.totalPlots > 0);
 
-    const completedProjects = projectPredictions.filter(p => p.isCompleted && p.monthsTo90 > 0);
+    const completedProjects = projectPredictions.filter(p => p.isCompleted && p.monthsTo100 > 0);
     const avgVelocity = completedProjects.length > 0 
-       ? completedProjects.reduce((sum, p) => sum + p.monthsTo90, 0) / completedProjects.length 
+       ? completedProjects.reduce((sum, p) => sum + p.monthsTo100, 0) / completedProjects.length 
        : 12;
 
     projectPredictions.forEach(p => {
        if (!p.isCompleted && p.firstBookingDate) {
           const predictedTime = p.firstBookingDate + (avgVelocity * 30.44 * 24 * 3600 * 1000);
-          p.predicted90Date = predictedTime;
+          p.predicted100Date = predictedTime;
        }
     });
 
@@ -538,13 +538,13 @@ export default function SalesIntelligence({ leads, projectName, projectsData }: 
                              <div className="text-[10px] text-slate-500 font-medium">รวม {p.absoluteTotalPlots} แปลง</div>
                            </div>
                            <div className="text-right">
-                             <div className="font-black text-indigo-600">{p.monthsTo90.toFixed(1)} <span className="text-xs">เดือน</span></div>
-                             <div className="text-[10px] text-slate-500 font-medium">ถึงโอน 90%</div>
+                             <div className="font-black text-indigo-600">{p.monthsTo100.toFixed(1)} <span className="text-xs">เดือน</span></div>
+                             <div className="text-[10px] text-slate-500 font-medium">ปิดโครงการ 100%</div>
                            </div>
                         </div>
                      ))}
                      {data.projectPredictions.filter(p => p.isCompleted).length === 0 && (
-                        <div className="text-center text-slate-400 font-medium py-4 text-sm">ยังไม่มีโครงการในอดีตที่โอนถึง 90%</div>
+                        <div className="text-center text-slate-400 font-medium py-4 text-sm">ยังไม่มีโครงการในอดีตที่ปิดโครงการ 100%</div>
                      )}
                   </div>
                   <div className="mt-4 pt-4 border-t border-indigo-100 flex justify-between items-center">
@@ -559,7 +559,7 @@ export default function SalesIntelligence({ leads, projectName, projectsData }: 
                   </h3>
                   <div className="space-y-4">
                      {data.projectPredictions.filter(p => !p.isCompleted).map((p, idx) => {
-                        const predictedDate = p.predicted90Date ? new Date(p.predicted90Date).toLocaleDateString('th-TH', { month: 'long', year: 'numeric' }) : 'N/A';
+                        const predictedDate = p.predicted100Date ? new Date(p.predicted100Date).toLocaleDateString('th-TH', { month: 'long', year: 'numeric' }) : 'N/A';
                         const startDate = p.firstBookingDate ? new Date(p.firstBookingDate).toLocaleDateString('th-TH', { month: 'short', year: '2-digit' }) : 'N/A';
                         
                         return (
@@ -577,7 +577,7 @@ export default function SalesIntelligence({ leads, projectName, projectsData }: 
                                  </div>
                               </div>
                               <div className="bg-emerald-50 p-3 rounded-lg flex items-center justify-between border border-emerald-100">
-                                 <span className="text-xs font-bold text-emerald-800">คาดการณ์ปิดโอน 90%</span>
+                                 <span className="text-xs font-bold text-emerald-800">คาดการณ์ปิดโครงการ 100%</span>
                                  <span className="text-emerald-600 font-black flex items-center gap-1">
                                     <Zap size={14} /> {predictedDate}
                                  </span>

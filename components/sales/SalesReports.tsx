@@ -26,12 +26,13 @@ export default function SalesReports({ leads, projectName, viewType = 'reports' 
     const grouped = bookedLeads.reduce((acc, lead) => {
       const date = new Date(lead.bookingDate);
       const yearMonth = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-      if (!acc[yearMonth]) acc[yearMonth] = { items: [], totalValue: 0, count: 0 };
+      if (!acc[yearMonth]) acc[yearMonth] = { items: [], totalValue: 0, totalAppraisalValue: 0, count: 0 };
       acc[yearMonth].items.push(lead);
       acc[yearMonth].totalValue += (lead.salePrice || 0);
+      acc[yearMonth].totalAppraisalValue += (lead.landAppraisalPrice || 0);
       acc[yearMonth].count += 1;
       return acc;
-    }, {} as Record<string, { items: any[], totalValue: number, count: number }>);
+    }, {} as Record<string, { items: any[], totalValue: number, totalAppraisalValue: number, count: number }>);
     
     // Sort keys descending
     const sortedKeys = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
@@ -53,12 +54,13 @@ export default function SalesReports({ leads, projectName, viewType = 'reports' 
       const date = transferDateStr ? new Date(transferDateStr) : null;
       const yearMonth = date ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}` : 'Unknown';
       
-      if (!acc[yearMonth]) acc[yearMonth] = { items: [], totalValue: 0, count: 0 };
+      if (!acc[yearMonth]) acc[yearMonth] = { items: [], totalValue: 0, totalAppraisalValue: 0, count: 0 };
       acc[yearMonth].items.push({ ...lead, actualTransferDate: transferDateStr });
       acc[yearMonth].totalValue += (lead.salePrice || 0);
+      acc[yearMonth].totalAppraisalValue += (lead.landAppraisalPrice || 0);
       acc[yearMonth].count += 1;
       return acc;
-    }, {} as Record<string, { items: any[], totalValue: number, count: number }>);
+    }, {} as Record<string, { items: any[], totalValue: number, totalAppraisalValue: number, count: number }>);
 
     // Sort keys descending
     const sortedKeys = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
@@ -343,6 +345,10 @@ export default function SalesReports({ leads, projectName, viewType = 'reports' 
                           <div className="font-bold text-slate-800">{data.count} ยูนิต</div>
                         </div>
                         <div className="text-right">
+                          <div className="text-xs font-semibold text-slate-500">ยอดขาย ทด (ประเมิน)</div>
+                          <div className="font-bold text-rose-500">{formatMoney(data.totalAppraisalValue)}</div>
+                        </div>
+                        <div className="text-right">
                           <div className="text-xs font-semibold text-slate-500">มูลค่ารวม (โดยประมาณ)</div>
                           <div className="font-bold text-blue-600">{formatMoney(data.totalValue)}</div>
                         </div>
@@ -357,7 +363,8 @@ export default function SalesReports({ leads, projectName, viewType = 'reports' 
                             <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase">โครงการ</th>
                             <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase">รหัสแปลง</th>
                             <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase">ลูกค้า</th>
-                            <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase">ราคา</th>
+                            <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase">ราคา ท.ด.</th>
+                            <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase">ราคาขาย</th>
                             <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase">สถานะ</th>
                           </tr>
                         </thead>
@@ -370,9 +377,10 @@ export default function SalesReports({ leads, projectName, viewType = 'reports' 
                                 <td className="px-6 py-4 text-sm font-medium text-slate-700">{new Date(lead.bookingDate).toLocaleDateString('th-TH')}</td>
                                 <td className="px-6 py-4 text-sm font-semibold text-slate-900">{lead.project || (projectName === 'ทุกโครงการ' ? 'ไม่ระบุ' : projectName)}</td>
                                 <td className="px-6 py-4"><span className="text-xs font-bold bg-slate-100 px-2 py-1 rounded text-slate-700">{lead.plot || '-'}</span></td>
-                                <td className="px-6 py-4 text-sm font-medium text-slate-800">{lead.name}</td>
-                                <td className="px-6 py-4 text-sm font-semibold text-emerald-600">{formatMoney(lead.salePrice || 0)}</td>
-                                <td className="px-6 py-4">
+                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-900">{lead.name}</td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-rose-500">{lead.landAppraisalPrice > 0 ? formatMoney(lead.landAppraisalPrice) : '-'}</td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-600">{formatMoney(lead.salePrice)}</td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm">
                                   <div className={`inline-flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-bold ${statusCfg.bg} ${statusCfg.color}`}>
                                     <StatusIcon size={12} /> {statusCfg.label}
                                   </div>
@@ -449,6 +457,10 @@ export default function SalesReports({ leads, projectName, viewType = 'reports' 
                           <div className="font-bold text-slate-800">{data.count} ยูนิต</div>
                         </div>
                         <div className="text-right">
+                          <div className="text-xs font-semibold text-slate-500">ยอดโอน ทด (ประเมิน)</div>
+                          <div className="font-bold text-rose-500">{formatMoney(data.totalAppraisalValue)}</div>
+                        </div>
+                        <div className="text-right">
                           <div className="text-xs font-semibold text-slate-500">มูลค่ารวม (โดยประมาณ)</div>
                           <div className="font-bold text-emerald-600">{formatMoney(data.totalValue)}</div>
                         </div>
@@ -463,7 +475,8 @@ export default function SalesReports({ leads, projectName, viewType = 'reports' 
                             <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase">โครงการ</th>
                             <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase">รหัสแปลง</th>
                             <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase">ลูกค้า</th>
-                            <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase">ราคา</th>
+                            <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase">ราคา ท.ด.</th>
+                            <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase">ราคาขาย</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -473,8 +486,9 @@ export default function SalesReports({ leads, projectName, viewType = 'reports' 
                                 <td className="px-6 py-4 text-sm font-medium text-slate-700">{lead.actualTransferDate ? new Date(lead.actualTransferDate).toLocaleDateString('th-TH') : '-'}</td>
                                 <td className="px-6 py-4 text-sm font-semibold text-slate-900">{lead.project || (projectName === 'ทุกโครงการ' ? 'ไม่ระบุ' : projectName)}</td>
                                 <td className="px-6 py-4"><span className="text-xs font-bold bg-slate-100 px-2 py-1 rounded text-slate-700">{lead.plot || '-'}</span></td>
-                                <td className="px-6 py-4 text-sm font-medium text-slate-800">{lead.name}</td>
-                                <td className="px-6 py-4 text-sm font-semibold text-emerald-600">{formatMoney(lead.salePrice || 0)}</td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-900">{lead.name}</td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-rose-500">{lead.landAppraisalPrice > 0 ? formatMoney(lead.landAppraisalPrice) : '-'}</td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-emerald-600">{formatMoney(lead.salePrice || 0)}</td>
                               </tr>
                             );
                           })}

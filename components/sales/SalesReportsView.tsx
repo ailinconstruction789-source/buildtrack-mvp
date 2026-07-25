@@ -60,7 +60,7 @@ export default function SalesReportsView({ project, viewType = 'reports' }: { pr
              salesData = [...salesData, ...sData];
              const plotIds = sData.map(s => s.plot_id).filter(Boolean);
              if (plotIds.length > 0) {
-               const { data: pData } = await supabase.from('plots').select('id, plot_id, selling_price').in('plot_id', plotIds);
+              const { data: pData } = await supabase.from('plots').select('id, plot_id, selling_price, land_appraisal_price').in('plot_id', plotIds);
                if (pData) plotsData = [...plotsData, ...pData];
              }
           }
@@ -82,8 +82,10 @@ export default function SalesReportsView({ project, viewType = 'reports' }: { pr
           const saleCreatedAt = sale?.created_at?.split('T')[0];
           const bookingDate = explicitReserved || saleCreatedAt || l.created_at?.split('T')[0] || null;
 
-          const plotInfo = plotsData?.find(p => p.plot_id === sale?.plot_id);
+          const plotInfo = plotsData?.find(p => p.plot_id === sale?.plot_id || p.id === sale?.plot_id);
           const rawSellingPrice = sale?.sale_price ? Number(sale.sale_price) : (plotInfo?.selling_price || 0);
+          let rawLandAppraisal = Number(sale?.land_office_price || plotInfo?.land_appraisal_price || 0);
+          if (rawLandAppraisal === 0) rawLandAppraisal = rawSellingPrice;
 
           return {
             id: l.id,
@@ -92,6 +94,7 @@ export default function SalesReportsView({ project, viewType = 'reports' }: { pr
             status: l.status,
             plot: sale?.plot_id || null,
             salePrice: rawSellingPrice,
+            landAppraisalPrice: rawLandAppraisal,
             expectedTransferDate: sale?.expected_transfer_date || null,
             bookingDate,
             agentName: l.agent_name || 'ไม่ระบุ',

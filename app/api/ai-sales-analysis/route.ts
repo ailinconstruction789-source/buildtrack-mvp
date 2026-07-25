@@ -19,6 +19,7 @@ export async function POST(request: Request) {
       model: "gemini-3.5-flash",
       generationConfig: {
         responseMimeType: "application/json",
+        maxOutputTokens: 8192,
       }
     });
 
@@ -39,7 +40,7 @@ Structure:
   "riskProject": "String (1 paragraph explaining the project with highest risk/cancellations, referencing its cancel rate and bookings. If none, say 'ทุกโครงการอยู่ในเกณฑ์ปลอดภัย')",
   "sweetSpot": "String (1 paragraph analyzing the most popular price range and why it's the mass market favorite)",
   "seasonality": "String (1 paragraph analyzing the high/low season based on the monthMap trend)",
-  "salesPrediction": "String (1 paragraph analyzing the 'projectPredictions' data. Compare historical avgVelocity (months to 90% sold) against active projects. Provide an estimated month/year they will finish.)",
+  "salesPrediction": "String (1 paragraph analyzing the 'projectPredictions' data. Compare historical avgVelocity (months to 100% sold) against active projects. Provide an estimated month/year they will finish.)",
   "rootCause": "String (1 paragraph identifying the #1 cancellation reason and explaining its business impact)",
   "recommendations": [
     {
