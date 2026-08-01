@@ -61,6 +61,12 @@ const formatPhoneNumber = (value: string) => {
 };
 
 export default function SalesKanban({ project, projects, user, onBack }: { project?: any, projects?: any[], user?: any, onBack?: () => void }) {
+  const [internalProject, setInternalProject] = useState<any>(project || null);
+
+  useEffect(() => {
+    if (project) setInternalProject(project);
+  }, [project]);
+
   const [leads, setLeads] = useState(initialLeads);
   const [activeTab, setActiveTab] = useState<'map' | 'list' | 'pricing' | 'booked' | 'transferred' | 'reports' | 'intelligence'>('map');
   const [search, setSearch] = useState('');
@@ -85,7 +91,8 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
 
   // Fetch Leads and Sales Data from Supabase
   const fetchData = async () => {
-    const projName = project?.name || 'ไอลิน6';
+    if (!internalProject) return;
+    const projName = internalProject.name;
     try {
       // 1. Fetch plots for dropdowns
       const { data: plotsData } = await supabase.from('plots').select('id, plot_name').eq('project_name', projName);
@@ -156,7 +163,7 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
 
   useEffect(() => {
     fetchData();
-  }, [project?.name]);
+  }, [internalProject?.name]);
 
   useEffect(() => {
     if (!panelState.plotId) {
@@ -940,18 +947,75 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
     }
   };
 
+  const handleBack = () => {
+    if (!project && internalProject) {
+      setInternalProject(null);
+    } else if (onBack) {
+      onBack();
+    }
+  };
+
+  if (!internalProject) {
+    return (
+      <div className="h-screen overflow-y-auto bg-[#f5f5f7] p-4 sm:p-8 w-full custom-scrollbar">
+        <div className="flex items-center gap-4 mb-8">
+          {onBack && (
+            <button onClick={onBack} className="p-2 hover:bg-slate-200 rounded-full transition-colors bg-white shadow-sm">
+              <ArrowLeft size={24} className="text-slate-600" />
+            </button>
+          )}
+          <div className="flex items-center gap-3">
+            <div className="bg-[#d4af37] p-3 rounded-2xl shadow-lg shadow-[#d4af37]/30">
+              <Building2 className="text-white" size={28} />
+            </div>
+            <div>
+              <h2 className="text-2xl sm:text-3xl font-black italic text-slate-800 uppercase tracking-tight">Sales Kanban</h2>
+              <p className="text-sm font-bold text-slate-500">กรุณาเลือกโครงการที่ต้องการเข้าสู่ระบบฝ่ายขาย</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+          {projects?.map((p, index) => (
+            <div 
+              key={p.id || p.name || index}
+              onClick={() => setInternalProject(p)}
+              className="bg-white rounded-[2rem] shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-slate-100 overflow-hidden cursor-pointer hover:shadow-[0_20px_50px_rgb(0,0,0,0.1)] hover:-translate-y-1.5 transition-all duration-300 group flex flex-col"
+            >
+              <div className="h-44 bg-slate-100 relative overflow-hidden shrink-0">
+                {p.logo_url ? (
+                  <img src={p.logo_url} alt={p.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
+                ) : (
+                  <div className="flex items-center justify-center h-full text-slate-300">
+                    <Building2 size={64} className="opacity-30 group-hover:scale-110 transition-transform duration-700" />
+                  </div>
+                )}
+                <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-slate-900/20 to-transparent" />
+                <h3 className="absolute bottom-4 left-5 text-white font-black text-2xl italic tracking-wide">{p.name}</h3>
+              </div>
+              <div className="p-5 flex-1 flex flex-col justify-between">
+                <p className="text-sm font-bold text-slate-500 line-clamp-2 mb-6">{p.description || 'ไม่ได้ระบุคำอธิบายโครงการ'}</p>
+                <button className="w-full py-3.5 bg-[#d4af37]/10 text-[#d4af37] rounded-xl font-black text-sm flex items-center justify-center gap-2 group-hover:bg-[#d4af37] group-hover:text-white transition-all">
+                  เข้าสู่ระบบฝ่ายขาย <ArrowRight size={18} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-screen overflow-hidden bg-[#f8fafc] font-sans flex flex-col">
       {/* Header */}
       <header className="bg-white border-b border-gray-200 px-4 md:px-8 py-4 md:py-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 sm:gap-0 z-10 shrink-0">
         <div className="flex items-center gap-4">
-          {onBack && (
-            <button onClick={onBack} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
-              <ArrowLeft size={24} className="text-slate-600" />
-            </button>
-          )}
+          <button onClick={handleBack} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+            <ArrowLeft size={24} className="text-slate-600" />
+          </button>
           <div>
-            <h1 className="text-3xl font-bold text-[#0f172a] tracking-tight">Sales Management {project ? `- ${project.name}` : ''}</h1>
+            <h1 className="text-3xl font-bold text-[#0f172a] tracking-tight">Sales Management - {internalProject.name}</h1>
             <p className="text-gray-500 text-sm mt-1">Manage leads, bookings, and handovers</p>
           </div>
         </div>

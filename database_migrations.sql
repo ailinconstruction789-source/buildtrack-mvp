@@ -201,3 +201,23 @@ GRANT SELECT ON vw_plot_task_assignments_with_project TO anon;
 GRANT SELECT ON vw_plot_task_schedules_with_project TO anon;
 GRANT SELECT ON vw_plot_task_assignments_with_project TO authenticated;
 GRANT SELECT ON vw_plot_task_schedules_with_project TO authenticated;
+-- Create table for AI Sales Reports Cache
+CREATE TABLE IF NOT EXISTS ai_sales_reports (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    project_name TEXT NOT NULL,
+    report_data JSONB NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Allow all authenticated users to read and insert (similar to other tables)
+ALTER TABLE ai_sales_reports ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Allow authenticated read ai_sales_reports" ON ai_sales_reports
+    FOR SELECT
+    TO authenticated
+    USING (true);
+
+CREATE POLICY "Allow authenticated insert ai_sales_reports" ON ai_sales_reports
+    FOR INSERT
+    TO authenticated
+    WITH CHECK (true);

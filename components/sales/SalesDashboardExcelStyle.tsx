@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Loader2, Calendar, TrendingUp, Users, BarChart, ChevronDown, ChevronUp } from 'lucide-react';
 import WaitingForTransferDetails from './WaitingForTransferDetails';
-import { ComposedChart, Bar, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
+import { ComposedChart, Bar, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, LabelList } from 'recharts';
 
 export default function SalesDashboardExcelStyle({ project }: { project?: any }) {
   const [loading, setLoading] = useState(true);
@@ -13,6 +13,12 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
   const [selectedDateStr, setSelectedDateStr] = useState<string>(new Date().toISOString().split('T')[0]);
   const selectedYear = selectedDateStr.split('-')[0];
   const selectedMonth = selectedDateStr.split('-')[1];
+
+  const [cumulativeYear, setCumulativeYear] = useState<string>(selectedYear);
+
+  useEffect(() => {
+    setCumulativeYear(selectedYear);
+  }, [selectedYear]);
 
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
 
@@ -197,6 +203,35 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
       return obj;
     });
 
+    const lineChartTransfers = buildLineData('transferDate');
+    const lineChartBookings = buildLineData('bookDate');
+    const lineChartViews = buildLineData('createdDate');
+
+    let accTransfers = 0;
+    let accBookings = 0;
+    let accViews = 0;
+
+    const currentActualYear = new Date().getFullYear().toString();
+    const currentActualMonth = new Date().getMonth();
+    
+    const cumulativeChartTransfers = lineChartTransfers.map((item, idx) => {
+      accTransfers += (item[`y${cumulativeYear}`] || 0);
+      const isFuture = cumulativeYear === currentActualYear && idx > currentActualMonth;
+      return { month: item.month, cumulative: isFuture ? null : accTransfers };
+    });
+    
+    const cumulativeChartBookings = lineChartBookings.map((item, idx) => {
+      accBookings += (item[`y${cumulativeYear}`] || 0);
+      const isFuture = cumulativeYear === currentActualYear && idx > currentActualMonth;
+      return { month: item.month, cumulative: isFuture ? null : accBookings };
+    });
+    
+    const cumulativeChartViews = lineChartViews.map((item, idx) => {
+      accViews += (item[`y${cumulativeYear}`] || 0);
+      const isFuture = cumulativeYear === currentActualYear && idx > currentActualMonth;
+      return { month: item.month, cumulative: isFuture ? null : accViews };
+    });
+
     return {
       viewsAcc, bookedAcc, cancelAcc, transferAcc,
       viewsMonth, bookedMonth, transferMonth, cancelMonth, expectingTransfer,
@@ -204,12 +239,15 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
       sumTransAppraisal, sumWaitAppraisal,
       sumTransCnt, sumWaitCnt, sumAvailCnt, sumTotalCnt,
       projChartData,
-      lineChartTransfers: buildLineData('transferDate'),
-      lineChartBookings: buildLineData('bookDate'),
-      lineChartViews: buildLineData('createdDate'),
+      lineChartTransfers,
+      lineChartBookings,
+      lineChartViews,
+      cumulativeChartTransfers,
+      cumulativeChartBookings,
+      cumulativeChartViews,
       rawValidRecords: validRecords
     };
-  }, [data, selectedDateStr]);
+  }, [data, selectedDateStr, cumulativeYear]);
 
   if (loading) return <div className="flex items-center justify-center h-full"><Loader2 className="animate-spin text-blue-600" size={48} /></div>;
   if (!metrics) return <div className="p-8 text-center text-gray-500">No data available</div>;
@@ -627,6 +665,87 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
                 <Line type="monotone" dataKey="y2024" name="ปี 2024" stroke="#e2e8f0" strokeWidth={2} strokeDasharray="5 5" dot={{r: 3, fill: '#f8fafc', stroke: '#e2e8f0', strokeWidth: 1}} activeDot={{r: 5, strokeWidth: 0}} />
                 <Area type="monotone" dataKey="y2025" name="ปี 2025 (ปีที่แล้ว)" fill="#f1f5f9" stroke="#cbd5e1" strokeWidth={2} dot={{r: 3, fill: '#cbd5e1', strokeWidth: 0}} activeDot={{r: 5, fill: '#94a3b8', strokeWidth: 0}} />
                 <Line type="monotone" dataKey="y2026" name="ปี 2026 (ปัจจุบัน)" stroke="#6366f1" strokeWidth={4} dot={{r: 5, fill: '#ffffff', stroke: '#6366f1', strokeWidth: 2}} activeDot={{r: 8, strokeWidth: 0}} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* CUMULATIVE CHARTS */}
+        <div className="mt-8 pt-6 border-t border-gray-200">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+            <div className="flex items-center gap-3">
+              <TrendingUp className="text-emerald-600 w-7 h-7 p-1.5 bg-emerald-100 rounded-lg" />
+              <h2 className="text-xl font-bold text-gray-800">สรุปยอดสะสม (Cumulative) ประจำปี</h2>
+            </div>
+            <div className="flex items-center gap-2 bg-white p-1.5 px-3 rounded-lg border border-gray-200 shadow-sm">
+              <span className="text-sm font-bold text-gray-600">เลือกปี:</span>
+              <select 
+                value={cumulativeYear}
+                onChange={e => setCumulativeYear(e.target.value)}
+                className="bg-transparent border-none text-sm font-bold text-emerald-700 focus:ring-0 cursor-pointer outline-none"
+              >
+                <option value="2023">2023</option>
+                <option value="2024">2024</option>
+                <option value="2025">2025</option>
+                <option value="2026">2026</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            {/* Cumulative Transfers */}
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80">
+              <h3 className="text-center font-bold text-gray-700 mb-4">ยอดโอนสะสม ปี {cumulativeYear} (หลัง)</h3>
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={metrics.cumulativeChartTransfers} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis dataKey="month" tick={{fontSize: 12, fill: '#64748b', fontWeight: 600}} axisLine={false} tickLine={false} dy={10} />
+                  <YAxis allowDecimals={false} tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false} dx={-10} />
+                  <RechartsTooltip 
+                    contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} 
+                    labelStyle={{ fontWeight: 'bold', color: '#1e293b', marginBottom: '8px' }}
+                  />
+                  <Area type="monotone" dataKey="cumulative" name="ยอดโอนสะสม" fill="#d1fae5" stroke="#10b981" strokeWidth={3} dot={{r: 4, fill: '#ffffff', stroke: '#10b981', strokeWidth: 2}} activeDot={{r: 7, strokeWidth: 0}}>
+                    <LabelList dataKey="cumulative" position="top" offset={10} style={{ fill: '#059669', fontSize: 11, fontWeight: 'bold' }} />
+                  </Area>
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Cumulative Bookings */}
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80">
+              <h3 className="text-center font-bold text-gray-700 mb-4">ยอดจองสะสม ปี {cumulativeYear} (หลัง)</h3>
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={metrics.cumulativeChartBookings} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis dataKey="month" tick={{fontSize: 12, fill: '#64748b', fontWeight: 600}} axisLine={false} tickLine={false} dy={10} />
+                  <YAxis allowDecimals={false} tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false} dx={-10} />
+                  <RechartsTooltip 
+                    contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} 
+                    labelStyle={{ fontWeight: 'bold', color: '#1e293b', marginBottom: '8px' }}
+                  />
+                  <Area type="monotone" dataKey="cumulative" name="ยอดจองสะสม" fill="#dbeafe" stroke="#3b82f6" strokeWidth={3} dot={{r: 4, fill: '#ffffff', stroke: '#3b82f6', strokeWidth: 2}} activeDot={{r: 7, strokeWidth: 0}}>
+                    <LabelList dataKey="cumulative" position="top" offset={10} style={{ fill: '#2563eb', fontSize: 11, fontWeight: 'bold' }} />
+                  </Area>
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+          
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80">
+            <h3 className="text-center font-bold text-gray-700 mb-4">ยอดเข้าชมสะสม ปี {cumulativeYear} (ครั้ง)</h3>
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={metrics.cumulativeChartViews} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis dataKey="month" tick={{fontSize: 12, fill: '#64748b', fontWeight: 600}} axisLine={false} tickLine={false} dy={10} />
+                <YAxis allowDecimals={false} tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false} dx={-10} />
+                <RechartsTooltip 
+                  contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} 
+                  labelStyle={{ fontWeight: 'bold', color: '#1e293b', marginBottom: '8px' }}
+                />
+                <Area type="monotone" dataKey="cumulative" name="ยอดเข้าชมสะสม" fill="#f3e8ff" stroke="#a855f7" strokeWidth={3} dot={{r: 4, fill: '#ffffff', stroke: '#a855f7', strokeWidth: 2}} activeDot={{r: 7, strokeWidth: 0}}>
+                  <LabelList dataKey="cumulative" position="top" offset={10} style={{ fill: '#9333ea', fontSize: 11, fontWeight: 'bold' }} />
+                </Area>
               </ComposedChart>
             </ResponsiveContainer>
           </div>

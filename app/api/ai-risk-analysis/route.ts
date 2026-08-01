@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, SchemaType, Schema } from '@google/generative-ai';
 
 export async function POST(request: Request) {
   try {
@@ -15,11 +15,29 @@ export async function POST(request: Request) {
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
+    
+    const responseSchema = {
+      type: SchemaType.ARRAY,
+      description: "Array of exactly 4 risk insights.",
+      items: {
+        type: SchemaType.OBJECT,
+        properties: {
+          title: { type: SchemaType.STRING, description: "Topic of the alert" },
+          type: { type: SchemaType.STRING, description: "One of: 'weather', 'contractor', 'defect', 'bottleneck', 'evm'" },
+          severity: { type: SchemaType.STRING, description: "One of: 'high', 'medium', 'info'" },
+          message: { type: SchemaType.STRING, description: "Detailed AI analysis in Thai language." },
+          recommendation: { type: SchemaType.STRING, description: "Actionable advice in Thai language." },
+        },
+        required: ["title", "type", "severity", "message", "recommendation"]
+      }
+    } as Schema;
+
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-3.5-flash",
+      model: "gemini-1.5-flash",
       generationConfig: {
         responseMimeType: "application/json",
-        maxOutputTokens: 4096,
+        responseSchema: responseSchema,
+        maxOutputTokens: 8192,
       }
     });
 
@@ -78,7 +96,9 @@ STRICT CONSTRAINTS:
       try {
         parsedData = JSON.parse(cleaned);
       } catch (parseError: any) {
-        throw new Error("Failed to parse AI response: " + parseError.message + "\nRaw AI Text: " + text.substring(0, 100) + "...");
+        // Safe string escaping for error log
+        const safeText = String(text).substring(0, 500).replace(/\n/g, '\\n');
+        throw new Error("Failed to parse AI response: " + parseError.message + " | Raw AI Text: " + safeText + "...");
       }
     }
 

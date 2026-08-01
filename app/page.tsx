@@ -438,6 +438,7 @@ export default function ConstructionApp() {
 
   const [isMobilePreview, setIsMobilePreview] = useState(false);
   const [isRealMobile, setIsRealMobile] = useState(false);
+  const [showMobileSalesMenu, setShowMobileSalesMenu] = useState(false);
 
   const [gridCols, setGridCols] = useState(40);
   const [gridRows, setGridRows] = useState(24);
@@ -2585,18 +2586,23 @@ export default function ConstructionApp() {
                       {(isAdmin || isProjectPlanner || isQC || isSiteEngineer || isOwner || isForeman) && (
                         <button onClick={() => setView('reports')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'reports' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><PieChart size={18} /> Reports & Analytics</button>
                       )}
-                      {(isAdmin || isOwner || isSales) && (
-                        <>
+                    </nav>
+                  </div>
+
+                  {/* SALES & CRM */}
+                  {(isAdmin || isOwner || isSales) && (
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3 px-2">Sales & CRM</p>
+                      <nav className="space-y-1">
                           <button onClick={() => setView('sales-dashboard-excel')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-dashboard-excel' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><BarChartHorizontal size={18} /> Dashboard (Excel)</button>
                           <button onClick={() => setView('sales-dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-dashboard' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><LayoutDashboard size={18} /> ระบบฝ่ายขาย (Kanban)</button>
                           <button onClick={() => setView('sales-reports')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-reports' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><TrendingUp size={18} /> รายงานสรุปยอด (Sales)</button>
                           <button onClick={() => setView('sales-summary-table')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-summary-table' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><Building2 size={18} /> ตารางสรุปฝั่งขาย</button>
                           <button onClick={() => setView('agent-performance')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'agent-performance' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><Users size={18} /> สรุปผลงานเซลล์</button>
                           <button onClick={() => setView('sales-intelligence')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-intelligence' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><Lightbulb size={18} /> Strategic Report</button>
-                        </>
-                      )}
-                    </nav>
-                  </div>
+                      </nav>
+                    </div>
+                  )}
 
                   {(isAdmin || isProjectPlanner || isOwner || isQC || isSiteEngineer || isForeman) && (
                     <div>
@@ -3716,7 +3722,11 @@ export default function ConstructionApp() {
               )}
               {/* 💡 View: Sales Strategic Report */}
               {view === 'sales-intelligence' && (
-                <SalesIntelligenceView project={selectedProject} />
+                <SalesIntelligenceView 
+                  project={selectedProject} 
+                  projects={projects}
+                  onBack={() => { setView('dashboard'); setSelectedProject(null); }}
+                />
               )}
 
               {/* 🏢 View: Sales Summary Table */}
@@ -4481,6 +4491,12 @@ export default function ConstructionApp() {
                   </button>
                 </>
               )}
+              {(isAdmin || isOwner || isSales) && (
+                <button onClick={() => setShowMobileSalesMenu(true)} className={`flex flex-col items-center p-2 rounded-xl w-16 ${['sales-dashboard-excel', 'sales-dashboard', 'sales-reports', 'sales-summary-table', 'agent-performance', 'sales-intelligence'].includes(activeView) ? 'text-[#d4af37]' : 'text-slate-400 hover:text-slate-600'}`}>
+                  <Building2 size={20} className={['sales-dashboard-excel', 'sales-dashboard', 'sales-reports', 'sales-summary-table', 'agent-performance', 'sales-intelligence'].includes(activeView) ? 'fill-[#d4af37]/20' : ''} />
+                  <span className="text-[9px] font-black mt-1">ฝ่ายขาย</span>
+                </button>
+              )}
               <button onClick={() => handleLogout()} className="flex flex-col items-center p-2 rounded-xl w-16 text-rose-600 hover:bg-rose-50">
                 <LogOut size={20} className="fill-rose-100" />
                 <span className="text-[9px] font-black mt-1">ออกระบบ</span>
@@ -4489,6 +4505,47 @@ export default function ConstructionApp() {
           )}
         </div>
       </div>
+      
+      {/* 📱 Mobile Sales Menu Action Sheet */}
+      {showMobileSalesMenu && (
+        <div className="fixed inset-0 z-[600] bg-black/60 backdrop-blur-sm flex items-end animate-in fade-in duration-200" onClick={() => setShowMobileSalesMenu(false)}>
+          <div className="bg-white w-full rounded-t-[2.5rem] p-8 pb-12 animate-in slide-in-from-bottom-full duration-300 shadow-[0_-20px_50px_rgba(0,0,0,0.2)]" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-2xl font-black text-slate-800 uppercase italic">Sales & CRM</h3>
+              <button onClick={() => setShowMobileSalesMenu(false)} className="p-3 bg-slate-100 text-slate-500 rounded-full hover:bg-slate-200 transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <button onClick={() => { setView('sales-dashboard-excel'); setShowMobileSalesMenu(false); }} className={`flex flex-col items-center justify-center p-5 rounded-2xl border-2 transition-all ${activeView === 'sales-dashboard-excel' ? 'border-[#d4af37] bg-[#d4af37]/10' : 'border-slate-100 bg-slate-50 hover:border-slate-200'}`}>
+                <BarChartHorizontal size={28} className="text-[#d4af37] mb-3" />
+                <span className="text-xs font-bold text-slate-700 text-center">Dashboard<br/>(Excel)</span>
+              </button>
+              <button onClick={() => { setView('sales-dashboard'); setShowMobileSalesMenu(false); }} className={`flex flex-col items-center justify-center p-5 rounded-2xl border-2 transition-all ${activeView === 'sales-dashboard' ? 'border-[#d4af37] bg-[#d4af37]/10' : 'border-slate-100 bg-slate-50 hover:border-slate-200'}`}>
+                <LayoutDashboard size={28} className="text-[#d4af37] mb-3" />
+                <span className="text-xs font-bold text-slate-700 text-center">ระบบฝ่ายขาย<br/>(Kanban)</span>
+              </button>
+              <button onClick={() => { setView('sales-reports'); setShowMobileSalesMenu(false); }} className={`flex flex-col items-center justify-center p-5 rounded-2xl border-2 transition-all ${activeView === 'sales-reports' ? 'border-[#d4af37] bg-[#d4af37]/10' : 'border-slate-100 bg-slate-50 hover:border-slate-200'}`}>
+                <TrendingUp size={28} className="text-[#d4af37] mb-3" />
+                <span className="text-xs font-bold text-slate-700 text-center">รายงาน<br/>สรุปยอด</span>
+              </button>
+              <button onClick={() => { setView('sales-summary-table'); setShowMobileSalesMenu(false); }} className={`flex flex-col items-center justify-center p-5 rounded-2xl border-2 transition-all ${activeView === 'sales-summary-table' ? 'border-[#d4af37] bg-[#d4af37]/10' : 'border-slate-100 bg-slate-50 hover:border-slate-200'}`}>
+                <Building2 size={28} className="text-[#d4af37] mb-3" />
+                <span className="text-xs font-bold text-slate-700 text-center">ตารางสรุป<br/>ฝั่งขาย</span>
+              </button>
+              <button onClick={() => { setView('agent-performance'); setShowMobileSalesMenu(false); }} className={`flex flex-col items-center justify-center p-5 rounded-2xl border-2 transition-all ${activeView === 'agent-performance' ? 'border-[#d4af37] bg-[#d4af37]/10' : 'border-slate-100 bg-slate-50 hover:border-slate-200'}`}>
+                <Users size={28} className="text-[#d4af37] mb-3" />
+                <span className="text-xs font-bold text-slate-700 text-center">สรุปผลงาน<br/>เซลล์</span>
+              </button>
+              <button onClick={() => { setView('sales-intelligence'); setShowMobileSalesMenu(false); }} className={`flex flex-col items-center justify-center p-5 rounded-2xl border-2 transition-all ${activeView === 'sales-intelligence' ? 'border-[#d4af37] bg-[#d4af37]/10' : 'border-slate-100 bg-slate-50 hover:border-slate-200'}`}>
+                <Lightbulb size={28} className="text-[#d4af37] mb-3" />
+                <span className="text-xs font-bold text-slate-700 text-center">Strategic<br/>Report</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {editPlotModal.isOpen && (
         <div className="absolute inset-0 z-[600] bg-black/40 backdrop-blur-xl flex items-center justify-center p-4 fixed transition-all">
           <div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full p-6 space-y-5 animate-in zoom-in-95 duration-200">
