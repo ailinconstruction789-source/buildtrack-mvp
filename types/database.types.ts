@@ -40,6 +40,15 @@ export interface Plot {
   overview_image_url?: string;
   created_at: string;
   house_types?: { type_name: string };
+  // Admin Document Updates
+  permit_date?: string;
+  registration_date?: string;
+  water_meter_date?: string;
+  electric_meter_date?: string;
+  permit_status?: string;
+  registration_status?: string;
+  water_meter_status?: string;
+  electric_meter_status?: string;
 }
 
 export interface Contractor {

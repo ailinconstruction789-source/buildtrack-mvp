@@ -3,11 +3,11 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Plus, Map as MapIcon, Users, ListFilter, Download, ChevronRight, Home, Phone, Calendar, ArrowRight, ArrowLeft, LogOut, UserCheck, User, Key, X, FileText, Clock, CheckCircle, XCircle, Banknote, Building2, FileSignature, Pickaxe, Loader2, TrendingUp, Upload, Trash2, PieChart, Lightbulb } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import * as XLSX from 'xlsx';
 import SalesMap from './SalesMap';
 import SalesPricing from './SalesPricing';
 import SalesReports from './SalesReports';
 import SalesIntelligence from './SalesIntelligence';
+import AdminDocsManager from './AdminDocsManager';
 
 const initialLeads: any[] = [];
 
@@ -60,22 +60,24 @@ const formatPhoneNumber = (value: string) => {
   return val;
 };
 
-export default function SalesKanban({ project, projects, user, onBack }: { project?: any, projects?: any[], user?: any, onBack?: () => void }) {
-  const [internalProject, setInternalProject] = useState<any>(project || null);
+export default function SalesKanban({ project: externalProject, projects, user, onBack }: { project?: any, projects?: any[], user?: any, onBack?: () => void }) {
+  const [internalProject, setInternalProject] = useState<any>(externalProject || null);
 
   useEffect(() => {
-    if (project) setInternalProject(project);
-  }, [project]);
+    if (externalProject) setInternalProject(externalProject);
+  }, [externalProject]);
+
+  const project = internalProject;
 
   const [leads, setLeads] = useState(initialLeads);
-  const [activeTab, setActiveTab] = useState<'map' | 'list' | 'pricing' | 'booked' | 'transferred' | 'reports' | 'intelligence'>('map');
+  const [activeTab, setActiveTab] = useState<'map' | 'list' | 'pricing' | 'booked' | 'transferred' | 'reports' | 'intelligence' | 'admin_docs'>('map');
   const [search, setSearch] = useState('');
   
-  // Side Panel State
   const [panelState, setPanelState] = useState<{type: 'default' | 'booking' | 'customer' | 'new-customer', plotId: string, lead: any}>({ type: 'default', plotId: '', lead: null });
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // For Customer Editing
-  const [editCustomerForm, setEditCustomerForm] = useState({ name: '', phone: '', occupation: '', status: '', plot: '', salePrice: '', bank: '', cancelReason: '', landOfficePrice: '', agentName: '', transactionDate: new Date().toISOString().split('T')[0] });
+  const [editCustomerForm, setEditCustomerForm] = useState({ name: '', phone: '', occupation: '', status: '', plot: '', salePrice: '', bank: '', cancelReason: '', landOfficePrice: '', agentName: '', transactionDate: new Date().toISOString().split('T')[0], note: '' });
 
   // Real Plot Data from Supabase
   const [projectPlots, setProjectPlots] = useState<string[]>([]);
@@ -95,7 +97,7 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
     const projName = internalProject.name;
     try {
       // 1. Fetch plots for dropdowns
-      const { data: plotsData } = await supabase.from('plots').select('id, plot_name').eq('project_name', projName);
+      const { data: plotsData } = await supabase.from('plots').select('*').eq('project_name', projName);
       if (plotsData) {
         setProjectPlots(plotsData.map(p => p.id));
         setProjectPlotsData(plotsData);
@@ -311,102 +313,111 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
       setPanelState({ type: 'booking', plotId, lead: null });
     } else if (lead) {
       setPanelState({ type: 'customer', plotId, lead });
-      setEditCustomerForm({ name: lead.name, phone: lead.phone, occupation: lead.occupation || '', status: lead.status, plot: lead.plot || '', salePrice: lead.salePrice?.toString() || '', bank: lead.bank || '', cancelReason: lead.cancelReason || '', landOfficePrice: lead.landOfficePrice || '', transactionDate: new Date().toISOString().split('T')[0], agentName: lead.agentName || '' });
+      setEditCustomerForm({ name: lead.name, phone: lead.phone, occupation: lead.occupation || '', status: lead.status, plot: lead.plot || '', salePrice: lead.salePrice?.toString() || '', bank: lead.bank || '', cancelReason: lead.cancelReason || '', landOfficePrice: lead.landOfficePrice || '', transactionDate: new Date().toISOString().split('T')[0], agentName: lead.agentName || '', note: '' });
     }
   };
 
   const handleEditLeadClick = (lead: any) => {
     setActiveTab('map');
     setPanelState({ type: 'customer', plotId: lead.plot || '', lead });
-    setEditCustomerForm({ name: lead.name, phone: lead.phone, occupation: lead.occupation || '', status: lead.status, plot: lead.plot || '', salePrice: lead.salePrice?.toString() || '', bank: lead.bank || '', cancelReason: lead.cancelReason || '', landOfficePrice: lead.landOfficePrice || '', transactionDate: new Date().toISOString().split('T')[0], agentName: lead.agentName || '' });
+    setEditCustomerForm({ name: lead.name, phone: lead.phone, occupation: lead.occupation || '', status: lead.status, plot: lead.plot || '', salePrice: lead.salePrice?.toString() || '', bank: lead.bank || '', cancelReason: lead.cancelReason || '', landOfficePrice: lead.landOfficePrice || '', transactionDate: new Date().toISOString().split('T')[0], agentName: lead.agentName || '', note: '' });
   };
 
   const handleSaveBooking = async (e: React.FormEvent) => {
     e.preventDefault();
-    const formData = new FormData(e.target as HTMLFormElement);
-    const projName = project?.name || 'ไอลิน6';
-    const txDateStr = formData.get('transactionDate') as string;
-    const txDate = txDateStr ? new Date(`${txDateStr}T12:00:00Z`).toISOString() : new Date().toISOString();
-    
-    const { data: newLead } = await supabase.from('leads').insert([{
-      project_name: projName,
-      customer_name: formData.get('name'),
-      phone: formData.get('phone'),
-      occupation: formData.get('occupation'),
-      status: 'Reserved',
-      interest: 'Any',
-      agent_name: user?.username || 'Unknown',
-      created_at: txDate
-    }]).select().single();
-
-    if (newLead) {
-      const salePriceInput = formData.get('salePrice') as string;
-      const parsedSalePrice = salePriceInput ? Number(salePriceInput.replace(/[^0-9.-]+/g,"")) : null;
-
-      await supabase.from('sales').insert([{
-        lead_id: newLead.id,
-        plot_id: panelState.plotId,
-        contract_status: 'Reserved',
-        sale_price: parsedSalePrice,
-        created_at: txDate
-      }]);
+    setIsSubmitting(true);
+    try {
+      const formData = new FormData(e.target as HTMLFormElement);
+      const projName = internalProject?.name || 'ไอลิน6';
+      const txDateStr = formData.get('transactionDate') as string;
+      const txDate = txDateStr ? new Date(`${txDateStr}T12:00:00Z`).toISOString() : new Date().toISOString();
       
-      await supabase.from('status_history').insert([{
-        entity_type: 'lead',
-        entity_id: newLead.id,
-        new_status: 'Reserved',
-        changed_by: user?.username || 'Unknown',
+      const { data: newLead } = await supabase.from('leads').insert([{
+        project_name: projName,
+        customer_name: formData.get('name'),
+        phone: formData.get('phone'),
+        occupation: formData.get('occupation'),
+        status: 'Reserved',
+        interest: 'Any',
+        agent_name: user?.username || 'Unknown',
         created_at: txDate
-      }]);
+      }]).select().single();
 
-      await fetchData();
+      if (newLead) {
+        const salePriceInput = formData.get('salePrice') as string;
+        const parsedSalePrice = salePriceInput ? Number(salePriceInput.replace(/[^0-9.-]+/g,"")) : null;
+
+        await supabase.from('sales').insert([{
+          lead_id: newLead.id,
+          plot_id: panelState.plotId,
+          contract_status: 'Reserved',
+          sale_price: parsedSalePrice,
+          created_at: txDate
+        }]);
+        
+        await supabase.from('status_history').insert([{
+          entity_type: 'lead',
+          entity_id: newLead.id,
+          new_status: 'Reserved',
+          changed_by: user?.username || 'Unknown',
+          created_at: txDate
+        }]);
+
+        await fetchData();
+      }
+      setPanelState({ type: 'default', plotId: '', lead: null });
+    } finally {
+      setIsSubmitting(false);
     }
-    setPanelState({ type: 'default', plotId: '', lead: null });
   };
 
   const handleSaveNewCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
-    const formData = new FormData(e.target as HTMLFormElement);
-    const projName = project?.name || 'ไอลิน6';
-    const txDateStr = formData.get('transactionDate') as string;
-    const txDate = txDateStr ? new Date(`${txDateStr}T12:00:00Z`).toISOString() : new Date().toISOString();
-    
-    const interestPrimary = formData.get('interest') as string;
-    const interestSecondary = formData.get('interestSecondary') as string;
-    const otherProjects = formData.getAll('otherProjects') as string[];
-    
-    let finalInterest = interestPrimary === 'Any' ? 'Any' : `${interestPrimary}`;
-    if (interestSecondary.trim()) {
-       finalInterest = interestPrimary === 'Any' ? interestSecondary.trim() : `${finalInterest}, ${interestSecondary.trim()}`;
-    }
-    if (otherProjects.length > 0) {
-       const otherProjectsStr = `สนใจโครงการอื่น: ${otherProjects.join(', ')}`;
-       finalInterest = finalInterest === 'Any' ? otherProjectsStr : `${finalInterest} (${otherProjectsStr})`;
-    }
-    
-    const { data: newLead } = await supabase.from('leads').insert([{
-      project_name: projName,
-      customer_name: formData.get('name'),
-      phone: formData.get('phone'),
-      occupation: formData.get('occupation'),
-      status: 'Visit',
-      interest: finalInterest,
-      agent_name: user?.username || 'Unknown',
-      created_at: txDate
-    }]).select().single();
-
-    if (newLead) {
-      await supabase.from('status_history').insert([{
-        entity_type: 'lead',
-        entity_id: newLead.id,
-        new_status: 'Visit',
-        changed_by: user?.username || 'Unknown',
+    setIsSubmitting(true);
+    try {
+      const formData = new FormData(e.target as HTMLFormElement);
+      const projName = internalProject?.name || 'ไอลิน6';
+      const txDateStr = formData.get('transactionDate') as string;
+      const txDate = txDateStr ? new Date(`${txDateStr}T12:00:00Z`).toISOString() : new Date().toISOString();
+      
+      const interestPrimary = formData.get('interest') as string;
+      const interestSecondary = formData.get('interestSecondary') as string;
+      const otherProjects = formData.getAll('otherProjects') as string[];
+      
+      let finalInterest = interestPrimary === 'Any' ? 'Any' : `${interestPrimary}`;
+      if (interestSecondary.trim()) {
+         finalInterest = interestPrimary === 'Any' ? interestSecondary.trim() : `${finalInterest}, ${interestSecondary.trim()}`;
+      }
+      if (otherProjects.length > 0) {
+         const otherProjectsStr = `สนใจโครงการอื่น: ${otherProjects.join(', ')}`;
+         finalInterest = finalInterest === 'Any' ? otherProjectsStr : `${finalInterest} (${otherProjectsStr})`;
+      }
+      
+      const { data: newLead } = await supabase.from('leads').insert([{
+        project_name: projName,
+        customer_name: formData.get('name'),
+        phone: formData.get('phone'),
+        occupation: formData.get('occupation'),
+        status: 'Visit',
+        interest: finalInterest,
+        agent_name: user?.username || 'Unknown',
         created_at: txDate
-      }]);
+      }]).select().single();
 
-      await fetchData();
+      if (newLead) {
+        await supabase.from('status_history').insert([{
+          entity_type: 'lead',
+          entity_id: newLead.id,
+          new_status: 'Visit',
+          changed_by: user?.username || 'Unknown',
+          created_at: txDate
+        }]);
+        await fetchData();
+      }
+      setPanelState({ type: 'default', plotId: '', lead: null });
+    } finally {
+      setIsSubmitting(false);
     }
-    setPanelState({ type: 'default', plotId: '', lead: null });
   };
 
   const handleDeleteCustomer = async (leadId: string) => {
@@ -441,61 +452,72 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
 
   const handleUpdateCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
-    const leadId = panelState.lead.id;
-    const oldStatus = panelState.lead.status;
-    const newStatus = editCustomerForm.status;
-    const isNewBooking = oldStatus === 'Visit' && newStatus !== 'Visit';
-    const txDateStr = editCustomerForm.transactionDate;
-    const txDate = txDateStr ? new Date(`${txDateStr}T12:00:00Z`).toISOString() : new Date().toISOString();
-    
-    await supabase.from('leads').update({
-      customer_name: editCustomerForm.name,
-      phone: editCustomerForm.phone,
-      occupation: editCustomerForm.occupation,
-      status: newStatus,
-      ...(isNewBooking ? { agent_name: user?.username || 'Unknown' } : {})
-    }).eq('id', leadId);
-
-    const { data: existingSale } = await supabase.from('sales').select('id').eq('lead_id', leadId).maybeSingle();
-    
-    const salePayload = {
-      contract_status: newStatus === 'Transferred' || newStatus === 'Handover' ? 'Transferred' : (newStatus === 'Contracted' || newStatus === 'DownPayment' || newStatus === 'DocumentPrep' || newStatus === 'LoanProcessing' || newStatus === 'Approved' ? 'Contracted' : 'Reserved'),
-      cancellation_reason: newStatus === 'Cancelled' ? editCustomerForm.cancelReason : null,
-      sale_price: editCustomerForm.salePrice ? Number(editCustomerForm.salePrice.replace(/[^0-9.-]+/g,"")) : null,
-      land_office_price: editCustomerForm.landOfficePrice ? Number(editCustomerForm.landOfficePrice.replace(/[^0-9.-]+/g,"")) : null,
-      ...(newStatus === 'Transferred' || newStatus === 'Handover' ? { transferred_at: txDate } : {})
-    };
-
-    if (existingSale) {
-      await supabase.from('sales').update(salePayload).eq('id', existingSale.id);
-    } else if (isNewBooking) {
-      await supabase.from('sales').insert([{ lead_id: leadId, ...salePayload }]);
-    }
-
-    if (oldStatus !== newStatus || editCustomerForm.bank !== panelState.lead.bank) {
-      let note = '';
-      if (oldStatus === newStatus && editCustomerForm.bank !== panelState.lead.bank) {
-        note = `เปลี่ยนธนาคารเป็น: ${editCustomerForm.bank}`;
-      } else if ((newStatus === 'DocumentPrep' || newStatus === 'LoanProcessing') && editCustomerForm.bank) {
-        note = `ยื่นผ่าน: ${editCustomerForm.bank}`;
-      } else if (newStatus === 'Cancelled' && editCustomerForm.cancelReason) {
-        note = `เหตุผล: ${editCustomerForm.cancelReason}`;
-      } else if (newStatus === 'Approved' && editCustomerForm.landOfficePrice) {
-        note = `ราคา ท.ด. ฿${parseInt(editCustomerForm.landOfficePrice).toLocaleString()}`;
-      }
+    setIsSubmitting(true);
+    try {
+      const leadId = panelState.lead.id;
+      const oldStatus = panelState.lead.status;
+      const newStatus = editCustomerForm.status;
+      const isNewBooking = oldStatus === 'Visit' && newStatus !== 'Visit';
+      const txDateStr = editCustomerForm.transactionDate;
+      const txDate = txDateStr ? new Date(`${txDateStr}T12:00:00Z`).toISOString() : new Date().toISOString();
       
-      await supabase.from('status_history').insert([{
-        entity_type: 'lead',
-        entity_id: leadId,
-        old_status: oldStatus,
-        new_status: newStatus,
-        changed_by: (user?.username || 'Unknown') + (note ? ` (${note})` : ''),
-        created_at: txDate
-      }]);
-    }
+      await supabase.from('leads').update({
+        customer_name: editCustomerForm.name,
+        phone: editCustomerForm.phone,
+        occupation: editCustomerForm.occupation,
+        status: newStatus,
+        ...(isNewBooking ? { agent_name: user?.username || 'Unknown' } : {})
+      }).eq('id', leadId);
 
-    await fetchData();
-    setPanelState({ type: 'default', plotId: '', lead: null });
+      const { data: existingSale } = await supabase.from('sales').select('id').eq('lead_id', leadId).maybeSingle();
+      
+      const salePayload = {
+        contract_status: newStatus === 'Transferred' || newStatus === 'Handover' ? 'Transferred' : (newStatus === 'Contracted' || newStatus === 'DownPayment' || newStatus === 'DocumentPrep' || newStatus === 'LoanProcessing' || newStatus === 'Approved' ? 'Contracted' : 'Reserved'),
+        cancellation_reason: newStatus === 'Cancelled' ? editCustomerForm.cancelReason : null,
+        sale_price: editCustomerForm.salePrice ? Number(editCustomerForm.salePrice.replace(/[^0-9.-]+/g,"")) : null,
+        land_office_price: editCustomerForm.landOfficePrice ? Number(editCustomerForm.landOfficePrice.replace(/[^0-9.-]+/g,"")) : null,
+        ...(newStatus === 'Transferred' || newStatus === 'Handover' ? { transferred_at: txDate } : {})
+      };
+
+      if (existingSale) {
+        await supabase.from('sales').update(salePayload).eq('id', existingSale.id);
+      } else if (isNewBooking) {
+        await supabase.from('sales').insert([{ lead_id: leadId, ...salePayload }]);
+      }
+
+      if (oldStatus !== newStatus || editCustomerForm.bank !== panelState.lead.bank || editCustomerForm.note) {
+        let noteParts = [];
+        if (oldStatus === newStatus && editCustomerForm.bank !== panelState.lead.bank) {
+          noteParts.push(`เปลี่ยนธนาคารเป็น: ${editCustomerForm.bank}`);
+        } else if ((newStatus === 'DocumentPrep' || newStatus === 'LoanProcessing') && editCustomerForm.bank) {
+          noteParts.push(`ยื่นผ่าน: ${editCustomerForm.bank}`);
+        } else if (newStatus === 'Cancelled' && editCustomerForm.cancelReason) {
+          noteParts.push(`เหตุผล: ${editCustomerForm.cancelReason}`);
+        } else if (newStatus === 'Approved' && editCustomerForm.landOfficePrice) {
+          noteParts.push(`ราคา ท.ด. ฿${parseInt(editCustomerForm.landOfficePrice).toLocaleString()}`);
+        }
+        
+        if (editCustomerForm.note) {
+          noteParts.push(`หมายเหตุ: ${editCustomerForm.note}`);
+        }
+        
+        const finalNote = noteParts.join(' | ');
+
+        await supabase.from('status_history').insert([{
+          entity_type: 'lead',
+          entity_id: leadId,
+          old_status: oldStatus,
+          new_status: newStatus,
+          changed_by: (user?.username || 'Unknown') + (finalNote ? ` (${finalNote})` : ''),
+          created_at: txDate
+        }]);
+      }
+
+      await fetchData();
+      setPanelState({ type: 'default', plotId: '', lead: null });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const filteredLeads = sortLeadsByPlot(leads.filter(l => {
@@ -519,7 +541,8 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
   };
 
   // Excel Import Handlers
-  const handleDownloadTemplate = () => {
+  const handleDownloadTemplate = async () => {
+    const XLSX = await import('xlsx');
     const ws = XLSX.utils.json_to_sheet([
       { 'Project Name': 'ไอลิน 3', 'Customer Name': 'สมชาย ใจดี', 'Phone': '0812345678', 'Occupation': 'เจ้าของธุรกิจ', 'Interest': 'แบบบ้าน A', 'Status': 'Visit', 'Plot': 'A1', 'Sale Price': 3500000, 'Land Price': 50000, 'Sales Agent': user?.username || 'Jane', 'Visit Date': '25/12/2026', 'Booking Date': '', 'Transfer Date': '', 'Cancel Date': '' },
       { 'Project Name': 'ไอลิน 4', 'Customer Name': 'สมหญิง สวยงาม', 'Phone': '0898765432', 'Occupation': 'พนักงานบริษัท', 'Interest': 'แบบบ้าน B', 'Status': 'Reserved', 'Plot': 'B5', 'Sale Price': 4200000, 'Land Price': 60000, 'Sales Agent': user?.username || 'John', 'Visit Date': '20/12/2026', 'Booking Date': '22/12/2026', 'Transfer Date': '', 'Cancel Date': '' },
@@ -558,6 +581,7 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
     const reader = new FileReader();
     reader.onload = async (event) => {
       try {
+        const XLSX = await import('xlsx');
         const bstr = event.target?.result;
         const wb = XLSX.read(bstr, { type: 'binary' });
         const wsname = wb.SheetNames[0];
@@ -689,7 +713,8 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
     return null;
   };
 
-  const handleExportData = () => {
+  const handleExportData = async () => {
+    const XLSX = await import('xlsx');
     const exportRows = leads.map(l => {
       const transferDate = l.history.find((h: any) => h.status === 'Transferred')?.timestamp?.split('T')[0] || '';
       const cancelDate = l.history.find((h: any) => h.status === 'Cancelled')?.timestamp?.split('T')[0] || '';
@@ -1101,6 +1126,13 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
             <Lightbulb size={18} className={activeTab === 'intelligence' ? 'text-[#d4af37]' : ''} />
             Business Insights
           </button>
+          <button 
+            onClick={() => setActiveTab('admin_docs')}
+            className={`pb-4 px-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'admin_docs' ? 'border-[#d4af37] text-[#0f172a]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+          >
+            <FileText size={18} className={activeTab === 'admin_docs' ? 'text-[#d4af37]' : ''} />
+            อัพเดทเอกสาร & สาธารณูปโภค (ธุรการ)
+          </button>
         </div>
         
         {/* Search Bar for List/Booked/Transferred View */}
@@ -1413,6 +1445,13 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
               </div>
             )}
             
+            {/* ADMIN DOCS TAB */}
+            {activeTab === 'admin_docs' && (
+              <div className="h-full p-4 md:p-6 overflow-hidden">
+                <AdminDocsManager plots={projectPlotsData} onUpdate={fetchData} />
+              </div>
+            )}
+            
           </div> {/* End Tab Content */}
 
           {/* Side Panel */}
@@ -1587,8 +1626,8 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
                       <input name="salePrice" type="text" autoComplete="off" className="w-full border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-[#d4af37] focus:ring-1 focus:ring-[#d4af37] text-sm font-semibold" placeholder="เช่น 3500000" />
                     </div>
                     <div className="pt-4">
-                      <button type="submit" className="w-full bg-[#0f172a] hover:bg-[#1e293b] text-white font-bold py-3 rounded-xl transition-colors shadow-sm">
-                        ยืนยันการจอง
+                      <button type="submit" disabled={isSubmitting} className="w-full bg-[#0f172a] hover:bg-[#1e293b] text-white font-bold py-3 rounded-xl transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                        {isSubmitting ? <><Loader2 className="animate-spin" size={18} /> กำลังบันทึก...</> : 'ยืนยันการจอง'}
                       </button>
                     </div>
                   </form>
@@ -1660,8 +1699,8 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
                       </div>
                     )}
                     <div className="pt-4">
-                      <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-colors shadow-sm">
-                        บันทึกการเยี่ยมชม (Visit)
+                      <button type="submit" disabled={isSubmitting} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                        {isSubmitting ? <><Loader2 className="animate-spin" size={18} /> กำลังบันทึก...</> : 'บันทึกการเยี่ยมชม (Visit)'}
                       </button>
                     </div>
                   </form>
@@ -1698,12 +1737,14 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-slate-700 mb-1">วันที่ทำรายการ / วันที่อัปเดตสถานะ</label>
+                      <label className={`block text-xs font-semibold mb-1 ${['Transferred', 'Handover'].includes(editCustomerForm.status) ? 'text-blue-700 bg-blue-50 px-2 py-1 rounded-md inline-block border border-blue-200 shadow-sm' : 'text-slate-700'}`}>
+                        {['Transferred', 'Handover'].includes(editCustomerForm.status) ? '🗓️ วันที่โอนกรรมสิทธิ์ (ระบุย้อนหลังได้)' : 'วันที่ทำรายการ / วันที่อัปเดตสถานะ'}
+                      </label>
                       <input 
                         type="date" 
                         value={editCustomerForm.transactionDate} 
                         onChange={e => setEditCustomerForm({...editCustomerForm, transactionDate: e.target.value})}
-                        className="w-full border border-slate-200 rounded-xl px-4 py-2 focus:outline-none focus:border-[#d4af37] text-sm text-gray-700" 
+                        className={`w-full border rounded-xl px-4 py-2 focus:outline-none focus:border-[#d4af37] text-sm text-gray-700 ${['Transferred', 'Handover'].includes(editCustomerForm.status) ? 'border-blue-300 bg-blue-50/30' : 'border-slate-200'}`} 
                       />
                     </div>
                     <div className="grid grid-cols-2 gap-3">
@@ -1826,6 +1867,18 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
                         </div>
                       )}
 
+                      {['DocumentPrep', 'LoanProcessing', 'Approved', 'Transferred'].includes(editCustomerForm.status) && (
+                        <div className="mb-3 animate-in slide-in-from-top-2 duration-200">
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">หมายเหตุเพิ่มเติม (ถ้ามี)</label>
+                          <textarea 
+                            className="w-full border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-slate-500 text-slate-700 bg-white text-sm min-h-[60px]"
+                            value={editCustomerForm.note || ''}
+                            onChange={e => setEditCustomerForm({...editCustomerForm, note: e.target.value})}
+                            placeholder="ระบุหมายเหตุเพิ่มเติม (ไม่บังคับ)"
+                          />
+                        </div>
+                      )}
+
                       {editCustomerForm.status !== 'Visit' && editCustomerForm.status !== 'Negotiation' && editCustomerForm.status !== 'Cancelled' && (
                         <div>
                           <label className="block text-xs font-semibold text-emerald-700 mb-1">แปลงที่จอง (เลือกได้เฉพาะแปลงว่าง)</label>
@@ -1847,8 +1900,8 @@ export default function SalesKanban({ project, projects, user, onBack }: { proje
                     </div>
                     
                     <div className="pt-2 flex flex-col gap-2">
-                      <button type="submit" className={`w-full text-white font-bold py-3 rounded-xl transition-colors shadow-sm ${editCustomerForm.status === 'Cancelled' ? 'bg-red-600 hover:bg-red-700' : 'bg-[#0f172a] hover:bg-[#1e293b]'}`}>
-                        บันทึกการเปลี่ยนแปลง
+                      <button type="submit" disabled={isSubmitting} className={`w-full text-white font-bold py-3 rounded-xl transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 ${editCustomerForm.status === 'Cancelled' ? 'bg-red-600 hover:bg-red-700' : 'bg-[#0f172a] hover:bg-[#1e293b]'}`}>
+                        {isSubmitting ? <><Loader2 className="animate-spin" size={18} /> กำลังบันทึก...</> : 'บันทึกการเปลี่ยนแปลง'}
                       </button>
                       <button type="button" onClick={() => setPanelState({ type: 'default', plotId: '', lead: null })} className="w-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold py-3 rounded-xl transition-colors">
                         ปิดหน้าต่าง

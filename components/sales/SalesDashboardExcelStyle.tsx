@@ -21,6 +21,7 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
   }, [selectedYear]);
 
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
+  const [showTotalBreakdown, setShowTotalBreakdown] = useState(false);
 
   const toggleProjectExpand = (proj: string) => {
     setExpandedProjects(prev => {
@@ -107,6 +108,8 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
     const cancelMonth = validRecords.filter((r: any) => r.cancelDate?.startsWith(targetMonthPrefix));
 
     const expectingTransfer = validRecords.filter((r: any) => r.expectedTransfer && r.expectedTransfer.startsWith(targetMonthPrefix) && !r.transferDate && (!r.cancelDate || r.cancelDate > targetMonthPrefix));
+    
+    const carriedOverTransfers = validRecords.filter((r: any) => r.expectedTransfer && r.expectedTransfer < targetMonthPrefix && !r.transferDate && (!r.cancelDate || r.cancelDate > targetMonthPrefix));
 
     const projectGroups: Record<string, { total: number, transferred: number, waiting: number, available: number, transVal: number, waitVal: number, availVal: number, transAppraisal: number, waitAppraisal: number, transferredPlots: any[], waitingPlots: any[], availablePlots: any[] }> = {};
     
@@ -234,10 +237,11 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
 
     return {
       viewsAcc, bookedAcc, cancelAcc, transferAcc,
-      viewsMonth, bookedMonth, transferMonth, cancelMonth, expectingTransfer,
+      viewsMonth, bookedMonth, transferMonth, cancelMonth, expectingTransfer, carriedOverTransfers,
       activeProjects, sumTransVal, sumWaitVal, sumAvailVal,
       sumTransAppraisal, sumWaitAppraisal,
       sumTransCnt, sumWaitCnt, sumAvailCnt, sumTotalCnt,
+      projectGroups,
       projChartData,
       lineChartTransfers,
       lineChartBookings,
@@ -395,9 +399,15 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
                 </div>
               </div>
             </div>
-          <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between h-full">
+          <div 
+            className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between h-full cursor-pointer hover:bg-slate-50 transition-colors relative group"
+            onClick={() => setShowTotalBreakdown(true)}
+          >
+                <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="bg-white text-gray-400 p-1.5 rounded-lg shadow-sm border border-gray-100"><BarChart size={16} /></div>
+                </div>
                 <div className="px-2">
-                  <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">บ้านทั้งหมด (ปี {selectedYear})</div>
+                  <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1 group-hover:text-gray-700 transition-colors">บ้านทั้งหมด (ปี {selectedYear})</div>
                   <div className="text-xl font-black text-gray-800">{fmtM(metrics.sumTransVal + metrics.sumWaitVal + metrics.sumAvailVal)}</div>
                   <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
                     <span>{metrics.sumTotalCnt} หลัง</span>
@@ -754,10 +764,8 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
         {/* WAITING FOR TRANSFER DETAILS */}
         <div className="mt-8 pt-6 border-t-2 border-gray-200">
           <WaitingForTransferDetails 
-            plots={[...metrics.expectingTransfer, ...metrics.transferMonth]
-              .map((r: any) => r.plot)
-              .filter(Boolean)
-              .filter((plot: any, index: number, self: any[]) => self.findIndex((p: any) => p.id === plot.id) === index)}
+            plots={[...metrics.expectingTransfer, ...metrics.transferMonth].map((r: any) => r.plot).filter(Boolean).filter((plot: any, index: number, self: any[]) => self.findIndex((p: any) => p.id === plot.id) === index)}
+            carriedOverPlots={metrics.carriedOverTransfers.map((r: any) => r.plot).filter(Boolean).filter((plot: any, index: number, self: any[]) => self.findIndex((p: any) => p.id === plot.id) === index)}
             validRecords={metrics.rawValidRecords} 
           />
         </div>
@@ -818,6 +826,70 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
         </div>
 
       </div>
+
+      {showTotalBreakdown && (
+        <div className="fixed inset-0 z-[500] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50 shrink-0">
+              <div>
+                <h3 className="text-xl font-black text-gray-800">รายละเอียดรวมบ้านทั้งหมด (ปี {selectedYear})</h3>
+                <p className="text-sm text-gray-500 font-medium">ยอดรวมรวมจากราคาขายตั้งต้นของทุกสถานะ</p>
+              </div>
+              <button onClick={() => setShowTotalBreakdown(false)} className="w-10 h-10 rounded-full hover:bg-gray-200 flex items-center justify-center text-gray-500 transition-colors">
+                ✕
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto dark-scrollbar flex-1 bg-white">
+              {Object.keys(metrics.projectGroups).map(proj => {
+                const group = metrics.projectGroups[proj];
+                const allPlots = [
+                  ...group.transferredPlots.map((p: any) => ({...p, __status: 'โอนแล้ว'})), 
+                  ...group.waitingPlots.map((p: any) => ({...p, __status: 'รอโอน'})), 
+                  ...group.availablePlots.map((p: any) => ({...p, __status: 'ว่าง'}))
+                ];
+                if (allPlots.length === 0) return null;
+                return (
+                  <div key={proj} className="mb-8 last:mb-0">
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="bg-slate-800 text-white p-2 rounded-lg">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></svg>
+                      </div>
+                      <h4 className="text-lg font-bold text-gray-800">{proj}</h4>
+                      <div className="ml-auto text-right">
+                        <div className="text-lg font-black text-slate-800">{fmtM(group.transVal + group.waitVal + group.availVal)}</div>
+                        <div className="text-xs text-slate-500 font-medium">{group.total} แปลง</div>
+                      </div>
+                    </div>
+                    <div className="bg-white border border-gray-100 rounded-xl overflow-hidden shadow-sm">
+                      <table className="w-full text-left text-sm">
+                        <thead className="bg-slate-50 border-b border-gray-100 text-slate-500 text-xs uppercase">
+                          <tr>
+                            <th className="px-4 py-3 font-bold">แปลง</th>
+                            <th className="px-4 py-3 font-bold">สถานะ</th>
+                            <th className="px-4 py-3 font-bold text-right">ราคาตั้งต้น</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-50">
+                          {allPlots.sort((a: any, b: any) => a.plot_name?.localeCompare(b.plot_name, 'th', { numeric: true })).map((p: any) => (
+                            <tr key={p.id} className="hover:bg-slate-50/50 transition-colors">
+                              <td className="px-4 py-3 font-bold text-slate-700">{p.plot_name}</td>
+                              <td className="px-4 py-3">
+                                <span className={`px-2 py-1 rounded text-[10px] font-bold ${p.__status === 'โอนแล้ว' ? 'bg-emerald-100 text-emerald-700' : p.__status === 'รอโอน' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'}`}>{p.__status}</span>
+                              </td>
+                              <td className="px-4 py-3 font-bold text-right text-slate-700">{fmtM(p.selling_price || 0)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

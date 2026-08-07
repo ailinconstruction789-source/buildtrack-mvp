@@ -698,7 +698,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                                 } else if (tAction === 'Site Engineer อนุมัติ' && task.require_qc) {
                                   actualEndUI = <div className="flex items-center justify-center gap-1 w-full text-[9px] sm:text-[11px] font-bold text-orange-600 text-center"><span>{actualEndRaw}</span><span className="text-[7px] bg-orange-100 text-orange-800 px-1 rounded-sm whitespace-nowrap">🔍 รอ QC</span></div>;
                                 } else if (tAction === 'ส่งงาน 100%' || tRole === 'Foreman') {
-                                  actualEndUI = <div className="flex items-center justify-center gap-1 w-full text-[9px] sm:text-[11px] font-bold text-yellow-600 text-center"><span>{actualEndRaw}</span><span className="text-[7px] bg-yellow-100 text-yellow-800 px-1 rounded-sm whitespace-nowrap">⏳ รอ SE</span></div>;
+                                  actualEndUI = <div className="flex items-center justify-center gap-1 w-full text-[9px] sm:text-[11px] font-bold text-yellow-600 text-center"><span>{actualEndRaw}</span><span className="text-[7px] bg-yellow-100 text-yellow-800 px-1 rounded-sm whitespace-nowrap">⏳ รอ Site Engineer</span></div>;
                                 }
                             } else if (actualEndRaw !== '-') {
                                 actualEndUI = <div className="w-full text-[9px] sm:text-[11px] font-bold text-blue-600 text-center">-</div>;

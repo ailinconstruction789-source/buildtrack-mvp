@@ -37,6 +37,10 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
             setGridRows(gridConfig.rows || 24);
           }
           setMapGrid(projectData.layout_data.filter((c: any) => c.type !== 'config'));
+        } else {
+          setMapGrid([]);
+          setGridCols(40);
+          setGridRows(24);
         }
 
         // Fetch plots, progress, grass task assignments, and recent photos for this project

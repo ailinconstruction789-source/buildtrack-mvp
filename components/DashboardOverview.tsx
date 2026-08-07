@@ -292,27 +292,6 @@ const DashboardOverview = function DashboardOverview({
     </div>
   )}
 
-  <div className="mb-8 sm:mb-12 mt-10">
-    <h2 className="font-semibold text-xl tracking-tight sm:text-2xl text-[#1d1d1f] mb-4 sm:mb-8">Executive Summary</h2>
-    <div className={`grid gap-4 sm:gap-6 ${isMobileLayout ? 'grid-cols-2' : 'grid-cols-4'}`}>
-        <div className="bg-white/80 backdrop-blur-xl p-5 sm:p-6 rounded-[1.5rem] border border-white shadow-[0_4px_20px_rgb(0,0,0,0.03)] flex flex-col justify-center items-center sm:items-start text-center sm:text-left h-32 sm:h-auto hover:-translate-y-1 transition-transform duration-300">
-          <div className="flex items-center gap-2 text-[#86868b] mb-2 sm:mb-4"><FolderOpen size={18} className="hidden sm:block"/><span className="text-[11px] sm:text-sm font-semibold tracking-wide">Total Projects</span></div>
-          <div className="text-3xl sm:text-5xl font-semibold tracking-tight text-[#1d1d1f]">{projects.length}</div>
-        </div>
-        <div className="bg-white/80 backdrop-blur-xl p-5 sm:p-6 rounded-[1.5rem] border border-white shadow-[0_4px_20px_rgb(0,0,0,0.03)] flex flex-col justify-center items-center sm:items-start text-center sm:text-left h-32 sm:h-auto hover:-translate-y-1 transition-transform duration-300">
-          <div className="flex items-center gap-2 text-blue-500 mb-2 sm:mb-4"><Activity size={18} className="hidden sm:block"/><span className="text-[11px] sm:text-sm font-semibold tracking-wide">Active Plots</span></div>
-          <div className="text-3xl sm:text-5xl font-semibold tracking-tight text-blue-500">{activePlotsCount}</div>
-        </div>
-        <div className="bg-white/80 backdrop-blur-xl p-5 sm:p-6 rounded-[1.5rem] border border-white shadow-[0_4px_20px_rgb(0,0,0,0.03)] flex flex-col justify-center items-center sm:items-start text-center sm:text-left h-32 sm:h-auto hover:-translate-y-1 transition-transform duration-300">
-          <div className="flex items-center gap-2 text-emerald-500 mb-2 sm:mb-4"><CheckCircle size={18} className="hidden sm:block"/><span className="text-[11px] sm:text-sm font-semibold tracking-wide">Completed</span></div>
-          <div className="text-3xl sm:text-5xl font-semibold tracking-tight text-emerald-500">{completedPlotsCount}</div>
-        </div>
-        <div className={`p-5 sm:p-6 rounded-[1.5rem] shadow-[0_4px_20px_rgb(0,0,0,0.03)] flex flex-col justify-center items-center sm:items-start text-center sm:text-left h-32 sm:h-auto hover:-translate-y-1 transition-transform duration-300 ${delayedPlotsCount > 0 ? 'bg-rose-50/80 backdrop-blur-xl border border-rose-100' : 'bg-white/80 backdrop-blur-xl border border-white'}`}>
-          <div className={`flex items-center gap-2 mb-2 sm:mb-4 ${delayedPlotsCount > 0 ? 'text-rose-500' : 'text-[#86868b]'}`}><AlertCircle size={18} className="hidden sm:block"/><span className="text-[11px] sm:text-sm font-semibold tracking-wide">Delayed</span></div>
-          <div className={`text-3xl sm:text-5xl font-semibold tracking-tight ${delayedPlotsCount > 0 ? 'text-rose-500' : 'text-slate-300'}`}>{delayedPlotsCount}</div>
-        </div>
-    </div>
-  </div>
 </div>
   );
 }

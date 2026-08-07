@@ -4,12 +4,14 @@ import { CheckCircle2, Circle, Clock, FileText, Home, Save, Calendar, CheckSquar
 
 interface WaitingForTransferDetailsProps {
   plots: any[];
+  carriedOverPlots?: any[];
   validRecords: any[];
 }
 
-export default function WaitingForTransferDetails({ plots, validRecords }: WaitingForTransferDetailsProps) {
+export default function WaitingForTransferDetails({ plots, carriedOverPlots = [], validRecords }: WaitingForTransferDetailsProps) {
   // We need to display plots that are currently in "Waiting" status.
   const waitingPlots = plots; // The parent component should pass ONLY the waiting plots.
+  const allTargetPlots = [...plots, ...carriedOverPlots];
 
   const [savingId, setSavingId] = useState<string | null>(null);
   const [tasksProgress, setTasksProgress] = useState<Record<string, Record<string, number>>>({});
@@ -25,7 +27,9 @@ export default function WaitingForTransferDetails({ plots, validRecords }: Waiti
         const templateMap = new Map();
         templates?.forEach(t => templateMap.set(t.id, t.task_name));
 
-        const plotIds = waitingPlots.map(p => p.id);
+        const plotIds = allTargetPlots.map(p => p.id);
+
+        if (plotIds.length === 0) return;
 
         // fetch plot_task_assignments for individual task progress
         const { data: assignments } = await supabase
@@ -61,26 +65,7 @@ export default function WaitingForTransferDetails({ plots, validRecords }: Waiti
     };
     
     fetchProgress();
-  }, [waitingPlots]);
-
-  const handleUpdateAdminDate = async (plotId: string, field: string, dateVal: string) => {
-    try {
-      setSavingId(`${plotId}-${field}`);
-      const { error } = await supabase
-        .from('plots')
-        .update({ [field]: dateVal || null })
-        .eq('id', plotId);
-      
-      if (error) {
-        console.error('Error updating plot date:', error);
-        alert('เกิดข้อผิดพลาดในการบันทึกข้อมูล');
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setSavingId(null);
-    }
-  };
+  }, [waitingPlots, carriedOverPlots]);
 
   if (!waitingPlots || waitingPlots.length === 0) {
     return null;
@@ -108,15 +93,10 @@ export default function WaitingForTransferDetails({ plots, validRecords }: Waiti
     { key: 'electric_meter_date', label: 'มิเตอร์ไฟฟ้า' },
   ];
 
-  return (
-    <div className="mt-8 mb-6">
-      <div className="flex items-center gap-3 mb-6">
-        <Home className="text-amber-600 w-7 h-7 p-1.5 bg-amber-100 rounded-lg" />
-        <h2 className="text-xl font-bold text-gray-800">รายละเอียดบ้านที่รอโอน (Waiting for Transfer)</h2>
-      </div>
-
+  const renderPlotList = (plotList: any[]) => {
+    return (
       <div className="grid grid-cols-1 gap-6">
-        {[...waitingPlots].sort((a, b) => {
+        {[...plotList].sort((a, b) => {
           const recordsA = validRecords.filter(r => r.plot?.id === a.id || r.plot_id === a.id).sort((x: any, y: any) => (y.createdDate || '').localeCompare(x.createdDate || ''));
           const recordsB = validRecords.filter(r => r.plot?.id === b.id || r.plot_id === b.id).sort((x: any, y: any) => (y.createdDate || '').localeCompare(x.createdDate || ''));
           const expA = recordsA[0]?.expectedTransfer || '9999-99-99';
@@ -241,15 +221,32 @@ export default function WaitingForTransferDetails({ plots, validRecords }: Waiti
                             <span className="truncate text-xs">{doc.label}</span>
                           </div>
                           <div className="flex items-center gap-2 flex-1">
-                            <input 
-                              type="date" 
-                              className="text-xs p-1.5 px-2 border border-slate-200 rounded-lg w-full text-slate-600 bg-white focus:ring-2 focus:ring-amber-500/20 transition-all shadow-sm outline-none"
-                              defaultValue={plot[doc.key] ? new Date(plot[doc.key]).toISOString().split('T')[0] : ''}
-                              onChange={(e) => handleUpdateAdminDate(plot.id, doc.key, e.target.value)}
-                              disabled={savingId === `${plot.id}-${doc.key}`}
-                            />
-                            {plot[doc.key] && <CheckCircle2 size={16} className="text-emerald-500 shrink-0" />}
-                            {!plot[doc.key] && <div className="w-4 shrink-0"></div>}
+                            {(() => {
+                              const statusKey = doc.key.replace('_date', '_status');
+                              const status = plot[statusKey] || 'NotStarted';
+                              const dateStr = plot[doc.key] ? new Date(plot[doc.key]).toLocaleDateString('th-TH', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
+                              
+                              if (status === 'NotStarted') {
+                                return <div className="text-xs px-2 py-1 bg-slate-100 text-slate-500 rounded-lg w-full text-center">ยังไม่ได้ดำเนินการ</div>;
+                              }
+                              
+                              let statusBadge = null;
+                              if (status === 'Submitting') {
+                                statusBadge = <div className="text-xs px-2 py-1 bg-yellow-50 text-yellow-700 rounded-lg border border-yellow-200 flex-1">กำลังยื่น ({dateStr})</div>;
+                              } else if (status === 'Waiting') {
+                                statusBadge = <div className="text-xs px-2 py-1 bg-orange-50 text-orange-700 rounded-lg border border-orange-200 flex-1">รอผล ({dateStr})</div>;
+                              } else if (status === 'Received') {
+                                statusBadge = <div className="text-xs px-2 py-1 bg-emerald-50 text-emerald-700 rounded-lg border border-emerald-200 flex-1 font-bold">ได้รับแล้ว ({dateStr})</div>;
+                              }
+                              
+                              return (
+                                <div className="flex items-center gap-2 w-full">
+                                  {statusBadge}
+                                  {status === 'Received' && <CheckCircle2 size={16} className="text-emerald-500 shrink-0" />}
+                                  {status !== 'Received' && <div className="w-4 shrink-0"></div>}
+                                </div>
+                              );
+                            })()}
                           </div>
                         </div>
                       ))}
@@ -262,6 +259,38 @@ export default function WaitingForTransferDetails({ plots, validRecords }: Waiti
           );
         })}
       </div>
+    );
+  };
+
+  return (
+    <div className="mt-8 mb-6">
+      <div className="flex items-center gap-3 mb-8 border-b border-gray-100 pb-4">
+        <Home className="text-amber-600 w-8 h-8 p-1.5 bg-amber-100 rounded-lg" />
+        <div>
+          <h2 className="text-2xl font-bold text-gray-800">รายละเอียดบ้านที่รอโอน (Waiting for Transfer)</h2>
+          <p className="text-sm text-gray-500">เป้าหมายทั้งหมด {waitingPlots.length + carriedOverPlots.length} แปลง</p>
+        </div>
+      </div>
+
+      {waitingPlots && waitingPlots.length > 0 && (
+        <div className="mb-10">
+          <h3 className="text-lg font-bold text-blue-600 mb-4 flex items-center gap-2">
+            <span className="bg-blue-100 text-blue-600 p-1.5 rounded-lg"><Calendar size={16} /></span>
+            คาดโอนตามเป้าหมายเดือนนี้ ({waitingPlots.length} แปลง)
+          </h3>
+          {renderPlotList(waitingPlots)}
+        </div>
+      )}
+
+      {carriedOverPlots && carriedOverPlots.length > 0 && (
+        <div>
+          <h3 className="text-lg font-bold text-rose-600 mb-4 flex items-center gap-2">
+            <span className="bg-rose-100 text-rose-600 p-1.5 rounded-lg"><Clock size={16} /></span>
+            คาดโอนตกค้างจากเดือนก่อน ({carriedOverPlots.length} แปลง)
+          </h3>
+          {renderPlotList(carriedOverPlots)}
+        </div>
+      )}
     </div>
   );
 }

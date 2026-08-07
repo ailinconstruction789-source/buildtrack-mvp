@@ -6,7 +6,8 @@ import { XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveCont
 export default function QCPerformanceDashboard({
   plots, taskTemplates, defects, allUpdatesRecord, assignments, isAdmin, isOwner, inspectionQueue
 }: any) {
-  const [qcFilterDate, setQcFilterDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [qcFilterStartDate, setQcFilterStartDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [qcFilterEndDate, setQcFilterEndDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [showQCDailyModal, setShowQCDailyModal] = useState(false);
   const [groupBy, setGroupBy] = useState<'time' | 'contractor' | 'plot'>('time');
   const [lightbox, setLightbox] = useState<{isOpen: boolean, images: string[], currentIndex: number}>({ isOpen: false, images: [], currentIndex: 0 });
@@ -172,13 +173,9 @@ export default function QCPerformanceDashboard({
     const passedList: any[] = [];
     const rejectedList: any[] = [];
     
-    // Create Date from qcFilterDate (YYYY-MM-DD)
-    const [year, month, day] = qcFilterDate.split('-').map(Number);
-    const filterDateObj = new Date(year, month - 1, day);
-    const filterDateStr = filterDateObj.toDateString();
-    
     allUpdatesRecord.forEach((upd: any) => {
-       if (new Date(upd.created_at).toDateString() === filterDateStr) {
+       const updDateStr = new Date(upd.created_at).toLocaleDateString('en-CA');
+       if (updDateStr >= qcFilterStartDate && updDateStr <= qcFilterEndDate) {
           if (upd.action === 'QC อนุมัติผ่าน' || upd.action === 'QC อนุมัติ' || upd.action === 'QC แจ้งแก้ไข') {
              const plot = plots?.find((p:any) => String(p.id) === String(upd.plot_id));
              const task = taskTemplates?.find((t:any) => String(t.id) === String(upd.task_template_id));
@@ -267,12 +264,11 @@ export default function QCPerformanceDashboard({
     const dailyValueTrend = Object.values(dailyValueMap);
 
     // 6.5. Today's Activities List
-    const targetDateStr = qcFilterDate;
     const todayActivities: any[] = [];
     allUpdatesRecord.forEach((upd: any) => {
       const d = new Date(upd.created_at);
       const dateStr = d.toLocaleDateString('en-CA');
-      if (dateStr === targetDateStr) {
+      if (dateStr >= qcFilterStartDate && dateStr <= qcFilterEndDate) {
         if (upd.progress === 100 && (upd.action === 'ส่งงาน 100%' || !upd.action?.includes('QC'))) {
           todayActivities.push({ type: 'se', action: upd.action, plot_id: upd.plot_id, task_template_id: upd.task_template_id, time: d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) });
         }
@@ -374,7 +370,7 @@ export default function QCPerformanceDashboard({
       suspectApprovals,
       todayActivities
     };
-  }, [defects, allUpdatesRecord, taskTemplates, plots, qcFilterDate, assignments, valueChartRange, inspectionQueue]);
+  }, [defects, allUpdatesRecord, taskTemplates, plots, qcFilterStartDate, qcFilterEndDate, assignments, valueChartRange, inspectionQueue]);
 
   const groupedDailyQC = useMemo(() => {
     if (!qcAnalytics) return null;
@@ -524,7 +520,7 @@ export default function QCPerformanceDashboard({
               {/* Workload Comparison Chart */}
               <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm hover:shadow-md transition-shadow flex-1">
                 <h4 className="font-bold text-slate-600 mb-4 text-sm flex items-center gap-2">
-                  <span>เปรียบเทียบภาระงาน (SE ส่งงาน vs QC ตรวจงาน)</span>
+                  <span>เปรียบเทียบภาระงาน (Site Engineer ส่งงาน vs QC ตรวจงาน)</span>
                 </h4>
                 <div className="h-48 sm:h-56">
                   <ResponsiveContainer width="100%" height="100%">
@@ -542,7 +538,7 @@ export default function QCPerformanceDashboard({
                                 <p className="font-bold mb-1">{data.date}</p>
                                 <div className="flex items-center gap-2 mb-1">
                                   <div className="w-2 h-2 rounded-full bg-blue-400"></div>
-                                  <span className="text-slate-300">SE ส่ง:</span>
+                                  <span className="text-slate-300">Site Engineer ส่ง:</span>
                                   <span className="font-bold text-blue-400">{data.seSubmitCount}</span>
                                 </div>
                                 <div className="flex items-center gap-2 mb-1">
@@ -563,7 +559,7 @@ export default function QCPerformanceDashboard({
                           return null;
                         }}
                       />
-                      <Bar dataKey="seSubmitCount" name="SE ส่งงาน" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={30} />
+                      <Bar dataKey="seSubmitCount" name="Site Engineer ส่งงาน" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={30} />
                       <Bar dataKey="qcInspectCount" name="QC ตรวจงาน" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={30} />
                     </BarChart>
                   </ResponsiveContainer>
@@ -578,15 +574,22 @@ export default function QCPerformanceDashboard({
                     <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-300 shadow-sm">
                        <input 
                          type="date" 
-                         value={qcFilterDate}
-                         onChange={(e) => setQcFilterDate(e.target.value)}
+                         value={qcFilterStartDate}
+                         onChange={(e) => setQcFilterStartDate(e.target.value)}
+                         className="bg-transparent text-sm font-bold text-slate-700 focus:outline-none"
+                       />
+                       <span className="text-slate-400 text-sm">-</span>
+                       <input 
+                         type="date" 
+                         value={qcFilterEndDate}
+                         onChange={(e) => setQcFilterEndDate(e.target.value)}
                          className="bg-transparent text-sm font-bold text-slate-700 focus:outline-none"
                        />
                     </div>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                      <h6 className="text-xs font-bold text-blue-600 mb-2 border-b border-blue-200 pb-1">SE ส่งงาน ({qcAnalytics.todayActivities.filter((a: any) => a.type === 'se').length} รายการ)</h6>
+                      <h6 className="text-xs font-bold text-blue-600 mb-2 border-b border-blue-200 pb-1">Site Engineer ส่งงาน ({qcAnalytics.todayActivities.filter((a: any) => a.type === 'se').length} รายการ)</h6>
                       <ul className="space-y-2 max-h-32 overflow-y-auto pr-2 custom-scrollbar">
                         {qcAnalytics.todayActivities.filter((a: any) => a.type === 'se').length === 0 ? <li className="text-xs text-slate-400 italic">ไม่มีข้อมูลในวันที่เลือก</li> : 
                          qcAnalytics.todayActivities.filter((a: any) => a.type === 'se').map((act: any, i: number) => (
@@ -654,14 +657,14 @@ export default function QCPerformanceDashboard({
                 <span className="bg-rose-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">{qcAnalytics.suspectApprovals.length} รายการ</span>
               </div>
               <p className="text-xs text-rose-600/80 font-bold mb-4">
-                * รายการที่ QC กดอนุมัติผ่านภายใน 10 นาทีหลังจากผู้รับเหมา/SE ส่งงาน (หรือไม่มีการแนบรูปภาพใหม่) ควรตรวจสอบความถูกต้องของหน้างานจริง
+                * รายการที่ QC กดอนุมัติผ่านภายใน 10 นาทีหลังจากผู้รับเหมา/Site Engineer ส่งงาน (หรือไม่มีการแนบรูปภาพใหม่) ควรตรวจสอบความถูกต้องของหน้างานจริง
               </p>
               
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="border-b border-rose-200 text-xs text-rose-800">
-                      <th className="py-2 px-3 font-bold">เวลาที่ SE ส่ง</th>
+                      <th className="py-2 px-3 font-bold">เวลาที่ Site Engineer ส่ง</th>
                       <th className="py-2 px-3 font-bold">เวลา QC ตรวจ</th>
                       <th className="py-2 px-3 font-bold">แปลง</th>
                       <th className="py-2 px-3 font-bold">ชื่องาน</th>
@@ -727,8 +730,16 @@ export default function QCPerformanceDashboard({
                  <Calendar size={16} className="text-indigo-100" />
                  <input 
                    type="date" 
-                   value={qcFilterDate}
-                   onChange={(e) => setQcFilterDate(e.target.value)}
+                   value={qcFilterStartDate}
+                   onChange={(e) => setQcFilterStartDate(e.target.value)}
+                   className="bg-transparent text-sm font-bold text-white focus:outline-none"
+                   style={{ colorScheme: 'dark' }}
+                 />
+                 <span className="text-indigo-200 text-sm">-</span>
+                 <input 
+                   type="date" 
+                   value={qcFilterEndDate}
+                   onChange={(e) => setQcFilterEndDate(e.target.value)}
                    className="bg-transparent text-sm font-bold text-white focus:outline-none"
                    style={{ colorScheme: 'dark' }}
                  />
@@ -851,7 +862,7 @@ export default function QCPerformanceDashboard({
                         
                         {/* Step 2: SE */}
                         <div className={`flex items-center gap-1 shrink-0 ${isWaitingSE ? 'text-amber-600 bg-amber-50 px-2 py-1 rounded-md' : (isWaitingQC ? 'text-emerald-600' : 'text-slate-400')}`}>
-                          {isWaitingSE ? '⏳ SE กำลังตรวจ' : (isWaitingQC ? '✅ SE ตรวจผ่าน' : (isRework ? '⚪ รอดำเนินการ' : '⚪ รอ SE ตรวจ'))}
+                          {isWaitingSE ? '⏳ Site Engineer กำลังตรวจ' : (isWaitingQC ? '✅ Site Engineer ตรวจผ่าน' : (isRework ? '⚪ รอดำเนินการ' : '⚪ รอ Site Engineer ตรวจ'))}
                         </div>
                         
                         <span className="mx-1 sm:mx-2 text-slate-300 shrink-0">➔</span>
@@ -1028,7 +1039,7 @@ export default function QCPerformanceDashboard({
                 <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">
                   <List className="text-indigo-500" /> รายละเอียดการตรวจงาน QC
                 </h2>
-                <p className="text-sm font-bold text-slate-500 mt-1">ประจำวันที่ {new Date(qcFilterDate).toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                <p className="text-sm font-bold text-slate-500 mt-1">ประจำวันที่ {new Date(qcFilterStartDate).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' })} {qcFilterStartDate !== qcFilterEndDate ? `ถึง ${new Date(qcFilterEndDate).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' })}` : ''}</p>
               </div>
               <div className="flex gap-2">
                 <div className="hidden sm:flex items-center bg-slate-100 rounded-xl p-1 border border-slate-200">
@@ -1038,7 +1049,7 @@ export default function QCPerformanceDashboard({
                 </div>
                 <button onClick={() => {
                   const originalTitle = document.title;
-                  const formattedDate = new Date(qcFilterDate).toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' });
+                  const formattedDate = `${new Date(qcFilterStartDate).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' })} ${qcFilterStartDate !== qcFilterEndDate ? `ถึง ${new Date(qcFilterEndDate).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' })}` : ''}`;
                   document.title = `รายการตรวจQC_${formattedDate}`;
                   setTimeout(() => {
                     window.print();
@@ -1083,7 +1094,7 @@ export default function QCPerformanceDashboard({
                               <div className="flex flex-col gap-1 shrink-0 text-right">
                                 {item.seSubmitFullStr !== '-' && (
                                   <div className="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-md self-end whitespace-nowrap">
-                                    SE ส่ง: {item.seSubmitFullStr}
+                                    Site Engineer ส่ง: {item.seSubmitFullStr}
                                   </div>
                                 )}
                                 <div className="text-xs font-bold bg-emerald-200/50 text-emerald-700 px-2 py-1 rounded-md self-end whitespace-nowrap">QC ตรวจผ่าน: {item.time}</div>
@@ -1131,7 +1142,7 @@ export default function QCPerformanceDashboard({
                               <div className="flex flex-col gap-1 shrink-0 text-right">
                                 {item.seSubmitFullStr !== '-' && (
                                   <div className="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-md self-end whitespace-nowrap">
-                                    SE ส่ง: {item.seSubmitFullStr}
+                                    Site Engineer ส่ง: {item.seSubmitFullStr}
                                   </div>
                                 )}
                                 <div className="text-xs font-bold bg-rose-200/50 text-rose-700 px-2 py-1 rounded-md self-end whitespace-nowrap">QC ตีกลับ: {item.time}</div>
@@ -1191,7 +1202,7 @@ export default function QCPerformanceDashboard({
                                   <div className="flex flex-col gap-1 shrink-0 text-right">
                                     {item.seSubmitFullStr !== '-' && (
                                       <div className="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-md self-end whitespace-nowrap">
-                                        SE ส่ง: {item.seSubmitFullStr}
+                                        Site Engineer ส่ง: {item.seSubmitFullStr}
                                       </div>
                                     )}
                                     <div className={`text-xs font-bold ${isPassed ? 'bg-emerald-200/50 text-emerald-700' : 'bg-rose-200/50 text-rose-700'} px-2 py-1 rounded-md self-end whitespace-nowrap`}>
@@ -1290,7 +1301,7 @@ export default function QCPerformanceDashboard({
             <div className="flex justify-between items-end mb-6 border-b-2 border-slate-800 pb-4">
               <div>
                 <h1 className="text-2xl font-black uppercase mb-2">รายงานสรุปผลการเข้าตรวจงาน QC</h1>
-                <p className="text-sm font-bold text-slate-600">ประจำวันที่: {new Date(qcFilterDate).toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                <p className="text-sm font-bold text-slate-600">ประจำวันที่: {new Date(qcFilterStartDate).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' })} {qcFilterStartDate !== qcFilterEndDate ? `ถึง ${new Date(qcFilterEndDate).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' })}` : ''}</p>
               </div>
             </div>
             

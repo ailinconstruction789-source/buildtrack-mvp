@@ -1083,7 +1083,7 @@ export default function OwnerAnalyticsDashboard({
         {/* 5. Performance Heatmaps (Weekly & Billing Cycle) */}
         <div className="lg:col-span-2 space-y-6">
            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-              <WeeklyHeatmap data={qcSePerformance} roleFilter="se" title="Weekly Work Habits (SE)" colorScheme="blue" />
+              <WeeklyHeatmap data={qcSePerformance} roleFilter="se" title="Weekly Work Habits (Site Engineer)" colorScheme="blue" />
               <WeeklyHeatmap data={qcSePerformance} roleFilter="qc" title="Weekly Work Habits (QC)" colorScheme="purple" />
            </div>
            <div className="grid grid-cols-1 gap-6">

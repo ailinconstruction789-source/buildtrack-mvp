@@ -88,7 +88,7 @@ export default function BillingCycleHeatmap({ data }: BillingCycleHeatmapProps) 
                   )}
                   {isSeDeadline && (
                     <div className="text-[10px] text-blue-500 font-bold mt-1 text-center leading-tight">
-                      SE<br/>Deadline
+                      Site Engineer<br/>Deadline
                     </div>
                   )}
                 </div>
@@ -126,7 +126,7 @@ export default function BillingCycleHeatmap({ data }: BillingCycleHeatmapProps) 
                   )}
                   {isSeDeadline && (
                     <div className="text-[10px] text-blue-500 font-bold mt-1 text-center leading-tight">
-                      SE<br/>Deadline
+                      Site Engineer<br/>Deadline
                     </div>
                   )}
                 </div>
@@ -164,7 +164,7 @@ export default function BillingCycleHeatmap({ data }: BillingCycleHeatmapProps) 
                   )}
                   {isSeDeadline && (
                     <div className="text-[10px] text-blue-500 font-bold mt-1 text-center leading-tight">
-                      SE<br/>Deadline
+                      Site Engineer<br/>Deadline
                     </div>
                   )}
                 </div>
