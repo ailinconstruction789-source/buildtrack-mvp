@@ -11,11 +11,13 @@ const ContractorScheduleView = dynamic(() => import('@/components/ContractorSche
 const MapVisualizer = dynamic(() => import('@/components/MapVisualizer'));
 const HouseDetailView = dynamic(() => import('@/components/HouseDetailView'));
 const TaskProgressView = dynamic(() => import('@/components/TaskProgressView'));
+const DefectProgressView = dynamic(() => import('@/components/DefectProgressView'));
 const OwnerAnalyticsDashboard = dynamic(() => import('@/components/OwnerAnalyticsDashboard'));
 const SalesReportsView = dynamic(() => import('@/components/sales/SalesReportsView'));
 const SalesDashboardExcelStyle = dynamic(() => import('@/components/sales/SalesDashboardExcelStyle'));
 const SalesIntelligenceView = dynamic(() => import('@/components/sales/SalesIntelligenceView'));
 const SalesSummaryTable = dynamic(() => import('@/components/sales/SalesSummaryTable'));
+const HousePromotionsView = dynamic(() => import('@/components/HousePromotionsView'));
 const QCPerformanceDashboard = dynamic(() => import('@/components/QCPerformanceDashboard'));
 const ExecutiveAnalytics = dynamic(() => import('@/components/ExecutiveAnalytics'));
 const MasterGanttChart = dynamic(() => import('@/components/MasterGanttChart'));
@@ -36,7 +38,7 @@ import {
   LayoutDashboard, Map as MapIcon, Truck, ChevronRight, ClipboardList, Loader2,
   Send, Camera, CheckCircle, XCircle, UserCog, X, Maximize2, HardHat, PlusCircle, Settings, Building, FolderOpen, Users, Trash2, Search, Filter, LogOut, AlertTriangle, Eraser, Grid, Paintbrush, Clock, SortAsc,
   UserPlus, Phone, CalendarDays, Wrench, FileSpreadsheet, Bell, CalendarClock, TrendingUp, AlertCircle, BarChartHorizontal, Save, Calendar, Smartphone, Monitor, ZoomIn, ZoomOut,
-  PieChart, Home, Activity, Download, Copy, Pickaxe, ShieldAlert, Printer, CheckSquare, Square, ImageIcon, Tag, Hammer, UserCheck, DollarSign, ArrowLeft, Key, Ban, Edit2, Check, Plus, Upload, Calculator, ChevronDown, ChevronUp, Lightbulb, Building2
+  PieChart, Home, Activity, Download, Copy, Pickaxe, ShieldAlert, Printer, CheckSquare, Square, ImageIcon, Tag, Hammer, UserCheck, DollarSign, ArrowLeft, Key, Ban, Edit2, Check, Plus, Upload, Calculator, ChevronDown, ChevronUp, Lightbulb, Building2, Gift
 } from 'lucide-react';
 
 // 🌟 ฟังก์ชันบีบอัดรูปภาพ Native — อยู่นอก component เพื่อไม่ให้ถูกสร้างใหม่ทุก render 🌟
@@ -123,6 +125,8 @@ export default function ConstructionApp() {
     fetchPlotDetails,
     fetchOwnerAnalyticsData,
     togglePlotSaleStatus,
+    resetHandoverCycle,
+    updateInspectionRound,
     materialRequests, setMaterialRequests,
     materialReceipts, setMaterialReceipts, inspectionQueueView, plotStatuses, plotOverallStatuses, qcSePerformance } = useBuildTrackData(loggedInUser, selectedProject?.name);
 
@@ -142,6 +146,10 @@ export default function ConstructionApp() {
     }, 100);
   }, []);
   const [taskReturnView, setTaskReturnView] = useState('house-detail');
+  const [defectReturnView, setDefectReturnView] = useState('dashboard');
+  const [activeHouseTab, setActiveHouseTab] = useState('construction');
+  const [selectedDefect, setSelectedDefect] = useState<any>(null);
+  const [defectUpdates, setDefectUpdates] = useState<any[]>([]);
   const activeView = loadingView || view;
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
   const [selectedPlot, setSelectedPlot] = useState<any>(null);
@@ -227,6 +235,7 @@ export default function ConstructionApp() {
 
   // Extracted: [notifications,
   const [showNotifs, setShowNotifs] = useState(false);
+  const [houseReturnView, setHouseReturnView] = useState<string>('');
   // Extracted: [contractors,
 
   const [inputText, setInputText] = useState('');
@@ -590,7 +599,7 @@ export default function ConstructionApp() {
 
   // Lazy load specific plot details when opening plot view
   useEffect(() => {
-    if (selectedPlot?.id && (view === 'house-detail' || view === 'task-progress')) {
+    if (selectedPlot?.id && (view === 'house-detail' || view === 'task-progress' || view === 'defect-progress')) {
       fetchPlotDetails(selectedPlot.id);
     }
   }, [selectedPlot?.id, view, fetchPlotDetails]);
@@ -1788,6 +1797,102 @@ export default function ConstructionApp() {
     }
     setIsSending(false);
   };
+
+  // 🌟 ฟังก์ชันส่งการอัปเดตงานซ่อมแซม (Defect)
+  const handleSendDefectPost = async () => {
+    if (isSending || !selectedDefect) return;
+    setIsSending(true);
+    if (selectedFiles.length > 0) {
+      setGlobalUploadState({ isUploading: true, isSuccess: false, message: 'กำลังบีบอัดและอัปโหลดรูปภาพงาน... ห้ามปิดหน้าต่าง' });
+    }
+    try {
+      let imageUrls: any[] = [];
+      if (selectedFiles.length > 0) {
+        imageUrls = await Promise.all(selectedFiles.map(async (f) => {
+          const comp = await compressImageNative(f.file);
+          const safeId = String(selectedPlot?.id || 'defect').replace(/[^a-zA-Z0-9-]/g, '');
+          const path = `${safeId}/${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          const { error } = await supabase.storage.from('task_images').upload(path, comp);
+          if (error) throw new Error('อัปโหลดรูปไม่สำเร็จ กรุณาลองใหม่');
+          return supabase.storage.from('task_images').getPublicUrl(path).data.publicUrl;
+        }));
+      }
+      
+      const username = loggedInUser?.username || loggedInUser?.name || currentUserRole || 'Admin';
+      const { error } = await supabase.from('defect_updates').insert([{ 
+         defect_id: selectedDefect.id, 
+         created_by: username, 
+         progress: progressValue, 
+         note: inputText.trim() || `อัปเดตความคืบหน้า ${progressValue}%`,
+         image_urls: imageUrls.length > 0 ? imageUrls.join(',') : null 
+      }]);
+      if (error) throw error;
+
+      // Update defect overall progress in defects table
+      const { error: defectErr } = await supabase.from('defects').update({ 
+         progress: progressValue,
+         status: progressValue === 100 ? 'resolved' : 'in_progress',
+         actual_start: selectedDefect.actual_start || new Date().toISOString(),
+         ...(progressValue === 100 ? { actual_end: new Date().toISOString() } : {})
+      }).eq('id', selectedDefect.id);
+      
+      if (defectErr) throw defectErr;
+
+      const { data } = await supabase.from('defect_updates').select('*').eq('defect_id', selectedDefect.id).order('created_at', { ascending: true });
+      setUpdates(data || []); 
+      setInputText(''); 
+      setSelectedFiles([]);
+      
+      fetchAllData();
+      if (imageUrls.length > 0) {
+        setGlobalUploadState({ isUploading: false, isSuccess: true, message: 'อัปโหลดรูปภาพเสร็จสิ้น!' });
+        setTimeout(() => setGlobalUploadState({ isUploading: false, isSuccess: false, message: '' }), 1500);
+      }
+    } catch (e: any) {
+      if (selectedFiles.length > 0) setGlobalUploadState({ isUploading: false, isSuccess: false, message: '' });
+      showAlert('Error', (e as Error).message);
+    }
+    setIsSending(false);
+  };
+
+  // 🗑️ ฟังก์ชันลบประวัติการรายงานงานซ่อม (Recall Defect Post)
+  const handleDeleteDefectUpdate = async (updateId: any, defectId: any, plotId: any) => {
+    showConfirm(
+      'ยืนยันการลบรายงาน ⚠️',
+      'คุณแน่ใจหรือไม่ว่าต้องการลบประวัติรายงานชิ้นนี้? ระบบจะทำการคำนวณเปอร์เซ็นต์ความคืบหน้าย้อนกลับไปยังครั้งก่อนหน้าให้อัตโนมัติครับ',
+      async () => {
+        setIsSending(true);
+        try {
+          const { error } = await supabase.from('defect_updates').delete().eq('id', updateId);
+          if (error) throw error;
+
+          const { data } = await supabase.from('defect_updates')
+            .select('*')
+            .eq('defect_id', defectId)
+            .order('created_at', { ascending: true });
+
+          setUpdates(data || []);
+          const newProgress = data?.length ? data[data.length - 1].progress : 0;
+          setProgressValue(newProgress);
+          
+          // Update overall defect status
+          await supabase.from('defects').update({ 
+            progress: newProgress,
+            status: newProgress === 100 ? 'resolved' : (newProgress === 0 ? 'reported' : 'in_progress'),
+            ...(newProgress !== 100 ? { actual_end: null } : {})
+          }).eq('id', defectId);
+
+          fetchAllData();
+          closeDialog();
+          showAlert('สำเร็จ ✨', 'ลบประวัติการอัปเดตงานและปรับปรุงความคืบหน้าเรียบร้อยแล้วครับ');
+        } catch (e: any) {
+          showAlert('Error', (e as Error).message);
+        }
+        setIsSending(false);
+      }
+    );
+  };
+
   // 🗑️ ฟังก์ชันลบประวัติการรายงานงาน (Recall Post)
   const handleDeleteUpdate = async (updateId: any, taskTemplateId: any, plotId: any) => {
     showConfirm(
@@ -2359,6 +2464,16 @@ export default function ConstructionApp() {
                         );
                       })}
                     </div>
+                    {view === 'task-progress' && (
+                     <button onClick={() => setView(taskReturnView)} className="text-sm font-bold text-slate-500 hover:text-blue-600 flex items-center gap-1.5 hover:-translate-x-1 transition-transform">
+                        <ArrowLeft size={16}/> BACK TO {taskReturnView === 'dashboard' ? 'DASHBOARD' : 'PLOT'}
+                     </button>
+                    )}
+                    {view === 'defect-progress' && (
+                     <button onClick={() => setView(defectReturnView || 'house-detail')} className="text-sm font-bold text-slate-500 hover:text-blue-600 flex items-center gap-1.5 hover:-translate-x-1 transition-transform">
+                        <ArrowLeft size={16}/> BACK TO {defectReturnView === 'dashboard' ? 'DASHBOARD' : 'PLOT'}
+                     </button>
+                    )}
                   </>
                 )}
               </div>
@@ -2585,12 +2700,16 @@ export default function ConstructionApp() {
             <header className="bg-slate-900 text-white p-3 sm:p-4 shrink-0 shadow-md z-[100] relative">
               <div className="flex justify-between items-center">
                 <div className="flex items-center gap-2">
-                  {view === 'project-detail' || view === 'house-detail' || view === 'task-progress' ? (
+                  {view === 'project-detail' || view === 'house-detail' || view === 'task-progress' || view === 'defect-progress' ? (
                      <button onClick={() => {
                         if (view === 'project-detail') { setView('dashboard'); setSelectedProject(null); }
-                        else if (view === 'house-detail') setView('project-detail');
+                        else if (view === 'house-detail') {
+                          if (houseReturnView) { setView(houseReturnView); setHouseReturnView(''); }
+                          else setView('project-detail');
+                        }
                         else if (view === 'task-progress') setView(taskReturnView);
-                     }} className="text-white flex items-center gap-1.5 font-bold text-xs sm:text-sm bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-full transition-colors">
+                        else if (view === 'defect-progress') setView(defectReturnView || 'house-detail');
+                     }} className="text-white flex items-center gap-1.5 font-bold text-xs sm:text-sm bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-full transition-colors cursor-pointer">
                         <ArrowLeft size={16} /> BACK
                      </button>
                   ) : (
@@ -2637,8 +2756,11 @@ export default function ConstructionApp() {
                     </button>
                  )}
                  {view === 'house-detail' && (
-                    <button onClick={() => setView('project-detail')} className="text-sm font-bold text-slate-500 hover:text-blue-600 flex items-center gap-1.5 hover:-translate-x-1 transition-transform">
-                       <ArrowLeft size={16}/> BACK TO {selectedProject?.name || 'PROJECT'}
+                    <button onClick={() => {
+                      if (houseReturnView) { setView(houseReturnView); setHouseReturnView(''); }
+                      else setView('project-detail');
+                    }} className="text-sm font-bold text-slate-500 hover:text-blue-600 flex items-center gap-1.5 hover:-translate-x-1 transition-transform cursor-pointer">
+                       <ArrowLeft size={16}/> BACK TO {houseReturnView === 'sales-dashboard-excel' ? 'SALES DASHBOARD' : selectedProject?.name || 'PROJECT'}
                     </button>
                  )}
                  {view === 'task-progress' && (
@@ -3599,10 +3721,20 @@ export default function ConstructionApp() {
               )}
 
 
-              {/* 📊 View: Sales Dashboard Excel */}
-              {view === 'sales-dashboard-excel' && (
-                <SalesDashboardExcelStyle project={selectedProject} />
-              )}
+              {/* 📊 View: Sales Dashboard Excel (Keep-Alive Cache - Instant 0s Transitions) */}
+              <div className={view === 'sales-dashboard-excel' ? 'block h-full' : 'hidden'}>
+                <SalesDashboardExcelStyle 
+                  project={selectedProject} 
+                  onViewDefects={(plot: any) => {
+                    const foundProj = projects.find((p: any) => p.name === plot.project_name || p.project_name === plot.project_name);
+                    if (foundProj) setSelectedProject(foundProj);
+                    setSelectedPlot(plot);
+                    setActiveHouseTab('handover');
+                    setHouseReturnView('sales-dashboard-excel');
+                    setView('house-detail');
+                  }}
+                />
+              </div>
 
               {/* 📊 View: Sales Dashboard */}
               {view === 'sales-dashboard' && (
@@ -3633,6 +3765,16 @@ export default function ConstructionApp() {
               {/* 🏢 View: Sales Summary Table */}
               {view === 'sales-summary-table' && (
                 <SalesSummaryTable />
+              )}
+
+              {/* 🎁 View: Sales Promotions Management (Admin & Sales) */}
+              {view === 'sales-promotions' && (isAdmin || isSales) && (
+                <HousePromotionsView
+                  plots={plots}
+                  projects={projects}
+                  selectedPlot={selectedPlot}
+                  currentUserRole={currentUserRole}
+                />
               )}
 
               {/* 🗺️ View: Project Detail & Map Builder */}
@@ -3667,6 +3809,7 @@ export default function ConstructionApp() {
               {/* 📋 LEVEL 3: House Detail */}
               {view === 'house-detail' && selectedPlot && (
                 <HouseDetailView
+                  setSelectedDefect={setSelectedDefect} setDefectReturnView={setDefectReturnView}
                   loading={loading}
                   view={view} setView={setView} selectedPlot={selectedPlot} selectedProject={selectedProject}
                   isMobileLayout={isMobileLayout} plotPlanStart={plotPlanStart} plotPlanEnd={plotPlanEnd}
@@ -3690,6 +3833,9 @@ export default function ConstructionApp() {
                   getPlotOverallStatus={getPlotOverallStatus} handleUploadOverviewImage={handleUploadOverviewImage}
                   togglePlotSaleStatus={togglePlotSaleStatus} materialRequests={materialRequests} materialReceipts={materialReceipts}
                   setMaterialRequests={setMaterialRequests} setMaterialReceipts={setMaterialReceipts}
+                  defects={defects} setDefects={setDefects} contractors={contractors}
+                  activeHouseTab={activeHouseTab} setActiveHouseTab={setActiveHouseTab}
+                  fetchAllData={fetchAllData} resetHandoverCycle={resetHandoverCycle} updateInspectionRound={updateInspectionRound}
                   showAlert={showAlert} showToast={showToast}
                 />
               )}
@@ -3714,6 +3860,29 @@ export default function ConstructionApp() {
                   isPendingSE={isPendingSE} handleReviewAction={handleReviewAction} isQC={isQC}
                   isPendingQC={isPendingQC} isProcurement={isProcurement} isOwner={isOwner}
                   handleSendPost={handleSendPost} 
+                  handleAdminUndoLatest={handleAdminUndoLatest}
+                  handleAdminResetToZero={handleAdminResetToZero}
+                />
+              )}
+              {/* 🛠️ LEVEL 4: Defect Progress */}
+              {view === 'defect-progress' && selectedDefect && (
+                <DefectProgressView
+                  view={view} setView={setView} defectReturnView={defectReturnView}
+                  isMobileLayout={isMobileLayout} selectedDefect={selectedDefect} selectedPlot={selectedPlot}
+                  setProgressValue={setProgressValue} progressValue={progressValue} isSending={isSending}
+                  setFullImageUrl={setFullImageUrl} handleDeleteDefectUpdate={handleDeleteDefectUpdate}
+                  setExportModalOpen={setExportModalOpen}
+                  isProjectPlanner={isProjectPlanner}
+                  isAdmin={isAdmin} currentUserRole={currentUserRole} updates={updates} setUpdates={setUpdates}
+                  inputText={inputText} setInputText={setInputText}
+                  selectedFiles={selectedFiles} setSelectedFiles={setSelectedFiles}
+
+                  isTaskCompleted={selectedDefect.progress === 100} handleOpenExportModal={handleOpenExportModal}
+                  defects={defects} loggedInUser={loggedInUser}
+                  isLockedForForeman={isLockedForForeman} isSiteEngineer={isSiteEngineer}
+                  isPendingSE={isPendingSE} handleReviewAction={handleReviewAction} isQC={isQC}
+                  isPendingQC={isPendingQC} isProcurement={isProcurement} isOwner={isOwner}
+                  handleSendPost={handleSendDefectPost} 
                   handleAdminUndoLatest={handleAdminUndoLatest}
                   handleAdminResetToZero={handleAdminResetToZero}
                 />
@@ -3984,8 +4153,8 @@ export default function ConstructionApp() {
                 </>
               )}
               {(isAdmin || isOwner || isSales) && (
-                <button onClick={() => setShowMobileSalesMenu(true)} className={`flex flex-col items-center p-2 rounded-xl w-16 ${['sales-dashboard-excel', 'sales-dashboard', 'sales-reports', 'sales-summary-table', 'agent-performance', 'sales-intelligence'].includes(activeView) ? 'text-[#d4af37]' : 'text-slate-400 hover:text-slate-600'}`}>
-                  <Building2 size={20} className={['sales-dashboard-excel', 'sales-dashboard', 'sales-reports', 'sales-summary-table', 'agent-performance', 'sales-intelligence'].includes(activeView) ? 'fill-[#d4af37]/20' : ''} />
+                <button onClick={() => setShowMobileSalesMenu(true)} className={`flex flex-col items-center p-2 rounded-xl w-16 ${['sales-dashboard-excel', 'sales-dashboard', 'sales-reports', 'sales-summary-table', 'sales-promotions', 'agent-performance', 'sales-intelligence'].includes(activeView) ? 'text-[#d4af37]' : 'text-slate-400 hover:text-slate-600'}`}>
+                  <Building2 size={20} className={['sales-dashboard-excel', 'sales-dashboard', 'sales-reports', 'sales-summary-table', 'sales-promotions', 'agent-performance', 'sales-intelligence'].includes(activeView) ? 'fill-[#d4af37]/20' : ''} />
                   <span className="text-[9px] font-black mt-1">ฝ่ายขาย</span>
                 </button>
               )}
@@ -4025,6 +4194,12 @@ export default function ConstructionApp() {
                 <Building2 size={28} className="text-[#d4af37] mb-3" />
                 <span className="text-xs font-bold text-slate-700 text-center">ตารางสรุป<br/>ฝั่งขาย</span>
               </button>
+              {(isAdmin || isSales) && (
+                <button onClick={() => { setView('sales-promotions'); setShowMobileSalesMenu(false); }} className={`flex flex-col items-center justify-center p-5 rounded-2xl border-2 transition-all ${activeView === 'sales-promotions' ? 'border-[#d4af37] bg-[#d4af37]/10' : 'border-slate-100 bg-slate-50 hover:border-slate-200'}`}>
+                  <Gift size={28} className="text-[#d4af37] mb-3" />
+                  <span className="text-xs font-bold text-slate-700 text-center">ของแถม<br/>โครงการ</span>
+                </button>
+              )}
               <button onClick={() => { setView('agent-performance'); setShowMobileSalesMenu(false); }} className={`flex flex-col items-center justify-center p-5 rounded-2xl border-2 transition-all ${activeView === 'agent-performance' ? 'border-[#d4af37] bg-[#d4af37]/10' : 'border-slate-100 bg-slate-50 hover:border-slate-200'}`}>
                 <Users size={28} className="text-[#d4af37] mb-3" />
                 <span className="text-xs font-bold text-slate-700 text-center">สรุปผลงาน<br/>เซลล์</span>

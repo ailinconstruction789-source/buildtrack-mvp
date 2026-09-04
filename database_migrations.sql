@@ -221,3 +221,7 @@ CREATE POLICY "Allow authenticated insert ai_sales_reports" ON ai_sales_reports
     FOR INSERT
     TO authenticated
     WITH CHECK (true);
+
+-- Add actual_start and actual_end to defects
+ALTER TABLE "public"."defects" ADD COLUMN IF NOT EXISTS "actual_start" timestamp with time zone;
+ALTER TABLE "public"."defects" ADD COLUMN IF NOT EXISTS "actual_end" timestamp with time zone;

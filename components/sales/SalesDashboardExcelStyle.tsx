@@ -6,7 +6,7 @@ import { Loader2, Calendar, TrendingUp, Users, BarChart, ChevronDown, ChevronUp 
 import WaitingForTransferDetails from './WaitingForTransferDetails';
 import { ComposedChart, Bar, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, LabelList } from 'recharts';
 
-export default function SalesDashboardExcelStyle({ project }: { project?: any }) {
+export default function SalesDashboardExcelStyle({ project, onViewDefects }: { project?: any; onViewDefects?: (plot: any) => void }) {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<any>({ leads: [], sales: [], plots: [], history: [], houseTypes: [] });
   
@@ -766,7 +766,8 @@ export default function SalesDashboardExcelStyle({ project }: { project?: any })
           <WaitingForTransferDetails 
             plots={[...metrics.expectingTransfer, ...metrics.transferMonth].map((r: any) => r.plot).filter(Boolean).filter((plot: any, index: number, self: any[]) => self.findIndex((p: any) => p.id === plot.id) === index)}
             carriedOverPlots={metrics.carriedOverTransfers.map((r: any) => r.plot).filter(Boolean).filter((plot: any, index: number, self: any[]) => self.findIndex((p: any) => p.id === plot.id) === index)}
-            validRecords={metrics.rawValidRecords} 
+            validRecords={metrics.rawValidRecords}
+            onViewDefects={onViewDefects}
           />
         </div>
 

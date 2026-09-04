@@ -1,6 +1,6 @@
 'use client';
 import React, { useState } from 'react';
-import { LayoutDashboard, ClipboardList, Home, PieChart, BarChartHorizontal, TrendingUp, Building2, Users, Lightbulb, Grid, Calendar, Activity, ShieldAlert, PlusCircle, MapIcon, Building, DollarSign, Monitor, FileSpreadsheet, Wrench, FolderOpen, Smartphone, ChevronRight } from 'lucide-react';
+import { LayoutDashboard, ClipboardList, Home, PieChart, BarChartHorizontal, TrendingUp, Building2, Users, Lightbulb, Grid, Calendar, Activity, ShieldAlert, PlusCircle, MapIcon, Building, DollarSign, Monitor, FileSpreadsheet, Wrench, FolderOpen, Smartphone, ChevronRight, Gift } from 'lucide-react';
 
 const Sidebar = React.memo(({
   activeView,
@@ -70,6 +70,10 @@ const Sidebar = React.memo(({
                           <button onClick={() => setView('sales-dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-dashboard' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><LayoutDashboard size={18} /> ระบบฝ่ายขาย (Kanban)</button>
                           <button onClick={() => setView('sales-reports')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-reports' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><TrendingUp size={18} /> รายงานสรุปยอด (Sales)</button>
                           <button onClick={() => setView('sales-summary-table')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-summary-table' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><Building2 size={18} /> ตารางสรุปฝั่งขาย</button>
+                          {/* 🎁 ของแถมโครงการ (Promotions) - เฉพาะ Admin & Sales */}
+                          {(isAdmin || isSales) && (
+                            <button onClick={() => setView('sales-promotions')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-promotions' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><Gift size={18} /> ของแถมโครงการ (Promotions)</button>
+                          )}
                           <button onClick={() => setView('agent-performance')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'agent-performance' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><Users size={18} /> สรุปผลงานเซลล์</button>
                           <button onClick={() => setView('sales-intelligence')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-intelligence' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><Lightbulb size={18} /> Strategic Report</button>
                       </nav>

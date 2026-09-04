@@ -30,6 +30,8 @@ interface HouseDetailViewProps {
   schedules: any;
   scheduleInputs: any;
   setSelectedTask: (t: any) => void;
+  setSelectedDefect: (d: any) => void;
+  setDefectReturnView: (v: string) => void;
   setDefectModal: (o: any) => void;
   setTaskReturnView: (v: string) => void;
   setAssignModal: (o: any) => void;
@@ -70,6 +72,9 @@ interface HouseDetailViewProps {
   isUploadingLayer?: boolean;
   simulatedStatus?: any;
   editingHouseType?: any;
+  contractors?: any[];
+  activeHouseTab?: string;
+  setActiveHouseTab?: (t: string) => void;
 }
 
 const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
@@ -79,7 +84,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
     isSummaryDelayed, isProjectPlanner, setCopyModalOpen, handleSaveAllSchedules,
     isSubmitting, houseTypes, taskTemplates, getTaskStatus, latestUpdatesMap,
     schedules, scheduleInputs, 
-    setSelectedTask, setDefectModal,
+    setSelectedTask, setSelectedDefect, setDefectReturnView, setDefectModal,
     setTaskReturnView, setAssignModal,
     currentUserRole,
     totalChartDays, timeMarkers, todayTs, chartStart, chartEnd,
@@ -93,7 +98,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
     defects, setDefects,
     showAlert, showToast,
     materialReceipts, setMaterialReceipts, handleForceCompleteAllTasks,
-    isUploadingLayer, simulatedStatus, editingHouseType
+    isUploadingLayer, contractors, simulatedStatus, editingHouseType
   } = props;
 
   const currentPlotStatus = selectedPlot ? getPlotOverallStatus(selectedPlot.id) : null;
@@ -111,9 +116,12 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
   const [receiptUploadTask, setReceiptUploadTask] = React.useState<any>(null);
   const [viewHistoryTask, setViewHistoryTask] = React.useState<any>(null);
 
-  const [activeHouseTab, setActiveHouseTab] = React.useState('construction');
+  const [internalActiveHouseTab, setInternalActiveHouseTab] = React.useState('construction');
+  const activeHouseTab = props.activeHouseTab !== undefined ? props.activeHouseTab : internalActiveHouseTab;
+  const setActiveHouseTab = props.setActiveHouseTab || setInternalActiveHouseTab;
   const [taskSearchQuery, setTaskSearchQuery] = React.useState('');
   const [hideCompletedTasks, setHideCompletedTasks] = React.useState(false);
+  const [hideExcludedTasks, setHideExcludedTasks] = React.useState(true);
 
   // 🌟 Scroll Position Memory for Task Table 🌟
   const tableScrollRef = React.useRef<HTMLDivElement>(null);
@@ -579,7 +587,16 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                              onChange={(e) => setHideCompletedTasks(e.target.checked)}
                            />
                            ซ่อนงานที่เสร็จแล้ว (100%)
-                         </label>
+                          </label>
+                          <label className="flex items-center gap-2 text-sm font-semibold text-slate-600 cursor-pointer w-full sm:w-auto bg-slate-50 px-3 py-2 sm:py-2.5 rounded-xl border border-slate-200 hover:bg-slate-100 transition-colors select-none">
+                            <input 
+                              type="checkbox" 
+                              className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500"
+                              checked={hideExcludedTasks}
+                              onChange={(e) => setHideExcludedTasks(e.target.checked)}
+                            />
+                            ซ่อนงานข้อยกเว้น (N/A)
+                          </label>
                        </div>
                        
                        <div 
@@ -660,6 +677,16 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                                 const key = `${selectedPlot.id}-${t.id}`;
                                 const tProgress = latestUpdatesMap[key]?.progress || 0;
                                 if (tProgress === 100) return false;
+                            }
+                            if (hideExcludedTasks) {
+                                const assignment = assignments.find(a => a.task_template_id === t.id && a.plot_id === selectedPlot.id);
+                                const isGlobalExcluded = selectedPlot?.house_types?.type_name ? t.excluded_house_types?.includes(selectedPlot.house_types.type_name) : false;
+                                if (assignment?.is_excluded === true || isGlobalExcluded) return false;
+                            }
+                            if (hideExcludedTasks) {
+                                const assignment = assignments.find(a => a.task_template_id === t.id && a.plot_id === selectedPlot.id);
+                                const isGlobalExcluded = selectedPlot?.house_types?.type_name ? t.excluded_house_types?.includes(selectedPlot.house_types.type_name) : false;
+                                if (assignment?.is_excluded === true || isGlobalExcluded) return false;
                             }
                             return true;
                           }).map((task) => {
@@ -1180,7 +1207,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
   </td>
 )}
 <td className={`sticky ${isMobileLayout ? 'left-[220px]' : 'left-[360px]'} bg-white z-[40] border-b border-r border-black/5 p-1.5 sm:p-2 align-middle w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.08)]`}>
-                                            <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-black/5">
+                                          <div className="flex items-center gap-1 pb-1.5 mb-1.5 border-b border-dashed border-black/5">
                                               <span className="text-[8px] font-bold uppercase text-slate-400 w-8 shrink-0 text-left">Plan:</span>
                                               <div className="flex-1 text-[9px] sm:text-[11px] font-bold text-[#1d1d1f] text-center">
                                                  {plan.planned_start ? new Date(plan.planned_start).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}
@@ -1262,6 +1289,10 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
 
                      {activeHouseTab === 'handover' && (
                        <HouseHandoverView 
+                         setView={setView}
+                         setSelectedDefect={setSelectedDefect}
+                         setDefectReturnView={setDefectReturnView}
+                         isMobileLayout={isMobileLayout}
                          selectedPlot={selectedPlot} 
                          defects={defects || []} 
                          setDefects={setDefects || (() => {})} 
@@ -1269,6 +1300,10 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                          resetHandoverCycle={resetHandoverCycle}
                          updateInspectionRound={updateInspectionRound}
                          fetchAllData={fetchAllData}
+                         taskTemplates={taskTemplates}
+                         contractors={contractors}
+                         assignments={assignments}
+                         schedules={schedules}
                        />
                      )}
                    </div>

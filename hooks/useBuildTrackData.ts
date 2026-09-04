@@ -581,7 +581,15 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
     try {
       const { error } = await supabase.from('plots').update({
         handover_cycle: (currentCycle || 1) + 1,
-        inspection_round: 0
+        inspection_round: 0,
+        handover_status: 'pending',
+        handover_completed_at: null,
+        handover_completed_by: null,
+        inspection_round1_date: null,
+        inspection_round1_status: 'pending',
+        inspection_round2_date: null,
+        inspection_round2_status: 'pending',
+        handover_notes: null
       }).eq('id', plotId);
       if (error) throw error;
       await fetchPlotDetails(plotId);

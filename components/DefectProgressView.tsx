@@ -5,18 +5,18 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
-interface TaskProgressViewProps {
+interface DefectProgressViewProps {
   view: string;
   setView: (v: string) => void;
-  taskReturnView: string;
+  defectReturnView: string;
   isMobileLayout: boolean;
-  selectedTask: any;
+  selectedDefect: any;
   selectedPlot: any;
   setProgressValue: (v: number) => void;
   progressValue: number;
   isSending: boolean;
   setFullImageUrl: (url: string) => void;
-  handleDeleteUpdate: (updateId: string, taskId: string, plotId: string) => void;
+  handleDeleteDefectUpdate: (updateId: string, taskId: string, plotId: string) => void;
   setExportModalOpen: (b: boolean) => void;
   isProjectPlanner: boolean;
   isAdmin: boolean;
@@ -29,7 +29,7 @@ interface TaskProgressViewProps {
   setSelectedFiles: (files: any[]) => void;
   isTaskCompleted: boolean;
   handleOpenExportModal: () => void;
-  setDefectModal: (o: any) => void;
+  
   defects: any[];
   loggedInUser: any;
   isLockedForForeman: boolean;
@@ -45,42 +45,42 @@ interface TaskProgressViewProps {
   handleAdminResetToZero?: (taskTemplateId: string, plotId: string) => void;
 }
 
-const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps) {
+const DefectProgressView = function DefectProgressView(props: DefectProgressViewProps) {
   const {
-    view, setView, taskReturnView, isMobileLayout, selectedTask, selectedPlot,
+    view, setView, defectReturnView, isMobileLayout, selectedDefect, selectedPlot,
     setProgressValue, progressValue, isSending, setFullImageUrl,
-    handleDeleteUpdate, setExportModalOpen, 
+    handleDeleteDefectUpdate, setExportModalOpen, 
     isProjectPlanner, isAdmin, currentUserRole,
     updates, setUpdates, inputText, setInputText, 
     selectedFiles, setSelectedFiles,
-    isTaskCompleted, handleOpenExportModal, setDefectModal, defects, loggedInUser,
+    isTaskCompleted, handleOpenExportModal,  defects, loggedInUser,
     isLockedForForeman, isSiteEngineer, isPendingSE, handleReviewAction, isQC,
     isPendingQC, isProcurement, isOwner, handleSendPost, handleAdminUndoLatest, handleAdminResetToZero
   } = props;
 
   useEffect(() => {
-    if (view === 'task-progress' && selectedTask && selectedPlot) {
-      supabase.from('task_updates').select('*')
-        .eq('task_template_id', selectedTask.id)
-        .eq('plot_id', selectedPlot.id)
+    if (view === 'defect-progress' && selectedDefect && selectedPlot) {
+      supabase.from('defect_updates').select('*')
+        .eq('defect_id', selectedDefect.id)
+        
         .order('created_at', { ascending: true })
         .then(({ data }) => {
           setUpdates(data || []);
           setProgressValue(data?.length ? data[data.length - 1].progress : 0);
         });
     }
-  }, [view, selectedTask?.id, selectedPlot?.id, setUpdates, setProgressValue]);
+  }, [view, selectedDefect?.id, selectedPlot?.id, setUpdates, setProgressValue]);
 
   return (
     <>
-{view === 'task-progress' && selectedTask && (
+{view === 'defect-progress' && selectedDefect && (
                    <div className="animate-in slide-in-from-right duration-300">
                        {/* 🌟 Header Section 🌟 */}
                        <div className="bg-white rounded-2xl sm:rounded-[2.5rem] shadow-2xl border border-black/5 overflow-hidden flex flex-col h-[75vh] sm:h-[800px] relative border-b-8 border-b-blue-600">
                             <header className={`${isMobileLayout ? 'p-4' : 'p-6 sm:p-10'} bg-slate-800 text-white flex justify-between items-center shrink-0`}>
                                 <div className="flex items-center gap-3 sm:gap-4 min-w-0">
                                     <button 
-                                      onClick={() => setView(taskReturnView || 'house-detail')}
+                                      onClick={() => setView(defectReturnView || 'house-detail')}
                                       className="p-2 sm:px-4 sm:py-2.5 bg-white/10 hover:bg-white/20 active:scale-95 text-white rounded-xl sm:rounded-2xl flex items-center gap-1.5 transition-all text-xs sm:text-sm font-bold border border-white/10 shrink-0 shadow-sm"
                                       title="ย้อนกลับ"
                                     >
@@ -88,8 +88,8 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                        <span className="hidden sm:inline">ย้อนกลับ</span>
                                     </button>
                                     <div className="min-w-0">
-                                        <h1 className={`${isMobileLayout ? 'text-lg' : 'text-2xl sm:text-4xl'} font-bold text-white leading-tight mb-1 sm:mb-2 italic uppercase tracking-tight truncate`}>{selectedTask.task_name}</h1>
-                                        <p className="text-[10px] sm:text-sm text-slate-400 font-bold uppercase tracking-widest">Plot {selectedPlot.id} / Task {selectedTask.task_order}</p>
+                                        <h1 className={`${isMobileLayout ? 'text-lg' : 'text-2xl sm:text-4xl'} font-bold text-white leading-tight mb-1 sm:mb-2 italic uppercase tracking-tight truncate`}>{selectedDefect.description}</h1>
+                                        <p className="text-[10px] sm:text-sm text-slate-400 font-bold uppercase tracking-widest">Plot {selectedPlot.id} / Task {selectedDefect.task_order}</p>
                                     </div>
                                 </div>
                                
@@ -101,17 +101,17 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                  )}
                                  <div className={`${isMobileLayout ? 'text-3xl' : 'text-5xl sm:text-6xl'} font-bold text-blue-400 italic tracking-tighter`}>{isTaskCompleted ? <CheckCircle size={isMobileLayout?32:48} className="text-green-400 inline-block"/> : `${progressValue}%`}</div>
                                  {/* 🌟 ปุ่ม Punch List / Defect แยกหน้าต่างแบบมีรูปภาพ */}
-                                 {['QC', 'Foreman', 'Site Engineer', 'Admin', 'Owner'].includes(currentUserRole) && (
+                                 {false && (
                                     <button 
-                                       onClick={() => setDefectModal({ isOpen: true, task: selectedTask, plotId: selectedPlot.id })}
+                                       
                                        className={`ml-3 sm:ml-6 bg-rose-600 hover:bg-rose-700 text-white font-bold flex items-center gap-1.5 shadow-md border border-rose-500 transition-all ${isMobileLayout ? 'px-2.5 py-2 text-[10px] rounded-lg' : 'px-4 py-3 text-sm rounded-xl'}`}
                                     >
                                        <ShieldAlert size={isMobileLayout ? 14 : 18} />
                                        <span className="hidden sm:inline">แจ้งซ่อม (Defect)</span>
                                        <span className="inline sm:hidden">แจ้งซ่อม</span>
-                                       {defects.filter(d => d.plot_id === selectedPlot.id && d.task_id === selectedTask.id && d.status === 'pending').length > 0 && (
+                                       {defects.filter(d => d.plot_id === selectedPlot.id && d.task_id === selectedDefect.id && d.status === 'pending').length > 0 && (
                                           <span className="bg-white text-rose-600 text-[10px] font-bold px-1.5 py-0.5 rounded-full animate-pulse ml-1 shadow">
-                                             {defects.filter(d => d.plot_id === selectedPlot.id && d.task_id === selectedTask.id && d.status === 'pending').length}
+                                             {defects.filter(d => d.plot_id === selectedPlot.id && d.task_id === selectedDefect.id && d.status === 'pending').length}
                                           </span>
                                        )}
                                     </button>
@@ -119,7 +119,7 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                  {/* ⏪ ปุ่ม Admin: ย้อนสถานะงาน (Rollback) */}
                                  {isAdmin && updates.length > 0 && handleAdminUndoLatest && (
                                     <button 
-                                       onClick={() => handleAdminUndoLatest(selectedTask.id, selectedPlot.id)}
+                                       onClick={() => handleAdminUndoLatest(selectedDefect.id, selectedPlot.id)}
                                        className={`bg-orange-500 hover:bg-orange-600 text-white font-bold flex items-center gap-1.5 shadow-md border border-orange-400 transition-all ${isMobileLayout ? 'ml-2 px-2.5 py-2 text-[10px] rounded-lg' : 'ml-3 px-4 py-3 text-sm rounded-xl'}`}
                                     >
                                        <span className="hidden sm:inline">แอดมิน: ย้อนสถานะล่าสุด (Undo)</span>
@@ -128,7 +128,7 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                  )}
                                  {isAdmin && progressValue > 0 && handleAdminResetToZero && (
                                     <button 
-                                       onClick={() => handleAdminResetToZero(selectedTask.id, selectedPlot.id)}
+                                       onClick={() => handleAdminResetToZero(selectedDefect.id, selectedPlot.id)}
                                        className={`bg-rose-500 hover:bg-rose-600 text-white font-bold flex items-center gap-1.5 shadow-md border border-rose-400 transition-all ${isMobileLayout ? 'ml-2 px-2.5 py-2 text-[10px] rounded-lg' : 'ml-2 px-4 py-3 text-sm rounded-xl'}`}
                                     >
                                        <span className="hidden sm:inline">แอดมิน: รีเซ็ตงาน (0%)</span>
@@ -149,14 +149,14 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                            <main className={`flex-1 overflow-y-auto ${isMobileLayout ? 'p-3 pb-32 space-y-3' : 'p-4 sm:px-8 sm:pt-8 sm:pb-[280px] space-y-4 sm:space-y-6'} bg-slate-50/50`}>
                                {updates.map((update: any) => (
                                <div key={update.id} className={`flex ${isMobileLayout ? 'gap-2' : 'gap-3 sm:gap-5'} animate-in slide-in-from-bottom-4`}>
-                                   <div className={`${isMobileLayout ? 'w-8 h-8 rounded-lg text-xs' : 'w-10 h-10 sm:w-14 sm:h-14 rounded-2xl text-sm sm:text-base'} flex items-center justify-center text-white font-bold shrink-0 shadow-lg ${update.role === 'QC' ? 'bg-purple-600' : update.role === 'Site Engineer' ? 'bg-blue-600' : 'bg-slate-600'}`}>{update.user_name.charAt(0)}</div>
+                                   <div className={`${isMobileLayout ? 'w-8 h-8 rounded-lg text-xs' : 'w-10 h-10 sm:w-14 sm:h-14 rounded-2xl text-sm sm:text-base'} flex items-center justify-center text-white font-bold shrink-0 shadow-lg ${update.created_by === 'QC' ? 'bg-purple-600' : update.created_by === 'Site Engineer' ? 'bg-blue-600' : 'bg-slate-600'}`}>{update.created_by.charAt(0)}</div>
                                     {/* สังเกตตรงนี้: ผมแอบเติม pr-8 เข้าไปท้ายสุดของบรรทัดเพื่อไม่ให้ข้อความไปบังปุ่มลบครับ */}
                                    <div className={`flex-1 bg-white ${isMobileLayout ? 'p-3 rounded-2xl' : 'p-5 sm:p-6 rounded-[1.5rem] sm:rounded-[2rem]'} border border-black/5 shadow-sm relative pr-8`}>
                                        
                                        {/* 🗑️ ปุ่มลบรายงาน (สิทธิ์: เฉพาะ Admin เท่านั้น) และงานนั้นต้องยังไม่จบ 100% */}
                                        {isAdmin && !isTaskCompleted && (
                                           <button
-                                             onClick={() => handleDeleteUpdate(update.id, selectedTask.id, selectedPlot.id)}
+                                             onClick={() => handleDeleteDefectUpdate(update.id, selectedDefect.id, selectedPlot.id)}
                                              className="absolute top-3 right-3 text-slate-400 hover:text-rose-500 p-1.5 hover:bg-rose-50 rounded-xl transition-all hover:scale-105"
                                              title="ลบรายงานความผิดพลาดชิ้นนี้"
                                           >
@@ -165,7 +165,7 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                        )}
 
                                        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-2 sm:mb-4 gap-1 sm:gap-2">
-                                         <p className={`text-[9px] sm:text-xs font-bold uppercase italic tracking-widest leading-tight ${update.role === 'QC' ? 'text-purple-400' : update.role === 'Site Engineer' ? 'text-blue-400' : 'text-slate-400'}`}>{update.action} • {update.user_name} • {update.progress}%</p>
+                                         <p className={`text-[9px] sm:text-xs font-bold uppercase italic tracking-widest leading-tight ${update.created_by === 'QC' ? 'text-purple-400' : update.created_by === 'Site Engineer' ? 'text-blue-400' : 'text-slate-400'}`}>{update.action} • {update.created_by} • {update.progress}%</p>
                                          <span className={`text-[8px] sm:text-xs text-[#86868b] font-bold bg-[#f5f5f7] border border-slate-100 ${isMobileLayout ? 'px-2 py-0.5' : 'px-3 py-1.5'} rounded-lg shrink-0 w-fit`}>{new Date(update.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })} • {new Date(update.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.</span>
                                          {/* 🌟 ป้ายสภาพอากาศ ณ เวลาที่รายงาน */}
                                           {update.weather_info && (
@@ -174,10 +174,10 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                             </span>
                                           )}
                                        </div>
-                                       <p className={`text-[#1d1d1f] ${isMobileLayout ? 'text-xs mb-2' : 'text-sm sm:text-base mb-4'} font-medium leading-relaxed`}>{update.text_content}</p>
-                                       {update.image_url && (
-                                            <div className={`grid gap-2 ${update.image_url.split(',').filter((u: string) => u.trim() !== '').length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                                               {update.image_url.split(',').filter((u: string) => u.trim() !== '').map((url: any, i: any) => (
+                                       <p className={`text-[#1d1d1f] ${isMobileLayout ? 'text-xs mb-2' : 'text-sm sm:text-base mb-4'} font-medium leading-relaxed`}>{update.note}</p>
+                                       {update.image_urls && (
+                                            <div className={`grid gap-2 ${update.image_urls.split(',').filter((u: string) => u.trim() !== '').length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                                               {update.image_urls.split(',').filter((u: string) => u.trim() !== '').map((url: any, i: any) => (
                                                   <img key={i} src={url.trim()} onClick={() => setFullImageUrl(url.trim())} className={`w-full aspect-video ${isMobileLayout ? 'h-24' : 'h-32 sm:h-48'} object-cover rounded-xl sm:rounded-2xl cursor-zoom-in border border-slate-100 shadow-sm hover:opacity-90 transition-opacity`} alt="Task Update" /> 
                                                ))}
                                            </div>
@@ -261,4 +261,4 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
   );
 }
 
-export default React.memo(TaskProgressView);
+export default React.memo(DefectProgressView);

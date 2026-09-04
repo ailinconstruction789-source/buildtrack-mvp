@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { ShieldAlert, CheckCircle, Camera, Send, Loader2, X, RefreshCw, ChevronRight, PlusCircle } from 'lucide-react';
+import { ShieldAlert, CheckCircle, PlusCircle, Loader2, Calendar, HardHat, Pickaxe, History, Trash2, Search, Award, FileCheck, Lock, Unlock, CheckCircle2, UserCog, X, AlertTriangle, CalendarClock, Wrench } from 'lucide-react';
+import DefectTaskSelectModal from './DefectTaskSelectModal';
+import HandoverCertificateModal from './HandoverCertificateModal';
+import AppCustomModal, { AppModalConfig } from './AppCustomModal';
 
 export default function HouseHandoverView({ 
   selectedPlot, 
@@ -9,232 +12,1121 @@ export default function HouseHandoverView({
   currentUserRole,
   resetHandoverCycle,
   updateInspectionRound,
-  fetchAllData
+  fetchAllData,
+  taskTemplates,
+  contractors,
+  assignments,
+  schedules,
+  isMobileLayout,
+  setView,
+  setSelectedDefect,
+  setDefectReturnView
 }: any) {
-  const [newDefectText, setNewDefectText] = useState('');
-  const [defectFiles, setDefectFiles] = useState<any[]>([]);
-  const [isSubmittingDefect, setIsSubmittingDefect] = useState(false);
-  const [fullImageUrl, setFullImageUrl] = useState<string | null>(null);
+  const [isSelectModalOpen, setIsSelectModalOpen] = useState(false);
+  const [isCertificateModalOpen, setIsCertificateModalOpen] = useState(false);
+  const [assigningDefect, setAssigningDefect] = useState<any>(null);
+  const [defectSearchQuery, setDefectSearchQuery] = useState('');
+  const [hideCompletedDefects, setHideCompletedDefects] = useState(false);
+  
+  const [localCycle, setLocalCycle] = useState<number>(selectedPlot?.handover_cycle || 1);
+  const [viewingRound, setViewingRound] = useState<number>(selectedPlot?.inspection_round || 1);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [defectScheduleInputs, setDefectScheduleInputs] = useState<any>({});
+  
+  // Custom App Modal State
+  const [modalConfig, setModalConfig] = useState<AppModalConfig | null>(null);
 
-  const cycle = selectedPlot.handover_cycle || 1;
-  const round = selectedPlot.inspection_round || 0;
+  const showAlert = (title: string, message: string, variant: 'warning' | 'success' | 'danger' | 'info' = 'info') => {
+    setModalConfig({
+      isOpen: true,
+      type: 'alert',
+      variant,
+      title,
+      message
+    });
+  };
 
-  const currentDefects = defects.filter((d: any) => 
-    d.plot_id === selectedPlot.id && 
+  const showConfirm = (
+    title: string, 
+    message: string, 
+    onConfirm: () => void, 
+    variant: 'warning' | 'success' | 'danger' | 'info' = 'info',
+    confirmText?: string
+  ) => {
+    setModalConfig({
+      isOpen: true,
+      type: 'confirm',
+      variant,
+      title,
+      message,
+      confirmText,
+      onConfirm
+    });
+  };
+
+  const cycle = localCycle || selectedPlot?.handover_cycle || 1;
+  const currentRound = selectedPlot?.inspection_round || 0;
+  const isHandoverCompleted = selectedPlot?.handover_status === 'completed';
+
+  React.useEffect(() => {
+    if (selectedPlot?.inspection_round !== undefined) {
+      setViewingRound(selectedPlot.inspection_round);
+    }
+    if (selectedPlot?.handover_cycle) {
+      setLocalCycle(selectedPlot.handover_cycle);
+    }
+  }, [selectedPlot?.inspection_round, selectedPlot?.handover_cycle]);
+
+  // Show defects only for the selected cycle and viewing round
+  const roundDefects = (defects || []).filter((d: any) => 
+    d.plot_id === selectedPlot?.id && 
     d.defect_stage === 'handover' &&
-    d.handover_cycle === cycle
+    d.handover_cycle === cycle &&
+    d.inspection_round === viewingRound
   );
 
-  const handleSendHandoverDefect = async () => {
-    if (!newDefectText.trim() && defectFiles.length === 0) return;
-    if (round === 0) {
-      alert("กรุณากด 'เริ่มตรวจรอบที่ 1' ก่อนแจ้ง Defect");
-      return;
+  const canCompleteHandover = !isHandoverCompleted && currentRound > 0 && roundDefects.length > 0 && roundDefects.every((d: any) => (d.progress || 0) === 100);
+
+  const filteredDefects = roundDefects.filter((d: any) => {
+    const taskTemp = taskTemplates?.find((t: any) => t.id === (d.task_id || d.task_template_id));
+    const title = taskTemp?.task_name || d.description || '';
+    if (defectSearchQuery && !title.toLowerCase().includes(defectSearchQuery.toLowerCase())) {
+      return false;
     }
-
-    setIsSubmittingDefect(true);
-    try {
-      let imageUrls: string[] = [];
-      if (defectFiles.length > 0) {
-        for (const fileObj of defectFiles) {
-          const fileExt = fileObj.file.name.split('.').pop();
-          const fileName = `${Math.random()}.${fileExt}`;
-          const filePath = `${selectedPlot.id}/handover_${fileName}`;
-
-          const { error: uploadError } = await supabase.storage
-            .from('defect_images')
-            .upload(filePath, fileObj.file);
-
-          if (uploadError) throw uploadError;
-
-          const { data: publicUrlData } = supabase.storage
-            .from('defect_images')
-            .getPublicUrl(filePath);
-
-          imageUrls.push(publicUrlData.publicUrl);
-        }
-      }
-
-      const { error } = await supabase.from('defects').insert([{
-        plot_id: selectedPlot.id,
-        description: newDefectText,
-        reported_by: currentUserRole,
-        status: 'pending',
-        image_url: imageUrls.join(','),
-        defect_stage: 'handover',
-        handover_cycle: cycle,
-        inspection_round: round
-      }]);
-
-      if (error) throw error;
-
-      setNewDefectText('');
-      setDefectFiles([]);
-      if (fetchAllData) fetchAllData();
-    } catch (error: any) {
-      console.error('Error saving handover defect:', error);
-      alert('เกิดข้อผิดพลาดในการบันทึก: ' + error.message);
-    } finally {
-      setIsSubmittingDefect(false);
+    if (hideCompletedDefects && d.progress === 100) {
+      return false;
     }
-  };
-
-  const handleResolveDefect = async (id: string) => {
-    try {
-      const { error } = await supabase.from('defects').update({ status: 'resolved' }).eq('id', id);
-      if (error) throw error;
-      if (fetchAllData) fetchAllData();
-    } catch (e) {
-      console.error(e);
-    }
-  };
+    return true;
+  });
 
   const handleNextRound = async () => {
-    if (confirm(`ยืนยันเริ่มการตรวจรอบที่ ${round + 1} ใช่หรือไม่?`)) {
-      await updateInspectionRound(selectedPlot.id, round + 1);
+    if (isHandoverCompleted && currentUserRole !== 'Admin') {
+      showAlert('ผ่านการตรวจรับแล้ว', 'แปลงนี้ผ่านการตรวจรับมอบบ้านเรียบร้อยแล้ว ไม่สามารถเพิ่มรอบใหม่ได้ครับ', 'info');
+      return;
+    }
+    if (currentRound > 0) {
+      const pendingDefects = roundDefects.filter((d: any) => (d.progress || 0) < 100);
+      if (pendingDefects.length > 0) {
+        showAlert(
+          'ยังมีงานซ่อมที่ยังไม่เสร็จ',
+          `⚠️ ไม่สามารถเริ่มตรวจรอบใหม่ได้ เนื่องจากยังมีรายการแจ้งซ่อมในรอบนี้ที่ยังไม่เสร็จ 100% อีก ${pendingDefects.length} รายการ\n\nกรุณาแก้ไขและอัปเดตงานให้เสร็จเรียบร้อยครบทุกรายการก่อนเริ่มรอบถัดไปครับ`,
+          'warning'
+        );
+        return;
+      }
+    }
+
+    showConfirm(
+      'เริ่มการตรวจรอบใหม่',
+      `ยืนยันเริ่มการตรวจรอบที่ ${currentRound + 1} ใช่หรือไม่? \n(งานที่ยังแก้ไม่เสร็จจะถูกยกยอดมารอบใหม่ด้วย)`,
+      async () => {
+        setIsSubmitting(true);
+        const nextRound = currentRound + 1;
+
+        if (selectedPlot) {
+          selectedPlot.inspection_round = nextRound;
+        }
+        setViewingRound(nextRound);
+
+        try {
+          await updateInspectionRound(selectedPlot.id, nextRound);
+          
+          if (fetchAllData) await fetchAllData();
+        } catch (e: any) {
+          showAlert('เกิดข้อผิดพลาด', e.message, 'danger');
+        } finally {
+          setIsSubmitting(false);
+        }
+      },
+      'info',
+      `เริ่มตรวจรอบที่ ${currentRound + 1}`
+    );
+  };
+
+  const handleCompleteHandover = async () => {
+    showConfirm(
+      'อนุมัติผ่านการตรวจรับบ้าน',
+      `🎉 ยืนยันการอนุมัติผ่านและปิดการตรวจรับมอบบ้าน แปลง ${selectedPlot.id} ใช่หรือไม่?\n\nเมื่ออนุมัติแล้ว ข้อมูลทั้งหมดจะถูกล็อกเป็นโหมดอ่านอย่างเดียวและบันทึกประวัติการส่งมอบสำเร็จครับ`,
+      async () => {
+        setIsSubmitting(true);
+        try {
+          if (selectedPlot) {
+            selectedPlot.handover_status = 'completed';
+            selectedPlot.handover_completed_at = new Date().toISOString();
+            selectedPlot.handover_completed_by = currentUserRole;
+          }
+
+          const { error } = await supabase.from('plots').update({
+            handover_status: 'completed',
+            handover_completed_at: new Date().toISOString(),
+            handover_completed_by: currentUserRole
+          }).eq('id', selectedPlot.id);
+          
+          if (error) console.warn('Supabase plots handover columns notice:', error.message);
+
+          showAlert('อนุมัติผ่านสำเร็จ', `🎉 ยินดีด้วยครับ! แปลง ${selectedPlot.id} ตรวจรับมอบบ้านผ่านการอนุมัติเรียบร้อยแล้วครับ`, 'success');
+          if (fetchAllData) await fetchAllData();
+        } catch (e: any) {
+          if (selectedPlot) {
+            selectedPlot.handover_status = 'completed';
+            selectedPlot.handover_completed_at = new Date().toISOString();
+          }
+          showAlert('อนุมัติผ่านสำเร็จ', `🎉 ยินดีด้วยครับ! แปลง ${selectedPlot.id} ตรวจรับมอบบ้านผ่านการอนุมัติเรียบร้อยแล้วครับ`, 'success');
+        } finally {
+          setIsSubmitting(false);
+        }
+      },
+      'success',
+      'อนุมัติปิดการตรวจรับ'
+    );
+  };
+
+  const handleUnlockHandover = async () => {
+    showConfirm(
+      'ปลดล็อกการแก้ไข',
+      `คุณต้องการปลดล็อกสถานะตรวจรับบ้านแปลง ${selectedPlot.id} กลับมารอดำเนินการใช่หรือไม่?`,
+      async () => {
+        setIsSubmitting(true);
+        try {
+          if (selectedPlot) {
+            selectedPlot.handover_status = 'pending';
+            selectedPlot.handover_completed_at = null;
+          }
+
+          const { error } = await supabase.from('plots').update({
+            handover_status: 'pending',
+            handover_completed_at: null,
+            handover_completed_by: null
+          }).eq('id', selectedPlot.id);
+
+          if (error) console.warn('Supabase unlock notice:', error.message);
+
+          showAlert('ปลดล็อกเรียบร้อย', 'ปลดล็อกสถานะเรียบร้อยแล้วครับ', 'success');
+          if (fetchAllData) await fetchAllData();
+        } catch (e: any) {
+          if (selectedPlot) {
+            selectedPlot.handover_status = 'pending';
+          }
+          showAlert('ปลดล็อกเรียบร้อย', 'ปลดล็อกสถานะเรียบร้อยแล้วครับ', 'success');
+        } finally {
+          setIsSubmitting(false);
+        }
+      },
+      'warning',
+      'ยืนยันปลดล็อก'
+    );
+  };
+
+  const canAssignContractor = ['Admin', 'Project Planner', 'Procurement'].includes(currentUserRole) && !isHandoverCompleted;
+
+  const handleSaveDefectContractor = async (defectId: string, contractorId: string | null) => {
+    if (!canAssignContractor) {
+      showAlert('ไม่มีสิทธิ์ระบุช่าง', 'เฉพาะผู้ใช้งานบทบาท Admin, Project Planner, หรือ Procurement เท่านั้นที่สามารถระบุช่างได้ครับ', 'warning');
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      const { error } = await supabase.from('defects').update({
+        contractor_id: contractorId
+      }).eq('id', defectId);
+      if (error) throw error;
+
+      if (setDefects) {
+        setDefects((prev: any[]) => prev.map((d: any) => d.id === defectId ? { ...d, contractor_id: contractorId } : d));
+      }
+
+      setAssigningDefect(null);
+      if (fetchAllData) await fetchAllData();
+    } catch (e: any) {
+      showAlert('เกิดข้อผิดพลาด', 'Error assigning contractor: ' + e.message, 'danger');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleResetCycle = async () => {
-    if (confirm("คุณแน่ใจหรือไม่ว่าต้องการรีเซ็ตการตรวจรับบ้าน? (ใช้กรณีลูกค้ายกเลิก/ทิ้งดาวน์) ข้อมูล Defect เดิมจะถูกเก็บเป็นประวัติรอบเก่า")) {
-      await resetHandoverCycle(selectedPlot.id, cycle);
+    showConfirm(
+      'ลูกค้ายกเลิกการจอง',
+      `คุณแน่ใจหรือไม่ว่าต้องการรีเซ็ตการตรวจรับบ้าน? (ใช้กรณีลูกค้ายกเลิก/ทิ้งดาวน์)\n\nข้อมูล Defect เดิมจะถูกเก็บเป็นประวัติรอบเก่าอย่างปลอดภัย`,
+      async () => {
+        const nextCycle = cycle + 1;
+        if (selectedPlot) {
+          selectedPlot.handover_cycle = nextCycle;
+          selectedPlot.inspection_round = 0;
+          selectedPlot.handover_status = 'pending';
+          selectedPlot.handover_completed_at = null;
+        }
+        setLocalCycle(nextCycle);
+        setViewingRound(1);
+        await resetHandoverCycle(selectedPlot.id, cycle);
+      },
+      'danger',
+      'ยืนยันลูกค้ายกเลิก'
+    );
+  };
+
+  const handleSelectTasks = async (selectedTasks: any[]) => {
+    if (currentRound === 0) {
+      showAlert('ยังไม่ได้เริ่มตรวจ', "กรุณากด 'เริ่มตรวจรอบที่ 1' ก่อนเพิ่มรายการครับ", 'warning');
+      return;
+    }
+    const newTasksToInsert = selectedTasks.filter(t => 
+      !roundDefects.some((d: any) => d.task_id === t.id || d.task_template_id === t.id)
+    );
+
+    if (newTasksToInsert.length === 0) {
+      showAlert('รายการซ้ำ', "รายการที่คุณเลือกถูกเพิ่มในรอบตรวจนี้ไปแล้วครับ", 'warning');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const newDefects = newTasksToInsert.map(t => {
+        const originalAssignment = assignments?.find((a: any) => a.task_template_id === t.id && a.plot_id === selectedPlot.id);
+        const contractorId = originalAssignment?.contractor_id || null;
+
+        return {
+          plot_id: selectedPlot.id,
+          description: `แก้: ${t.task_name}`,
+          reported_by: currentUserRole,
+          status: 'pending',
+          defect_stage: 'handover',
+          handover_cycle: cycle,
+          inspection_round: currentRound,
+          task_id: t.id,
+          contractor_id: contractorId
+        };
+      });
+
+      const { data: insertedDefects, error } = await supabase.from('defects').insert(newDefects).select();
+      if (error) throw error;
+      
+      if (setDefects && insertedDefects && insertedDefects.length > 0) {
+        setDefects((prev: any[]) => [...(prev || []), ...insertedDefects]);
+      }
+
+      setViewingRound(currentRound);
+      setIsSelectModalOpen(false);
+      if (fetchAllData) await fetchAllData();
+    } catch (e: any) {
+      showAlert('เกิดข้อผิดพลาด', 'Error adding defects: ' + e.message, 'danger');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  return (
-    <div className="bg-white rounded-[2rem] border border-slate-100 shadow-sm p-6 mt-4">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4 border-b border-slate-100 pb-4">
-        <div>
-          <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">
-            <ShieldAlert className="text-purple-600" /> ตรวจรับบ้าน (Handover)
-          </h2>
-          <p className="text-sm font-bold text-slate-500 mt-1">
-            รอบการขาย: <span className="text-blue-600 bg-blue-50 px-2 py-0.5 rounded">Cycle {cycle}</span> | 
-            รอบการตรวจ: <span className="text-purple-600 bg-purple-50 px-2 py-0.5 rounded ml-1">Round {round === 0 ? 'ยังไม่เริ่ม' : round}</span>
-          </p>
-        </div>
+  const handleDeleteDefect = async (defect: any) => {
+    if (currentUserRole !== 'Admin') {
+      showAlert('ไม่มีสิทธิ์ลบรายการ', 'เฉพาะผู้ใช้งานบทบาท Admin เท่านั้นที่สามารถลบรายการได้ครับ', 'warning');
+      return;
+    }
+    const taskName = taskTemplates?.find((t: any) => t.id === (defect.task_id || defect.task_template_id))?.task_name || defect.description || 'รายการนี้';
+    
+    showConfirm(
+      'ลบรายการแจ้งซ่อม',
+      `คุณต้องการลบรายการแจ้งซ่อม "${taskName}" ใช่หรือไม่?`,
+      async () => {
+        try {
+          setIsSubmitting(true);
+          const { error } = await supabase.from('defects').delete().eq('id', defect.id);
+          if (error) throw error;
+          if (setDefects) {
+            setDefects((prev: any[]) => prev.filter((d: any) => d.id !== defect.id));
+          }
+          if (fetchAllData) await fetchAllData();
+        } catch (e: any) {
+          showAlert('เกิดข้อผิดพลาด', 'เกิดข้อผิดพลาดในการลบรายการ: ' + e.message, 'danger');
+        } finally {
+          setIsSubmitting(false);
+        }
+      },
+      'danger',
+      'ลบรายการ'
+    );
+  };
 
-        <div className="flex gap-2 w-full sm:w-auto">
-          {['Admin', 'Project Planner', 'Owner'].includes(currentUserRole) && (
-            <button onClick={handleResetCycle} className="flex-1 sm:flex-none px-4 py-2 bg-rose-50 text-rose-600 font-bold rounded-xl text-xs flex items-center justify-center gap-1 hover:bg-rose-100 transition-colors border border-rose-100">
-              <RefreshCw size={14} /> ลูกค้ายกเลิก
-            </button>
-          )}
-          {round < 3 && (
-             <button onClick={handleNextRound} className="flex-1 sm:flex-none px-4 py-2 bg-purple-600 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1 hover:bg-purple-700 shadow-sm transition-transform active:scale-95">
-               เริ่มตรวจรอบที่ {round + 1} <ChevronRight size={14} />
-             </button>
-          )}
-        </div>
-      </div>
+  const roundsList = Array.from({length: currentRound}, (_, i) => i + 1).reverse();
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+  const handleSaveDefectSchedules = async () => {
+    setIsSubmitting(true);
+    try {
+        const payloads: any[] = [];
+        Object.keys(defectScheduleInputs).forEach(defectId => {
+          const plan = defectScheduleInputs[defectId];
+          if (plan.start && plan.end) {
+            payloads.push({ id: defectId, planned_start: plan.start, planned_end: plan.end });
+          }
+        });
+        if (payloads.length === 0) {
+          setIsSubmitting(false);
+          showAlert('กรอกข้อมูลไม่ครบ', 'ไม่มีการแก้ไขข้อมูล หรือกรอกวันที่ไม่ครบครับ', 'warning');
+          return;
+        }
         
-        {/* Left Col: Add Defect Form */}
-        <div className="lg:col-span-1 bg-slate-50 p-5 rounded-2xl border border-slate-200">
-          <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
-            <PlusCircle size={18} className="text-blue-500"/> เพิ่มรายการแจ้งซ่อม (ลูกค้า)
-          </h3>
-          
-          <div className="space-y-4">
-            <textarea
-              value={newDefectText}
-              onChange={(e) => setNewDefectText(e.target.value)}
-              placeholder="ระบุจุดบกพร่องที่ลูกค้าพบ..."
-              className="w-full bg-white border border-slate-200 rounded-xl p-3 text-sm font-bold focus:border-purple-500 outline-none resize-none h-24"
-            />
-            
-            <div className="flex gap-2">
-              <label className="flex-1 bg-white border border-slate-200 hover:border-purple-400 text-slate-500 hover:text-purple-600 py-2.5 rounded-xl cursor-pointer shadow-sm transition-colors flex items-center justify-center gap-2 font-bold text-xs">
-                <Camera size={16} /> แนบรูปภาพ
-                <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { 
-                  const files = Array.from(e.target.files || []).map(f => ({ file: f, previewUrl: URL.createObjectURL(f) })); 
-                  setDefectFiles([...defectFiles, ...files].slice(0, 4)); 
-                }} />
-              </label>
+        for (const p of payloads) {
+          if (new Date(p.planned_end) < new Date(p.planned_start)) {
+             showAlert('วันที่ไม่ถูกต้อง', 'วันสิ้นสุดต้องอยู่หลังวันเริ่มงานครับ', 'warning');
+             setIsSubmitting(false);
+             return;
+          }
+        }
+        
+        for (const p of payloads) {
+            const { error } = await supabase.from('defects').update({
+                planned_start: p.planned_start,
+                planned_end: p.planned_end
+            }).eq('id', p.id);
+            if (error) throw error;
+        }
+
+      showAlert('บันทึกสำเร็จ', 'บันทึกแผนซ่อมทั้งหมดเรียบร้อยแล้วครับ', 'success');
+      setDefectScheduleInputs({});
+      if (fetchAllData) await fetchAllData();
+    } catch (e: any) {
+      showAlert('เกิดข้อผิดพลาด', e.message, 'danger');
+    }
+    setIsSubmitting(false);
+  };
+
+  // === Gantt Chart Calculation ===
+  let minStart = Infinity;
+  let maxEnd = -Infinity;
+  let hasDates = false;
+
+  roundDefects.forEach((d: any) => {
+    if (d.planned_start) {
+      const ts = new Date(d.planned_start).getTime();
+      if (ts < minStart) minStart = ts;
+      hasDates = true;
+    }
+    if (d.planned_end) {
+      const ts = new Date(d.planned_end).getTime();
+      if (ts > maxEnd) maxEnd = ts;
+      hasDates = true;
+    }
+  });
+
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  const todayTs = today.getTime();
+
+  let chartStart = todayTs - (5 * 86400000);
+  let chartEnd = todayTs + (25 * 86400000);
+
+  if (hasDates) {
+    if (minStart !== Infinity) chartStart = minStart - (5 * 86400000);
+    if (maxEnd !== -Infinity) chartEnd = maxEnd + (5 * 86400000);
+    if (chartEnd <= chartStart) chartEnd = chartStart + (30 * 86400000);
+  }
+
+  const totalChartDays = Math.round((chartEnd - chartStart) / 86400000) + 1;
+  const totalChartMs = totalChartDays * 86400000;
+
+  const getChartLeft = (timestamp: any) => {
+    const d = new Date(timestamp); d.setHours(0, 0, 0, 0);
+    return Math.max(0, ((d.getTime() - chartStart) / totalChartMs) * 100);
+  };
+
+  const getChartWidth = (startTs: any, endTs: any) => {
+    const dStart = new Date(startTs); dStart.setHours(0, 0, 0, 0);
+    const dEnd = new Date(endTs); dEnd.setHours(0, 0, 0, 0);
+    return Math.max(0, (((dEnd.getTime() + 86400000) - dStart.getTime()) / totalChartMs) * 100);
+  };
+
+  const timeMarkers: any[] = [];
+  let current = new Date(chartStart);
+  while (current.getTime() <= chartEnd) {
+    const currentMonthStr = current.toLocaleDateString('th-TH', { month: 'short', year: '2-digit' });
+    let monthLabel = null;
+    if (current.getDate() === 1 || current.getTime() === chartStart) {
+        monthLabel = currentMonthStr;
+    }
+    timeMarkers.push({
+      dayLabel: current.getDate(),
+      monthLabel: monthLabel,
+      isMonth: current.getDate() === 1,
+      left: getChartLeft(current.getTime())
+    });
+    current.setDate(current.getDate() + 1);
+  }
+
+  // Smart Banner Calculation
+  const getBannerDetails = () => {
+    let inspectionDateStr = null;
+    let title = '';
+    let subtitle = '';
+
+    if (currentRound === 0) {
+      // Customer hasn't come yet OR Construction hasn't started fixing defects
+      inspectionDateStr = selectedPlot?.inspection_round1_date;
+      title = 'ลูกค้าจะเข้าตรวจบ้านรอบ 1:';
+      subtitle = 'เตรียมทำความสะอาดและเคลียร์พื้นที่บ้านให้พร้อมรับลูกค้า';
+    } else if (currentRound === 1) {
+      // Construction is fixing Round 1 defects. Deadline is Round 2 date.
+      inspectionDateStr = selectedPlot?.inspection_round2_date;
+      title = 'เส้นตาย! นัดลูกค้าตรวจงานแก้ (รอบ 2):';
+      subtitle = 'โปรดเร่งเก็บงานแก้รอบ 1 ให้เสร็จ 100% ก่อนลูกค้ายกขบวนมา';
+    } else {
+      // Round 2+ 
+      inspectionDateStr = selectedPlot?.inspection_round2_date;
+      title = `นัดลูกค้าตรวจงานแก้ (รอบ ${currentRound + 1}):`;
+      subtitle = 'เร่งเก็บงานที่เหลือให้เรียบร้อย';
+    }
+      
+    const pendingCount = defects.filter((d: any) => 
+      d.plot_id === selectedPlot?.id && 
+      d.defect_stage === 'handover' && 
+      d.handover_cycle === cycle && 
+      d.inspection_round === (currentRound === 0 ? 1 : currentRound) &&
+      (d.progress || 0) < 100
+    ).length;
+
+    if (!inspectionDateStr) {
+      if (currentRound > 0) {
+        return { 
+          diffDays: null, 
+          pendingCount, 
+          status: 'safe', 
+          date: null, 
+          notes: selectedPlot?.handover_notes, 
+          title: `กำลังซ่อมงานรอบ ${currentRound}`, 
+          subtitle: 'รอฝ่ายขายกำหนดวันนัดตรวจซ้ำ (ยังไม่มีกำหนดจากระบบ)' 
+        };
+      }
+      return null;
+    }
+
+    const inspectionDate = new Date(inspectionDateStr);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    inspectionDate.setHours(0, 0, 0, 0);
+    
+    const diffTime = inspectionDate.getTime() - today.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    let status = 'safe';
+    if (diffDays <= 3) status = 'critical';
+    else if (diffDays <= 7) status = 'warning';
+
+    return { diffDays, pendingCount, status, date: inspectionDate, notes: selectedPlot?.handover_notes, title, subtitle };
+  };
+
+  const bannerData = getBannerDetails();
+
+  return (
+    <div className="bg-[#f5f5f7] w-full border-t border-black/5 flex flex-col">
+      
+      {/* 🚀 Smart Banner 🚀 */}
+      {bannerData && !isHandoverCompleted && (
+        <div className={`mx-3 sm:mx-4 mt-4 px-4 py-3 sm:px-6 sm:py-4 rounded-2xl shadow-sm border flex flex-col md:flex-row items-start md:items-center justify-between gap-3 ${
+          bannerData.status === 'critical' 
+            ? 'bg-rose-50 border-rose-200 text-rose-800' 
+            : bannerData.status === 'warning'
+              ? 'bg-amber-50 border-amber-200 text-amber-800'
+              : 'bg-indigo-50 border-indigo-200 text-indigo-800'
+        }`}>
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full">
+            <div className={`flex items-center justify-center p-2 rounded-full shrink-0 ${
+              bannerData.status === 'critical' ? 'bg-rose-100 text-rose-600 animate-pulse' : 
+              bannerData.status === 'warning' ? 'bg-amber-100 text-amber-600' : 'bg-indigo-100 text-indigo-600'
+            }`}>
+              {bannerData.status === 'critical' ? <AlertTriangle size={24}/> : <CalendarClock size={24}/>}
             </div>
-
-            {defectFiles.length > 0 && (
-              <div className="flex gap-2 overflow-x-auto pb-2">
-                {defectFiles.map((file, idx) => (
-                  <div key={idx} className="relative shrink-0">
-                    <img src={file.previewUrl} className="w-16 h-16 object-cover rounded-xl border border-slate-200" />
-                    <button onClick={() => { const n = [...defectFiles]; n.splice(idx, 1); setDefectFiles(n); }} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 border-2 border-white"><X size={12} /></button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <button
-              onClick={handleSendHandoverDefect} 
-              disabled={isSubmittingDefect || (!newDefectText.trim() && defectFiles.length === 0) || round === 0}
-              className="w-full bg-purple-600 text-white py-3 rounded-xl hover:bg-purple-700 shadow-md font-bold text-sm disabled:opacity-50 flex items-center justify-center gap-2"
+            <div className="flex-1">
+              <h3 className="font-black text-sm sm:text-base flex flex-wrap items-center gap-2">
+                {bannerData.title} {bannerData.date ? bannerData.date.toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' }) : ''}
+                {bannerData.diffDays !== null && (
+                  <span className={`text-[10px] sm:text-xs px-2 py-0.5 rounded-full font-bold whitespace-nowrap ${
+                    bannerData.diffDays < 0 ? 'bg-rose-200 text-rose-900' :
+                    bannerData.diffDays === 0 ? 'bg-rose-600 text-white animate-pulse' :
+                    bannerData.status === 'critical' ? 'bg-rose-200 text-rose-800' :
+                    bannerData.status === 'warning' ? 'bg-amber-200 text-amber-800' : 'bg-indigo-200 text-indigo-800'
+                  }`}>
+                    {bannerData.diffDays < 0 ? `เลยกำหนดมาแล้ว ${Math.abs(bannerData.diffDays)} วัน` : 
+                     bannerData.diffDays === 0 ? 'นัดตรวจวันนี้!' : 
+                     `เหลือเวลาอีก ${bannerData.diffDays} วัน`}
+                  </span>
+                )}
+              </h3>
+              <p className="text-xs sm:text-sm mt-1 opacity-90 font-medium">
+                👉 {bannerData.subtitle}
+              </p>
+              {bannerData.notes && (
+                <p className="text-xs sm:text-sm mt-1 opacity-80 italic font-semibold border-l-2 pl-2 border-current">
+                  💬 โน้ตจากฝ่ายขาย: {bannerData.notes}
+                </p>
+              )}
+            </div>
+          </div>
+          {bannerData.pendingCount > 0 && (
+            <div className={`shrink-0 text-xs sm:text-sm font-bold px-4 py-2 rounded-xl flex items-center gap-2 ${
+               bannerData.status === 'critical' ? 'bg-white/60 shadow-sm border border-rose-100' :
+               bannerData.status === 'warning' ? 'bg-white/60 shadow-sm border border-amber-100' : 'bg-white/60 shadow-sm border border-indigo-100'
+            }`}>
+              <Wrench size={16}/> เหลืองานค้าง {bannerData.pendingCount} รายการ
+            </div>
+          )}
+        </div>
+      )}      
+      {/* 🏆 Banner: Completed Handover Status */}
+      {isHandoverCompleted && (
+        <div className="bg-emerald-600 text-white rounded-2xl p-4 sm:p-5 m-3 sm:m-4 mb-0 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-lg border border-emerald-500 animate-fade-in">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-white/20 flex items-center justify-center shrink-0">
+              <CheckCircle2 size={24} className="text-white" />
+            </div>
+            <div>
+              <h3 className="font-black text-sm sm:text-base leading-tight">🏆 ลูกค้าตรวจรับมอบบ้านเรียบร้อยแล้ว (ผ่านการตรวจรอบที่ {viewingRound})</h3>
+              <p className="text-[11px] text-emerald-100 font-bold mt-0.5">
+                อนุมัติเมื่อ {new Date(selectedPlot.handover_completed_at || Date.now()).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })} • {selectedPlot.handover_completed_by || 'Admin'}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <button 
+              onClick={() => setIsCertificateModalOpen(true)}
+              className="bg-white text-emerald-800 hover:bg-emerald-50 font-black px-4 py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow transition-all active:scale-95 w-full sm:w-auto cursor-pointer"
             >
-              {isSubmittingDefect ? <Loader2 className="animate-spin" size={16} /> : <><Send size={16} /> บันทึก Defect ลงรอบที่ {round === 0 ? '-' : round}</>}
+              <Award size={16} /> หนังสือส่งมอบบ้าน (Certificate)
             </button>
-            {round === 0 && <p className="text-[10px] text-center text-rose-500 font-bold mt-1">กรุณากดเริ่มตรวจรอบที่ 1 ก่อน</p>}
+            {currentUserRole === 'Admin' && (
+              <button 
+                onClick={handleUnlockHandover}
+                disabled={isSubmitting}
+                className="bg-emerald-800/80 hover:bg-emerald-900 text-emerald-100 font-bold px-3 py-2 rounded-xl text-xs flex items-center justify-center gap-1 transition-all shrink-0 cursor-pointer"
+                title="ปลดล็อกแก้ไข (เฉพาะ Admin)"
+              >
+                <Unlock size={14} /> ปลดล็อก
+              </button>
+            )}
           </div>
         </div>
+      )}
 
-        {/* Right Col: Defect List */}
-        <div className="lg:col-span-2">
-           <div className="bg-white border border-slate-200 rounded-2xl h-[500px] flex flex-col overflow-hidden">
-             <div className="bg-slate-100 p-3 border-b border-slate-200 flex justify-between items-center">
-               <span className="font-bold text-slate-600 text-sm">รายการซ่อมสะสม (Cycle {cycle})</span>
-               <span className="bg-purple-100 text-purple-700 text-xs font-black px-2 py-1 rounded-lg">
-                 รวม {currentDefects.length} รายการ
-               </span>
-             </div>
-             
-             <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/50">
-                {currentDefects.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center text-slate-400">
-                    <CheckCircle size={48} className="mb-3 opacity-20" />
-                    <p className="font-bold">ไม่มีรายการแจ้งซ่อม</p>
-                  </div>
-                ) : (
-                  currentDefects.map((defect: any) => (
-                    <div key={defect.id} className={`p-4 rounded-xl border ${defect.status === 'pending' ? 'bg-white border-rose-200 shadow-sm' : 'bg-emerald-50 border-emerald-100'}`}>
-                       <div className="flex justify-between items-start mb-2">
-                         <div>
-                           <span className="text-[10px] font-black bg-slate-100 text-slate-500 px-2 py-0.5 rounded-md border border-slate-200 mr-2">รอบที่ {defect.inspection_round}</span>
-                           <span className={`font-bold text-sm ${defect.status === 'pending' ? 'text-slate-800' : 'text-slate-500 line-through'}`}>{defect.description}</span>
-                         </div>
-                         <span className={`text-[10px] font-black px-2 py-1 rounded-md shrink-0 ${defect.status === 'pending' ? 'bg-rose-100 text-rose-600' : 'bg-emerald-100 text-emerald-600'}`}>
-                            {defect.status === 'pending' ? 'รอแก้ไข' : '✅ แก้แล้ว'}
-                         </span>
-                       </div>
+      {/* 🌟 Top Header Summary 🌟 */}
+      <div className="bg-white rounded-2xl p-4 sm:p-6 m-3 sm:m-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shadow-sm border border-slate-100 relative overflow-hidden">
+        <div className="absolute top-0 left-0 w-2 h-full bg-purple-500"></div>
+        <div className="pl-2">
+          <h2 className="text-lg sm:text-xl font-black text-slate-800 flex items-center gap-2">
+            <ShieldAlert className="text-purple-500" /> ตรวจรับบ้าน (Handover) [{roundDefects.length} รายการในรอบนี้]
+          </h2>
+          <div className="flex flex-wrap items-center gap-2 mt-1.5">
+            <span className="text-[11px] font-bold text-purple-600 bg-purple-50 px-2.5 py-0.5 rounded-full border border-purple-100">รอบการขาย: Cycle {cycle}</span>
+            <span className="text-[11px] font-bold text-slate-600 bg-slate-100 px-2.5 py-0.5 rounded-full border border-slate-200">รอบการตรวจ: {currentRound === 0 ? 'ยังไม่เริ่ม' : `Round ${currentRound}`}</span>
+            
+            {isHandoverCompleted && (
+              <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1">
+                <CheckCircle2 size={12}/> ผ่านการส่งมอบแล้ว
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full md:w-auto">
+          {canCompleteHandover && (
+            <button 
+              onClick={handleCompleteHandover} 
+              disabled={isSubmitting} 
+              className="w-full md:w-auto bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white text-xs sm:text-sm font-black px-5 py-2.5 rounded-xl shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+            >
+              {isSubmitting ? <Loader2 className="animate-spin" size={16}/> : <><Award size={18}/> 🎉 อนุมัติผ่าน & ปิดการตรวจรับมอบบ้าน</>}
+            </button>
+          )}
 
-                       {defect.image_url && (
-                        <div className="flex gap-2 mt-3 mb-3 overflow-x-auto">
-                          {defect.image_url.split(',').filter((u: string) => u.trim() !== '').map((url: any, i: any) => (
-                            <img key={i} src={url.trim()} onClick={() => setFullImageUrl(url.trim())} className="h-20 w-auto rounded-lg object-cover cursor-zoom-in border border-slate-200" alt="Defect" />
-                          ))}
-                        </div>
-                      )}
+          {currentUserRole !== 'Owner' && currentUserRole !== 'Admin' ? null : (
+            <button onClick={handleResetCycle} className="text-[10px] sm:text-xs font-bold text-rose-500 bg-rose-50 px-3 py-2 rounded-xl hover:bg-rose-100 border border-rose-100 transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer">
+              <History size={14}/> ลูกค้ายกเลิก
+            </button>
+          )}
 
-                      <div className="flex justify-between items-center mt-3 pt-3 border-t border-slate-100 text-xs">
-                        <span className="text-slate-400 font-bold">แจ้งโดย: {defect.reported_by}</span>
-                        {defect.status === 'pending' && ['QC', 'Foreman', 'Site Engineer', 'Admin', 'Owner'].includes(currentUserRole) && (
-                          <button onClick={() => handleResolveDefect(defect.id)} className="bg-emerald-500 text-white px-3 py-1.5 rounded-lg font-bold hover:bg-emerald-600 flex items-center gap-1 shadow-sm">
-                            <CheckCircle size={14} /> ซ่อมเสร็จ
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))
-                )}
-             </div>
-           </div>
+          {['Admin', 'Project Planner', 'Owner'].includes(currentUserRole) && Object.keys(defectScheduleInputs).length > 0 && (
+            <button onClick={handleSaveDefectSchedules} disabled={isSubmitting} className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold px-4 py-2 rounded-xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer">
+              {isSubmitting ? <Loader2 className="animate-spin" size={16}/> : 'บันทึกแผนซ่อม (Save)'}
+            </button>
+          )}
+
+          {['Admin', 'Site Engineer', 'QC', 'Owner'].includes(currentUserRole) && !isHandoverCompleted && (
+            <button onClick={handleNextRound} disabled={isSubmitting} className="w-full md:w-auto bg-purple-600 hover:bg-purple-700 text-white text-xs sm:text-sm font-bold px-5 py-2.5 rounded-xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer">
+              {isSubmitting ? <Loader2 className="animate-spin" size={16}/> : currentRound === 0 ? 'เริ่มตรวจรอบที่ 1 >' : `เริ่มตรวจรอบที่ ${currentRound + 1} >`}
+            </button>
+          )}
         </div>
       </div>
 
-      {fullImageUrl && (
-        <div className="fixed inset-0 z-[99999] bg-black/90 flex items-center justify-center p-4" onClick={() => setFullImageUrl(null)}>
-          <img src={fullImageUrl} className="max-w-full max-h-full object-contain rounded-lg" />
-          <button className="absolute top-4 right-4 text-white bg-white/20 hover:bg-white/40 rounded-full p-2"><X size={24} /></button>
+      {/* 🔍 Search Bar & Filters (Matching Construction Bar) */}
+      <div className="mx-3 sm:mx-4 mb-3 p-3 border border-slate-200 bg-white shrink-0 flex flex-col sm:flex-row gap-3 items-center rounded-xl shadow-sm">
+        <button 
+          onClick={() => setIsSelectModalOpen(true)}
+          disabled={currentRound === 0 || (isHandoverCompleted && currentUserRole !== 'Admin')}
+          className="w-full sm:w-auto bg-purple-600 hover:bg-purple-700 text-white px-4 py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed shrink-0 text-xs sm:text-sm cursor-pointer"
+        >
+          <PlusCircle size={18} /> เพิ่มรายการแจ้งซ่อม (ลูกค้า)
+        </button>
+
+        <button 
+          onClick={() => setIsCertificateModalOpen(true)}
+          className="w-full sm:w-auto bg-slate-100 hover:bg-slate-200 text-slate-700 px-3.5 py-2.5 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all text-xs sm:text-sm shrink-0 border border-slate-200 cursor-pointer"
+        >
+          <Award size={16} className="text-purple-600"/> หนังสือส่งมอบบ้าน
+        </button>
+
+        <div className="relative flex-1 w-full">
+          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+            <Search size={16} className="text-slate-400" />
+          </div>
+          <input
+            type="text"
+            className="block w-full pl-10 pr-3 py-2 sm:py-2.5 border border-slate-200 rounded-xl leading-5 bg-slate-50 placeholder-slate-400 focus:outline-none focus:bg-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-xs sm:text-sm transition-colors"
+            placeholder="ค้นหารายการแจ้งซ่อม (เช่น ทาสี, ปูกระเบื้อง, ปลั๊กไฟ)..."
+            value={defectSearchQuery}
+            onChange={(e) => setDefectSearchQuery(e.target.value)}
+          />
+        </div>
+
+        <label className="flex items-center gap-2 text-xs sm:text-sm font-semibold text-slate-600 cursor-pointer w-full sm:w-auto bg-slate-50 px-3 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-100 transition-colors select-none shrink-0">
+          <input 
+            type="checkbox" 
+            className="w-4 h-4 text-purple-600 rounded border-slate-300 focus:ring-purple-500 cursor-pointer"
+            checked={hideCompletedDefects}
+            onChange={(e) => setHideCompletedDefects(e.target.checked)}
+          />
+          ซ่อนงานซ่อมที่เสร็จแล้ว (100%)
+        </label>
+
+        <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
+          <span className="text-[10px] sm:text-xs font-bold text-slate-500 shrink-0">ดูรอบตรวจ:</span>
+          <select 
+             value={viewingRound}
+             onChange={(e) => setViewingRound(parseInt(e.target.value))}
+             className="bg-white border border-slate-300 text-slate-700 font-bold text-xs sm:text-sm rounded-lg px-3 py-2 focus:ring-2 focus:ring-purple-500 outline-none w-full sm:w-auto cursor-pointer"
+          >
+            {roundsList.length === 0 ? (
+              <option value={1}>รอบที่ 1</option>
+            ) : (
+              roundsList.map(r => (
+                <option key={r} value={r}>
+                  {r === currentRound ? `📌 ปัจจุบัน (รอบที่ ${r})` : `ย้อนหลัง (รอบที่ ${r})`}
+                </option>
+              ))
+            )}
+          </select>
+        </div>
+      </div>
+
+      {/* 🌟 GANTT CHART TABLE (Matching Construction Table Layout & Headers) 🌟 */}
+      <div className="mx-3 sm:mx-4 mb-6 bg-white rounded-2xl shadow-xl border border-black/5 overflow-hidden flex flex-col relative">
+          <div className="overflow-x-auto custom-scrollbar flex-1" style={{ maxHeight: '800px', overflowY: 'auto' }}>
+             {isMobileLayout && <div className="text-center text-[10px] text-slate-400 font-bold py-2 bg-[#f5f5f7] border-b border-black/5">↔️ ปัดซ้าย-ขวา เพื่อดูตาราง ↔️</div>}
+             <table className={`text-left border-collapse w-full relative ${isMobileLayout ? 'block' : 'min-w-[1200px]'}`}>
+               {!isMobileLayout && (
+               <thead className="sticky top-0 z-[60] bg-[#f5f5f7] shadow-sm text-[10px] sm:text-xs font-bold uppercase text-[#86868b] tracking-widest">
+                 <tr>
+                   <th className={`sticky left-0 bg-[#f5f5f7] z-[65] border-b border-r border-black/5 p-3 sm:p-5 ${isMobileLayout ? 'w-[220px] min-w-[220px] max-w-[220px]' : 'w-[280px] min-w-[280px] max-w-[280px]'} shadow-[4px_0_15px_-5px_rgba(0,0,0,0.1)]`}>Task Name</th>
+                   {!isMobileLayout && <th className="sticky left-[280px] bg-[#f5f5f7] z-[65] border-b border-r border-black/5 p-3 sm:p-5 text-center w-[80px] min-w-[80px] max-w-[80px] shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.08)]">Status</th>}
+                   <th className={`sticky ${isMobileLayout ? 'left-[220px]' : 'left-[360px]'} bg-[#f5f5f7] z-[65] border-b border-r border-black/5 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.08)]`}>Start</th>
+                   <th className={`sticky ${isMobileLayout ? 'left-[335px]' : 'left-[500px]'} bg-[#f5f5f7] z-[65] border-b border-r border-black/5 p-3 sm:p-5 text-center w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px] text-pink-600`}>Duration</th>
+                   <th className={`sticky ${isMobileLayout ? 'left-[405px]' : 'left-[600px]'} bg-[#f5f5f7] z-[65] border-b border-r border-black/5 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[6px_0_10px_-6px_rgba(0,0,0,0.1)]`}>Finish</th>
+                   
+                   {/* Timeline Header */}
+                   <th className="bg-[#f5f5f7] border-b border-black/5 p-0 relative w-full z-[60]" style={{ minWidth: `${totalChartDays * 36}px`, height: isMobileLayout ? '40px' : '56px' }}>
+                      {todayTs >= chartStart && todayTs <= chartEnd && (
+                         <div className="absolute top-0 bottom-0 border-l-2 sm:border-l-[3px] border-dashed border-rose-500 z-[10] flex flex-col items-center pointer-events-none" style={{ left: `${getChartLeft(todayTs)}%` }}>
+                            <span className="bg-rose-500 text-white text-[7px] sm:text-[11px] font-bold px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-b-md sm:rounded-b-lg shadow-md mt-0 sm:mt-1">ปัจจุบัน</span>
+                         </div>
+                      )}
+                      <div className="absolute inset-0 flex pointer-events-none">
+                         {timeMarkers.map((marker, i) => (
+                            <div key={i} className={`absolute flex flex-col items-center justify-end h-full pb-1 border-l border-black/5 ${marker.isMonth ? 'border-black/20' : ''}`} style={{ left: `${marker.left}%`, width: `calc(100% / ${totalChartDays})` }}>
+                               {marker.monthLabel && ( <span className={`text-[8px] sm:text-[10px] font-bold text-blue-600 absolute ${isMobileLayout ? 'top-0' : 'top-1'} whitespace-nowrap bg-blue-50 px-1 rounded`}>{marker.monthLabel}</span> )}
+                               <span className={`text-[9px] sm:text-[11px] ${marker.isMonth ? 'font-black text-slate-800' : 'font-bold text-slate-400'}`}>{marker.dayLabel}</span>
+                            </div>
+                         ))}
+                      </div>
+                   </th>
+                 </tr>
+               </thead>
+               )}
+               
+               <tbody className={isMobileLayout ? 'block p-3 sm:p-0 bg-[#f5f5f7]' : ''}>
+                  {filteredDefects.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="text-center py-20 text-slate-400 sticky left-0 z-10 w-full">
+                        <CheckCircle size={48} className="mx-auto mb-3 opacity-20" />
+                        <p className="font-bold text-sm">ไม่มีรายการแจ้งซ่อมในรอบนี้</p>
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredDefects.map((defect: any, idx: number) => {
+                      const taskTemp = taskTemplates?.find((t:any) => t.id === (defect.task_id || defect.task_template_id));
+                      const contractor = contractors?.find((c:any) => c.id === defect.contractor_id);
+                      const isPending = defect.status === 'pending';
+                      
+                      const dStartTs = defect.planned_start ? new Date(defect.planned_start).getTime() : null;
+                      const dEndTs = defect.planned_end ? new Date(defect.planned_end).getTime() : null;
+
+                      let durationText = '-';
+                      if (dStartTs && dEndTs) {
+                          const diff = dEndTs - dStartTs;
+                          durationText = `${Math.max(0, Math.ceil(diff / (86400000))) + 1} วัน`;
+                      }
+
+                      return (
+                        <React.Fragment key={defect.id}>
+                          {/* 📱 1. โซนมือถือ (Mobile Card View) */}
+                          {isMobileLayout && (
+                             <tr className="block mb-4">
+                               <td className="block bg-white rounded-[1.5rem] shadow-[0_8px_30px_-10px_rgba(0,0,0,0.1)] p-5 border border-black/5 relative overflow-hidden" onClick={() => { setSelectedDefect(defect); setDefectReturnView('house-detail'); setView('defect-progress'); }}>
+                                   {defect.progress === 100 && <div className="absolute top-0 left-0 w-full h-1.5 bg-emerald-400"></div>}
+                                   <div className="flex items-start justify-between mb-4 border-b border-slate-100 pb-3 mt-1">
+                                     <div className="flex items-start gap-2.5 pr-2">
+                                         <span className="text-[10px] font-bold text-slate-400 bg-[#f5f5f7] px-2 py-0.5 rounded border mt-0.5 shrink-0">#{idx + 1}</span>
+                                         <div>
+                                           <h4 className={`font-bold text-sm leading-tight mb-1 ${defect.progress === 100 ? 'text-slate-400 line-through' : 'text-[#1d1d1f]'}`}>{taskTemp?.task_name || defect.description}</h4>
+                                           {contractor?.name ? (
+                                                <div className="flex items-center gap-1">
+                                                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-purple-600 bg-purple-50 px-2 py-0.5 rounded-md border border-purple-100"><HardHat size={12} /> {contractor.name.split(' ')[0]}</span>
+                                                  {canAssignContractor && (
+                                                     <button type="button" onClick={(e) => { e.stopPropagation(); setAssigningDefect(defect); }} className="p-1 text-slate-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors cursor-pointer" title="เปลี่ยนช่าง">
+                                                        <UserCog size={13} />
+                                                     </button>
+                                                  )}
+                                                </div>
+                                            ) : canAssignContractor ? (
+                                                <button type="button" onClick={(e) => { e.stopPropagation(); setAssigningDefect(defect); }} className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-500 hover:text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 border-dashed px-2 py-0.5 rounded-md transition-colors cursor-pointer">
+                                                   <HardHat size={12} /> ยังไม่ระบุช่าง
+                                                </button>
+                                            ) : (
+                                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-400 bg-[#f5f5f7] px-2 py-0.5 rounded-md"><HardHat size={12} /> ยังไม่ระบุช่าง</span>
+                                            )}
+                                         </div>
+                                     </div>
+                                     <div className="flex items-center gap-2 shrink-0">
+                                       <span className={`px-2.5 py-1 rounded-xl text-xs font-bold ${defect.progress === 100 ? 'bg-emerald-100 text-emerald-700' : 'bg-purple-100 text-purple-700'}`}>
+                                           {defect.progress || 0}%
+                                       </span>
+                                       {currentUserRole === 'Admin' && (
+                                          <button 
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleDeleteDefect(defect);
+                                            }}
+                                            title="ลบรายการแจ้งซ่อม (เฉพาะ Admin)"
+                                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors shrink-0 cursor-pointer"
+                                          >
+                                            <Trash2 size={16} />
+                                          </button>
+                                       )}
+                                     </div>
+                                   </div>
+
+                                   <div className="grid grid-cols-2 gap-3 mb-3">
+                                     <div className="bg-[#f5f5f7] rounded-xl p-3 border border-slate-100">
+                                         <span className="text-[9px] font-bold uppercase text-[#86868b] block mb-1">แผนงาน</span>
+                                         <p className="text-[10px] font-bold text-[#1d1d1f]">เริ่ม: {defect.planned_start ? new Date(defect.planned_start).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</p>
+                                         <p className="text-[10px] font-bold text-[#1d1d1f]">จบ: {defect.planned_end ? new Date(defect.planned_end).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</p>
+                                         <div className="text-[10px] font-bold text-pink-500 mt-1 bg-pink-50 inline-block px-1.5 py-0.5 rounded">{durationText}</div>
+                                     </div>
+                                     <div className="bg-[#f5f5f7] rounded-xl p-3 border border-slate-100 flex flex-col justify-between">
+                                         <span className="text-[9px] font-bold uppercase text-[#86868b] block">สถานะ</span>
+                                         <span className={`text-xs font-bold px-2 py-1 rounded-lg border w-fit ${defect.progress === 100 ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-purple-50 text-purple-600 border-purple-200'}`}>
+                                            {defect.progress === 100 ? '✅ เสร็จเรียบร้อย' : 'รอซ่อม'}
+                                         </span>
+                                         <button className="w-full mt-2 py-1.5 bg-purple-600 text-white font-bold text-xs rounded-lg cursor-pointer">อัปเดตงาน</button>
+                                     </div>
+                                   </div>
+                               </td>
+                             </tr>
+                          )}
+
+                          {/* 💻 2. โซน PC (Desktop Table Row matching Construction layout) */}
+                          {!isMobileLayout && (
+                          <tr key={defect.id} className="group transition-colors cursor-pointer table-row bg-white hover:bg-slate-50/80" onClick={() => { setSelectedDefect(defect); setDefectReturnView('house-detail'); setView('defect-progress'); }}>
+                            {/* Col 1: Task Name (280px) */}
+                            <td className="p-2 sm:p-3 border-b border-black/5 h-[120px] w-[280px] min-w-[280px] max-w-[280px] z-20 bg-white sticky left-0 shadow-[4px_0_10px_-4px_rgba(0,0,0,0.1)]">
+                               <div className="w-full h-full flex flex-col justify-between">
+                                  <div className="min-w-0">
+                                     <div className="flex items-start gap-1.5 justify-between">
+                                        <div className="flex items-start gap-1.5 min-w-0 flex-1">
+                                           <span className="text-[10px] sm:text-xs font-bold text-slate-400 shrink-0 bg-[#f5f5f7] px-1.5 py-0.5 rounded border mt-0.5">#{idx + 1}</span>
+                                           <h4 className={`font-bold text-xs sm:text-sm leading-tight text-ellipsis overflow-hidden [display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical] ${defect.progress === 100 ? 'text-slate-400 line-through' : 'text-[#1d1d1f]'}`} title={taskTemp?.task_name || defect.description}>
+                                              {taskTemp?.task_name || defect.description}
+                                           </h4>
+                                        </div>
+                                        {currentUserRole === 'Admin' && (
+                                           <button 
+                                             type="button"
+                                             onClick={(e) => {
+                                               e.stopPropagation();
+                                               handleDeleteDefect(defect);
+                                             }}
+                                             title="ลบรายการแจ้งซ่อม (เฉพาะ Admin)"
+                                             className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors shrink-0 ml-1 cursor-pointer"
+                                           >
+                                             <Trash2 size={15} />
+                                           </button>
+                                        )}
+                                     </div>
+                                  </div>
+
+                                  <div className="flex flex-col gap-1 mt-1 border-t border-slate-100 pt-1">
+                                     <div className="flex items-center gap-1.5 justify-between">
+                                         {contractor?.name ? (
+                                             <div className="flex items-center gap-1 text-[10px] sm:text-xs font-bold text-purple-700 truncate bg-purple-50 px-2 py-0.5 rounded-md border border-purple-100">
+                                                 <HardHat size={11} className="text-purple-600 shrink-0"/> 
+                                                 <span className="truncate">{contractor.name.split(' ')[0]}</span>
+                                             </div>
+                                         ) : canAssignContractor ? (
+                                             <button 
+                                               type="button" 
+                                               onClick={(e) => { e.stopPropagation(); setAssigningDefect(defect); }} 
+                                               className="flex items-center gap-1 text-[10px] font-bold text-rose-500 hover:text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 border-dashed px-2 py-0.5 rounded-md transition-colors cursor-pointer"
+                                             >
+                                               <HardHat size={11} /> ยังไม่ระบุช่าง
+                                             </button>
+                                         ) : (
+                                             <span className="flex items-center gap-1 text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded-md">
+                                               <HardHat size={11} /> ยังไม่ระบุช่าง
+                                             </span>
+                                         )}
+
+                                         {contractor?.name && canAssignContractor && (
+                                             <button 
+                                               type="button" 
+                                               onClick={(e) => { e.stopPropagation(); setAssigningDefect(defect); }} 
+                                               className="p-1 text-slate-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors shrink-0 cursor-pointer" 
+                                               title="เปลี่ยนช่าง"
+                                             >
+                                                 <UserCog size={13} />
+                                             </button>
+                                         )}
+                                     </div>
+                                     <div className="flex items-center gap-2">
+                                       <div className="w-full bg-[#f5f5f7] rounded-full h-1.5 max-w-[100px]">
+                                           <div className={`h-full rounded-full transition-all duration-1000 ${defect.progress === 100 ? 'bg-emerald-500' : 'bg-purple-500'}`} style={{ width: `${defect.progress || 0}%` }}></div>
+                                       </div>
+                                       <span className="text-[9px] sm:text-[10px] font-bold text-[#86868b]">{defect.progress || 0}%</span>
+                                     </div>
+                                  </div>
+                               </div>
+                            </td>
+
+                            {/* Col 2: Status (80px) */}
+                            <td className="sticky left-[280px] bg-white z-20 border-b border-r border-black/5 p-2 text-center w-[80px] min-w-[80px] max-w-[80px] shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.08)] align-middle">
+                               <span className={`text-[10px] sm:text-xs font-black px-2 py-1 rounded-lg border inline-block ${defect.progress === 100 ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : defect.progress > 0 ? 'bg-blue-50 text-blue-600 border-blue-200' : 'bg-rose-50 text-rose-500 border-rose-200'}`}>
+                                 {defect.progress === 100 ? 'เสร็จ' : defect.progress > 0 ? 'กำลังแก้' : 'รอซ่อม'}
+                               </span>
+                            </td>
+
+                            {/* Col 3: Start (140px) */}
+                            <td className="sticky left-[360px] bg-white z-20 border-b border-r border-black/5 p-2 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.08)] align-middle">
+                               {['Project Planner', 'Admin', 'Owner'].includes(currentUserRole) && !isHandoverCompleted ? (
+                                  <div className="flex flex-col items-center gap-1">
+                                     <span className="text-[8px] font-bold uppercase text-slate-400">Plan:</span>
+                                     <input type="date" value={defectScheduleInputs[defect.id]?.start || (defect.planned_start ? defect.planned_start.split('T')[0] : '')}
+                                        onClick={(e) => e.stopPropagation()}
+                                        onChange={(e) => {
+                                           const newStart = e.target.value;
+                                           let currentEnd = defectScheduleInputs[defect.id]?.end || (defect.planned_end ? defect.planned_end.split('T')[0] : '');
+                                           let currentDuration = defectScheduleInputs[defect.id]?.duration || (dStartTs && dEndTs ? Math.ceil((dEndTs - dStartTs) / 86400000) + 1 : '');
+                                           let newEnd = currentEnd;
+                                           if (newStart && currentDuration && Number(currentDuration) > 0) {
+                                              const d = new Date(newStart); d.setDate(d.getDate() + (Number(currentDuration) - 1));
+                                              newEnd = d.toISOString().split('T')[0];
+                                           }
+                                           setDefectScheduleInputs((prev: any) => ({...prev, [defect.id]: { start: newStart, end: newEnd, duration: currentDuration }}));
+                                        }} 
+                                        className="w-full border border-purple-200 rounded px-1.5 py-1 text-[10px] font-bold text-center text-[#1d1d1f] outline-none focus:border-purple-500 bg-white shadow-sm cursor-pointer" 
+                                     />
+                                     {defect.actual_start && (
+                                        <span className="text-[8px] font-bold text-emerald-600 mt-0.5">Act: {new Date(defect.actual_start).toLocaleDateString('en-GB', {day:'2-digit',month:'2-digit',year:'2-digit'})}</span>
+                                     )}
+                                  </div>
+                               ) : (
+                                  <div className="flex flex-col items-center gap-1">
+                                     <span className="text-[8px] font-bold uppercase text-slate-400">PLAN:</span>
+                                     <span className="text-[11px] font-bold text-slate-700">{defect.planned_start ? new Date(defect.planned_start).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}</span>
+                                     {defect.actual_start && (
+                                        <span className="text-[8px] font-bold text-emerald-600">Act: {new Date(defect.actual_start).toLocaleDateString('en-GB', {day:'2-digit',month:'2-digit',year:'2-digit'})}</span>
+                                     )}
+                                  </div>
+                               )}
+                            </td>
+
+                            {/* Col 4: Duration (100px) */}
+                            <td className="sticky left-[500px] bg-white z-20 border-b border-r border-black/5 p-2 text-center w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px] align-middle">
+                               {['Project Planner', 'Admin', 'Owner'].includes(currentUserRole) && !isHandoverCompleted ? (
+                                  <div className="flex flex-col items-center gap-1">
+                                     <span className="text-[8px] font-bold uppercase text-pink-500">Days:</span>
+                                     <input type="number" min="1" placeholder="วัน" value={defectScheduleInputs[defect.id]?.duration || (dStartTs && dEndTs ? Math.ceil((dEndTs - dStartTs) / 86400000) + 1 : '')} 
+                                        onClick={(e) => e.stopPropagation()}
+                                        onChange={(e) => {
+                                           const newDuration = e.target.value;
+                                           let currentStart = defectScheduleInputs[defect.id]?.start || (defect.planned_start ? defect.planned_start.split('T')[0] : '');
+                                           let currentEnd = defectScheduleInputs[defect.id]?.end || (defect.planned_end ? defect.planned_end.split('T')[0] : '');
+                                           let newEnd = currentEnd;
+                                           if (currentStart && newDuration && Number(newDuration) > 0) {
+                                              const d = new Date(currentStart); d.setDate(d.getDate() + (Number(newDuration) - 1));
+                                              newEnd = d.toISOString().split('T')[0];
+                                           }
+                                           setDefectScheduleInputs((prev: any) => ({...prev, [defect.id]: { start: currentStart, end: newEnd, duration: newDuration }}));
+                                        }}
+                                        className="w-full border border-pink-200 rounded px-1 py-1 text-[10px] font-bold text-center text-pink-600 outline-none focus:border-pink-500 bg-pink-50/50 shadow-sm cursor-pointer" 
+                                     />
+                                  </div>
+                               ) : (
+                                  <div className="flex flex-col items-center gap-1">
+                                     <span className="text-[10px] sm:text-xs font-bold text-pink-600 bg-pink-50 px-2 py-1 rounded-md border border-pink-100">{durationText}</span>
+                                  </div>
+                               )}
+                            </td>
+
+                            {/* Col 5: Finish (140px) */}
+                            <td className="sticky left-[600px] bg-white z-20 border-b border-r border-black/5 p-2 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[6px_0_10px_-6px_rgba(0,0,0,0.1)] align-middle">
+                               {['Project Planner', 'Admin', 'Owner'].includes(currentUserRole) && !isHandoverCompleted ? (
+                                  <div className="flex flex-col items-center gap-1">
+                                     <span className="text-[8px] font-bold uppercase text-slate-400">Plan:</span>
+                                     <input type="date" value={defectScheduleInputs[defect.id]?.end || (defect.planned_end ? defect.planned_end.split('T')[0] : '')} 
+                                        onClick={(e) => e.stopPropagation()}
+                                        onChange={(e) => {
+                                           const newEnd = e.target.value;
+                                           let currentStart = defectScheduleInputs[defect.id]?.start || (defect.planned_start ? defect.planned_start.split('T')[0] : '');
+                                           let currentDuration = defectScheduleInputs[defect.id]?.duration || (dStartTs && dEndTs ? Math.ceil((dEndTs - dStartTs) / 86400000) + 1 : '');
+                                           let newDuration = currentDuration;
+                                           if (currentStart && newEnd) {
+                                              const diffTime = new Date(newEnd).getTime() - new Date(currentStart).getTime();
+                                              newDuration = String(Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24))) + 1);
+                                           }
+                                           setDefectScheduleInputs((prev: any) => ({...prev, [defect.id]: { start: currentStart, end: newEnd, duration: newDuration }}));
+                                        }} 
+                                        className="w-full border border-purple-200 rounded px-1.5 py-1 text-[10px] font-bold text-center text-[#1d1d1f] outline-none focus:border-purple-500 bg-white shadow-sm cursor-pointer" 
+                                     />
+                                     {defect.actual_end && (
+                                        <span className="text-[8px] font-bold text-emerald-600 mt-0.5">Act: {new Date(defect.actual_end).toLocaleDateString('en-GB', {day:'2-digit',month:'2-digit',year:'2-digit'})}</span>
+                                     )}
+                                  </div>
+                               ) : (
+                                  <div className="flex flex-col items-center gap-1">
+                                     <span className="text-[8px] font-bold uppercase text-slate-400">PLAN:</span>
+                                     <span className="text-[11px] font-bold text-slate-700">{defect.planned_end ? new Date(defect.planned_end).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}</span>
+                                     {defect.actual_end && (
+                                        <span className="text-[8px] font-bold text-emerald-600">Act: {new Date(defect.actual_end).toLocaleDateString('en-GB', {day:'2-digit',month:'2-digit',year:'2-digit'})}</span>
+                                     )}
+                                  </div>
+                               )}
+                            </td>
+
+                            {/* Col 6: Gantt Chart Timeline */}
+                            <td className="p-0 border-b border-black/5 relative z-10 w-full bg-[#fcfcfd]" style={{ minWidth: `${totalChartDays * 36}px`, height: '120px' }}>
+                               <div className="absolute inset-0 pointer-events-none z-0" style={{ 
+                                    backgroundImage: `repeating-linear-gradient(to right, transparent, transparent calc(100% / ${totalChartDays} - 1px), #f1f5f9 calc(100% / ${totalChartDays} - 1px), #f1f5f9 calc(100% / ${totalChartDays}))`,
+                                    backgroundSize: `calc(100% / ${totalChartDays}) 100%`
+                                 }}>
+                                  {todayTs >= chartStart && todayTs <= chartEnd && ( <div className="absolute top-0 bottom-0 border-l-2 sm:border-l-[3px] border-dashed border-rose-500/80 z-[15] pointer-events-none" style={{ left: `${getChartLeft(todayTs)}%` }}></div> )}
+                               </div>
+                               
+                               <div className="relative w-full h-full flex flex-col px-0">
+                                  {dStartTs && dEndTs && ( 
+                                     <div className={`absolute h-5 rounded-md z-[20] shadow-sm opacity-90 flex items-center px-1.5 ${defect.progress === 100 ? 'bg-emerald-500' : 'bg-purple-600'}`} style={{ left: `${getChartLeft(dStartTs)}%`, width: `${getChartWidth(dStartTs, dEndTs)}%`, top: '40%' }}>
+                                        <span className="text-[8px] sm:text-[9px] font-black text-white truncate">{defect.progress || 0}%</span>
+                                     </div> 
+                                  )}
+                               </div>
+                            </td>
+                          </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })
+                  )}
+               </tbody>
+             </table>
+          </div>
+      </div>
+
+      <DefectTaskSelectModal 
+        isOpen={isSelectModalOpen} 
+        onClose={() => setIsSelectModalOpen(false)} 
+        taskTemplates={taskTemplates}
+        selectedPlot={selectedPlot}
+        onSelectTask={handleSelectTasks}
+        existingDefects={roundDefects}
+      />
+
+      <HandoverCertificateModal 
+        isOpen={isCertificateModalOpen}
+        onClose={() => setIsCertificateModalOpen(false)}
+        selectedPlot={selectedPlot}
+        defects={defects}
+        taskTemplates={taskTemplates}
+        contractors={contractors}
+        viewingRound={viewingRound}
+        cycle={cycle}
+      />
+
+      {/* 🛠️ Contractor Assign Modal */}
+      {assigningDefect && (
+        <div className="fixed inset-0 bg-black/60 z-[99999] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-5 shadow-2xl border border-slate-200 animate-fade-in">
+            <div className="flex justify-between items-center pb-3 border-b border-slate-100 mb-4">
+              <div className="flex items-center gap-2 text-purple-700">
+                <HardHat size={20} />
+                <h3 className="font-bold text-base text-slate-800">ระบุช่าง / ผู้รับเหมา</h3>
+              </div>
+              <button onClick={() => setAssigningDefect(null)} className="p-1 hover:bg-slate-100 rounded-full text-slate-400 cursor-pointer">
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="text-xs font-bold text-slate-500 mb-3">
+              รายการ: <span className="text-slate-800 font-extrabold">{taskTemplates?.find((t: any) => t.id === (assigningDefect.task_id || assigningDefect.task_template_id))?.task_name || assigningDefect.description}</span>
+            </p>
+
+            <div className="max-h-[300px] overflow-y-auto space-y-2 mb-4 custom-scrollbar pr-1">
+              <button 
+                type="button"
+                onClick={() => handleSaveDefectContractor(assigningDefect.id, null)}
+                className={`w-full p-3 rounded-xl border text-left text-xs font-bold transition-all flex justify-between items-center cursor-pointer ${!assigningDefect.contractor_id ? 'border-rose-300 bg-rose-50 text-rose-700' : 'border-slate-200 hover:bg-slate-50 text-slate-600'}`}
+              >
+                <span>🚫 ไม่ระบุช่าง (ยังไม่มอบหมาย)</span>
+                {!assigningDefect.contractor_id && <CheckCircle size={16} className="text-rose-600" />}
+              </button>
+
+              {(contractors || []).map((c: any) => {
+                const isSelected = assigningDefect.contractor_id === c.id;
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => handleSaveDefectContractor(assigningDefect.id, c.id)}
+                    className={`w-full p-3 rounded-xl border text-left text-xs font-bold transition-all flex justify-between items-center cursor-pointer ${isSelected ? 'border-purple-500 bg-purple-50 text-purple-800' : 'border-slate-200 hover:bg-slate-50 text-slate-700'}`}
+                  >
+                    <div>
+                      <div className="font-extrabold text-sm">{c.name}</div>
+                      <div className="text-[10px] font-semibold text-slate-400">{c.specialization || 'ผู้รับเหมาทั่วไป'} {c.phone ? `• ${c.phone}` : ''}</div>
+                    </div>
+                    {isSelected && <CheckCircle size={16} className="text-purple-600" />}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-slate-100">
+              <button 
+                onClick={() => setAssigningDefect(null)}
+                className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-4 py-2 rounded-xl text-xs cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+            </div>
+          </div>
         </div>
       )}
+
+      {/* 🌟 Custom App Modal (Alert & Confirm) */}
+      <AppCustomModal 
+        config={modalConfig} 
+        onClose={() => setModalConfig(null)} 
+      />
     </div>
   );
 }
