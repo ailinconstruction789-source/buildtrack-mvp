@@ -3049,14 +3049,40 @@ export default function ConstructionApp() {
                         const currentPlotInfo = plots.find(p => String(p.id) === String(update.plot_id));
                         const projectNameText = currentPlotInfo ? currentPlotInfo.project_name : 'ไม่ระบุโครงการ';
 
+                        // 🔍 ตรวจสอบว่าเป็นรายงาน/การตรวจของ QC หรือไม่
+                        const isQC = update.role === 'QC' || (typeof update.action === 'string' && update.action.includes('QC'));
+                        const isQCPassed = isQC && (
+                          (typeof update.action === 'string' && (update.action.includes('อนุมัติ') || update.action.includes('ผ่าน'))) ||
+                          update.progress === 100
+                        );
+                        const isQCRejected = isQC && (
+                          (typeof update.action === 'string' && (update.action.includes('ไม่อนุมัติ') || update.action.includes('ไม่ผ่าน') || update.action.includes('แจ้งแก้ไข'))) ||
+                          update.progress === 95
+                        );
+
                         return (
-                          <div key={update.id} className="bg-white rounded-2xl sm:rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden animate-in slide-in-from-bottom-4">
+                          <div 
+                            key={update.id} 
+                            className={`bg-white rounded-2xl sm:rounded-[2rem] border overflow-hidden animate-in slide-in-from-bottom-4 transition-all duration-300 ${
+                              isQCPassed 
+                                ? 'border-emerald-300 sm:border-emerald-400 shadow-lg shadow-emerald-500/10 ring-2 ring-emerald-500/20' 
+                                : isQCRejected 
+                                  ? 'border-rose-300 sm:border-rose-400 shadow-lg shadow-rose-500/10 ring-2 ring-rose-500/20' 
+                                  : 'border-slate-200 shadow-sm hover:shadow-md'
+                            }`}
+                          >
 
                             {/* ส่วนหัวโพสต์: ป้ายชื่อโครงการ + ล็อกพิกัดแปลง + ชื่องวดงาน */}
-                            <div className="bg-slate-800 px-4 sm:px-6 py-3 flex flex-wrap justify-between items-center gap-2">
+                            <div className={`px-4 sm:px-6 py-3 flex flex-wrap justify-between items-center gap-2 transition-colors ${
+                              isQCPassed 
+                                ? 'bg-gradient-to-r from-emerald-900 via-slate-900 to-slate-900 border-b border-emerald-700/50' 
+                                : isQCRejected 
+                                  ? 'bg-gradient-to-r from-rose-950 via-slate-900 to-slate-900 border-b border-rose-700/50' 
+                                  : 'bg-slate-800'
+                            }`}>
                               <div className="flex items-center gap-2 flex-wrap min-w-0">
 
-                                {/* 🏢 ป้ายชื่อโครงการ (เพิ่มใหม่ สีน้ำเงินเด่นๆ) */}
+                                {/* 🏢 ป้ายชื่อโครงการ */}
                                 <span className="bg-blue-600 text-white font-black text-[10px] sm:text-xs px-2.5 py-1 rounded-xl shadow-sm shrink-0 flex items-center gap-1">
                                   🏢 {projectNameText}
                                 </span>
@@ -3069,9 +3095,23 @@ export default function ConstructionApp() {
                                   🛠️ {taskName}
                                 </h4>
                               </div>
-                              <span className="bg-white/20 text-white font-black text-[10px] px-2.5 py-1 rounded-lg uppercase tracking-wider ml-auto">
-                                {update.progress}%
-                              </span>
+
+                              {/* ป้ายแสดงสถานะด้านขวาบนหัวการ์ด */}
+                              <div className="flex items-center gap-1.5 ml-auto">
+                                {isQCPassed ? (
+                                  <span className="bg-emerald-500 text-white font-black text-[10px] sm:text-xs px-3 py-1 rounded-xl shadow-sm flex items-center gap-1.5 uppercase tracking-wider animate-in zoom-in-95">
+                                    <CheckCircle size={13} className="stroke-[2.5]" /> QC ผ่าน {update.progress}%
+                                  </span>
+                                ) : isQCRejected ? (
+                                  <span className="bg-rose-500 text-white font-black text-[10px] sm:text-xs px-3 py-1 rounded-xl shadow-sm flex items-center gap-1.5 uppercase tracking-wider animate-in zoom-in-95">
+                                    <XCircle size={13} className="stroke-[2.5]" /> QC ไม่ผ่าน ({update.progress}%)
+                                  </span>
+                                ) : (
+                                  <span className="bg-white/20 text-white font-black text-[10px] px-2.5 py-1 rounded-lg uppercase tracking-wider">
+                                    {update.progress}%
+                                  </span>
+                                )}
+                              </div>
                             </div>
 
                             {/* ส่วนเนื้อหาภายในกล่องแชท */}
@@ -3079,16 +3119,55 @@ export default function ConstructionApp() {
                               {/* ข้อมูลผู้รายงาน และ สภาพอากาศ */}
                               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
                                 <div className="flex items-center gap-2.5">
-                                  <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-600 to-purple-600 flex items-center justify-center text-white font-black text-sm shadow-md">
-                                    {update.user_name.charAt(0)}
+                                  {/* Avatar ผู้รายงาน */}
+                                  <div className={`w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center text-white font-black text-sm shadow-md shrink-0 transition-transform ${
+                                    isQCPassed
+                                      ? 'bg-gradient-to-tr from-emerald-600 to-teal-500 ring-2 ring-emerald-400/40'
+                                      : isQCRejected
+                                        ? 'bg-gradient-to-tr from-rose-600 to-red-500 ring-2 ring-rose-400/40'
+                                        : update.role === 'QC'
+                                          ? 'bg-gradient-to-tr from-purple-600 to-indigo-600'
+                                          : update.role === 'Site Engineer'
+                                            ? 'bg-gradient-to-tr from-blue-600 to-cyan-600'
+                                            : 'bg-gradient-to-tr from-blue-600 to-purple-600'
+                                  }`}>
+                                    {update.user_name ? update.user_name.charAt(0).toUpperCase() : 'U'}
                                   </div>
+
                                   <div>
-                                    <span className="font-black text-slate-800 text-sm flex items-center gap-1.5">
-                                      {update.user_name}
-                                      <span className={`text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded ${update.role === 'QC' ? 'bg-purple-100 text-purple-600' : update.role === 'Site Engineer' ? 'bg-blue-100 text-blue-600' : 'bg-orange-100 text-orange-600'}`}>
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className="font-black text-slate-800 text-sm">
+                                        {update.user_name}
+                                      </span>
+
+                                      {/* ป้าย Role */}
+                                      <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md ${
+                                        isQCPassed
+                                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                          : isQCRejected
+                                            ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                                            : update.role === 'QC'
+                                              ? 'bg-purple-100 text-purple-600'
+                                              : update.role === 'Site Engineer'
+                                                ? 'bg-blue-100 text-blue-600'
+                                                : 'bg-orange-100 text-orange-600'
+                                      }`}>
                                         {update.role}
                                       </span>
-                                    </span>
+
+                                      {/* 🌟 ป้ายสรุปผลการตรวจของ QC ชัดเจน (เขียว = ผ่าน / แดง = ไม่ผ่าน) */}
+                                      {isQCPassed && (
+                                        <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-black px-2 py-0.5 rounded-lg flex items-center gap-1 shadow-xs">
+                                          <CheckCircle size={11} className="stroke-[2.5]" /> ตรวจผ่าน
+                                        </span>
+                                      )}
+                                      {isQCRejected && (
+                                        <span className="bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-black px-2 py-0.5 rounded-lg flex items-center gap-1 shadow-xs">
+                                          <XCircle size={11} className="stroke-[2.5]" /> ไม่ผ่าน (แจ้งแก้ไข)
+                                        </span>
+                                      )}
+                                    </div>
+
                                     <p className="text-[10px] text-slate-400 font-bold mt-0.5">
                                       {new Date(update.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })} • {new Date(update.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.
                                     </p>
@@ -3104,7 +3183,13 @@ export default function ConstructionApp() {
                               </div>
 
                               {/* ข้อความบรรยายเนื้อหางาน */}
-                              <p className="text-slate-700 text-xs sm:text-sm font-medium leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-100/50">
+                              <p className={`text-xs sm:text-sm font-medium leading-relaxed p-3.5 rounded-xl border ${
+                                isQCPassed
+                                  ? 'bg-emerald-50/50 border-emerald-100 text-slate-800'
+                                  : isQCRejected
+                                    ? 'bg-rose-50/50 border-rose-100 text-slate-800'
+                                    : 'bg-slate-50 border-slate-100/50 text-slate-700'
+                              }`}>
                                 {update.text_content}
                               </p>
 
@@ -3116,7 +3201,13 @@ export default function ConstructionApp() {
                                       key={i}
                                       src={url.trim()}
                                       onClick={() => setFullImageUrl(url.trim())}
-                                      className="w-full aspect-[4/3] sm:aspect-video object-cover rounded-xl border border-slate-200 shadow-sm cursor-zoom-in hover:opacity-95 transition-opacity"
+                                      className={`w-full aspect-[4/3] sm:aspect-video object-cover rounded-xl border shadow-sm cursor-zoom-in hover:opacity-95 transition-opacity ${
+                                        isQCPassed
+                                          ? 'border-emerald-200'
+                                          : isQCRejected
+                                            ? 'border-rose-200'
+                                            : 'border-slate-200'
+                                      }`}
                                       alt="Live Feed Report Image"
                                     />
                                   ))}

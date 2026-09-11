@@ -8,6 +8,9 @@ import SalesPricing from './SalesPricing';
 import SalesReports from './SalesReports';
 import SalesIntelligence from './SalesIntelligence';
 import AdminDocsManager from './AdminDocsManager';
+import LeadTrackerView from './LeadTrackerView';
+import SalesFunnelAnalytics from './SalesFunnelAnalytics';
+import { parseExcelRowToLead, downloadLeadTrackerTemplate, ParsedLeadRow } from '@/lib/salesImportHelper';
 
 const initialLeads: any[] = [];
 
@@ -70,7 +73,8 @@ export default function SalesKanban({ project: externalProject, projects, user, 
   const project = internalProject;
 
   const [leads, setLeads] = useState(initialLeads);
-  const [activeTab, setActiveTab] = useState<'map' | 'list' | 'pricing' | 'booked' | 'transferred' | 'reports' | 'intelligence' | 'admin_docs'>('map');
+  const [rawLeads, setRawLeads] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState<'map' | 'list' | 'pricing' | 'booked' | 'transferred' | 'reports' | 'intelligence' | 'admin_docs' | 'lead_tracker' | 'funnel_analytics'>('lead_tracker');
   const [search, setSearch] = useState('');
   
   const [panelState, setPanelState] = useState<{type: 'default' | 'booking' | 'customer' | 'new-customer', plotId: string, lead: any}>({ type: 'default', plotId: '', lead: null });
@@ -88,7 +92,7 @@ export default function SalesKanban({ project: externalProject, projects, user, 
 
   // Excel Import State
   const [showImportModal, setShowImportModal] = useState(false);
-  const [importData, setImportData] = useState<any[]>([]);
+  const [importData, setImportData] = useState<ParsedLeadRow[]>([]);
   const [isImporting, setIsImporting] = useState(false);
 
   // Fetch Leads and Sales Data from Supabase
@@ -106,6 +110,7 @@ export default function SalesKanban({ project: externalProject, projects, user, 
       // 2. Fetch leads
       const { data: leadsData, error: leadsErr } = await supabase.from('leads').select('*').eq('project_name', projName);
       if (leadsErr) throw leadsErr;
+      setRawLeads(leadsData || []);
       if (!leadsData || leadsData.length === 0) { setLeads([]); return; }
 
       // 3. Fetch sales & history in chunks to prevent PostgREST URL length limit errors
@@ -309,7 +314,7 @@ export default function SalesKanban({ project: externalProject, projects, user, 
   const availablePlots = projectPlots.filter(p => !leads.find(l => l.plot === p && !['Visit', 'Cancelled', 'Rejected'].includes(l.status)));
 
   const handlePlotClick = (plotId: string, status: string, lead?: any) => {
-    if (status === 'Available' || status === 'Cancelled' || status === 'Rejected') {
+    if (status === 'Available' || status === 'Cancelled' || status === 'Rejected' || !lead) {
       setPanelState({ type: 'booking', plotId, lead: null });
     } else if (lead) {
       setPanelState({ type: 'customer', plotId, lead });
@@ -541,37 +546,12 @@ export default function SalesKanban({ project: externalProject, projects, user, 
   };
 
   // Excel Import Handlers
-  const handleDownloadTemplate = async () => {
-    const XLSX = await import('xlsx');
-    const ws = XLSX.utils.json_to_sheet([
-      { 'Project Name': 'ไอลิน 3', 'Customer Name': 'สมชาย ใจดี', 'Phone': '0812345678', 'Occupation': 'เจ้าของธุรกิจ', 'Interest': 'แบบบ้าน A', 'Status': 'Visit', 'Plot': 'A1', 'Sale Price': 3500000, 'Land Price': 50000, 'Sales Agent': user?.username || 'Jane', 'Visit Date': '25/12/2026', 'Booking Date': '', 'Transfer Date': '', 'Cancel Date': '' },
-      { 'Project Name': 'ไอลิน 4', 'Customer Name': 'สมหญิง สวยงาม', 'Phone': '0898765432', 'Occupation': 'พนักงานบริษัท', 'Interest': 'แบบบ้าน B', 'Status': 'Reserved', 'Plot': 'B5', 'Sale Price': 4200000, 'Land Price': 60000, 'Sales Agent': user?.username || 'John', 'Visit Date': '20/12/2026', 'Booking Date': '22/12/2026', 'Transfer Date': '', 'Cancel Date': '' },
-      { 'Project Name': 'ไอลิน 6', 'Customer Name': 'มานะ อดทน', 'Phone': '0833334444', 'Occupation': 'ข้าราชการ', 'Interest': 'แบบบ้าน C', 'Status': 'Transferred', 'Plot': 'C10', 'Sale Price': 5500000, 'Land Price': 80000, 'Sales Agent': user?.username || 'Jane', 'Visit Date': '01/10/2026', 'Booking Date': '05/10/2026', 'Transfer Date': '15/12/2026', 'Cancel Date': '' }
-    ]);
-    const guideWs = XLSX.utils.json_to_sheet([
-      { 'Status (ภาษาอังกฤษเท่านั้น)': 'Project Name', 'ความหมาย': 'ชื่อโครงการ (ต้องระบุให้ตรงกับในระบบเป๊ะๆ เช่น ไอลิน 6)' },
-      { 'Status (ภาษาอังกฤษเท่านั้น)': 'Visit', 'ความหมาย': 'เยี่ยมชมโครงการ (ค่าเริ่มต้น)' },
-      { 'Status (ภาษาอังกฤษเท่านั้น)': 'Negotiation', 'ความหมาย': 'กำลังเจรจา' },
-      { 'Status (ภาษาอังกฤษเท่านั้น)': 'Reserved', 'ความหมาย': 'จองแล้ว' },
-      { 'Status (ภาษาอังกฤษเท่านั้น)': 'Contracted', 'ความหมาย': 'ทำสัญญาแล้ว' },
-      { 'Status (ภาษาอังกฤษเท่านั้น)': 'DownPayment', 'ความหมาย': 'ผ่อนดาวน์' },
-      { 'Status (ภาษาอังกฤษเท่านั้น)': 'DocumentPrep', 'ความหมาย': 'เตรียมเอกสาร' },
-      { 'Status (ภาษาอังกฤษเท่านั้น)': 'LoanProcessing', 'ความหมาย': 'ยื่นกู้' },
-      { 'Status (ภาษาอังกฤษเท่านั้น)': 'Approved', 'ความหมาย': 'อนุมัติแล้ว' },
-      { 'Status (ภาษาอังกฤษเท่านั้น)': 'Transferred', 'ความหมาย': 'โอนกรรมสิทธิ์' },
-      { 'Status (ภาษาอังกฤษเท่านั้น)': 'Handover', 'ความหมาย': 'รับมอบบ้าน' },
-      { 'Status (ภาษาอังกฤษเท่านั้น)': 'Cancelled', 'ความหมาย': 'ยกเลิก' },
-      { 'Status (ภาษาอังกฤษเท่านั้น)': '---', 'ความหมาย': '---' },
-      { 'Status (ภาษาอังกฤษเท่านั้น)': 'Sale Price', 'ความหมาย': 'ราคาขายสุทธิ (ตัวเลขเท่านั้น เช่น 3500000)' },
-      { 'Status (ภาษาอังกฤษเท่านั้น)': 'Land Price', 'ความหมาย': 'ราคาประเมินที่ดิน/กรมที่ดิน (ตัวเลขเท่านั้น)' },
-      { 'Status (ภาษาอังกฤษเท่านั้น)': 'Sales Agent', 'ความหมาย': 'ชื่อพนักงานขายที่ดูแลลูกค้า' },
-      { 'Status (ภาษาอังกฤษเท่านั้น)': 'Visit Date', 'ความหมาย': 'วันที่เยี่ยมชม (ถ้าไม่ระบุ ระบบจะใช้วันที่ปัจจุบัน)' },
-      { 'Status (ภาษาอังกฤษเท่านั้น)': 'Plot (แปลงบ้าน)', 'ความหมาย': projectPlotsData.length > 0 ? `แปลงที่มีในโครงการ: ${projectPlotsData.map(p => p.plot_name).join(', ')}` : 'โปรดระบุชื่อแปลงให้ตรงกับในระบบ' },
-    ]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Template');
-    XLSX.utils.book_append_sheet(wb, guideWs, 'Guide');
-    XLSX.writeFile(wb, 'Customer_Import_Template.xlsx');
+  const handleDownloadTemplate = () => {
+    const projectNames = projects?.map((p: any) => p.name) || [];
+    downloadLeadTrackerTemplate(
+      projectNames.length > 0 ? projectNames : ['ไอลิน 3', 'ไอลิน 4', 'ไอลิน 6', 'ไอลิน สันทราย 2'],
+      user?.username || 'Jane'
+    );
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -581,136 +561,59 @@ export default function SalesKanban({ project: externalProject, projects, user, 
     const reader = new FileReader();
     reader.onload = async (event) => {
       try {
-        const XLSX = await import('xlsx');
+        const XLSXLib = await import('xlsx');
         const bstr = event.target?.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
-        const wsname = wb.SheetNames[0];
-        const ws = wb.Sheets[wsname];
-        const data = XLSX.utils.sheet_to_json(ws);
-        
-        // Get headers from first row to check if the column exists
-        if (data.length > 0 && (!Object.keys(data[0] as object).some(k => k.trim() === 'Customer Name') || !Object.keys(data[0] as object).some(k => k.trim() === 'Project Name'))) {
-          alert("รูปแบบไฟล์ไม่ถูกต้อง ต้องมีคอลัมน์ Project Name และ Customer Name (กรุณาตรวจสอบว่าพิมพ์ชื่อคอลัมน์ถูกต้อง)");
+        const wb = XLSXLib.read(bstr, { type: 'binary' });
+        const sheetName = wb.SheetNames.find(n => n.includes('Lead') || n.includes('Tracker')) || wb.SheetNames[0];
+        const ws = wb.Sheets[sheetName];
+        const rawRows = XLSXLib.utils.sheet_to_json(ws);
+
+        if (!rawRows || rawRows.length === 0) {
+          alert("ไม่พบข้อมูลในไฟล์ กรุณาตรวจสอบการกรอกข้อมูล");
           return;
         }
-
-        const { data: allProjectsData } = await supabase.from('projects').select('name');
-        const validProjectNames = allProjectsData?.map(p => p.name) || [];
-
-        // Clean data: remove completely empty rows or rows without Customer Name
-        const cleanData = data.filter((row: any) => row && row['Customer Name'] && String(row['Customer Name']).trim() !== '').map((row: any) => {
-          const pName = String(row['Project Name'] || '').trim();
-          if (!pName || pName === '') {
-            row['Project Name'] = 'ลูกค้าทั่วไป';
-          } else if (!validProjectNames.includes(pName) && pName !== 'ลูกค้าทั่วไป') {
-            const existingInterest = row['Interest'] ? String(row['Interest']).trim() : '';
-            row['Interest'] = existingInterest ? `${existingInterest} (สนใจ: ${pName})` : `สนใจ: ${pName}`;
-            row['Project Name'] = 'ลูกค้าทั่วไป';
-          }
-          return row;
-        });
 
         const { data: allPlotsData } = await supabase.from('plots').select('id, plot_name, project_name');
+        const defaultProj = internalProject?.name || project?.name || 'ไอลิน 6';
+        const defaultAg = user?.username || 'ส่วนกลาง';
 
-        if (cleanData.length === 0) {
-          alert("ไม่พบข้อมูลลูกค้าในไฟล์ กรุณาตรวจสอบการกรอกข้อมูล");
-          return;
-        }
-
-        const validStatuses = ['Visit', 'Negotiation', 'Reserved', 'DownPayment', 'DocumentPrep', 'LoanProcessing', 'Approved', 'Contracted', 'Transferred', 'Handover', 'Cancelled'];
-        let hasError = false;
-        let errorMsg = '';
-
-        for (let i = 0; i < cleanData.length; i++) {
-          const row: any = cleanData[i];
-          const rowNum = i + 2; // Approximate row number
-          
-          if (!row['Phone']) {
-            hasError = true;
-            errorMsg = `บรรทัดที่ ${rowNum} (${row['Customer Name']}): ข้อมูล Phone ห้ามเว้นว่าง`;
-            break;
-          }
-          if (row['Status']) {
-            const rawStatus = row['Status'].toString().trim();
-            if (!validStatuses.includes(rawStatus)) {
-              hasError = true;
-              errorMsg = `บรรทัดที่ ${rowNum} (${row['Customer Name']}): สถานะ "${rawStatus}" ไม่ถูกต้อง`;
-              break;
-            }
-          }
-          if (row['Project Name']) {
-            const projNameCol = row['Project Name'].toString().trim();
-            if (row['Plot']) {
-              const plotStr = row['Plot'].toString().trim();
-              const normalizedPlotStr = plotStr.replace(/\s+/g, '');
-              const projPrefix = projNameCol.replace(/\s+/g, '');
-              const matched = allPlotsData?.find(p => {
-                if (p.project_name !== projNameCol) return false;
-                const pName = p.plot_name.replace(/\s+/g, '');
+        const parsedRows: ParsedLeadRow[] = [];
+        for (let i = 0; i < rawRows.length; i++) {
+          const rowObj = rawRows[i] as Record<string, any>;
+          const parsed = parseExcelRowToLead(rowObj, i + 2, defaultProj, defaultAg);
+          if (parsed) {
+            if (parsed.interested_plot_name && allPlotsData) {
+              const normalizedPlotStr = parsed.interested_plot_name.replace(/\s+/g, '').toLowerCase();
+              const projPrefix = parsed.project_name.replace(/\s+/g, '').toLowerCase();
+              const matched = allPlotsData.find(p => {
+                const pName = (p.plot_name || '').replace(/\s+/g, '').toLowerCase();
+                const pProj = (p.project_name || '').toLowerCase();
+                if (pProj !== parsed.project_name.toLowerCase()) return false;
                 return pName === normalizedPlotStr || 
                        `${projPrefix}-${pName}` === normalizedPlotStr || 
                        `${projPrefix}${pName}` === normalizedPlotStr ||
                        pName === normalizedPlotStr.replace(new RegExp(`^${projPrefix}-?`), '');
               });
-              if (!matched) {
-                hasError = true;
-                errorMsg = `บรรทัดที่ ${rowNum} (${row['Customer Name']}): รหัสแปลง "${plotStr}" ไม่มีอยู่ในระบบของโครงการ "${projNameCol}"`;
-                break;
+              if (matched) {
+                parsed.matched_plot_id = matched.id;
               }
-              // Update the row to use the matched plot id to avoid issues later
-              row['PlotId'] = matched.id;
             }
+            parsedRows.push(parsed);
           }
         }
 
-        if (hasError) {
-          alert("ไฟล์ถูกปฏิเสธ: " + errorMsg);
-          e.target.value = '';
+        if (parsedRows.length === 0) {
+          alert("ไม่พบแถวข้อมูลลูกค้าที่ถูกต้องในไฟล์ (ต้องมีข้อมูลชื่อลูกค้า)");
           return;
         }
 
-        setImportData(cleanData);
+        setImportData(parsedRows);
       } catch (err) {
         console.error("Error parsing Excel:", err);
         alert("ไฟล์ไม่ถูกต้องหรือไม่สามารถอ่านได้ครับ");
       }
     };
     reader.readAsBinaryString(file);
-  };
-
-  const parseDateStr = (dateStr: any) => {
-    if (!dateStr) return null;
-    const str = dateStr.toString().trim();
-    
-    // Check if it's an Excel serial number (only digits)
-    if (/^\d+(\.\d+)?$/.test(str)) {
-      const serial = parseFloat(str);
-      const utcDays = Math.floor(serial - 25569);
-      const utcValue = utcDays * 86400; 
-      const dateInfo = new Date(utcValue * 1000);
-      return new Date(dateInfo.getFullYear(), dateInfo.getMonth(), dateInfo.getDate(), 12, 0, 0).toISOString();
-    }
-
-    const parts = str.split(/[\/\-]/);
-    if (parts.length === 3) {
-      let day = parseInt(parts[0]);
-      let month = parseInt(parts[1]);
-      let year = parseInt(parts[2]);
-      if (year < 100) year += 2000;
-      if (day > 1000) {
-        const temp = day;
-        day = year;
-        year = temp;
-      }
-      return new Date(Date.UTC(year, month - 1, day, 5, 0, 0)).toISOString();
-    }
-    
-    const parsed = new Date(str);
-    if (!isNaN(parsed.getTime())) {
-      return new Date(Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate(), 5, 0, 0)).toISOString();
-    }
-    
-    return null;
   };
 
   const handleExportData = async () => {
@@ -771,163 +674,125 @@ export default function SalesKanban({ project: externalProject, projects, user, 
     if (importData.length === 0) return;
     setIsImporting(true);
     try {
-      const validStatuses = ['Visit', 'Negotiation', 'Reserved', 'DownPayment', 'DocumentPrep', 'LoanProcessing', 'Approved', 'Contracted', 'Transferred', 'Handover', 'Cancelled'];
-      
       let updatedCount = 0;
       let insertedCount = 0;
 
       // Fetch all leads to match across all projects
       const { data: allLeadsData } = await supabase.from('leads').select('id, customer_name, phone, project_name, status, agent_name, created_at');
-      const { data: allSalesData } = await supabase.from('sales').select('id, lead_id, plot_id');
 
       for (const row of importData) {
-        const projName = row['Project Name']?.toString().trim() || 'ลูกค้าทั่วไป';
-        const rawStatus = row['Status']?.toString().trim();
-        const status = validStatuses.includes(rawStatus) ? rawStatus : 'Visit';
-        const visitDate = parseDateStr(row['Visit Date']) || new Date().toISOString();
-        const customerName = row['Customer Name']?.toString().trim() || 'Unknown';
-        const phone = row['Phone']?.toString().trim() || '';
-        let plotId = row['PlotId'] || null;
-        // plotId is already matched to UUID in handleFileUpload
-        
-        const parseMoney = (val: any) => {
-          if (val == null || val === '') return null;
-          const numStr = val.toString().replace(/[^0-9.-]+/g,"");
-          const num = Number(numStr);
-          return isNaN(num) ? null : num;
-        };
-        
-        const salePrice = parseMoney(row['Sale Price']);
-        const landPrice = parseMoney(row['Land Price']);
-        const bookingDate = parseDateStr(row['Booking Date']);
-        const transferDate = parseDateStr(row['Transfer Date']);
-        const cancelDate = parseDateStr(row['Cancel Date']);
-        
-        // Find if this lead already exists in ALL projects by Name, Phone and Project
         const existingLead = allLeadsData?.find(l => 
-          l.customer_name?.toLowerCase() === customerName.toLowerCase() && l.phone === phone && l.project_name === projName
+          l.customer_name?.toLowerCase() === row.customer_name.toLowerCase() && 
+          (row.phone ? l.phone === row.phone : true) && 
+          (l.project_name === row.project_name || (!l.project_name && !row.project_name))
         );
+
+        const leadPayload = {
+          customer_name: row.customer_name,
+          phone: row.phone,
+          project_name: row.project_name,
+          channel: row.channel,
+          source: row.channel,
+          agent_name: row.agent_name,
+          lead_date: row.lead_date,
+          contacted_date: row.contacted_date,
+          appointment_date: row.appointment_date,
+          actual_visit_date: row.actual_visit_date,
+          follow_up_count: row.follow_up_count,
+          last_follow_up_date: row.last_follow_up_date,
+          interested_plot_id: row.matched_plot_id || null,
+          interested_plot_name: row.interested_plot_name || null,
+          booking_date: row.booking_date,
+          booking_amount: row.booking_amount,
+          loan_submission_date: row.loan_submission_date,
+          loan_approved_date: row.loan_approved_date,
+          transferred_date: row.transferred_date,
+          lost_reason: row.lost_reason,
+          lost_reason_detail: row.lost_reason_detail,
+          crm_status: row.crm_status,
+          auto_status: row.auto_status,
+          notes: row.notes,
+          occupation: row.occupation,
+          interest: row.interest,
+          status: row.legacy_status,
+          created_by_agent: user?.username || row.agent_name
+        };
+
+        let currentLeadId = '';
 
         if (existingLead) {
           // UPDATE EXISTING LEAD
-          await supabase.from('leads').update({
-            customer_name: customerName,
-            phone: phone,
-            occupation: row['Occupation']?.toString() || '',
-            interest: row['Interest']?.toString() || 'Any',
-            status: status,
-            agent_name: row['Sales Agent']?.toString() || existingLead.agent_name || user?.username || 'Unknown'
-          }).eq('id', existingLead.id);
+          await supabase.from('leads').update(leadPayload).eq('id', existingLead.id);
+          currentLeadId = existingLead.id;
 
-          if (['Reserved', 'Contracted', 'DownPayment', 'DocumentPrep', 'LoanProcessing', 'Approved', 'Transferred', 'Handover', 'Cancelled'].includes(status)) {
-            const contractStatus = status === 'Transferred' || status === 'Handover' ? 'Transferred' : (status === 'Contracted' || status === 'DownPayment' || status === 'DocumentPrep' || status === 'LoanProcessing' || status === 'Approved' ? 'Contracted' : (status === 'Cancelled' ? 'Cancelled' : 'Reserved'));
-            
-            // Check if sale exists
-            const { data: existingSale } = await supabase.from('sales').select('id').eq('lead_id', existingLead.id).maybeSingle();
-            
-            const salePayload = {
-              plot_id: plotId,
-              sale_price: salePrice,
-              land_office_price: landPrice,
-              contract_status: contractStatus,
-              ...(transferDate ? { transferred_at: transferDate } : {})
-            };
-            
-            if (existingSale) {
-              const { error: updateSaleErr } = await supabase.from('sales').update(salePayload).eq('id', existingSale.id);
-              if (updateSaleErr) console.error("Update Sale Error:", updateSaleErr, salePayload);
-            } else {
-              const { error: insertSaleErr } = await supabase.from('sales').insert([{
-                lead_id: existingLead.id,
-                ...salePayload,
-                bank_status: 'Pending',
-                created_at: bookingDate || existingLead.created_at
-              }]);
-              if (insertSaleErr) console.error("Insert Sale Error:", insertSaleErr, salePayload);
-            }
-          }
-          
-          if (status !== existingLead.status) {
-             await supabase.from('status_history').insert([{
-               entity_type: 'lead',
-               entity_id: existingLead.id,
-               old_status: existingLead.status,
-               new_status: status,
-               changed_by: (user?.username || 'Unknown') + ' (System Import Update)',
-               created_at: transferDate || cancelDate || bookingDate || new Date().toISOString()
-             }]);
+          if (row.legacy_status !== existingLead.status) {
+            await supabase.from('status_history').insert([{
+              entity_type: 'lead',
+              entity_id: existingLead.id,
+              old_status: existingLead.status,
+              new_status: row.legacy_status,
+              changed_by: (user?.username || 'Unknown') + ' (System Import Update)',
+              created_at: row.transferred_date || row.booking_date || new Date().toISOString()
+            }]);
           }
           updatedCount++;
         } else {
           // INSERT NEW LEAD
           const { data: newLeadsData, error: newLeadsError } = await supabase.from('leads').insert([{
-            project_name: projName,
-            customer_name: customerName,
-            phone: phone,
-            occupation: row['Occupation']?.toString() || '',
-            interest: row['Interest']?.toString() || 'Any',
-            status: status,
-            agent_name: row['Sales Agent']?.toString() || user?.username || 'Unknown',
-            created_at: visitDate
+            ...leadPayload,
+            created_at: row.lead_date || new Date().toISOString()
           }]).select();
           
           if (newLeadsError) {
-             console.error("Insert Lead Error Detailed:", JSON.stringify(newLeadsError, Object.getOwnPropertyNames(newLeadsError)));
-             alert(`เกิดข้อผิดพลาดในการบันทึกข้อมูลลูกค้า ${customerName}: ` + JSON.stringify(newLeadsError, Object.getOwnPropertyNames(newLeadsError)));
-             continue; // Skip this row to prevent further errors
+            console.error("Insert Lead Error Detailed:", newLeadsError);
+            continue;
           }
 
           if (newLeadsData && newLeadsData.length > 0) {
-            const newLead = newLeadsData[0];
-            
-            // Determine the best date for the initial status history record
-            let initialHistoryDate = newLead.created_at;
-            if (['Transferred', 'Handover'].includes(status) && transferDate) {
-               initialHistoryDate = transferDate;
-            } else if (status === 'Cancelled' && cancelDate) {
-               initialHistoryDate = cancelDate;
-            } else if (['Reserved', 'Contracted', 'DownPayment', 'DocumentPrep', 'LoanProcessing', 'Approved'].includes(status) && bookingDate) {
-               initialHistoryDate = bookingDate;
-            }
-
-            // Insert initial status history for the new lead
+            currentLeadId = newLeadsData[0].id;
             await supabase.from('status_history').insert([{
-               entity_type: 'lead',
-               entity_id: newLead.id,
-               new_status: status,
-               changed_by: (user?.username || 'Unknown') + ' (System Import)',
-               created_at: initialHistoryDate
+              entity_type: 'lead',
+              entity_id: currentLeadId,
+              new_status: row.legacy_status,
+              changed_by: (user?.username || 'Unknown') + ' (System Import)',
+              created_at: row.transferred_date || row.booking_date || row.lead_date || new Date().toISOString()
             }]);
-
-            // If a booking date was explicitly provided and status isn't just 'Reserved', 
-            // log a historical 'Reserved' event so reports can accurately track it
-            if (bookingDate && status !== 'Reserved' && ['Contracted', 'DownPayment', 'DocumentPrep', 'LoanProcessing', 'Approved', 'Transferred', 'Handover'].includes(status)) {
-              await supabase.from('status_history').insert([{
-                 entity_type: 'lead',
-                 entity_id: newLead.id,
-                 new_status: 'Reserved',
-                 changed_by: (user?.username || 'Unknown') + ' (System Import)',
-                 created_at: bookingDate
-              }]);
-            }
-
-            if (['Reserved', 'Contracted', 'DownPayment', 'DocumentPrep', 'LoanProcessing', 'Approved', 'Transferred', 'Handover', 'Cancelled'].includes(status)) {
-              const { error: newSaleErr } = await supabase.from('sales').insert([{
-                lead_id: newLead.id,
-                plot_id: plotId,
-                sale_price: salePrice,
-                land_office_price: landPrice,
-                contract_status: status === 'Transferred' || status === 'Handover' ? 'Transferred' : (status === 'Contracted' || status === 'DownPayment' || status === 'DocumentPrep' || status === 'LoanProcessing' || status === 'Approved' ? 'Contracted' : (status === 'Cancelled' ? 'Cancelled' : 'Reserved')),
-                bank_status: 'Pending',
-                created_at: bookingDate || newLead.created_at,
-                transferred_at: transferDate || null
-              }]);
-              if (newSaleErr) {
-                console.error("Insert New Sale Error:", newSaleErr, { plotId, salePrice, landPrice });
-                alert("เกิดข้อผิดพลาดในการบันทึกราคาและแปลง: " + JSON.stringify(newSaleErr));
-              }
-            }
             insertedCount++;
+          }
+        }
+
+        // Sync with sales table & plots
+        if (currentLeadId && (row.matched_plot_id || row.booking_date || row.crm_status.includes('จอง') || row.crm_status.includes('โอน') || row.crm_status.includes('สัญญา'))) {
+          const contractStatus = row.transferred_date || row.crm_status.includes('โอน') ? 'Transferred' : (row.crm_status.includes('สัญญา') ? 'Contracted' : 'Reserved');
+          const salePrice = row.sale_price || row.booking_amount || 0;
+
+          const { data: existingSale } = await supabase.from('sales').select('id').eq('lead_id', currentLeadId).maybeSingle();
+
+          const salePayload = {
+            plot_id: row.matched_plot_id || null,
+            sale_price: salePrice,
+            booking_amount: row.booking_amount,
+            land_office_price: row.land_office_price,
+            contract_status: contractStatus,
+            ...(row.transferred_date ? { transferred_at: row.transferred_date } : {})
+          };
+
+          if (existingSale) {
+            await supabase.from('sales').update(salePayload).eq('id', existingSale.id);
+          } else {
+            await supabase.from('sales').insert([{
+              lead_id: currentLeadId,
+              ...salePayload,
+              bank_status: row.loan_approved_date ? 'Approved' : (row.loan_submission_date ? 'Pre-approved' : 'Pending'),
+              created_at: row.booking_date || row.lead_date || new Date().toISOString()
+            }]);
+          }
+
+          if (row.matched_plot_id) {
+            await supabase.from('plots').update({
+              has_customer: true,
+              sale_status: row.transferred_date ? 'transferred' : 'sold'
+            }).eq('id', row.matched_plot_id);
           }
         }
       }
@@ -1078,6 +943,20 @@ export default function SalesKanban({ project: externalProject, projects, user, 
       <div className="px-4 md:px-8 pt-4 md:pt-6 pb-2 border-b border-gray-200 bg-white flex flex-col lg:flex-row lg:items-center justify-between gap-4 lg:gap-0">
         <div className="flex gap-4 md:gap-8 overflow-x-auto w-full lg:w-auto pb-1 no-scrollbar shrink-0">
           <button 
+            onClick={() => setActiveTab('lead_tracker')}
+            className={`pb-4 px-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'lead_tracker' ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+          >
+            <FileText size={18} className={activeTab === 'lead_tracker' ? 'text-blue-600' : ''} />
+            📋 Lead Tracker
+          </button>
+          <button 
+            onClick={() => setActiveTab('funnel_analytics')}
+            className={`pb-4 px-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'funnel_analytics' ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+          >
+            <TrendingUp size={18} className={activeTab === 'funnel_analytics' ? 'text-blue-600' : ''} />
+            📊 Funnel & KPI Analytics
+          </button>
+          <button 
             onClick={() => setActiveTab('map')}
             className={`pb-4 px-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'map' ? 'border-[#d4af37] text-[#0f172a]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
           >
@@ -1157,6 +1036,35 @@ export default function SalesKanban({ project: externalProject, projects, user, 
         {/* GLOBAL WRAPPER */}
         <div className="h-full bg-white rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.02)] border border-gray-100 flex overflow-hidden relative">
           <div className="flex-1 h-full relative min-w-0 flex flex-col">
+            {/* LEAD TRACKER TAB (Ailin Funnel System) */}
+            {activeTab === 'lead_tracker' && (
+              <div className="h-full overflow-y-auto bg-slate-50">
+                <LeadTrackerView
+                  leads={rawLeads}
+                  plots={projectPlotsData}
+                  projects={projects}
+                  selectedProjectName={project?.name}
+                  user={user}
+                  onRefresh={fetchData}
+                  onSelectPlotForBooking={(plotId, lead) => {
+                    setActiveTab('map');
+                    setPanelState({ type: 'booking', plotId, lead });
+                  }}
+                />
+              </div>
+            )}
+
+            {/* FUNNEL ANALYTICS TAB */}
+            {activeTab === 'funnel_analytics' && (
+              <div className="h-full overflow-y-auto bg-slate-50">
+                <SalesFunnelAnalytics
+                  leads={rawLeads}
+                  projects={projects}
+                  selectedProjectName={project?.name}
+                />
+              </div>
+            )}
+
             {/* MAP VIEW TAB */}
             {activeTab === 'map' && (
               <SalesMap leads={leads} projectName={project?.name || 'ไอลิน6'} onPlotClick={handlePlotClick} />
@@ -1454,13 +1362,14 @@ export default function SalesKanban({ project: externalProject, projects, user, 
             
           </div> {/* End Tab Content */}
 
-          {/* Side Panel */}
-          <div className={`
-            absolute inset-y-0 right-0 z-50 transform transition-transform duration-300 ease-in-out
-            md:relative md:z-auto md:transform-none
-            ${panelState.type === 'default' ? 'translate-x-full md:translate-x-0' : 'translate-x-0'}
-            w-full md:w-[420px] shrink-0 bg-white md:border-l border-gray-100 overflow-y-auto overflow-x-hidden md:shadow-none
-          `}>
+          {/* Side Panel (Only visible in Project Map tab) */}
+          {activeTab === 'map' && (
+            <div className={`
+              absolute inset-y-0 right-0 z-50 transform transition-transform duration-300 ease-in-out
+              md:relative md:z-auto md:transform-none
+              ${panelState.type === 'default' ? 'translate-x-full md:translate-x-0' : 'translate-x-0'}
+              w-full md:w-[420px] shrink-0 bg-white md:border-l border-gray-100 overflow-y-auto overflow-x-hidden md:shadow-none
+            `}>
             <div key={`${panelState.type}-${panelState.plotId}`} className="flex flex-col min-h-full w-full p-5 md:p-6 relative pt-12 md:pt-6">
                 <button 
                   onClick={() => setPanelState({ type: 'default', plotId: '', lead: null })}
@@ -1597,40 +1506,97 @@ export default function SalesKanban({ project: externalProject, projects, user, 
               ) : null}
 
               {panelState.type === 'booking' && (
-                <div className="flex flex-col h-full animate-in fade-in duration-300">
-                  <div className="flex justify-between items-center mb-6">
+                <div className="flex flex-col h-full animate-in fade-in duration-300 space-y-5">
+                  <div className="flex justify-between items-center pb-3 border-b border-slate-100">
                     <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
-                      <Home className="text-[#d4af37]" /> จองแปลง {projectPlotsData.find(d => d.id === panelState.plotId)?.plot_name || panelState.plotId}
+                      <Home className="text-emerald-600" /> แปลง {projectPlotsData.find(d => d.id === panelState.plotId)?.plot_name || panelState.plotId}
                     </h3>
-                    <button onClick={() => setPanelState({ type: 'default', plotId: '', lead: null })} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
+                    <button onClick={() => setPanelState({ type: 'default', plotId: '', lead: null })} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+                      <X size={18} />
+                    </button>
                   </div>
-                  <form onSubmit={handleSaveBooking} className="space-y-5 flex-1" autoComplete="off">
-                    <div>
-                      <label className="block text-sm font-semibold text-slate-700 mb-1.5">ชื่อลูกค้า</label>
-                      <input name="name" type="text" autoComplete="off" className="w-full border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-[#d4af37] focus:ring-1 focus:ring-[#d4af37] text-sm" placeholder="ระบุชื่อลูกค้า..." required />
+
+                  {/* Status Banner */}
+                  <div className="bg-emerald-50 border border-emerald-200/80 rounded-2xl p-4 text-emerald-900">
+                    <div className="flex items-center gap-2 font-black text-sm text-emerald-800">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                      🟢 สถานะ: แปลงว่าง (พร้อมขาย)
                     </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-slate-700 mb-1.5">อาชีพ (ถ้ามี)</label>
-                      <input name="occupation" type="text" autoComplete="off" className="w-full border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-[#d4af37] focus:ring-1 focus:ring-[#d4af37] text-sm" placeholder="เช่น ธุรกิจส่วนตัว, แพทย์..." />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-slate-700 mb-1.5">เบอร์โทรศัพท์</label>
-                      <input name="phone" type="tel" autoComplete="off" onInput={(e) => { e.currentTarget.value = formatPhoneNumber(e.currentTarget.value) }} className="w-full border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-[#d4af37] focus:ring-1 focus:ring-[#d4af37] text-sm" placeholder="08X-XXX-XXXX" required />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-slate-700 mb-1.5">วันที่จอง (Transaction Date)</label>
-                      <input name="transactionDate" type="date" className="w-full border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-[#d4af37] text-sm" defaultValue={new Date().toISOString().split('T')[0]} />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-slate-700 mb-1.5">ราคาขายที่ตกลงกัน (บาท)</label>
-                      <input name="salePrice" type="text" autoComplete="off" className="w-full border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-[#d4af37] focus:ring-1 focus:ring-[#d4af37] text-sm font-semibold" placeholder="เช่น 3500000" />
-                    </div>
-                    <div className="pt-4">
-                      <button type="submit" disabled={isSubmitting} className="w-full bg-[#0f172a] hover:bg-[#1e293b] text-white font-bold py-3 rounded-xl transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-                        {isSubmitting ? <><Loader2 className="animate-spin" size={18} /> กำลังบันทึก...</> : 'ยืนยันการจอง'}
-                      </button>
-                    </div>
-                  </form>
+                    <p className="text-xs text-emerald-700/80 mt-1">
+                      แปลงนี้ยังไม่มีการวางเงินจอง สามารถเปิดขายและระบุลูกค้าจองได้
+                    </p>
+                  </div>
+
+                  {/* Interested Leads in this plot */}
+                  {(() => {
+                    const plotName = projectPlotsData.find(d => d.id === panelState.plotId)?.plot_name || panelState.plotId;
+                    const interestedLeads = rawLeads.filter(l => 
+                      (l.interested_plot_name === plotName || l.interested_plot_id === panelState.plotId) &&
+                      !l.crm_status?.includes('Booked') && !l.crm_status?.includes('Transferred') && !l.crm_status?.includes('Lost')
+                    );
+
+                    return (
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-bold text-xs text-slate-700 flex items-center gap-1.5">
+                            <Users size={14} className="text-blue-600" /> Lead ที่กำลังสนใจแปลงนี้
+                          </h4>
+                          <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100">
+                            {interestedLeads.length} ราย
+                          </span>
+                        </div>
+
+                        {interestedLeads.length > 0 ? (
+                          <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                            {interestedLeads.map(lead => (
+                              <div key={lead.id} className="p-3 bg-slate-50 border border-slate-200/80 rounded-xl flex items-center justify-between gap-2">
+                                <div>
+                                  <div className="font-bold text-slate-800 text-xs">{lead.customer_name}</div>
+                                  <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
+                                    <span>📞 {lead.phone || '-'}</span>
+                                    <span className="bg-slate-200 px-1.5 py-0.2 rounded text-[10px]">{lead.channel || lead.source || 'Walk in'}</span>
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveTab('lead_tracker');
+                                  }}
+                                  className="bg-orange-600 hover:bg-orange-700 text-white font-bold text-[11px] px-2.5 py-1.5 rounded-lg shrink-0 shadow-sm flex items-center gap-1 cursor-pointer transition-colors"
+                                >
+                                  ⚡ จองให้รายนี้
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-center py-4 bg-slate-50 rounded-xl border border-slate-100 text-xs text-slate-400">
+                            ยังไม่มี Lead ที่ระบุว่าสนใจแปลงนี้
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* Actions */}
+                  <div className="space-y-2 pt-2 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveTab('lead_tracker');
+                      }}
+                      className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl text-xs flex items-center justify-center gap-2 shadow-md shadow-blue-600/10 cursor-pointer transition-colors"
+                    >
+                      <FileText size={16} /> ไปที่หน้า Lead Tracker เพื่อเลือก/เพิ่มลูกค้าจอง
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPanelState({ type: 'default', plotId: '', lead: null })}
+                      className="w-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold py-2.5 rounded-xl text-xs cursor-pointer transition-colors"
+                    >
+                      ปิดหน้าต่าง
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -1953,10 +1919,11 @@ export default function SalesKanban({ project: externalProject, projects, user, 
                   )}
                 </div>
               )}
-              </div>
             </div>
-        </div>
+          </div>
+        )}
       </div>
+    </div>
 
       {/* 🌟 Full Screen Image Modal 🌟 */}
       {fullImageUrl && (
@@ -2018,41 +1985,69 @@ export default function SalesKanban({ project: externalProject, projects, user, 
               </div>
 
               {importData.length > 0 && (
-                <div className="border border-gray-200 rounded-xl overflow-hidden">
+                <div className="border border-gray-200 rounded-xl overflow-hidden shadow-sm">
                   <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex justify-between items-center">
-                    <span className="font-semibold text-gray-700">Preview ข้อมูล ({importData.length} รายการ)</span>
+                    <span className="font-semibold text-gray-700 text-xs flex items-center gap-1.5">
+                      <CheckCircle size={15} className="text-emerald-600" />
+                      Preview ข้อมูล ({importData.length} รายการ)
+                    </span>
+                    <span className="text-[11px] text-gray-500 bg-white px-2.5 py-0.5 rounded-full border border-gray-200 font-semibold">
+                      พร้อมนำเข้า
+                    </span>
                   </div>
                   <div className="overflow-x-auto max-h-[300px]">
-                    <table className="w-full text-left text-sm whitespace-nowrap">
-                      <thead className="bg-white sticky top-0 shadow-sm z-10">
+                    <table className="w-full text-left text-xs whitespace-nowrap">
+                      <thead className="bg-white sticky top-0 shadow-sm z-10 text-gray-600 font-bold border-b border-gray-100">
                         <tr>
-                          <th className="px-4 py-3 font-semibold text-gray-600 border-b border-gray-100">โครงการ</th>
-                          <th className="px-4 py-3 font-semibold text-gray-600 border-b border-gray-100">ชื่อลูกค้า</th>
-                          <th className="px-4 py-3 font-semibold text-gray-600 border-b border-gray-100">เบอร์โทร</th>
-                          <th className="px-4 py-3 font-semibold text-gray-600 border-b border-gray-100">สถานะ</th>
-                          <th className="px-4 py-3 font-semibold text-gray-600 border-b border-gray-100">แปลง</th>
-                          <th className="px-4 py-3 font-semibold text-gray-600 border-b border-gray-100 text-right">ราคาขาย</th>
-                          <th className="px-4 py-3 font-semibold text-gray-600 border-b border-gray-100 text-right">ราคา ท.ด.</th>
-                          <th className="px-4 py-3 font-semibold text-gray-600 border-b border-gray-100">ความสนใจ</th>
-                          <th className="px-4 py-3 font-semibold text-gray-600 border-b border-gray-100">ผู้ดูแล (Sales)</th>
+                          <th className="px-3 py-2.5">ลำดับ</th>
+                          <th className="px-3 py-2.5">วันที่ Lead</th>
+                          <th className="px-3 py-2.5">โครงการ</th>
+                          <th className="px-3 py-2.5">ชื่อลูกค้า</th>
+                          <th className="px-3 py-2.5">เบอร์โทร</th>
+                          <th className="px-3 py-2.5">ช่องทาง</th>
+                          <th className="px-3 py-2.5">เซลล์</th>
+                          <th className="px-3 py-2.5">นัด/เข้าชม</th>
+                          <th className="px-3 py-2.5">แปลงที่เล็ง</th>
+                          <th className="px-3 py-2.5">CRM Status</th>
+                          <th className="px-3 py-2.5">Lost Reason</th>
+                          <th className="px-3 py-2.5">หมายเหตุ</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100 bg-white">
                         {importData.slice(0, 100).map((row, idx) => (
                           <tr key={idx} className="hover:bg-gray-50">
-                            <td className="px-4 py-2">{row['Project Name'] || '-'}</td>
-                            <td className="px-4 py-2">{row['Customer Name'] || '-'}</td>
-                            <td className="px-4 py-2">{row['Phone'] || '-'}</td>
-                            <td className="px-4 py-2">
-                              <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded text-xs font-semibold">
-                                {row['Status'] || 'Visit'}
+                            <td className="px-3 py-2 font-mono text-gray-400">{idx + 1}</td>
+                            <td className="px-3 py-2">{row.lead_date ? new Date(row.lead_date).toLocaleDateString('th-TH') : '-'}</td>
+                            <td className="px-3 py-2 font-bold text-gray-700">{row.project_name}</td>
+                            <td className="px-3 py-2 font-bold text-blue-900">{row.customer_name}</td>
+                            <td className="px-3 py-2 font-mono text-gray-600">{row.phone || '-'}</td>
+                            <td className="px-3 py-2">
+                              <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded text-[10px] font-semibold">
+                                {row.channel}
                               </span>
                             </td>
-                            <td className="px-4 py-2">{row['Plot'] || '-'}</td>
-                            <td className="px-4 py-2 text-right">{row['Sale Price'] ? Number(row['Sale Price']).toLocaleString() : '-'}</td>
-                            <td className="px-4 py-2 text-right">{row['Land Price'] ? Number(row['Land Price']).toLocaleString() : '-'}</td>
-                            <td className="px-4 py-2">{row['Interest'] || '-'}</td>
-                            <td className="px-4 py-2">{row['Sales Agent'] || '-'}</td>
+                            <td className="px-3 py-2 text-gray-600">{row.agent_name}</td>
+                            <td className="px-3 py-2 text-[11px]">
+                              {row.actual_visit_date ? (
+                                <span className="text-emerald-700 font-bold">เข้าชม {new Date(row.actual_visit_date).toLocaleDateString('th-TH')}</span>
+                              ) : row.appointment_date ? (
+                                <span className="text-purple-700 font-bold">นัด {new Date(row.appointment_date).toLocaleDateString('th-TH')}</span>
+                              ) : '-'}
+                            </td>
+                            <td className="px-3 py-2">
+                              {row.interested_plot_name ? (
+                                <span className="bg-emerald-50 text-emerald-800 font-bold px-1.5 py-0.5 rounded border border-emerald-200 text-[10px]">
+                                  {row.interested_plot_name}
+                                </span>
+                              ) : '-'}
+                            </td>
+                            <td className="px-3 py-2">
+                              <span className="bg-blue-50 text-blue-800 font-bold px-2 py-0.5 rounded-full text-[10px] border border-blue-200">
+                                {row.crm_status}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 text-rose-600 text-[11px]">{row.lost_reason || '-'}</td>
+                            <td className="px-3 py-2 text-gray-500 max-w-[150px] truncate text-[11px]">{row.notes || '-'}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -2060,7 +2055,7 @@ export default function SalesKanban({ project: externalProject, projects, user, 
                   </div>
                   {importData.length > 100 && (
                     <div className="p-2 text-center text-xs text-gray-500 bg-gray-50 border-t border-gray-200">
-                      แสดงตัวอย่างสูงสุด 100 รายการแรกเท่านั้น
+                      แสดงตัวอย่างสูงสุด 100 รายการแรกเท่านั้น (ระบบจะนำเข้าทั้งหมด {importData.length} รายการ)
                     </div>
                   )}
                 </div>

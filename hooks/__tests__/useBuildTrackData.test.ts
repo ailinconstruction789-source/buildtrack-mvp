@@ -3,17 +3,20 @@ import { describe, it, expect, vi, beforeEach, Mock } from 'vitest';
 import { useBuildTrackData } from '../useBuildTrackData';
 import { supabase } from '@/lib/supabase';
 
-vi.mock('@/lib/supabase', () => ({
-  supabase: {
-    from: vi.fn(),
-    channel: vi.fn(() => ({
-      on: vi.fn(() => ({
-        subscribe: vi.fn(),
-      })),
-    })),
-    removeChannel: vi.fn(),
-  },
-}));
+vi.mock('@/lib/supabase', () => {
+  const channelMock: any = {
+    subscribe: vi.fn(),
+  };
+  channelMock.on = vi.fn(() => channelMock);
+
+  return {
+    supabase: {
+      from: vi.fn(),
+      channel: vi.fn(() => channelMock),
+      removeChannel: vi.fn(),
+    },
+  };
+});
 
 describe('useBuildTrackData Hook', () => {
   const mockUser = { username: 'testuser', role: 'Admin' };
@@ -67,7 +70,7 @@ describe('useBuildTrackData Hook', () => {
       if (table === 'notifications') return createMockChain([{ id: 1, message: 'Note 1' }]);
       if (table === 'vw_plot_progress') return createMockChain([{ plot_id: 'p1', overall_progress: 50 }]);
       if (table === 'vw_project_progress') return createMockChain([{ project_name: 'Proj1', plot_count: 1, project_progress: 50 }]);
-      if (table === 'plot_task_assignments') return createMockChain([
+      if (table === 'plot_task_assignments' || table === 'vw_active_plot_task_assignments') return createMockChain([
         { plot_id: 'p1', task_template_id: 1, current_progress: 25, actual_start_date: '2023-01-01', actual_end_date: null }
       ]);
       if (table === 'task_updates') return createMockChain([{ id: 1, note: 'Update' }]);

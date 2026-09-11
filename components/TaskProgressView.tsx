@@ -147,11 +147,16 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                            )}
 
                            <main className={`flex-1 overflow-y-auto ${isMobileLayout ? 'p-3 pb-32 space-y-3' : 'p-4 sm:px-8 sm:pt-8 sm:pb-[280px] space-y-4 sm:space-y-6'} bg-slate-50/50`}>
-                               {updates.map((update: any) => (
+                                {updates.map((update: any) => {
+                                  const isQC = update.role === 'QC' || (typeof update.action === 'string' && update.action.includes('QC'));
+                                  const isQCPass = isQC && ((typeof update.action === 'string' && (update.action.includes('อนุมัติ') || update.action.includes('ผ่าน'))) || update.progress === 100);
+                                  const isQCFail = isQC && ((typeof update.action === 'string' && (update.action.includes('ไม่อนุมัติ') || update.action.includes('ไม่ผ่าน') || update.action.includes('แจ้งแก้ไข'))) || update.progress === 95);
+
+                                  return (
                                <div key={update.id} className={`flex ${isMobileLayout ? 'gap-2' : 'gap-3 sm:gap-5'} animate-in slide-in-from-bottom-4`}>
-                                   <div className={`${isMobileLayout ? 'w-8 h-8 rounded-lg text-xs' : 'w-10 h-10 sm:w-14 sm:h-14 rounded-2xl text-sm sm:text-base'} flex items-center justify-center text-white font-bold shrink-0 shadow-lg ${update.role === 'QC' ? 'bg-purple-600' : update.role === 'Site Engineer' ? 'bg-blue-600' : 'bg-slate-600'}`}>{update.user_name.charAt(0)}</div>
+                                   <div className={`${isMobileLayout ? 'w-8 h-8 rounded-lg text-xs' : 'w-10 h-10 sm:w-14 sm:h-14 rounded-2xl text-sm sm:text-base'} flex items-center justify-center text-white font-bold shrink-0 shadow-lg ${isQCPass ? 'bg-emerald-600' : isQCFail ? 'bg-rose-600' : update.role === 'QC' ? 'bg-purple-600' : update.role === 'Site Engineer' ? 'bg-blue-600' : 'bg-slate-600'}`}>{update.user_name.charAt(0)}</div>
                                     {/* สังเกตตรงนี้: ผมแอบเติม pr-8 เข้าไปท้ายสุดของบรรทัดเพื่อไม่ให้ข้อความไปบังปุ่มลบครับ */}
-                                   <div className={`flex-1 bg-white ${isMobileLayout ? 'p-3 rounded-2xl' : 'p-5 sm:p-6 rounded-[1.5rem] sm:rounded-[2rem]'} border border-black/5 shadow-sm relative pr-8`}>
+                                   <div className={`flex-1 bg-white ${isMobileLayout ? 'p-3 rounded-2xl' : 'p-5 sm:p-6 rounded-[1.5rem] sm:rounded-[2rem]'} border ${isQCPass ? 'border-emerald-200 bg-emerald-50/20' : isQCFail ? 'border-rose-200 bg-rose-50/20' : 'border-black/5'} shadow-sm relative pr-8`}>
                                        
                                        {/* 🗑️ ปุ่มลบรายงาน (สิทธิ์: เฉพาะ Admin เท่านั้น) และงานนั้นต้องยังไม่จบ 100% */}
                                        {isAdmin && !isTaskCompleted && (
@@ -165,7 +170,7 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                        )}
 
                                        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-2 sm:mb-4 gap-1 sm:gap-2">
-                                         <p className={`text-[9px] sm:text-xs font-bold uppercase italic tracking-widest leading-tight ${update.role === 'QC' ? 'text-purple-400' : update.role === 'Site Engineer' ? 'text-blue-400' : 'text-slate-400'}`}>{update.action} • {update.user_name} • {update.progress}%</p>
+                                         <p className={`text-[9px] sm:text-xs font-bold uppercase italic tracking-widest leading-tight ${isQCPass ? 'text-emerald-600' : isQCFail ? 'text-rose-600' : update.role === 'QC' ? 'text-purple-400' : update.role === 'Site Engineer' ? 'text-blue-400' : 'text-slate-400'}`}>{update.action} • {update.user_name} • {update.progress}%</p>
                                          <span className={`text-[8px] sm:text-xs text-[#86868b] font-bold bg-[#f5f5f7] border border-slate-100 ${isMobileLayout ? 'px-2 py-0.5' : 'px-3 py-1.5'} rounded-lg shrink-0 w-fit`}>{new Date(update.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })} • {new Date(update.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.</span>
                                          {/* 🌟 ป้ายสภาพอากาศ ณ เวลาที่รายงาน */}
                                           {update.weather_info && (
@@ -182,10 +187,11 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                                ))}
                                            </div>
                                        )}
-                                   </div>
-                               </div>
-                               ))}
-                           </main>
+                                    </div>
+                                </div>
+                                );
+                              })}
+                            </main>
                            
                            {/* 🏡 🌟 Chat Input 🌟 */}
                            <footer className={`absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur-xl border-t border-black/5 ${isMobileLayout ? 'p-3' : 'p-4 sm:p-6'} shadow-[0_-10px_20px_rgba(0,0,0,0.05)] z-20`}>
