@@ -16,6 +16,7 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
   const [assignments, setAssignments] = useState<any[]>([]);
   const [schedules, setSchedules] = useState<any>({});
   const [defects, setDefects] = useState<any[]>([]);
+  const [defectUpdates, setDefectUpdates] = useState<any[]>([]);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [materialRequests, setMaterialRequests] = useState<any[]>([]);
   const [materialReceipts, setMaterialReceipts] = useState<any[]>([]);
@@ -108,6 +109,7 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
         schedulesData,
         recentUpdates,
         defectsData,
+        defectUpdatesData,
         { data: materialReqData },
         { data: materialReceiptData },
         { data: inspectionQueueData },
@@ -127,6 +129,7 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
         fetchWithoutLimit('plot_task_schedules', selectedProjectName),
         supabase.from('task_updates').select('*').order('created_at', { ascending: false }).limit(1000).then(res => res.data || []),
         supabase.from('defects').select('*').order('created_at', { ascending: false }).limit(500).then(res => res.data || []),
+        supabase.from('defect_updates').select('*').order('created_at', { ascending: false }).limit(500).then(res => res.data || []),
         supabase.from('vw_task_material_requests').select('*'),
         supabase.from('task_material_receipts').select('*').order('created_at', { ascending: true }),
         supabase.from('vw_inspection_queue').select('*'),
@@ -137,6 +140,7 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
 
       setNotifications(notifData || []);
       setDefects(defectsData || []);
+      setDefectUpdates(defectUpdatesData || []);
       setMaterialRequests(materialReqData || []);
       setMaterialReceipts(materialReceiptData || []);
       setInspectionQueueView(inspectionQueueData || []);
@@ -628,6 +632,8 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
     schedules, setSchedules,
     defects,
     setDefects,
+    defectUpdates,
+    setDefectUpdates,
     notifications, setNotifications,
     latestUpdatesMap, setLatestUpdatesMap,
     taskDates, setTaskDates,

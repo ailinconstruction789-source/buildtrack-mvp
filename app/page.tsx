@@ -38,7 +38,7 @@ import {
   LayoutDashboard, Map as MapIcon, Truck, ChevronRight, ClipboardList, Loader2,
   Send, Camera, CheckCircle, XCircle, UserCog, X, Maximize2, HardHat, PlusCircle, Settings, Building, FolderOpen, Users, Trash2, Search, Filter, LogOut, AlertTriangle, Eraser, Grid, Paintbrush, Clock, SortAsc,
   UserPlus, Phone, CalendarDays, Wrench, FileSpreadsheet, Bell, CalendarClock, TrendingUp, AlertCircle, BarChartHorizontal, Save, Calendar, Smartphone, Monitor, ZoomIn, ZoomOut,
-  PieChart, Home, Activity, Download, Copy, Pickaxe, ShieldAlert, Printer, CheckSquare, Square, ImageIcon, Tag, Hammer, UserCheck, DollarSign, ArrowLeft, Key, Ban, Edit2, Check, Plus, Upload, Calculator, ChevronDown, ChevronUp, Lightbulb, Building2, Gift
+  PieChart, Home, Activity, Download, Copy, Pickaxe, ShieldAlert, Printer, CheckSquare, Square, ImageIcon, Tag, Hammer, UserCheck, DollarSign, ArrowLeft, Key, Ban, Edit2, Check, Plus, Upload, Calculator, ChevronDown, ChevronUp, Lightbulb, Building2, Gift, Award
 } from 'lucide-react';
 
 // 🌟 ฟังก์ชันบีบอัดรูปภาพ Native — อยู่นอก component เพื่อไม่ให้ถูกสร้างใหม่ทุก render 🌟
@@ -117,6 +117,7 @@ export default function ConstructionApp() {
     assignments, setAssignments,
     schedules, setSchedules,
     defects, setDefects,
+    defectUpdates, setDefectUpdates,
     notifications, setNotifications,
     latestUpdatesMap, setLatestUpdatesMap,
     taskDates, setTaskDates,
@@ -149,7 +150,6 @@ export default function ConstructionApp() {
   const [defectReturnView, setDefectReturnView] = useState('dashboard');
   const [activeHouseTab, setActiveHouseTab] = useState('construction');
   const [selectedDefect, setSelectedDefect] = useState<any>(null);
-  const [defectUpdates, setDefectUpdates] = useState<any[]>([]);
   const activeView = loadingView || view;
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
   const [selectedPlot, setSelectedPlot] = useState<any>(null);
@@ -515,6 +515,112 @@ export default function ConstructionApp() {
 
   // 🌟 Infinite Scroll State สำหรับ Live Feed 🌟
   const [visibleFeedCount, setVisibleFeedCount] = useState(50);
+  const [feedCategoryFilter, setFeedCategoryFilter] = useState<'all' | 'construction' | 'handover'>('all');
+
+  // 📜 รวมกิจกรรมไซต์งานทั้งหมด (งานก่อสร้างทั่วไป + งานตรวจรับมอบบ้าน Handover)
+  const liveFeedItems = useMemo(() => {
+    const items: any[] = [];
+
+    // 1. งานก่อสร้างทั่วไปจาก task_updates
+    (allUpdatesRecord || []).filter((u: any) => !u.is_silent).forEach((u: any) => {
+      const task = taskTemplates.find((t: any) => t.id === u.task_template_id);
+      const isHandoverTask = Boolean(
+        (task?.task_name && task.task_name.includes('ตรวจรับ')) || 
+        (typeof u.action === 'string' && u.action.includes('ตรวจรับ')) ||
+        u.is_handover
+      );
+      items.push({
+        ...u,
+        id: u.id,
+        task_name: task ? task.task_name : (u.action || 'งานก่อสร้าง'),
+        is_handover: isHandoverTask,
+        feed_category: isHandoverTask ? 'handover' : 'construction'
+      });
+    });
+
+    // 2. งานตรวจรับมอบบ้าน: การอัปเดตงานซ่อม/Defect จาก defect_updates
+    (defectUpdates || []).forEach((du: any) => {
+      const defect = (defects || []).find((d: any) => d.id === du.defect_id);
+      if (defect) {
+        const task = taskTemplates.find((t: any) => t.id === (defect.task_template_id || defect.task_id));
+        const contractor = (contractors || []).find((c: any) => String(c.id) === String(defect.contractor_id));
+        const isCompleted = du.progress === 100;
+        items.push({
+          id: `defect-upd-${du.id}`,
+          plot_id: defect.plot_id,
+          task_template_id: defect.task_template_id || defect.task_id,
+          task_name: defect.description || task?.task_name || 'งานแก้ไขตรวจรับมอบบ้าน',
+          user_name: du.created_by || 'ช่างผู้รับเหมา',
+          role: du.created_by && du.created_by.includes('QC') ? 'QC' : (du.created_by && du.created_by.includes('Foreman') ? 'Foreman' : 'ช่างซ่อม/ผู้รับเหมา'),
+          action: isCompleted ? 'แก้ไข Defect เสร็จสิ้น 100%' : `อัปเดตงานแก้ไข Defect (${du.progress}%)`,
+          text_content: du.note || `อัปเดตความคืบหน้า ${du.progress}%`,
+          progress: du.progress || 0,
+          is_completed: isCompleted,
+          image_url: du.image_urls,
+          created_at: du.created_at,
+          is_handover: true,
+          handover_round: defect.inspection_round,
+          handover_cycle: defect.handover_cycle,
+          defect_description: defect.description,
+          contractor_name: contractor ? contractor.name : null,
+          feed_category: 'handover'
+        });
+      }
+    });
+
+    // 3. งานตรวจรับมอบบ้าน: รายการ Defect ที่เปิดตรวจรับในรอบต่างๆ
+    (defects || []).filter((d: any) => d.defect_stage === 'handover').forEach((d: any) => {
+      const task = taskTemplates.find((t: any) => t.id === (d.task_template_id || d.task_id));
+      const contractor = (contractors || []).find((c: any) => String(c.id) === String(d.contractor_id));
+      items.push({
+        id: `defect-init-${d.id}`,
+        plot_id: d.plot_id,
+        task_template_id: d.task_template_id || d.task_id,
+        task_name: d.description || task?.task_name || 'แจ้งรายการตรวจรับมอบบ้าน',
+        user_name: d.reported_by || d.reporter_name || 'ผู้ตรวจรับมอบบ้าน',
+        role: 'ตรวจรับมอบบ้าน',
+        action: `บันทึกรายการตรวจรับบ้าน (รอบที่ ${d.inspection_round || 1})`,
+        text_content: d.description || 'พบรายการที่ต้องแก้ไขในการตรวจรับมอบบ้าน',
+        progress: d.progress || 0,
+        is_completed: d.progress === 100,
+        image_url: d.image_url,
+        created_at: d.created_at,
+        is_handover: true,
+        handover_round: d.inspection_round,
+        handover_cycle: d.handover_cycle,
+        contractor_name: contractor ? contractor.name : null,
+        feed_category: 'handover'
+      });
+    });
+
+    // 4. งานตรวจรับมอบบ้าน: แปลงที่อนุมัติผ่านและปิดการตรวจรับมอบบ้านสำเร็จ
+    (plots || []).filter((p: any) => p.handover_status === 'completed' && p.handover_completed_at).forEach((p: any) => {
+      items.push({
+        id: `plot-handover-done-${p.id}`,
+        plot_id: p.id,
+        task_name: 'ตรวจรับมอบบ้านสำเร็จสมบูรณ์',
+        user_name: p.handover_completed_by || 'Admin',
+        role: 'ผู้มีอำนาจอนุมัติ',
+        action: '🏆 อนุมัติผ่านและปิดการตรวจรับมอบบ้าน',
+        text_content: `แปลง ${p.id} ผ่านการตรวจรับมอบบ้านเรียบร้อยแล้วทุกรายการ ส่งมอบบ้านสำเร็จ`,
+        progress: 100,
+        is_completed: true,
+        created_at: p.handover_completed_at,
+        is_handover: true,
+        is_handover_completed: true,
+        handover_round: p.inspection_round,
+        feed_category: 'handover'
+      });
+    });
+
+    // เรียงลำดับจากล่าสุดไปเก่าสุด
+    return items.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }, [allUpdatesRecord, defectUpdates, defects, plots, taskTemplates, contractors]);
+
+  const filteredLiveFeedItems = useMemo(() => {
+    if (feedCategoryFilter === 'all') return liveFeedItems;
+    return liveFeedItems.filter(item => item.feed_category === feedCategoryFilter);
+  }, [liveFeedItems, feedCategoryFilter]);
 
   // 🌟 Defect Tracking State 🌟
   const [defectFilterStatus, setDefectFilterStatus] = useState('pending');
@@ -3203,204 +3309,287 @@ export default function ConstructionApp() {
               {/* 📜 🌟 View: Global Timeline Feed (ฟีดรวมทุกรายงานเพื่อผู้บริหาร) 🌟 */}
               {view === 'global-feed' && (
                 <div className="animate-in fade-in zoom-in-95 duration-500 max-w-4xl mx-auto">
-                  <div className="mb-6 sm:mb-8">
-                    <h2 className="font-black text-2xl sm:text-4xl text-slate-800 italic uppercase tracking-tighter flex items-center gap-2">
-                      <Activity className="text-blue-600 animate-pulse" size={28} /> Site Activity Live Feed
-                    </h2>
-                    <p className="text-slate-500 text-[10px] sm:text-sm font-bold uppercase tracking-widest mt-1">ไทม์ไลน์รวมการรายงานแบบ Real-time จากทุกแปลงงาน</p>
+                  <div className="mb-6 sm:mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                    <div>
+                      <h2 className="font-black text-2xl sm:text-4xl text-slate-800 italic uppercase tracking-tighter flex items-center gap-2">
+                        <Activity className="text-blue-600 animate-pulse" size={28} /> Site Activity Live Feed
+                      </h2>
+                      <p className="text-slate-500 text-[10px] sm:text-sm font-bold uppercase tracking-widest mt-1">ไทม์ไลน์รวมการรายงานแบบ Real-time ทั้งงานก่อสร้างและงานตรวจรับมอบบ้าน</p>
+                    </div>
+
+                    {/* 🎛️ ปุ่มฟิลเตอร์แยกหมวดงาน */}
+                    <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-2xl w-fit shrink-0">
+                      <button
+                        onClick={() => setFeedCategoryFilter('all')}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all ${feedCategoryFilter === 'all' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                      >
+                        ทั้งหมด ({liveFeedItems.length})
+                      </button>
+                      <button
+                        onClick={() => setFeedCategoryFilter('construction')}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all ${feedCategoryFilter === 'construction' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                      >
+                        🏗️ งานก่อสร้าง ({liveFeedItems.filter(i => !i.is_handover).length})
+                      </button>
+                      <button
+                        onClick={() => setFeedCategoryFilter('handover')}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all ${feedCategoryFilter === 'handover' ? 'bg-purple-600 text-white shadow-sm' : 'text-purple-600 hover:text-purple-800'}`}
+                      >
+                        🛡️ ตรวจรับมอบบ้าน ({liveFeedItems.filter(i => i.is_handover).length})
+                      </button>
+                    </div>
                   </div>
 
                   <div className="space-y-4 sm:space-y-6 pb-12">
-                    {(!allUpdatesRecord || allUpdatesRecord.filter((u:any) => !u.is_silent).length === 0) ? (
+                    {(!filteredLiveFeedItems || filteredLiveFeedItems.length === 0) ? (
                       <div className="bg-white rounded-3xl border border-dashed border-slate-300 p-12 text-center text-slate-400 font-bold italic">
-                        ยังไม่มีประวัติการรายงานงานในระบบย่อยนี้
+                        {feedCategoryFilter === 'handover' ? 'ยังไม่มีประวัติกิจกรรมงานตรวจรับมอบบ้าน' : 'ยังไม่มีประวัติการรายงานงานในระบบย่อยนี้'}
                       </div>
                     ) : (
                       <>
-                        {allUpdatesRecord.filter((u:any) => !u.is_silent).slice(0, visibleFeedCount).map((update: any) => {
-                        const task = taskTemplates.find(t => t.id === update.task_template_id);
-                        const taskName = task ? task.task_name : update.action;
+                        {filteredLiveFeedItems.slice(0, visibleFeedCount).map((update: any) => {
+                          const isHandover = Boolean(update.is_handover);
+                          const taskName = update.task_name || (update.task_template_id ? taskTemplates.find(t => t.id === update.task_template_id)?.task_name : update.action);
 
-                        // 🌟 ดึงข้อมูลชื่อโครงการของแปลงนี้ขึ้นมา
-                        const currentPlotInfo = plots.find(p => String(p.id) === String(update.plot_id));
-                        const projectNameText = currentPlotInfo ? currentPlotInfo.project_name : 'ไม่ระบุโครงการ';
+                          // 🌟 ดึงข้อมูลชื่อโครงการของแปลงนี้ขึ้นมา
+                          const currentPlotInfo = plots.find(p => String(p.id) === String(update.plot_id));
+                          const projectNameText = currentPlotInfo ? currentPlotInfo.project_name : 'ไม่ระบุโครงการ';
 
-                        // 🔍 ตรวจสอบว่าเป็นรายงาน/การตรวจของ QC หรือไม่
-                        const isQC = update.role === 'QC' || (typeof update.action === 'string' && update.action.includes('QC'));
-                        const isQCPassed = isQC && (
-                          (typeof update.action === 'string' && (update.action.includes('อนุมัติ') || update.action.includes('ผ่าน'))) ||
-                          update.progress === 100
-                        );
-                        const isQCRejected = isQC && (
-                          (typeof update.action === 'string' && (update.action.includes('ไม่อนุมัติ') || update.action.includes('ไม่ผ่าน') || update.action.includes('แจ้งแก้ไข'))) ||
-                          update.progress === 95
-                        );
+                          // 🔍 ตรวจสอบว่าเป็นรายงาน/การตรวจของ QC หรือไม่
+                          const isQC = update.role === 'QC' || (typeof update.action === 'string' && update.action.includes('QC'));
+                          const isQCPassed = !isHandover && isQC && (
+                            (typeof update.action === 'string' && (update.action.includes('อนุมัติ') || update.action.includes('ผ่าน'))) ||
+                            update.progress === 100
+                          );
+                          const isQCRejected = !isHandover && isQC && (
+                            (typeof update.action === 'string' && (update.action.includes('ไม่อนุมัติ') || update.action.includes('ไม่ผ่าน') || update.action.includes('แจ้งแก้ไข'))) ||
+                            update.progress === 95
+                          );
 
-                        return (
-                          <div 
-                            key={update.id} 
-                            className={`bg-white rounded-2xl sm:rounded-[2rem] border overflow-hidden animate-in slide-in-from-bottom-4 transition-all duration-300 ${
-                              isQCPassed 
-                                ? 'border-emerald-300 sm:border-emerald-400 shadow-lg shadow-emerald-500/10 ring-2 ring-emerald-500/20' 
-                                : isQCRejected 
-                                  ? 'border-rose-300 sm:border-rose-400 shadow-lg shadow-rose-500/10 ring-2 ring-rose-500/20' 
-                                  : 'border-slate-200 shadow-sm hover:shadow-md'
-                            }`}
-                          >
+                          return (
+                            <div 
+                              key={update.id} 
+                              className={`bg-white rounded-2xl sm:rounded-[2rem] border overflow-hidden animate-in slide-in-from-bottom-4 transition-all duration-300 ${
+                                isHandover
+                                  ? 'border-purple-300 sm:border-purple-400 shadow-lg shadow-purple-500/10 ring-2 ring-purple-500/25 hover:shadow-xl hover:shadow-purple-500/15'
+                                  : isQCPassed 
+                                    ? 'border-emerald-300 sm:border-emerald-400 shadow-lg shadow-emerald-500/10 ring-2 ring-emerald-500/20' 
+                                    : isQCRejected 
+                                      ? 'border-rose-300 sm:border-rose-400 shadow-lg shadow-rose-500/10 ring-2 ring-rose-500/20' 
+                                      : 'border-slate-200 shadow-sm hover:shadow-md'
+                              }`}
+                            >
 
-                            {/* ส่วนหัวโพสต์: ป้ายชื่อโครงการ + ล็อกพิกัดแปลง + ชื่องวดงาน */}
-                            <div className={`px-4 sm:px-6 py-3 flex flex-wrap justify-between items-center gap-2 transition-colors ${
-                              isQCPassed 
-                                ? 'bg-gradient-to-r from-emerald-900 via-slate-900 to-slate-900 border-b border-emerald-700/50' 
-                                : isQCRejected 
-                                  ? 'bg-gradient-to-r from-rose-950 via-slate-900 to-slate-900 border-b border-rose-700/50' 
-                                  : 'bg-slate-800'
-                            }`}>
-                              <div className="flex items-center gap-2 flex-wrap min-w-0">
+                              {/* ส่วนหัวโพสต์: ป้ายชื่อโครงการ + ล็อกพิกัดแปลง + ชื่องวดงาน */}
+                              <div className={`px-4 sm:px-6 py-3 flex flex-wrap justify-between items-center gap-2 transition-colors ${
+                                isHandover
+                                  ? 'bg-gradient-to-r from-purple-950 via-slate-900 to-slate-900 border-b border-purple-700/50'
+                                  : isQCPassed 
+                                    ? 'bg-gradient-to-r from-emerald-900 via-slate-900 to-slate-900 border-b border-emerald-700/50' 
+                                    : isQCRejected 
+                                      ? 'bg-gradient-to-r from-rose-950 via-slate-900 to-slate-900 border-b border-rose-700/50' 
+                                      : 'bg-slate-800'
+                              }`}>
+                                <div className="flex items-center gap-2 flex-wrap min-w-0">
 
-                                {/* 🏢 ป้ายชื่อโครงการ */}
-                                <span className="bg-blue-600 text-white font-black text-[10px] sm:text-xs px-2.5 py-1 rounded-xl shadow-sm shrink-0 flex items-center gap-1">
-                                  🏢 {projectNameText}
-                                </span>
-
-                                <span className="bg-amber-400 text-slate-900 font-black text-[10px] sm:text-xs px-2.5 py-1 rounded-xl shadow-sm shrink-0">
-                                  📍 แปลง {update.plot_id}
-                                </span>
-
-                                <h4 className="font-black text-white text-xs sm:text-sm truncate max-w-[200px] sm:max-w-none" title={taskName}>
-                                  🛠️ {taskName}
-                                </h4>
-                              </div>
-
-                              {/* ป้ายแสดงสถานะด้านขวาบนหัวการ์ด */}
-                              <div className="flex items-center gap-1.5 ml-auto">
-                                {isQCPassed ? (
-                                  <span className="bg-emerald-500 text-white font-black text-[10px] sm:text-xs px-3 py-1 rounded-xl shadow-sm flex items-center gap-1.5 uppercase tracking-wider animate-in zoom-in-95">
-                                    <CheckCircle size={13} className="stroke-[2.5]" /> QC ผ่าน {update.progress}%
+                                  {/* 🏢 ป้ายชื่อโครงการ */}
+                                  <span className="bg-blue-600 text-white font-black text-[10px] sm:text-xs px-2.5 py-1 rounded-xl shadow-sm shrink-0 flex items-center gap-1">
+                                    🏢 {projectNameText}
                                   </span>
-                                ) : isQCRejected ? (
-                                  <span className="bg-rose-500 text-white font-black text-[10px] sm:text-xs px-3 py-1 rounded-xl shadow-sm flex items-center gap-1.5 uppercase tracking-wider animate-in zoom-in-95">
-                                    <XCircle size={13} className="stroke-[2.5]" /> QC ไม่ผ่าน ({update.progress}%)
-                                  </span>
-                                ) : (
-                                  <span className="bg-white/20 text-white font-black text-[10px] px-2.5 py-1 rounded-lg uppercase tracking-wider">
-                                    {update.progress}%
-                                  </span>
-                                )}
-                              </div>
-                            </div>
 
-                            {/* ส่วนเนื้อหาภายในกล่องแชท */}
-                            <div className="p-4 sm:p-6 space-y-4">
-                              {/* ข้อมูลผู้รายงาน และ สภาพอากาศ */}
-                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
-                                <div className="flex items-center gap-2.5">
-                                  {/* Avatar ผู้รายงาน */}
-                                  <div className={`w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center text-white font-black text-sm shadow-md shrink-0 transition-transform ${
-                                    isQCPassed
-                                      ? 'bg-gradient-to-tr from-emerald-600 to-teal-500 ring-2 ring-emerald-400/40'
-                                      : isQCRejected
-                                        ? 'bg-gradient-to-tr from-rose-600 to-red-500 ring-2 ring-rose-400/40'
-                                        : update.role === 'QC'
-                                          ? 'bg-gradient-to-tr from-purple-600 to-indigo-600'
-                                          : update.role === 'Site Engineer'
-                                            ? 'bg-gradient-to-tr from-blue-600 to-cyan-600'
-                                            : 'bg-gradient-to-tr from-blue-600 to-purple-600'
-                                  }`}>
-                                    {update.user_name ? update.user_name.charAt(0).toUpperCase() : 'U'}
-                                  </div>
+                                  <span className="bg-amber-400 text-slate-900 font-black text-[10px] sm:text-xs px-2.5 py-1 rounded-xl shadow-sm shrink-0">
+                                    📍 แปลง {update.plot_id}
+                                  </span>
 
-                                  <div>
-                                    <div className="flex items-center gap-1.5 flex-wrap">
-                                      <span className="font-black text-slate-800 text-sm">
-                                        {update.user_name}
+                                  {/* 🛡️ ป้ายระบุงานตรวจรับมอบบ้าน (Handover) */}
+                                  {isHandover ? (
+                                    <span className="bg-purple-600 text-white font-black text-[10px] sm:text-xs px-2.5 py-1 rounded-xl shadow-sm shrink-0 flex items-center gap-1 animate-in zoom-in-95">
+                                      <ShieldAlert size={12} className="text-purple-200" /> ตรวจรับมอบบ้าน {update.handover_round ? `(รอบ ${update.handover_round})` : ''}
+                                    </span>
+                                  ) : null}
+
+                                  <h4 className="font-black text-white text-xs sm:text-sm truncate max-w-[200px] sm:max-w-none" title={taskName}>
+                                    {isHandover ? `🔧 ${taskName}` : `🛠️ ${taskName}`}
+                                  </h4>
+                                </div>
+
+                                {/* ป้ายแสดงสถานะด้านขวาบนหัวการ์ด */}
+                                <div className="flex items-center gap-1.5 ml-auto">
+                                  {isHandover ? (
+                                    update.is_handover_completed || update.progress === 100 ? (
+                                      <span className="bg-gradient-to-r from-purple-500 to-emerald-500 text-white font-black text-[10px] sm:text-xs px-3 py-1 rounded-xl shadow-sm flex items-center gap-1.5 uppercase tracking-wider animate-in zoom-in-95">
+                                        <Award size={13} className="stroke-[2.5]" /> ตรวจรับผ่าน 100%
                                       </span>
+                                    ) : (
+                                      <span className="bg-purple-600/90 text-white font-black text-[10px] sm:text-xs px-2.5 py-1 rounded-xl shadow-sm flex items-center gap-1">
+                                        <Wrench size={12} /> ความคืบหน้า {update.progress}%
+                                      </span>
+                                    )
+                                  ) : isQCPassed ? (
+                                    <span className="bg-emerald-500 text-white font-black text-[10px] sm:text-xs px-3 py-1 rounded-xl shadow-sm flex items-center gap-1.5 uppercase tracking-wider animate-in zoom-in-95">
+                                      <CheckCircle size={13} className="stroke-[2.5]" /> QC ผ่าน {update.progress}%
+                                    </span>
+                                  ) : isQCRejected ? (
+                                    <span className="bg-rose-500 text-white font-black text-[10px] sm:text-xs px-3 py-1 rounded-xl shadow-sm flex items-center gap-1.5 uppercase tracking-wider animate-in zoom-in-95">
+                                      <XCircle size={13} className="stroke-[2.5]" /> QC ไม่ผ่าน ({update.progress}%)
+                                    </span>
+                                  ) : (
+                                    <span className="bg-white/20 text-white font-black text-[10px] px-2.5 py-1 rounded-lg uppercase tracking-wider">
+                                      {update.progress}%
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
 
-                                      {/* ป้าย Role */}
-                                      <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md ${
-                                        isQCPassed
-                                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                              {/* ส่วนเนื้อหาภายในกล่องแชท */}
+                              <div className="p-4 sm:p-6 space-y-4">
+                                {/* ข้อมูลผู้รายงาน และ สภาพอากาศ */}
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                                  <div className="flex items-center gap-2.5">
+                                    {/* Avatar ผู้รายงาน */}
+                                    <div className={`w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center text-white font-black text-sm shadow-md shrink-0 transition-transform ${
+                                      isHandover
+                                        ? 'bg-gradient-to-tr from-purple-600 to-indigo-600 ring-2 ring-purple-400/40'
+                                        : isQCPassed
+                                          ? 'bg-gradient-to-tr from-emerald-600 to-teal-500 ring-2 ring-emerald-400/40'
                                           : isQCRejected
-                                            ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                                            ? 'bg-gradient-to-tr from-rose-600 to-red-500 ring-2 ring-rose-400/40'
                                             : update.role === 'QC'
-                                              ? 'bg-purple-100 text-purple-600'
+                                              ? 'bg-gradient-to-tr from-purple-600 to-indigo-600'
                                               : update.role === 'Site Engineer'
-                                                ? 'bg-blue-100 text-blue-600'
-                                                : 'bg-orange-100 text-orange-600'
-                                      }`}>
-                                        {update.role}
-                                      </span>
-
-                                      {/* 🌟 ป้ายสรุปผลการตรวจของ QC ชัดเจน (เขียว = ผ่าน / แดง = ไม่ผ่าน) */}
-                                      {isQCPassed && (
-                                        <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-black px-2 py-0.5 rounded-lg flex items-center gap-1 shadow-xs">
-                                          <CheckCircle size={11} className="stroke-[2.5]" /> ตรวจผ่าน
-                                        </span>
-                                      )}
-                                      {isQCRejected && (
-                                        <span className="bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-black px-2 py-0.5 rounded-lg flex items-center gap-1 shadow-xs">
-                                          <XCircle size={11} className="stroke-[2.5]" /> ไม่ผ่าน (แจ้งแก้ไข)
-                                        </span>
-                                      )}
+                                                ? 'bg-gradient-to-tr from-blue-600 to-cyan-600'
+                                                : 'bg-gradient-to-tr from-blue-600 to-purple-600'
+                                    }`}>
+                                      {update.user_name ? update.user_name.charAt(0).toUpperCase() : (isHandover ? 'H' : 'U')}
                                     </div>
 
-                                    <p className="text-[10px] text-slate-400 font-bold mt-0.5">
-                                      {new Date(update.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })} • {new Date(update.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.
-                                    </p>
+                                    <div>
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className="font-black text-slate-800 text-sm">
+                                          {update.user_name}
+                                        </span>
+
+                                        {/* ป้าย Role */}
+                                        <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md ${
+                                          isHandover
+                                            ? 'bg-purple-100 text-purple-800 border border-purple-200'
+                                            : isQCPassed
+                                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                              : isQCRejected
+                                                ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                                                : update.role === 'QC'
+                                                  ? 'bg-purple-100 text-purple-600'
+                                                  : update.role === 'Site Engineer'
+                                                    ? 'bg-blue-100 text-blue-600'
+                                                    : 'bg-orange-100 text-orange-600'
+                                        }`}>
+                                          {update.role}
+                                        </span>
+
+                                        {/* 👷 ป้ายช่างผู้รับผิดชอบ Defect */}
+                                        {isHandover && update.contractor_name && (
+                                          <span className="bg-purple-50 text-purple-700 border border-purple-200 text-[9px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1">
+                                            <HardHat size={11} className="text-purple-500" /> ช่าง: {update.contractor_name}
+                                          </span>
+                                        )}
+
+                                        {/* 🌟 ป้ายสรุปผลการตรวจของ QC ชัดเจน (เขียว = ผ่าน / แดง = ไม่ผ่าน) */}
+                                        {!isHandover && isQCPassed && (
+                                          <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-black px-2 py-0.5 rounded-lg flex items-center gap-1 shadow-xs">
+                                            <CheckCircle size={11} className="stroke-[2.5]" /> ตรวจผ่าน
+                                          </span>
+                                        )}
+                                        {!isHandover && isQCRejected && (
+                                          <span className="bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-black px-2 py-0.5 rounded-lg flex items-center gap-1 shadow-xs">
+                                            <XCircle size={11} className="stroke-[2.5]" /> ไม่ผ่าน (แจ้งแก้ไข)
+                                          </span>
+                                        )}
+                                      </div>
+
+                                      <p className="text-[10px] text-slate-400 font-bold mt-0.5">
+                                        {new Date(update.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })} • {new Date(update.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.
+                                      </p>
+                                    </div>
                                   </div>
+
+                                  {/* ป้ายสภาพอากาศ ณ เวลารายงาน */}
+                                  {update.weather_info && (
+                                    <div className="text-[10px] sm:text-xs text-sky-700 font-black bg-sky-50 border border-sky-100 px-2.5 py-1 rounded-xl flex items-center gap-1.5 w-fit" title="สภาพอากาศขณะรายงาน">
+                                      <span>{update.weather_info}</span>
+                                    </div>
+                                  )}
                                 </div>
 
-                                {/* ป้ายสภาพอากาศ ณ เวลารายงาน */}
-                                {update.weather_info && (
-                                  <div className="text-[10px] sm:text-xs text-sky-700 font-black bg-sky-50 border border-sky-100 px-2.5 py-1 rounded-xl flex items-center gap-1.5 w-fit" title="สภาพอากาศขณะรายงาน">
-                                    <span>{update.weather_info}</span>
+                                {/* ข้อความบรรยายเนื้อหางาน */}
+                                <p className={`text-xs sm:text-sm font-medium leading-relaxed p-3.5 rounded-xl border ${
+                                  isHandover
+                                    ? 'bg-purple-50/40 border-purple-100 text-slate-800'
+                                    : isQCPassed
+                                      ? 'bg-emerald-50/50 border-emerald-100 text-slate-800'
+                                      : isQCRejected
+                                        ? 'bg-rose-50/50 border-rose-100 text-slate-800'
+                                        : 'bg-slate-50 border-slate-100/50 text-slate-700'
+                                }`}>
+                                  {update.text_content}
+                                </p>
+
+                                {/* รูปภาพผลงาน (ถ้ามีรูปภาพ จะรองรับการกดคลิกซูมดูรูปใหญ่ได้ทันที) */}
+                                {update.image_url && (
+                                  <div className={`grid gap-2 sm:gap-3 ${update.image_url.split(',').filter((u: string) => u.trim() !== '').length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                                    {update.image_url.split(',').filter((u: string) => u.trim() !== '').map((url: any, i: any) => (
+                                      <img
+                                        key={i}
+                                        src={url.trim()}
+                                        onClick={() => setFullImageUrl(url.trim())}
+                                        className={`w-full aspect-[4/3] sm:aspect-video object-cover rounded-xl border shadow-sm cursor-zoom-in hover:opacity-95 transition-opacity ${
+                                          isHandover
+                                            ? 'border-purple-200'
+                                            : isQCPassed
+                                              ? 'border-emerald-200'
+                                              : isQCRejected
+                                                ? 'border-rose-200'
+                                                : 'border-slate-200'
+                                        }`}
+                                        alt="Live Feed Report Image"
+                                      />
+                                    ))}
+                                  </div>
+                                )}
+
+                                {/* ปุ่มกดดูรายละเอียดแปลง */}
+                                {currentPlotInfo && (
+                                  <div className="pt-2 flex justify-end">
+                                    <button
+                                      onClick={() => {
+                                        setSelectedPlot(currentPlotInfo);
+                                        if (isHandover) {
+                                          setActiveHouseTab('handover');
+                                        }
+                                        setView('house-detail');
+                                      }}
+                                      className={`text-[11px] font-bold flex items-center gap-1 px-3 py-1.5 rounded-xl transition-all ${
+                                        isHandover 
+                                          ? 'text-purple-600 bg-purple-50 hover:bg-purple-100 border border-purple-200/60' 
+                                          : 'text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200/60'
+                                      }`}
+                                    >
+                                      <span>ดูรายละเอียดแปลง {update.plot_id}</span>
+                                      <ChevronRight size={14} />
+                                    </button>
                                   </div>
                                 )}
                               </div>
 
-                              {/* ข้อความบรรยายเนื้อหางาน */}
-                              <p className={`text-xs sm:text-sm font-medium leading-relaxed p-3.5 rounded-xl border ${
-                                isQCPassed
-                                  ? 'bg-emerald-50/50 border-emerald-100 text-slate-800'
-                                  : isQCRejected
-                                    ? 'bg-rose-50/50 border-rose-100 text-slate-800'
-                                    : 'bg-slate-50 border-slate-100/50 text-slate-700'
-                              }`}>
-                                {update.text_content}
-                              </p>
-
-                              {/* รูปภาพผลงาน (ถ้ามีรูปภาพ จะรองรับการกดคลิกซูมดูรูปใหญ่ได้ทันที) */}
-                              {update.image_url && (
-                                <div className={`grid gap-2 sm:gap-3 ${update.image_url.split(',').filter((u: string) => u.trim() !== '').length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                                  {update.image_url.split(',').filter((u: string) => u.trim() !== '').map((url: any, i: any) => (
-                                    <img
-                                      key={i}
-                                      src={url.trim()}
-                                      onClick={() => setFullImageUrl(url.trim())}
-                                      className={`w-full aspect-[4/3] sm:aspect-video object-cover rounded-xl border shadow-sm cursor-zoom-in hover:opacity-95 transition-opacity ${
-                                        isQCPassed
-                                          ? 'border-emerald-200'
-                                          : isQCRejected
-                                            ? 'border-rose-200'
-                                            : 'border-slate-200'
-                                      }`}
-                                      alt="Live Feed Report Image"
-                                    />
-                                  ))}
-                                </div>
-                              )}
                             </div>
-
+                          );
+                        })}
+                        {filteredLiveFeedItems.length > visibleFeedCount && (
+                          <div ref={observerTargetRef} className="py-6 flex justify-center items-center">
+                            <span className="bg-slate-100 text-slate-500 text-xs font-bold px-4 py-2 rounded-full flex items-center gap-2">
+                              <Loader2 size={14} className="animate-spin" /> กำลังโหลดเพิ่มเติม...
+                            </span>
                           </div>
-                        );
-                      })}
-                      {allUpdatesRecord.length > visibleFeedCount && (
-                        <div ref={observerTargetRef} className="py-6 flex justify-center items-center">
-                          <span className="bg-slate-100 text-slate-500 text-xs font-bold px-4 py-2 rounded-full flex items-center gap-2">
-                            <Loader2 size={14} className="animate-spin" /> กำลังโหลดเพิ่มเติม...
-                          </span>
-                        </div>
-                      )}
+                        )}
                       </>
                     )}
                   </div>

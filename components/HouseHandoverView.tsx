@@ -348,6 +348,47 @@ export default function HouseHandoverView({
 
   const roundsList = Array.from({length: currentRound}, (_, i) => i + 1).reverse();
 
+  const handleScheduleChange = (defectId: string, field: 'start' | 'duration' | 'end', val: string, defect: any) => {
+    const currentInput = defectScheduleInputs[defectId] || {};
+    const dStartTs = defect.planned_start ? new Date(defect.planned_start).getTime() : null;
+    const dEndTs = defect.planned_end ? new Date(defect.planned_end).getTime() : null;
+    const defaultDuration = (dStartTs && dEndTs) ? Math.max(1, Math.ceil((dEndTs - dStartTs) / 86400000) + 1) : '';
+
+    let start = currentInput.start !== undefined ? currentInput.start : (defect.planned_start ? defect.planned_start.split('T')[0] : '');
+    let end = currentInput.end !== undefined ? currentInput.end : (defect.planned_end ? defect.planned_end.split('T')[0] : '');
+    let duration = currentInput.duration !== undefined ? currentInput.duration : (defaultDuration ? String(defaultDuration) : '');
+
+    if (field === 'start') {
+      start = val;
+      if (start && duration && Number(duration) > 0) {
+        const d = new Date(start);
+        d.setDate(d.getDate() + (Number(duration) - 1));
+        end = d.toISOString().split('T')[0];
+      } else if (start && end) {
+        const diffTime = new Date(end).getTime() - new Date(start).getTime();
+        duration = String(Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24))) + 1);
+      }
+    } else if (field === 'duration') {
+      duration = val;
+      if (start && duration && Number(duration) > 0) {
+        const d = new Date(start);
+        d.setDate(d.getDate() + (Number(duration) - 1));
+        end = d.toISOString().split('T')[0];
+      }
+    } else if (field === 'end') {
+      end = val;
+      if (start && end) {
+        const diffTime = new Date(end).getTime() - new Date(start).getTime();
+        duration = String(Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24))) + 1);
+      }
+    }
+
+    setDefectScheduleInputs((prev: any) => ({
+      ...prev,
+      [defectId]: { start, end, duration }
+    }));
+  };
+
   const handleSaveDefectSchedules = async () => {
     setIsSubmitting(true);
     try {
@@ -380,7 +421,17 @@ export default function HouseHandoverView({
             if (error) throw error;
         }
 
-      showAlert('บันทึกสำเร็จ', 'บันทึกแผนซ่อมทั้งหมดเรียบร้อยแล้วครับ', 'success');
+      if (setDefects) {
+        setDefects((prev: any[]) => (prev || []).map((d: any) => {
+          const p = payloads.find(item => item.id === d.id);
+          if (p) {
+            return { ...d, planned_start: p.planned_start, planned_end: p.planned_end };
+          }
+          return d;
+        }));
+      }
+
+      showAlert('บันทึกสำเร็จ', 'บันทึกแผนซ่อมเรียบร้อยแล้วครับ', 'success');
       setDefectScheduleInputs({});
       if (fetchAllData) await fetchAllData();
     } catch (e: any) {
@@ -770,14 +821,22 @@ export default function HouseHandoverView({
                           durationText = `${Math.max(0, Math.ceil(diff / (86400000))) + 1} วัน`;
                       }
 
+                      const canEditSchedule = ['Project Planner', 'Admin', 'Owner', 'Foreman'].includes(currentUserRole) && !isHandoverCompleted;
+                      const currentInput = defectScheduleInputs[defect.id];
+                      const curStart = currentInput?.start !== undefined ? currentInput.start : (defect.planned_start ? defect.planned_start.split('T')[0] : '');
+                      const curEnd = currentInput?.end !== undefined ? currentInput.end : (defect.planned_end ? defect.planned_end.split('T')[0] : '');
+                      const defaultDuration = (dStartTs && dEndTs) ? Math.max(1, Math.ceil((dEndTs - dStartTs) / 86400000) + 1) : '';
+                      const curDuration = currentInput?.duration !== undefined ? currentInput.duration : (defaultDuration ? String(defaultDuration) : '');
+                      const hasPendingScheduleChanges = !!currentInput;
+
                       return (
                         <React.Fragment key={defect.id}>
                           {/* 📱 1. โซนมือถือ (Mobile Card View) */}
                           {isMobileLayout && (
                              <tr className="block mb-4">
-                               <td className="block bg-white rounded-[1.5rem] shadow-[0_8px_30px_-10px_rgba(0,0,0,0.1)] p-5 border border-black/5 relative overflow-hidden" onClick={() => { setSelectedDefect(defect); setDefectReturnView('house-detail'); setView('defect-progress'); }}>
+                               <td className="block bg-white rounded-[1.5rem] shadow-[0_8px_30px_-10px_rgba(0,0,0,0.1)] p-4 sm:p-5 border border-black/5 relative overflow-hidden" onClick={() => { setSelectedDefect(defect); setDefectReturnView('house-detail'); setView('defect-progress'); }}>
                                    {defect.progress === 100 && <div className="absolute top-0 left-0 w-full h-1.5 bg-emerald-400"></div>}
-                                   <div className="flex items-start justify-between mb-4 border-b border-slate-100 pb-3 mt-1">
+                                   <div className="flex items-start justify-between mb-3 border-b border-slate-100 pb-3 mt-0.5">
                                      <div className="flex items-start gap-2.5 pr-2">
                                          <span className="text-[10px] font-bold text-slate-400 bg-[#f5f5f7] px-2 py-0.5 rounded border mt-0.5 shrink-0">#{idx + 1}</span>
                                          <div>
@@ -820,21 +879,142 @@ export default function HouseHandoverView({
                                      </div>
                                    </div>
 
-                                   <div className="grid grid-cols-2 gap-3 mb-3">
-                                     <div className="bg-[#f5f5f7] rounded-xl p-3 border border-slate-100">
-                                         <span className="text-[9px] font-bold uppercase text-[#86868b] block mb-1">แผนงาน</span>
-                                         <p className="text-[10px] font-bold text-[#1d1d1f]">เริ่ม: {defect.planned_start ? new Date(defect.planned_start).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</p>
-                                         <p className="text-[10px] font-bold text-[#1d1d1f]">จบ: {defect.planned_end ? new Date(defect.planned_end).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</p>
-                                         <div className="text-[10px] font-bold text-pink-500 mt-1 bg-pink-50 inline-block px-1.5 py-0.5 rounded">{durationText}</div>
-                                     </div>
-                                     <div className="bg-[#f5f5f7] rounded-xl p-3 border border-slate-100 flex flex-col justify-between">
-                                         <span className="text-[9px] font-bold uppercase text-[#86868b] block">สถานะ</span>
-                                         <span className={`text-xs font-bold px-2 py-1 rounded-lg border w-fit ${defect.progress === 100 ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-purple-50 text-purple-600 border-purple-200'}`}>
-                                            {defect.progress === 100 ? '✅ เสร็จเรียบร้อย' : 'รอซ่อม'}
+                                   {/* 📅 ปรับแผนงานซ่อม (สำหรับ Foreman, Admin, Owner, Project Planner บนมือถือ) */}
+                                   {canEditSchedule ? (
+                                     <div 
+                                       className={`rounded-2xl p-3 border mb-3 transition-colors ${hasPendingScheduleChanges ? 'bg-purple-50/70 border-purple-300 ring-1 ring-purple-400/30' : 'bg-[#f8f9fa] border-slate-200'}`}
+                                       onClick={(e) => e.stopPropagation()}
+                                     >
+                                       <div className="flex items-center justify-between mb-2">
+                                         <span className="text-[10px] font-extrabold uppercase text-purple-800 flex items-center gap-1.5">
+                                           <Calendar size={13} className="text-purple-600" /> แผนงานซ่อม
                                          </span>
-                                         <button className="w-full mt-2 py-1.5 bg-purple-600 text-white font-bold text-xs rounded-lg cursor-pointer">อัปเดตงาน</button>
+                                         {hasPendingScheduleChanges ? (
+                                           <span className="text-[9px] font-bold text-amber-800 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-md animate-pulse">
+                                             ✏️ รอการบันทึก
+                                           </span>
+                                         ) : (
+                                           <span className="text-[9px] font-bold text-slate-400">
+                                             {durationText !== '-' ? durationText : 'ยังไม่ระบุวัน'}
+                                           </span>
+                                         )}
+                                       </div>
+
+                                       <div className="grid grid-cols-5 gap-2 items-center">
+                                         {/* วันเริ่ม (2 คอลัมน์) */}
+                                         <div className="col-span-2">
+                                           <label className="block text-[9px] font-bold text-slate-500 mb-1">วันเริ่ม</label>
+                                           <input 
+                                             type="date"
+                                             value={curStart}
+                                             onClick={(e) => e.stopPropagation()}
+                                             onChange={(e) => handleScheduleChange(defect.id, 'start', e.target.value, defect)}
+                                             className="w-full bg-white border border-purple-200 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-purple-500 shadow-sm cursor-pointer"
+                                           />
+                                         </div>
+
+                                         {/* ระยะเวลา (1 คอลัมน์) */}
+                                         <div className="col-span-1">
+                                           <label className="block text-[9px] font-bold text-pink-600 mb-1 text-center">ระยะเวลา</label>
+                                           <input 
+                                             type="number"
+                                             min="1"
+                                             placeholder="วัน"
+                                             value={curDuration}
+                                             onClick={(e) => e.stopPropagation()}
+                                             onChange={(e) => handleScheduleChange(defect.id, 'duration', e.target.value, defect)}
+                                             className="w-full bg-pink-50/80 border border-pink-200 rounded-lg px-1 py-1.5 text-xs font-bold text-center text-pink-600 outline-none focus:ring-2 focus:ring-pink-500 shadow-sm cursor-pointer"
+                                           />
+                                         </div>
+
+                                         {/* วันเสร็จสิ้น (2 คอลัมน์) */}
+                                         <div className="col-span-2">
+                                           <label className="block text-[9px] font-bold text-slate-500 mb-1">วันเสร็จสิ้น</label>
+                                           <input 
+                                             type="date"
+                                             value={curEnd}
+                                             onClick={(e) => e.stopPropagation()}
+                                             onChange={(e) => handleScheduleChange(defect.id, 'end', e.target.value, defect)}
+                                             className="w-full bg-white border border-purple-200 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-purple-500 shadow-sm cursor-pointer"
+                                           />
+                                         </div>
+                                       </div>
+
+                                       {(defect.actual_start || defect.actual_end) && (
+                                         <div className="flex items-center gap-3 mt-2 pt-2 border-t border-purple-100 text-[9px] text-slate-500">
+                                           <span className="font-bold text-emerald-600">ทำจริง:</span>
+                                           {defect.actual_start && <span>เริ่ม {new Date(defect.actual_start).toLocaleDateString('th-TH', {day:'numeric',month:'short'})}</span>}
+                                           {defect.actual_end && <span>จบ {new Date(defect.actual_end).toLocaleDateString('th-TH', {day:'numeric',month:'short'})}</span>}
+                                         </div>
+                                       )}
+
+                                       {hasPendingScheduleChanges && (
+                                         <button
+                                           type="button"
+                                           onClick={(e) => {
+                                             e.stopPropagation();
+                                             handleSaveDefectSchedules();
+                                           }}
+                                           disabled={isSubmitting}
+                                           className="w-full mt-2.5 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-98 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow transition-all cursor-pointer"
+                                         >
+                                           {isSubmitting ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
+                                           บันทึกแผนซ่อมรายการนี้
+                                         </button>
+                                       )}
                                      </div>
-                                   </div>
+                                   ) : (
+                                     <div className="grid grid-cols-2 gap-3 mb-3">
+                                       <div className="bg-[#f5f5f7] rounded-xl p-3 border border-slate-100">
+                                           <span className="text-[9px] font-bold uppercase text-[#86868b] block mb-1">แผนงาน</span>
+                                           <p className="text-[10px] font-bold text-[#1d1d1f]">เริ่ม: {defect.planned_start ? new Date(defect.planned_start).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</p>
+                                           <p className="text-[10px] font-bold text-[#1d1d1f]">จบ: {defect.planned_end ? new Date(defect.planned_end).toLocaleDateString('th-TH',{day:'numeric',month:'short'}) : '-'}</p>
+                                           <div className="text-[10px] font-bold text-pink-500 mt-1 bg-pink-50 inline-block px-1.5 py-0.5 rounded">{durationText}</div>
+                                       </div>
+                                       <div className="bg-[#f5f5f7] rounded-xl p-3 border border-slate-100 flex flex-col justify-between">
+                                           <span className="text-[9px] font-bold uppercase text-[#86868b] block">สถานะ</span>
+                                           <span className={`text-xs font-bold px-2 py-1 rounded-lg border w-fit ${defect.progress === 100 ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-purple-50 text-purple-600 border-purple-200'}`}>
+                                              {defect.progress === 100 ? '✅ เสร็จเรียบร้อย' : 'รอซ่อม'}
+                                           </span>
+                                           <button 
+                                             type="button"
+                                             onClick={(e) => { 
+                                               e.stopPropagation(); 
+                                               setSelectedDefect(defect); 
+                                               setDefectReturnView('house-detail'); 
+                                               setView('defect-progress'); 
+                                             }}
+                                             className="w-full mt-2 py-1.5 bg-purple-600 text-white font-bold text-xs rounded-lg cursor-pointer"
+                                           >
+                                             อัปเดตงาน
+                                           </button>
+                                       </div>
+                                     </div>
+                                   )}
+
+                                   {/* แถบสถานะ + ปุ่มอัปเดตงานเมื่อ canEditSchedule */}
+                                   {canEditSchedule && (
+                                     <div className="flex items-center justify-between bg-[#f5f5f7] rounded-xl px-3 py-2 border border-slate-100">
+                                       <div className="flex items-center gap-2">
+                                         <span className="text-[10px] font-bold text-[#86868b]">สถานะ:</span>
+                                         <span className={`text-xs font-bold px-2 py-0.5 rounded-lg border ${defect.progress === 100 ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-purple-50 text-purple-600 border-purple-200'}`}>
+                                           {defect.progress === 100 ? '✅ เสร็จเรียบร้อย' : 'รอซ่อม'}
+                                         </span>
+                                       </div>
+                                       <button 
+                                         type="button"
+                                         onClick={(e) => {
+                                           e.stopPropagation();
+                                           setSelectedDefect(defect);
+                                           setDefectReturnView('house-detail');
+                                           setView('defect-progress');
+                                         }}
+                                         className="py-1.5 px-3 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-lg shadow-sm cursor-pointer transition-all active:scale-95"
+                                       >
+                                         อัปเดตงาน &gt;
+                                       </button>
+                                     </div>
+                                   )}
                                </td>
                              </tr>
                           )}
@@ -861,7 +1041,7 @@ export default function HouseHandoverView({
                                                handleDeleteDefect(defect);
                                              }}
                                              title="ลบรายการแจ้งซ่อม (เฉพาะ Admin)"
-                                             className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors shrink-0 ml-1 cursor-pointer"
+                                             className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors shrink-0 cursor-pointer"
                                            >
                                              <Trash2 size={15} />
                                            </button>
@@ -869,43 +1049,31 @@ export default function HouseHandoverView({
                                      </div>
                                   </div>
 
-                                  <div className="flex flex-col gap-1 mt-1 border-t border-slate-100 pt-1">
-                                     <div className="flex items-center gap-1.5 justify-between">
-                                         {contractor?.name ? (
-                                             <div className="flex items-center gap-1 text-[10px] sm:text-xs font-bold text-purple-700 truncate bg-purple-50 px-2 py-0.5 rounded-md border border-purple-100">
-                                                 <HardHat size={11} className="text-purple-600 shrink-0"/> 
-                                                 <span className="truncate">{contractor.name.split(' ')[0]}</span>
-                                             </div>
-                                         ) : canAssignContractor ? (
-                                             <button 
-                                               type="button" 
-                                               onClick={(e) => { e.stopPropagation(); setAssigningDefect(defect); }} 
-                                               className="flex items-center gap-1 text-[10px] font-bold text-rose-500 hover:text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 border-dashed px-2 py-0.5 rounded-md transition-colors cursor-pointer"
-                                             >
-                                               <HardHat size={11} /> ยังไม่ระบุช่าง
-                                             </button>
-                                         ) : (
-                                             <span className="flex items-center gap-1 text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded-md">
-                                               <HardHat size={11} /> ยังไม่ระบุช่าง
-                                             </span>
-                                         )}
-
-                                         {contractor?.name && canAssignContractor && (
-                                             <button 
-                                               type="button" 
-                                               onClick={(e) => { e.stopPropagation(); setAssigningDefect(defect); }} 
-                                               className="p-1 text-slate-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors shrink-0 cursor-pointer" 
-                                               title="เปลี่ยนช่าง"
-                                             >
-                                                 <UserCog size={13} />
-                                             </button>
-                                         )}
+                                  <div className="pt-2 flex flex-col gap-1.5">
+                                     <div className="flex items-center gap-1.5">
+                                        <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden flex">
+                                           <div className={`h-full transition-all duration-300 ${defect.progress === 100 ? 'bg-emerald-500' : 'bg-purple-600'}`} style={{ width: `${defect.progress || 0}%` }}></div>
+                                        </div>
+                                        <span className="text-[10px] font-black text-slate-700 min-w-[28px] text-right">{defect.progress || 0}%</span>
                                      </div>
-                                     <div className="flex items-center gap-2">
-                                       <div className="w-full bg-[#f5f5f7] rounded-full h-1.5 max-w-[100px]">
-                                           <div className={`h-full rounded-full transition-all duration-1000 ${defect.progress === 100 ? 'bg-emerald-500' : 'bg-purple-500'}`} style={{ width: `${defect.progress || 0}%` }}></div>
-                                       </div>
-                                       <span className="text-[9px] sm:text-[10px] font-bold text-[#86868b]">{defect.progress || 0}%</span>
+
+                                     <div className="flex items-center justify-between gap-1 mt-0.5">
+                                        {contractor?.name ? (
+                                           <div className="flex items-center gap-1 min-w-0">
+                                              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md border border-purple-100 truncate"><HardHat size={12} className="shrink-0" /> <span className="truncate">{contractor.name.split(' ')[0]}</span></span>
+                                              {canAssignContractor && (
+                                                 <button type="button" onClick={(e) => { e.stopPropagation(); setAssigningDefect(defect); }} className="p-0.5 text-slate-400 hover:text-purple-600 hover:bg-purple-50 rounded transition-colors cursor-pointer shrink-0" title="เปลี่ยนช่าง">
+                                                    <UserCog size={13} />
+                                                 </button>
+                                              )}
+                                           </div>
+                                        ) : canAssignContractor ? (
+                                           <button type="button" onClick={(e) => { e.stopPropagation(); setAssigningDefect(defect); }} className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-500 hover:text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 border-dashed px-2 py-0.5 rounded-md transition-colors cursor-pointer truncate">
+                                              <HardHat size={12} className="shrink-0" /> ยังไม่ระบุช่าง
+                                           </button>
+                                        ) : (
+                                           <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-400 bg-[#f5f5f7] px-2 py-0.5 rounded-md"><HardHat size={12} /> ยังไม่ระบุช่าง</span>
+                                        )}
                                      </div>
                                   </div>
                                </div>
@@ -920,22 +1088,12 @@ export default function HouseHandoverView({
 
                             {/* Col 3: Start (140px) */}
                             <td className="sticky left-[360px] bg-white z-20 border-b border-r border-black/5 p-2 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.08)] align-middle">
-                               {['Project Planner', 'Admin', 'Owner', 'Foreman'].includes(currentUserRole) && !isHandoverCompleted ? (
+                               {canEditSchedule ? (
                                   <div className="flex flex-col items-center gap-1">
                                      <span className="text-[8px] font-bold uppercase text-slate-400">Plan:</span>
-                                     <input type="date" value={defectScheduleInputs[defect.id]?.start || (defect.planned_start ? defect.planned_start.split('T')[0] : '')}
+                                     <input type="date" value={curStart}
                                         onClick={(e) => e.stopPropagation()}
-                                        onChange={(e) => {
-                                           const newStart = e.target.value;
-                                           let currentEnd = defectScheduleInputs[defect.id]?.end || (defect.planned_end ? defect.planned_end.split('T')[0] : '');
-                                           let currentDuration = defectScheduleInputs[defect.id]?.duration || (dStartTs && dEndTs ? Math.ceil((dEndTs - dStartTs) / 86400000) + 1 : '');
-                                           let newEnd = currentEnd;
-                                           if (newStart && currentDuration && Number(currentDuration) > 0) {
-                                              const d = new Date(newStart); d.setDate(d.getDate() + (Number(currentDuration) - 1));
-                                              newEnd = d.toISOString().split('T')[0];
-                                           }
-                                           setDefectScheduleInputs((prev: any) => ({...prev, [defect.id]: { start: newStart, end: newEnd, duration: currentDuration }}));
-                                        }} 
+                                        onChange={(e) => handleScheduleChange(defect.id, 'start', e.target.value, defect)} 
                                         className="w-full border border-purple-200 rounded px-1.5 py-1 text-[10px] font-bold text-center text-[#1d1d1f] outline-none focus:border-purple-500 bg-white shadow-sm cursor-pointer" 
                                      />
                                      {defect.actual_start && (
@@ -950,27 +1108,17 @@ export default function HouseHandoverView({
                                         <span className="text-[8px] font-bold text-emerald-600">Act: {new Date(defect.actual_start).toLocaleDateString('en-GB', {day:'2-digit',month:'2-digit',year:'2-digit'})}</span>
                                      )}
                                   </div>
-                               )}
+                                )}
                             </td>
 
                             {/* Col 4: Duration (100px) */}
                             <td className="sticky left-[500px] bg-white z-20 border-b border-r border-black/5 p-2 text-center w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px] align-middle">
-                               {['Project Planner', 'Admin', 'Owner', 'Foreman'].includes(currentUserRole) && !isHandoverCompleted ? (
+                               {canEditSchedule ? (
                                   <div className="flex flex-col items-center gap-1">
                                      <span className="text-[8px] font-bold uppercase text-pink-500">Days:</span>
-                                     <input type="number" min="1" placeholder="วัน" value={defectScheduleInputs[defect.id]?.duration || (dStartTs && dEndTs ? Math.ceil((dEndTs - dStartTs) / 86400000) + 1 : '')} 
+                                     <input type="number" min="1" placeholder="วัน" value={curDuration} 
                                         onClick={(e) => e.stopPropagation()}
-                                        onChange={(e) => {
-                                           const newDuration = e.target.value;
-                                           let currentStart = defectScheduleInputs[defect.id]?.start || (defect.planned_start ? defect.planned_start.split('T')[0] : '');
-                                           let currentEnd = defectScheduleInputs[defect.id]?.end || (defect.planned_end ? defect.planned_end.split('T')[0] : '');
-                                           let newEnd = currentEnd;
-                                           if (currentStart && newDuration && Number(newDuration) > 0) {
-                                              const d = new Date(currentStart); d.setDate(d.getDate() + (Number(newDuration) - 1));
-                                              newEnd = d.toISOString().split('T')[0];
-                                           }
-                                           setDefectScheduleInputs((prev: any) => ({...prev, [defect.id]: { start: currentStart, end: newEnd, duration: newDuration }}));
-                                        }}
+                                        onChange={(e) => handleScheduleChange(defect.id, 'duration', e.target.value, defect)}
                                         className="w-full border border-pink-200 rounded px-1 py-1 text-[10px] font-bold text-center text-pink-600 outline-none focus:border-pink-500 bg-pink-50/50 shadow-sm cursor-pointer" 
                                      />
                                   </div>
@@ -983,22 +1131,12 @@ export default function HouseHandoverView({
 
                             {/* Col 5: Finish (140px) */}
                             <td className="sticky left-[600px] bg-white z-20 border-b border-r border-black/5 p-2 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[6px_0_10px_-6px_rgba(0,0,0,0.1)] align-middle">
-                               {['Project Planner', 'Admin', 'Owner', 'Foreman'].includes(currentUserRole) && !isHandoverCompleted ? (
+                               {canEditSchedule ? (
                                   <div className="flex flex-col items-center gap-1">
                                      <span className="text-[8px] font-bold uppercase text-slate-400">Plan:</span>
-                                     <input type="date" value={defectScheduleInputs[defect.id]?.end || (defect.planned_end ? defect.planned_end.split('T')[0] : '')} 
+                                     <input type="date" value={curEnd} 
                                         onClick={(e) => e.stopPropagation()}
-                                        onChange={(e) => {
-                                           const newEnd = e.target.value;
-                                           let currentStart = defectScheduleInputs[defect.id]?.start || (defect.planned_start ? defect.planned_start.split('T')[0] : '');
-                                           let currentDuration = defectScheduleInputs[defect.id]?.duration || (dStartTs && dEndTs ? Math.ceil((dEndTs - dStartTs) / 86400000) + 1 : '');
-                                           let newDuration = currentDuration;
-                                           if (currentStart && newEnd) {
-                                              const diffTime = new Date(newEnd).getTime() - new Date(currentStart).getTime();
-                                              newDuration = String(Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24))) + 1);
-                                           }
-                                           setDefectScheduleInputs((prev: any) => ({...prev, [defect.id]: { start: currentStart, end: newEnd, duration: newDuration }}));
-                                        }} 
+                                        onChange={(e) => handleScheduleChange(defect.id, 'end', e.target.value, defect)} 
                                         className="w-full border border-purple-200 rounded px-1.5 py-1 text-[10px] font-bold text-center text-[#1d1d1f] outline-none focus:border-purple-500 bg-white shadow-sm cursor-pointer" 
                                      />
                                      {defect.actual_end && (
@@ -1043,6 +1181,24 @@ export default function HouseHandoverView({
              </table>
           </div>
       </div>
+
+      {/* 📱 Mobile Floating Save Button */}
+      {isMobileLayout && ['Admin', 'Project Planner', 'Owner', 'Foreman'].includes(currentUserRole) && Object.keys(defectScheduleInputs).length > 0 && (
+        <div className="fixed bottom-5 left-3 right-3 sm:left-4 sm:right-4 z-50 animate-fade-in">
+          <button 
+            type="button"
+            onClick={handleSaveDefectSchedules} 
+            disabled={isSubmitting} 
+            className="w-full bg-emerald-600 hover:bg-emerald-700 active:scale-98 text-white font-black py-3.5 px-5 rounded-2xl shadow-2xl flex items-center justify-center gap-2 text-sm transition-all border border-emerald-400/40 cursor-pointer"
+          >
+            {isSubmitting ? (
+              <><Loader2 className="animate-spin" size={18} /> กำลังบันทึกแผนซ่อม...</>
+            ) : (
+              <><CheckCircle size={18} /> 💾 บันทึกแผนซ่อม ({Object.keys(defectScheduleInputs).length} รายการ)</>
+            )}
+          </button>
+        </div>
+      )}
 
       <DefectTaskSelectModal 
         isOpen={isSelectModalOpen} 
