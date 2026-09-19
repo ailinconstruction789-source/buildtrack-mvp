@@ -102,4 +102,41 @@ describe('HouseHandoverView - Mobile Schedule Editing', () => {
     expect(screen.queryByPlaceholderText('วัน')).not.toBeInTheDocument();
     expect(screen.getByText('แผนงาน')).toBeInTheDocument();
   });
+
+  it('allows Procurement to edit only start date and save without specifying end date', () => {
+    const defectWithoutDates = {
+      ...mockDefect,
+      planned_start: null,
+      planned_end: null
+    };
+
+    render(
+      <HouseHandoverView 
+        {...defaultProps} 
+        defects={[defectWithoutDates]}
+        isMobileLayout={true} 
+        currentUserRole="Procurement" 
+      />
+    );
+
+    // Should indicate Procurement role
+    expect(screen.getAllByText(/ผู้จัดจ้าง/i).length).toBeGreaterThan(0);
+    // Duration input should not be an active number input for Procurement
+    expect(screen.queryByPlaceholderText('วัน')).not.toBeInTheDocument();
+    expect(screen.getByText('รอโฟร์แมน')).toBeInTheDocument();
+
+    // Start date input is available
+    const allInputs = document.querySelectorAll('input[type="date"]');
+    expect(allInputs.length).toBe(1); // Only start date is an editable date input for Procurement
+
+    // Change start date
+    fireEvent.change(allInputs[0], { target: { value: '2026-09-25' } });
+
+    // In-card save button and floating save bar should appear with Procurement wording
+    expect(screen.getByText(/บันทึกวันเริ่มงานรายการนี้/i)).toBeInTheDocument();
+    expect(screen.getByText(/💾 บันทึกวันเริ่มงาน \(1 รายการ\)/i)).toBeInTheDocument();
+
+    // Trigger save
+    fireEvent.click(screen.getByText(/บันทึกวันเริ่มงานรายการนี้/i));
+  });
 });

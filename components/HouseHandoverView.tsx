@@ -68,6 +68,7 @@ export default function HouseHandoverView({
   const cycle = localCycle || selectedPlot?.handover_cycle || 1;
   const currentRound = selectedPlot?.inspection_round || 0;
   const isHandoverCompleted = selectedPlot?.handover_status === 'completed';
+  const isProcurement = currentUserRole === 'Procurement';
 
   React.useEffect(() => {
     if (selectedPlot?.inspection_round !== undefined) {
@@ -395,18 +396,25 @@ export default function HouseHandoverView({
         const payloads: any[] = [];
         Object.keys(defectScheduleInputs).forEach(defectId => {
           const plan = defectScheduleInputs[defectId];
-          if (plan.start && plan.end) {
-            payloads.push({ id: defectId, planned_start: plan.start, planned_end: plan.end });
+          const hasStart = Boolean(plan.start);
+          const hasEnd = Boolean(plan.end);
+
+          if (hasStart || hasEnd) {
+            payloads.push({ 
+              id: defectId, 
+              planned_start: hasStart ? plan.start : null, 
+              planned_end: hasEnd ? plan.end : null 
+            });
           }
         });
         if (payloads.length === 0) {
           setIsSubmitting(false);
-          showAlert('กรอกข้อมูลไม่ครบ', 'ไม่มีการแก้ไขข้อมูล หรือกรอกวันที่ไม่ครบครับ', 'warning');
+          showAlert('กรอกข้อมูลไม่ครบ', 'ไม่มีการแก้ไขข้อมูล หรือยังไม่ได้ระบุวันเริ่มงานครับ', 'warning');
           return;
         }
         
         for (const p of payloads) {
-          if (new Date(p.planned_end) < new Date(p.planned_start)) {
+          if (p.planned_start && p.planned_end && new Date(p.planned_end) < new Date(p.planned_start)) {
              showAlert('วันที่ไม่ถูกต้อง', 'วันสิ้นสุดต้องอยู่หลังวันเริ่มงานครับ', 'warning');
              setIsSubmitting(false);
              return;
@@ -690,7 +698,7 @@ export default function HouseHandoverView({
             </button>
           )}
 
-          {['Admin', 'Project Planner', 'Owner', 'Foreman'].includes(currentUserRole) && Object.keys(defectScheduleInputs).length > 0 && (
+          {['Admin', 'Project Planner', 'Owner', 'Foreman', 'Procurement'].includes(currentUserRole) && Object.keys(defectScheduleInputs).length > 0 && (
             <button onClick={handleSaveDefectSchedules} disabled={isSubmitting} className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold px-4 py-2 rounded-xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer">
               {isSubmitting ? <Loader2 className="animate-spin" size={16}/> : 'บันทึกแผนซ่อม (Save)'}
             </button>
@@ -821,7 +829,9 @@ export default function HouseHandoverView({
                           durationText = `${Math.max(0, Math.ceil(diff / (86400000))) + 1} วัน`;
                       }
 
-                      const canEditSchedule = ['Project Planner', 'Admin', 'Owner', 'Foreman'].includes(currentUserRole) && !isHandoverCompleted;
+                      const canEditSchedule = ['Project Planner', 'Admin', 'Owner', 'Foreman', 'Procurement'].includes(currentUserRole) && !isHandoverCompleted;
+                      const isProcurement = currentUserRole === 'Procurement';
+                      const canEditEndDate = canEditSchedule && !isProcurement;
                       const currentInput = defectScheduleInputs[defect.id];
                       const curStart = currentInput?.start !== undefined ? currentInput.start : (defect.planned_start ? defect.planned_start.split('T')[0] : '');
                       const curEnd = currentInput?.end !== undefined ? currentInput.end : (defect.planned_end ? defect.planned_end.split('T')[0] : '');
@@ -879,7 +889,7 @@ export default function HouseHandoverView({
                                      </div>
                                    </div>
 
-                                   {/* 📅 ปรับแผนงานซ่อม (สำหรับ Foreman, Admin, Owner, Project Planner บนมือถือ) */}
+                                   {/* 📅 ปรับแผนงานซ่อม (สำหรับ Foreman, Procurement, Admin, Owner, Project Planner บนมือถือ) */}
                                    {canEditSchedule ? (
                                      <div 
                                        className={`rounded-2xl p-3 border mb-3 transition-colors ${hasPendingScheduleChanges ? 'bg-purple-50/70 border-purple-300 ring-1 ring-purple-400/30' : 'bg-[#f8f9fa] border-slate-200'}`}
@@ -887,7 +897,7 @@ export default function HouseHandoverView({
                                      >
                                        <div className="flex items-center justify-between mb-2">
                                          <span className="text-[10px] font-extrabold uppercase text-purple-800 flex items-center gap-1.5">
-                                           <Calendar size={13} className="text-purple-600" /> แผนงานซ่อม
+                                           <Calendar size={13} className="text-purple-600" /> แผนงานซ่อม {isProcurement && <span className="text-emerald-600 font-bold lowercase text-[9px]">(ผู้จัดจ้าง)</span>}
                                          </span>
                                          {hasPendingScheduleChanges ? (
                                            <span className="text-[9px] font-bold text-amber-800 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-md animate-pulse">
@@ -895,7 +905,7 @@ export default function HouseHandoverView({
                                            </span>
                                          ) : (
                                            <span className="text-[9px] font-bold text-slate-400">
-                                             {durationText !== '-' ? durationText : 'ยังไม่ระบุวัน'}
+                                             {curStart ? (curEnd ? durationText : 'รอกำหนดวันเสร็จ') : 'ยังไม่ระบุวัน'}
                                            </span>
                                          )}
                                        </div>
@@ -916,29 +926,47 @@ export default function HouseHandoverView({
                                          {/* ระยะเวลา (1 คอลัมน์) */}
                                          <div className="col-span-1">
                                            <label className="block text-[9px] font-bold text-pink-600 mb-1 text-center">ระยะเวลา</label>
-                                           <input 
-                                             type="number"
-                                             min="1"
-                                             placeholder="วัน"
-                                             value={curDuration}
-                                             onClick={(e) => e.stopPropagation()}
-                                             onChange={(e) => handleScheduleChange(defect.id, 'duration', e.target.value, defect)}
-                                             className="w-full bg-pink-50/80 border border-pink-200 rounded-lg px-1 py-1.5 text-xs font-bold text-center text-pink-600 outline-none focus:ring-2 focus:ring-pink-500 shadow-sm cursor-pointer"
-                                           />
+                                           {canEditEndDate ? (
+                                             <input 
+                                               type="number"
+                                               min="1"
+                                               placeholder="วัน"
+                                               value={curDuration}
+                                               onClick={(e) => e.stopPropagation()}
+                                               onChange={(e) => handleScheduleChange(defect.id, 'duration', e.target.value, defect)}
+                                               className="w-full bg-pink-50/80 border border-pink-200 rounded-lg px-1 py-1.5 text-xs font-bold text-center text-pink-600 outline-none focus:ring-2 focus:ring-pink-500 shadow-sm cursor-pointer"
+                                             />
+                                           ) : (
+                                             <div className="w-full bg-slate-100 border border-slate-200 rounded-lg px-1 py-1.5 text-[10px] font-bold text-center text-slate-400 truncate" title="เฉพาะโฟร์แมนระบุ">
+                                               {curDuration ? `${curDuration}ว` : '-'}
+                                             </div>
+                                           )}
                                          </div>
 
                                          {/* วันเสร็จสิ้น (2 คอลัมน์) */}
                                          <div className="col-span-2">
                                            <label className="block text-[9px] font-bold text-slate-500 mb-1">วันเสร็จสิ้น</label>
-                                           <input 
-                                             type="date"
-                                             value={curEnd}
-                                             onClick={(e) => e.stopPropagation()}
-                                             onChange={(e) => handleScheduleChange(defect.id, 'end', e.target.value, defect)}
-                                             className="w-full bg-white border border-purple-200 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-purple-500 shadow-sm cursor-pointer"
-                                           />
+                                           {canEditEndDate ? (
+                                             <input 
+                                               type="date"
+                                               value={curEnd}
+                                               onClick={(e) => e.stopPropagation()}
+                                               onChange={(e) => handleScheduleChange(defect.id, 'end', e.target.value, defect)}
+                                               className="w-full bg-white border border-purple-200 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-purple-500 shadow-sm cursor-pointer"
+                                             />
+                                           ) : (
+                                             <div className="w-full bg-slate-100 border border-slate-200 rounded-lg px-1 py-1.5 text-[10px] font-bold text-center text-slate-400 truncate" title="เฉพาะโฟร์แมนระบุ">
+                                               {curEnd ? new Date(curEnd).toLocaleDateString('th-TH', {day:'numeric', month:'short'}) : 'รอโฟร์แมน'}
+                                             </div>
+                                           )}
                                          </div>
                                        </div>
+
+                                       {isProcurement && (
+                                         <div className="text-[9px] text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-2.5 py-1 mt-2 flex items-center gap-1 font-semibold">
+                                           <span>💡 ผู้จัดจ้างกำหนดวันเริ่มงาน (วันเสร็จสิ้นรอโฟร์แมนประเมิน)</span>
+                                         </div>
+                                       )}
 
                                        {(defect.actual_start || defect.actual_end) && (
                                          <div className="flex items-center gap-3 mt-2 pt-2 border-t border-purple-100 text-[9px] text-slate-500">
@@ -959,7 +987,7 @@ export default function HouseHandoverView({
                                            className="w-full mt-2.5 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-98 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow transition-all cursor-pointer"
                                          >
                                            {isSubmitting ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
-                                           บันทึกแผนซ่อมรายการนี้
+                                           {isProcurement ? 'บันทึกวันเริ่มงานรายการนี้' : 'บันทึกแผนซ่อมรายการนี้'}
                                          </button>
                                        )}
                                      </div>
@@ -1113,7 +1141,7 @@ export default function HouseHandoverView({
 
                             {/* Col 4: Duration (100px) */}
                             <td className="sticky left-[500px] bg-white z-20 border-b border-r border-black/5 p-2 text-center w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px] align-middle">
-                               {canEditSchedule ? (
+                               {canEditEndDate ? (
                                   <div className="flex flex-col items-center gap-1">
                                      <span className="text-[8px] font-bold uppercase text-pink-500">Days:</span>
                                      <input type="number" min="1" placeholder="วัน" value={curDuration} 
@@ -1124,14 +1152,16 @@ export default function HouseHandoverView({
                                   </div>
                                ) : (
                                   <div className="flex flex-col items-center gap-1">
-                                     <span className="text-[10px] sm:text-xs font-bold text-pink-600 bg-pink-50 px-2 py-1 rounded-md border border-pink-100">{durationText}</span>
+                                     <span className="text-[10px] sm:text-xs font-bold text-pink-600 bg-pink-50 px-2 py-1 rounded-md border border-pink-100">
+                                       {curDuration ? `${curDuration} วัน` : isProcurement ? 'รอโฟร์แมน' : durationText}
+                                     </span>
                                   </div>
                                )}
                             </td>
 
                             {/* Col 5: Finish (140px) */}
                             <td className="sticky left-[600px] bg-white z-20 border-b border-r border-black/5 p-2 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[6px_0_10px_-6px_rgba(0,0,0,0.1)] align-middle">
-                               {canEditSchedule ? (
+                               {canEditEndDate ? (
                                   <div className="flex flex-col items-center gap-1">
                                      <span className="text-[8px] font-bold uppercase text-slate-400">Plan:</span>
                                      <input type="date" value={curEnd} 
@@ -1146,7 +1176,9 @@ export default function HouseHandoverView({
                                ) : (
                                   <div className="flex flex-col items-center gap-1">
                                      <span className="text-[8px] font-bold uppercase text-slate-400">PLAN:</span>
-                                     <span className="text-[11px] font-bold text-slate-700">{defect.planned_end ? new Date(defect.planned_end).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-'}</span>
+                                     <span className="text-[11px] font-bold text-slate-700">
+                                       {curEnd ? new Date(curEnd).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : isProcurement ? 'รอโฟร์แมน' : (defect.planned_end ? new Date(defect.planned_end).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '-')}
+                                     </span>
                                      {defect.actual_end && (
                                         <span className="text-[8px] font-bold text-emerald-600">Act: {new Date(defect.actual_end).toLocaleDateString('en-GB', {day:'2-digit',month:'2-digit',year:'2-digit'})}</span>
                                      )}
@@ -1183,7 +1215,7 @@ export default function HouseHandoverView({
       </div>
 
       {/* 📱 Mobile Floating Save Button */}
-      {isMobileLayout && ['Admin', 'Project Planner', 'Owner', 'Foreman'].includes(currentUserRole) && Object.keys(defectScheduleInputs).length > 0 && (
+      {isMobileLayout && ['Admin', 'Project Planner', 'Owner', 'Foreman', 'Procurement'].includes(currentUserRole) && Object.keys(defectScheduleInputs).length > 0 && (
         <div className="fixed bottom-5 left-3 right-3 sm:left-4 sm:right-4 z-50 animate-fade-in">
           <button 
             type="button"
@@ -1194,7 +1226,7 @@ export default function HouseHandoverView({
             {isSubmitting ? (
               <><Loader2 className="animate-spin" size={18} /> กำลังบันทึกแผนซ่อม...</>
             ) : (
-              <><CheckCircle size={18} /> 💾 บันทึกแผนซ่อม ({Object.keys(defectScheduleInputs).length} รายการ)</>
+              <><CheckCircle size={18} /> {isProcurement ? `💾 บันทึกวันเริ่มงาน (${Object.keys(defectScheduleInputs).length} รายการ)` : `💾 บันทึกแผนซ่อม (${Object.keys(defectScheduleInputs).length} รายการ)`}</>
             )}
           </button>
         </div>
