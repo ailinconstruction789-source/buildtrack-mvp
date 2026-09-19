@@ -5,13 +5,17 @@ import {
   Search, Plus, Filter, Download, Upload, Phone, Calendar, 
   MapPin, Home, CheckCircle, XCircle, Clock, AlertTriangle, 
   MessageSquare, User, Building, FileText, ArrowRight, Save, 
-  Edit3, Trash2, Eye, MoreHorizontal, Check, RefreshCw, Loader2
+  Edit3, Trash2, Eye, MoreHorizontal, Check, RefreshCw, Loader2, Sparkles
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/supabase';
 import { Lead, CRMStatus, LostReason, MarketingChannel } from '@/types/sales';
 import { parseExcelRowToLead, downloadLeadTrackerTemplate, ParsedLeadRow, CRM_STATUS_OPTIONS, LOST_REASON_OPTIONS, MARKETING_CHANNEL_OPTIONS } from '@/lib/salesImportHelper';
 import CustomerVoicesModal from './CustomerVoicesModal';
+import HouseVisitChecklistModal from './HouseVisitChecklistModal';
+import AvailablePlotSelect from './AvailablePlotSelect';
+import type { InterestedPlot } from '@/lib/sales/plotAvailability';
+import { recheckInterestedPlot } from '@/lib/sales/plotAvailabilityClient';
 
 interface LeadTrackerViewProps {
   leads: Lead[];
@@ -47,6 +51,7 @@ export default function LeadTrackerView({
   const [showImportModal, setShowImportModal] = useState(false);
   const [importData, setImportData] = useState<ParsedLeadRow[]>([]);
   const [isImporting, setIsImporting] = useState(false);
+  const [showChecklistModal, setShowChecklistModal] = useState<{ isOpen: boolean; lead: Lead | null }>({ isOpen: false, lead: null });
   const [showFollowUpModal, setShowFollowUpModal] = useState<{ isOpen: boolean; lead: Lead | null }>({ isOpen: false, lead: null });
   const [showVisitModal, setShowVisitModal] = useState<{ isOpen: boolean; lead: Lead | null }>({ isOpen: false, lead: null });
   const [showBookingModal, setShowBookingModal] = useState<{ isOpen: boolean; lead: Lead | null }>({ isOpen: false, lead: null });
@@ -54,6 +59,8 @@ export default function LeadTrackerView({
   const [showSurveyModal, setShowSurveyModal] = useState<{ isOpen: boolean; lead: Lead | null }>({ isOpen: false, lead: null });
   
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [newLeadPlot, setNewLeadPlot] = useState<InterestedPlot | null>(null);
+  const [visitPlot, setVisitPlot] = useState<InterestedPlot | null>(null);
 
   // New Lead Form State
   const [newLeadForm, setNewLeadForm] = useState({
@@ -63,7 +70,6 @@ export default function LeadTrackerView({
     project_name: selectedProjectName !== 'all' ? selectedProjectName : (projects[0]?.name || 'ไอลิน สันทราย 2'),
     channel: 'Facebook',
     agent_name: user?.username || 'Bell',
-    interested_plot_name: '',
     appointment_date: '',
     notes: ''
   });
@@ -93,22 +99,28 @@ export default function LeadTrackerView({
     e.preventDefault();
     setIsSubmitting(true);
     try {
+      if (!newLeadForm.customer_name.trim() || !newLeadForm.phone.trim()) {
+        throw new Error('กรุณาระบุชื่อและเบอร์โทรก่อนสร้าง Lead');
+      }
+      if (!user?.username) throw new Error('กรุณาเข้าสู่ระบบก่อนบันทึก Lead');
+      const selectedPlot = await recheckInterestedPlot(newLeadForm.project_name, newLeadPlot?.id || null);
       const now = new Date().toISOString();
       const payload = {
-        customer_name: newLeadForm.customer_name,
-        phone: newLeadForm.phone,
+        customer_name: newLeadForm.customer_name.trim(),
+        phone: newLeadForm.phone.trim(),
         occupation: newLeadForm.occupation,
         project_name: newLeadForm.project_name,
         channel: newLeadForm.channel,
         source: newLeadForm.channel,
-        agent_name: newLeadForm.agent_name,
-        created_by_agent: user?.username || newLeadForm.agent_name,
-        interested_plot_name: newLeadForm.interested_plot_name,
+        agent_name: user.username,
+        created_by_agent: user.username,
+        interested_plot_id: selectedPlot?.id || null,
+        interested_plot_name: selectedPlot ? selectedPlot.plot_name || selectedPlot.id : null,
         lead_date: now,
-        contacted_date: now,
+        contacted_date: null,
         appointment_date: newLeadForm.appointment_date ? new Date(newLeadForm.appointment_date).toISOString() : null,
         crm_status: 'Follow-up — อยู่ระหว่างติดตาม',
-        auto_status: newLeadForm.appointment_date ? 'นัดชมแล้ว' : 'ติดต่อได้',
+        auto_status: newLeadForm.appointment_date ? 'นัดชมแล้ว' : 'Lead เข้า',
         notes: newLeadForm.notes,
         created_at: now
       };
@@ -117,6 +129,7 @@ export default function LeadTrackerView({
       if (error) throw error;
 
       setShowAddLeadModal(false);
+      setNewLeadPlot(null);
       setNewLeadForm({
         customer_name: '',
         phone: '',
@@ -124,14 +137,13 @@ export default function LeadTrackerView({
         project_name: selectedProjectName !== 'all' ? selectedProjectName : (projects[0]?.name || 'ไอลิน สันทราย 2'),
         channel: 'Facebook',
         agent_name: user?.username || 'Bell',
-        interested_plot_name: '',
         appointment_date: '',
         notes: ''
       });
       onRefresh();
     } catch (err) {
       console.error('Error creating lead:', err);
-      alert('บันทึก Lead ไม่สำเร็จ');
+      alert(err instanceof Error ? err.message : 'บันทึก Lead ไม่สำเร็จ');
     } finally {
       setIsSubmitting(false);
     }
@@ -172,24 +184,37 @@ export default function LeadTrackerView({
   };
 
   // Handle Visit Check-in
-  const handleCheckInVisit = async (lead: Lead, plotName: string, notes: string) => {
+  const handleCheckInVisit = async (lead: Lead, plotId: string | null, notes: string) => {
     setIsSubmitting(true);
     try {
+      const selectedPlot = await recheckInterestedPlot(lead.project_name || '', plotId);
+      const { data: existingSales, error: salesError } = await supabase.from('sales')
+        .select('id').eq('lead_id', lead.id).limit(1);
+      if (salesError) throw salesError;
       const now = new Date().toISOString();
-      await supabase.from('leads').update({
+      const { error } = await supabase.from('leads').update({
         actual_visit_date: now,
-        interested_plot_name: plotName || lead.interested_plot_name,
-        auto_status: 'เข้าชมแล้ว',
-        crm_status: 'Considering — กำลังพิจารณา / เปรียบเทียบ',
-        status: 'Visit',
+        // No new selection preserves legacy interest; never writes sales/plots.
+        ...(selectedPlot ? {
+          interested_plot_id: selectedPlot.id,
+          interested_plot_name: selectedPlot.plot_name || selectedPlot.id,
+        } : {}),
+        // A later Visit must not move an existing booking/transfer back to Visit.
+        ...(!existingSales?.length && !lead.booking_date && !lead.transferred_date ? {
+          auto_status: 'เข้าชมแล้ว',
+          crm_status: 'Considering — กำลังพิจารณา / เปรียบเทียบ',
+          status: 'Visit',
+        } : {}),
         notes: notes ? `${lead.notes ? lead.notes + ' | ' : ''}เข้าชมโครงการ: ${notes}` : lead.notes
       }).eq('id', lead.id);
+      if (error) throw error;
 
       setShowVisitModal({ isOpen: false, lead: null });
+      setVisitPlot(null);
       onRefresh();
     } catch (err) {
       console.error('Error check-in visit:', err);
-      alert('เช็คอินเข้าชมไม่สำเร็จ');
+      alert(err instanceof Error ? err.message : 'เช็คอินเข้าชมไม่สำเร็จ');
     } finally {
       setIsSubmitting(false);
     }
@@ -246,32 +271,27 @@ export default function LeadTrackerView({
   const handleMarkAsLost = async (lead: Lead, reason: string, detail: string) => {
     setIsSubmitting(true);
     try {
-      await supabase.from('leads').update({
+      // An interested plot is NOT this Lead's reservation. Lost must never free it.
+      const { data: existingSales, error: salesError } = await supabase.from('sales')
+        .select('id').eq('lead_id', lead.id).limit(1);
+      if (salesError) throw salesError;
+      if (existingSales?.length || lead.booking_date || lead.transferred_date) {
+        throw new Error('Lead นี้มีประวัติการจองแล้ว ต้องจัดการที่รายการขาย ไม่ใช้ Lost ก่อนจอง');
+      }
+      const { error } = await supabase.from('leads').update({
         lost_reason: reason,
         lost_reason_detail: detail,
         crm_status: 'Lost — ยุติการซื้อ / ไม่จอง',
         auto_status: 'Lost',
         status: 'Cancelled'
       }).eq('id', lead.id);
-
-      // If had a plot reserved, free it up
-      if (lead.interested_plot_id) {
-        await supabase.from('plots').update({
-          has_customer: false,
-          sale_status: 'ready_for_sale'
-        }).eq('id', lead.interested_plot_id);
-
-        await supabase.from('sales').update({
-          contract_status: 'Cancelled',
-          cancellation_reason: reason
-        }).eq('lead_id', lead.id);
-      }
+      if (error) throw error;
 
       setShowLostModal({ isOpen: false, lead: null });
       onRefresh();
     } catch (err) {
       console.error('Error marking as lost:', err);
-      alert('บันทึก Lost ไม่สำเร็จ');
+      alert(err instanceof Error ? err.message : 'บันทึก Lost ไม่สำเร็จ');
     } finally {
       setIsSubmitting(false);
     }
@@ -510,6 +530,14 @@ export default function LeadTrackerView({
 
         <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
           <button
+            onClick={() => setShowChecklistModal({ isOpen: true, lead: null })}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3.5 py-2.5 rounded-xl text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+            title="เริ่มกระบวนการตรวจบ้านตัวอย่าง / เตรียมพาชม 3-Stage SOP"
+          >
+            <Home size={15} /> 🏡 SOP ตรวจบ้าน & พาชม
+          </button>
+
+          <button
             onClick={() => setShowAddLeadModal(true)}
             className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-2 shadow-sm transition-all cursor-pointer"
           >
@@ -650,7 +678,7 @@ export default function LeadTrackerView({
                           </span>
                         ) : (
                           <button
-                            onClick={() => setShowVisitModal({ isOpen: true, lead: l })}
+                            onClick={() => { setVisitPlot(null); setShowVisitModal({ isOpen: true, lead: l }); }}
                             className="text-[11px] font-bold text-blue-600 hover:text-blue-800 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200 cursor-pointer"
                           >
                             + เช็คอินเข้าชม
@@ -683,6 +711,15 @@ export default function LeadTrackerView({
                       </td>
                       <td className="p-3 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
+                          {/* Button 0: SOP Visit & House Checklist */}
+                          <button
+                            onClick={() => setShowChecklistModal({ isOpen: true, lead: l })}
+                            className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold px-2 py-1 rounded-lg text-xs flex items-center gap-1 transition-colors cursor-pointer border border-indigo-200"
+                            title="เปิดขั้นตอนพาชม SOP (Stage A ➡️ B ➡️ C) และบันทึกผล"
+                          >
+                            <Sparkles size={12} className="text-indigo-600" /> SOP พาชม
+                          </button>
+
                           {/* Button 1: Convert to Booking */}
                           {!isBooked && !isLost && (
                             <button
@@ -750,9 +787,10 @@ export default function LeadTrackerView({
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-700 font-bold mb-1">เบอร์โทร</label>
+                  <label className="block text-slate-700 font-bold mb-1">เบอร์โทร *</label>
                   <input
-                    type="text"
+                    type="tel"
+                    required
                     value={newLeadForm.phone}
                     onChange={e => setNewLeadForm({ ...newLeadForm, phone: e.target.value })}
                     placeholder="081-xxx-xxxx"
@@ -773,7 +811,7 @@ export default function LeadTrackerView({
                   <label className="block text-slate-700 font-bold mb-1">โครงการ</label>
                   <select
                     value={newLeadForm.project_name}
-                    onChange={e => setNewLeadForm({ ...newLeadForm, project_name: e.target.value })}
+                    onChange={e => { setNewLeadPlot(null); setNewLeadForm({ ...newLeadForm, project_name: e.target.value }); }}
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 font-bold focus:ring-2 focus:ring-blue-500 focus:bg-white focus:outline-none"
                   >
                     {projects.map((p: any) => (
@@ -794,13 +832,12 @@ export default function LeadTrackerView({
                   </select>
                 </div>
                 <div>
-                  <label className="block text-slate-700 font-bold mb-1">แปลงที่เล็งไว้ (ถ้ามี)</label>
-                  <input
-                    type="text"
-                    value={newLeadForm.interested_plot_name}
-                    onChange={e => setNewLeadForm({ ...newLeadForm, interested_plot_name: e.target.value })}
-                    placeholder="เช่น A-05"
-                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 font-medium focus:ring-2 focus:ring-blue-500 focus:bg-white focus:outline-none"
+                  <AvailablePlotSelect
+                    key={newLeadForm.project_name}
+                    projectName={newLeadForm.project_name}
+                    value={newLeadPlot}
+                    onChange={setNewLeadPlot}
+                    disabled={isSubmitting}
                   />
                 </div>
                 <div>
@@ -904,19 +941,22 @@ export default function LeadTrackerView({
               ลูกค้า: <strong className="text-slate-800">{showVisitModal.lead.customer_name}</strong> ({showVisitModal.lead.phone})
             </p>
             
-            <form onSubmit={(e: any) => {
+            <form onSubmit={(e: React.FormEvent<HTMLFormElement>) => {
               e.preventDefault();
-              handleCheckInVisit(showVisitModal.lead!, e.target.plotName.value, e.target.notes.value);
+              const fields = new FormData(e.currentTarget);
+              handleCheckInVisit(showVisitModal.lead!, visitPlot?.id || null, String(fields.get('notes') || ''));
             }} className="space-y-4 text-xs">
               <div>
-                <label className="block text-slate-700 font-bold mb-1">แปลงที่ลูกค้าสนใจเป็นพิเศษ</label>
-                <input
-                  name="plotName"
-                  type="text"
-                  defaultValue={showVisitModal.lead.interested_plot_name || ''}
-                  placeholder="เช่น A-05, B-12"
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 font-medium focus:ring-2 focus:ring-emerald-500 focus:bg-white focus:outline-none"
+                <AvailablePlotSelect
+                  key={showVisitModal.lead.id}
+                  projectName={showVisitModal.lead.project_name}
+                  value={visitPlot}
+                  onChange={setVisitPlot}
+                  disabled={isSubmitting}
                 />
+                {showVisitModal.lead.interested_plot_name && <p className="mt-1 text-[10px] text-slate-500">
+                  ความสนใจเดิม: {showVisitModal.lead.interested_plot_name} (ไม่เลือกใหม่จะคงข้อมูลเดิม ไม่ถือเป็นการจอง)
+                </p>}
               </div>
               <div>
                 <label className="block text-slate-700 font-bold mb-1">ความคิดเห็นลูกค้าตอนพาชม</label>
@@ -1042,9 +1082,10 @@ export default function LeadTrackerView({
               ลูกค้า: <strong className="text-slate-800">{showLostModal.lead.customer_name}</strong>
             </p>
             
-            <form onSubmit={(e: any) => {
+            <form onSubmit={(e: React.FormEvent<HTMLFormElement>) => {
               e.preventDefault();
-              handleMarkAsLost(showLostModal.lead!, e.target.reason.value, e.target.detail.value);
+              const fields = new FormData(e.currentTarget);
+              handleMarkAsLost(showLostModal.lead!, String(fields.get('reason') || ''), String(fields.get('detail') || ''));
             }} className="space-y-4 text-xs">
               <div>
                 <label className="block text-slate-700 font-bold mb-1">สาเหตุหลักที่ไม่ซื้อ (Lost Reason) *</label>
@@ -1081,24 +1122,12 @@ export default function LeadTrackerView({
                   className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-5 py-2 rounded-xl flex items-center gap-2 cursor-pointer disabled:opacity-50"
                 >
                   {isSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                  บันทึก Lost (ปลดล็อกแปลง)
+                  บันทึก Lost ก่อนจอง (ไม่เปลี่ยนสถานะแปลง)
                 </button>
               </div>
             </form>
           </div>
         </div>
-      )}
-
-      {/* 🗣️ Customer Voices Modal */}
-      {showSurveyModal.isOpen && (
-        <CustomerVoicesModal
-          isOpen={showSurveyModal.isOpen}
-          onClose={() => setShowSurveyModal({ isOpen: false, lead: null })}
-          lead={showSurveyModal.lead}
-          projectName={showSurveyModal.lead?.project_name || selectedProjectName}
-          user={user}
-          onSaved={onRefresh}
-        />
       )}
 
       {/* 📥 Excel Import Modal 📥 */}
@@ -1258,6 +1287,35 @@ export default function LeadTrackerView({
             </div>
           </div>
         </div>
+      )}
+
+      {/* 🗣️ Customer Voices Survey Modal (42 Questions) */}
+      {showSurveyModal.isOpen && (
+        <CustomerVoicesModal
+          isOpen={showSurveyModal.isOpen}
+          onClose={() => setShowSurveyModal({ isOpen: false, lead: null })}
+          lead={showSurveyModal.lead}
+          projectName={showSurveyModal.lead?.project_name || (filterProject !== 'all' ? filterProject : 'ไอลิน 6')}
+          user={user}
+          onSaved={onRefresh}
+        />
+      )}
+
+      {/* 🏡 SOP House & Sales Visit Checklist Modal (Stage A ➡️ B ➡️ C) */}
+      {showChecklistModal.isOpen && (
+        <HouseVisitChecklistModal
+          isOpen={showChecklistModal.isOpen}
+          onClose={() => setShowChecklistModal({ isOpen: false, lead: null })}
+          lead={showChecklistModal.lead}
+          projectName={showChecklistModal.lead?.project_name || (filterProject !== 'all' ? filterProject : 'ไอลิน 6')}
+          user={user}
+          plots={plots}
+          onOpenSurvey={(lead) => {
+            setShowChecklistModal({ isOpen: false, lead: null });
+            setShowSurveyModal({ isOpen: true, lead });
+          }}
+          onSaved={onRefresh}
+        />
       )}
 
     </div>

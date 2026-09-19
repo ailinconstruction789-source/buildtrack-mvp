@@ -37,14 +37,18 @@ export default function WeatherWidget({ weatherInfo, showWeatherWidget, setShowW
       <div className="border-t border-slate-100 pt-3">
         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">พยากรณ์ 4 ชม. ข้างหน้า</p>
         <div className="flex justify-between gap-1">
-          {weatherInfo.hourly.map((h: any, i: number) => (
-            <div key={i} className="flex flex-col items-center justify-center bg-slate-50 rounded-lg p-2 flex-1 border border-slate-100">
-              <span className="text-[10px] font-bold text-slate-500">{h.time}</span>
-              <span className="text-lg my-1">{h.details.icon}</span>
-              <span className="text-[11px] font-black text-slate-700">{h.temp}°</span>
-              {h.rainProb > 20 && <span className="text-[8px] font-bold text-blue-500 mt-0.5">{h.rainProb}%</span>}
-            </div>
-          ))}
+          {weatherInfo.hourly && weatherInfo.hourly.length > 0 ? (
+            weatherInfo.hourly.map((h: any, i: number) => (
+              <div key={i} className="flex flex-col items-center justify-center bg-slate-50 rounded-lg p-2 flex-1 border border-slate-100">
+                <span className="text-[10px] font-bold text-slate-500">{h.time}</span>
+                <span className="text-lg my-1">{h.details?.icon || '🌤️'}</span>
+                <span className="text-[11px] font-black text-slate-700">{h.temp}°</span>
+                {h.rainProb > 20 && <span className="text-[8px] font-bold text-blue-500 mt-0.5">{h.rainProb}%</span>}
+              </div>
+            ))
+          ) : (
+            <div className="text-center py-2 text-xs text-slate-400 w-full">ไม่มีข้อมูลพยากรณ์</div>
+          )}
         </div>
       </div>
     </div>

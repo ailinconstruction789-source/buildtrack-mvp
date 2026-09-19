@@ -25,6 +25,7 @@ export default function HouseHandoverView({
   const [isSelectModalOpen, setIsSelectModalOpen] = useState(false);
   const [isCertificateModalOpen, setIsCertificateModalOpen] = useState(false);
   const [assigningDefect, setAssigningDefect] = useState<any>(null);
+  const [contractorSearchQuery, setContractorSearchQuery] = useState('');
   const [defectSearchQuery, setDefectSearchQuery] = useState('');
   const [hideCompletedDefects, setHideCompletedDefects] = useState(false);
   
@@ -217,11 +218,11 @@ export default function HouseHandoverView({
     );
   };
 
-  const canAssignContractor = ['Admin', 'Project Planner', 'Procurement'].includes(currentUserRole) && !isHandoverCompleted;
+  const canAssignContractor = ['Admin', 'Project Planner', 'Procurement', 'Foreman'].includes(currentUserRole) && !isHandoverCompleted;
 
   const handleSaveDefectContractor = async (defectId: string, contractorId: string | null) => {
     if (!canAssignContractor) {
-      showAlert('ไม่มีสิทธิ์ระบุช่าง', 'เฉพาะผู้ใช้งานบทบาท Admin, Project Planner, หรือ Procurement เท่านั้นที่สามารถระบุช่างได้ครับ', 'warning');
+      showAlert('ไม่มีสิทธิ์ระบุช่าง', 'เฉพาะผู้ใช้งานบทบาท Admin, Project Planner, Procurement หรือ Foreman เท่านั้นที่สามารถระบุช่างได้ครับ', 'warning');
       return;
     }
     setIsSubmitting(true);
@@ -638,7 +639,7 @@ export default function HouseHandoverView({
             </button>
           )}
 
-          {['Admin', 'Project Planner', 'Owner'].includes(currentUserRole) && Object.keys(defectScheduleInputs).length > 0 && (
+          {['Admin', 'Project Planner', 'Owner', 'Foreman'].includes(currentUserRole) && Object.keys(defectScheduleInputs).length > 0 && (
             <button onClick={handleSaveDefectSchedules} disabled={isSubmitting} className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold px-4 py-2 rounded-xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer">
               {isSubmitting ? <Loader2 className="animate-spin" size={16}/> : 'บันทึกแผนซ่อม (Save)'}
             </button>
@@ -919,7 +920,7 @@ export default function HouseHandoverView({
 
                             {/* Col 3: Start (140px) */}
                             <td className="sticky left-[360px] bg-white z-20 border-b border-r border-black/5 p-2 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.08)] align-middle">
-                               {['Project Planner', 'Admin', 'Owner'].includes(currentUserRole) && !isHandoverCompleted ? (
+                               {['Project Planner', 'Admin', 'Owner', 'Foreman'].includes(currentUserRole) && !isHandoverCompleted ? (
                                   <div className="flex flex-col items-center gap-1">
                                      <span className="text-[8px] font-bold uppercase text-slate-400">Plan:</span>
                                      <input type="date" value={defectScheduleInputs[defect.id]?.start || (defect.planned_start ? defect.planned_start.split('T')[0] : '')}
@@ -954,7 +955,7 @@ export default function HouseHandoverView({
 
                             {/* Col 4: Duration (100px) */}
                             <td className="sticky left-[500px] bg-white z-20 border-b border-r border-black/5 p-2 text-center w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px] align-middle">
-                               {['Project Planner', 'Admin', 'Owner'].includes(currentUserRole) && !isHandoverCompleted ? (
+                               {['Project Planner', 'Admin', 'Owner', 'Foreman'].includes(currentUserRole) && !isHandoverCompleted ? (
                                   <div className="flex flex-col items-center gap-1">
                                      <span className="text-[8px] font-bold uppercase text-pink-500">Days:</span>
                                      <input type="number" min="1" placeholder="วัน" value={defectScheduleInputs[defect.id]?.duration || (dStartTs && dEndTs ? Math.ceil((dEndTs - dStartTs) / 86400000) + 1 : '')} 
@@ -982,7 +983,7 @@ export default function HouseHandoverView({
 
                             {/* Col 5: Finish (140px) */}
                             <td className="sticky left-[600px] bg-white z-20 border-b border-r border-black/5 p-2 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[6px_0_10px_-6px_rgba(0,0,0,0.1)] align-middle">
-                               {['Project Planner', 'Admin', 'Owner'].includes(currentUserRole) && !isHandoverCompleted ? (
+                               {['Project Planner', 'Admin', 'Owner', 'Foreman'].includes(currentUserRole) && !isHandoverCompleted ? (
                                   <div className="flex flex-col items-center gap-1">
                                      <span className="text-[8px] font-bold uppercase text-slate-400">Plan:</span>
                                      <input type="date" value={defectScheduleInputs[defect.id]?.end || (defect.planned_end ? defect.planned_end.split('T')[0] : '')} 
@@ -1072,7 +1073,10 @@ export default function HouseHandoverView({
                 <HardHat size={20} />
                 <h3 className="font-bold text-base text-slate-800">ระบุช่าง / ผู้รับเหมา</h3>
               </div>
-              <button onClick={() => setAssigningDefect(null)} className="p-1 hover:bg-slate-100 rounded-full text-slate-400 cursor-pointer">
+              <button 
+                onClick={() => { setAssigningDefect(null); setContractorSearchQuery(''); }} 
+                className="p-1 hover:bg-slate-100 rounded-full text-slate-400 cursor-pointer"
+              >
                 <X size={18} />
               </button>
             </div>
@@ -1081,38 +1085,83 @@ export default function HouseHandoverView({
               รายการ: <span className="text-slate-800 font-extrabold">{taskTemplates?.find((t: any) => t.id === (assigningDefect.task_id || assigningDefect.task_template_id))?.task_name || assigningDefect.description}</span>
             </p>
 
-            <div className="max-h-[300px] overflow-y-auto space-y-2 mb-4 custom-scrollbar pr-1">
-              <button 
-                type="button"
-                onClick={() => handleSaveDefectContractor(assigningDefect.id, null)}
-                className={`w-full p-3 rounded-xl border text-left text-xs font-bold transition-all flex justify-between items-center cursor-pointer ${!assigningDefect.contractor_id ? 'border-rose-300 bg-rose-50 text-rose-700' : 'border-slate-200 hover:bg-slate-50 text-slate-600'}`}
-              >
-                <span>🚫 ไม่ระบุช่าง (ยังไม่มอบหมาย)</span>
-                {!assigningDefect.contractor_id && <CheckCircle size={16} className="text-rose-600" />}
-              </button>
+            {/* 🔍 Search Input for Contractors */}
+            <div className="relative mb-3">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                <Search size={15} />
+              </div>
+              <input
+                type="text"
+                className="w-full pl-9 pr-8 py-2 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 font-medium transition-colors"
+                placeholder="ค้นหาชื่อช่าง, ความเชี่ยวชาญ หรือเบอร์โทร..."
+                value={contractorSearchQuery}
+                onChange={(e) => setContractorSearchQuery(e.target.value)}
+                autoFocus
+              />
+              {contractorSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setContractorSearchQuery('')}
+                  className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
 
-              {(contractors || []).map((c: any) => {
-                const isSelected = assigningDefect.contractor_id === c.id;
-                return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => handleSaveDefectContractor(assigningDefect.id, c.id)}
-                    className={`w-full p-3 rounded-xl border text-left text-xs font-bold transition-all flex justify-between items-center cursor-pointer ${isSelected ? 'border-purple-500 bg-purple-50 text-purple-800' : 'border-slate-200 hover:bg-slate-50 text-slate-700'}`}
-                  >
-                    <div>
-                      <div className="font-extrabold text-sm">{c.name}</div>
-                      <div className="text-[10px] font-semibold text-slate-400">{c.specialization || 'ผู้รับเหมาทั่วไป'} {c.phone ? `• ${c.phone}` : ''}</div>
+            <div className="max-h-[300px] overflow-y-auto space-y-2 mb-4 custom-scrollbar pr-1">
+              {!contractorSearchQuery && (
+                <button 
+                  type="button"
+                  onClick={() => { handleSaveDefectContractor(assigningDefect.id, null); setContractorSearchQuery(''); }}
+                  className={`w-full p-3 rounded-xl border text-left text-xs font-bold transition-all flex justify-between items-center cursor-pointer ${!assigningDefect.contractor_id ? 'border-rose-300 bg-rose-50 text-rose-700' : 'border-slate-200 hover:bg-slate-50 text-slate-600'}`}
+                >
+                  <span>🚫 ไม่ระบุช่าง (ยังไม่มอบหมาย)</span>
+                  {!assigningDefect.contractor_id && <CheckCircle size={16} className="text-rose-600" />}
+                </button>
+              )}
+
+              {(() => {
+                const q = contractorSearchQuery.toLowerCase().trim();
+                const filtered = (contractors || []).filter((c: any) => {
+                  if (!q) return true;
+                  const nameMatch = (c.name || '').toLowerCase().includes(q);
+                  const specMatch = (c.specialization || '').toLowerCase().includes(q);
+                  const phoneMatch = (c.phone || '').toLowerCase().includes(q);
+                  return nameMatch || specMatch || phoneMatch;
+                });
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="text-center py-6 text-slate-400 text-xs font-bold bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                      ไม่พบข้อมูลช่างที่ตรงกับคำค้นหา &ldquo;{contractorSearchQuery}&rdquo;
                     </div>
-                    {isSelected && <CheckCircle size={16} className="text-purple-600" />}
-                  </button>
-                );
-              })}
+                  );
+                }
+
+                return filtered.map((c: any) => {
+                  const isSelected = assigningDefect.contractor_id === c.id;
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => { handleSaveDefectContractor(assigningDefect.id, c.id); setContractorSearchQuery(''); }}
+                      className={`w-full p-3 rounded-xl border text-left text-xs font-bold transition-all flex justify-between items-center cursor-pointer ${isSelected ? 'border-purple-500 bg-purple-50 text-purple-800' : 'border-slate-200 hover:bg-slate-50 text-slate-700'}`}
+                    >
+                      <div>
+                        <div className="font-extrabold text-sm">{c.name}</div>
+                        <div className="text-[10px] font-semibold text-slate-400">{c.specialization || 'ผู้รับเหมาทั่วไป'} {c.phone ? `• ${c.phone}` : ''}</div>
+                      </div>
+                      {isSelected && <CheckCircle size={16} className="text-purple-600" />}
+                    </button>
+                  );
+                });
+              })()}
             </div>
 
             <div className="flex justify-end pt-2 border-t border-slate-100">
               <button 
-                onClick={() => setAssigningDefect(null)}
+                onClick={() => { setAssigningDefect(null); setContractorSearchQuery(''); }}
                 className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-4 py-2 rounded-xl text-xs cursor-pointer"
               >
                 ยกเลิก

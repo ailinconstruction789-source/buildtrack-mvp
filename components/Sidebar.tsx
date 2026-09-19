@@ -1,6 +1,8 @@
 'use client';
-import React, { useState } from 'react';
-import { LayoutDashboard, ClipboardList, Home, PieChart, BarChartHorizontal, TrendingUp, Building2, Users, Lightbulb, Grid, Calendar, Activity, ShieldAlert, PlusCircle, MapIcon, Building, DollarSign, Monitor, FileSpreadsheet, Wrench, FolderOpen, Smartphone, ChevronRight, Gift } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { LayoutDashboard, ClipboardList, Home, PieChart, BarChartHorizontal, TrendingUp, Building2, Users, Lightbulb, Grid, Calendar, Activity, ShieldAlert, PlusCircle, MapIcon, Building, DollarSign, Monitor, FileSpreadsheet, Wrench, FolderOpen, Smartphone, ChevronRight, Gift, CalendarDays } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
+import Link from 'next/link';
 
 const Sidebar = React.memo(({
   activeView,
@@ -20,6 +22,35 @@ const Sidebar = React.memo(({
   isMobileLayout
 }: any) => {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
+  const [todayVisitsCount, setTodayVisitsCount] = useState<number>(0);
+
+  useEffect(() => {
+    if (!isSales && !isAdmin && !isOwner) return;
+    const fetchTodayVisits = async () => {
+      try {
+        const today = new Date();
+        const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+        const { data } = await supabase
+          .from('leads')
+          .select('id, appointment_date, actual_visit_date, crm_status, status');
+        
+        if (data) {
+          const count = data.filter(l => {
+            if (!l.appointment_date || l.actual_visit_date) return false;
+            if (l.crm_status?.includes('Lost') || l.status === 'Cancelled') return false;
+            const d = new Date(l.appointment_date);
+            if (isNaN(d.getTime())) return false;
+            const dStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            return dStr === todayStr;
+          }).length;
+          setTodayVisitsCount(count);
+        }
+      } catch (e) {
+        // silent fallback
+      }
+    };
+    fetchTodayVisits();
+  }, [isSales, isAdmin, isOwner]);
 
   return (
     <aside className={`bg-slate-900 text-slate-300 flex-col justify-between hidden md:flex shrink-0 shadow-2xl z-[120] transition-all duration-300 relative ${isSidebarCollapsed ? 'w-[88px] sidebar-collapsed' : 'w-72'}`}>
@@ -66,6 +97,24 @@ const Sidebar = React.memo(({
                     <div>
                       <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3 px-2">Sales & CRM</p>
                       <nav className="space-y-1">
+                          <Link href="/sales-crm" title="Lead ส่วนกลาง (เตรียมเปิดใช้)" aria-label="Lead ส่วนกลาง (เตรียมเปิดใช้)"
+                            className={`w-full flex items-center gap-3 py-3 rounded-xl font-bold hover:bg-slate-800 hover:text-[#d4af37] ${isSidebarCollapsed ? 'justify-center px-0' : 'px-4'}`}>
+                            <Users size={18} />{!isSidebarCollapsed && <span>Lead ส่วนกลาง <span className="text-[10px] text-slate-500">เตรียมเปิดใช้</span></span>}
+                          </Link>
+                          <button 
+                            onClick={() => setView('sales-daily-visits')} 
+                            className={`w-full flex items-center justify-between px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-daily-visits' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <CalendarDays size={18} /> 
+                              <span>ตารางนัดเข้าชม (Visits)</span>
+                            </div>
+                            {todayVisitsCount > 0 && (
+                              <span className="bg-rose-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full animate-pulse shadow-sm">
+                                {todayVisitsCount}
+                              </span>
+                            )}
+                          </button>
                           <button onClick={() => setView('sales-dashboard-excel')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-dashboard-excel' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><BarChartHorizontal size={18} /> Dashboard (Excel)</button>
                           <button onClick={() => setView('sales-dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-dashboard' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><LayoutDashboard size={18} /> ระบบฝ่ายขาย (Kanban)</button>
                           <button onClick={() => setView('sales-reports')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-reports' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><TrendingUp size={18} /> รายงานสรุปยอด (Sales)</button>

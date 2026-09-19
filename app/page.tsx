@@ -302,6 +302,43 @@ export default function ConstructionApp() {
     return { icon: '🌡️', text: 'สภาพอากาศปกติ' };
   };
 
+  // 🌟 ฟังก์ชันจำลองสภาพอากาศล่วงหน้า 4 ชั่วโมง (ใช้กรณี API ภายนอกไม่ตอบสนองหรือถูกบล็อก)
+  const generateFallbackHourlyForecast = (baseHour?: number) => {
+    const currentHour = baseHour !== undefined ? baseHour : new Date().getHours();
+    const hourly = [];
+    const getHourProfile = (h: number) => {
+      const hour = h % 24;
+      if (hour >= 6 && hour < 9) return { temp: 28, icon: '🌤️', text: 'มีเมฆบางส่วน', rainProb: 10, uv: 3 };
+      if (hour >= 9 && hour < 12) return { temp: 32, icon: '☀️', text: 'ฟ้าใส แดดแรง', rainProb: 15, uv: 7 };
+      if (hour >= 12 && hour < 15) return { temp: 34, icon: '☀️', text: 'แดดแรงจัด', rainProb: 20, uv: 9 };
+      if (hour >= 15 && hour < 18) return { temp: 32, icon: '🌤️', text: 'มีเมฆบางส่วน', rainProb: 30, uv: 5 };
+      if (hour >= 18 && hour < 21) return { temp: 29, icon: '⛅', text: 'อากาศเย็นลง', rainProb: 25, uv: 0 };
+      return { temp: 26, icon: '🌙', text: 'ท้องฟ้าแจ่มใส', rainProb: 10, uv: 0 };
+    };
+
+    for (let i = 1; i <= 4; i++) {
+      const targetHour = (currentHour + i) % 24;
+      const profile = getHourProfile(targetHour);
+      hourly.push({
+        time: `${String(targetHour).padStart(2, '0')}:00`,
+        temp: profile.temp,
+        details: { icon: profile.icon, text: profile.text },
+        rainProb: profile.rainProb,
+        uv: profile.uv
+      });
+    }
+
+    const currentProfile = getHourProfile(currentHour);
+    let alert = null;
+    if (currentProfile.uv >= 8) {
+      alert = { type: 'uv-high', msg: '🔴 UV รุนแรงมาก! หลีกเลี่ยงการตากแดดต่อเนื่อง' };
+    } else if (currentProfile.uv >= 5) {
+      alert = { type: 'uv-med', msg: '🟠 แดดแรง ทาครีมกันแดดและดื่มน้ำบ่อยๆ นะครับ' };
+    }
+
+    return { hourly, currentProfile, alert };
+  };
+
   // 🌟 ฟังก์ชันดึงข้อมูลพยากรณ์และสถานที่
   useEffect(() => {
     let isMounted = true;
@@ -310,26 +347,74 @@ export default function ConstructionApp() {
 
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(async (position) => {
-        if (!isMounted) return;
+        if (!isMounted || signal.aborted) return;
         const { latitude, longitude } = position.coords;
-        try {
-          // 1. ดึงชื่อสถานที่ฟรี (Reverse Geocoding)
-          const locRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=th`, { signal });
-          const locData = await locRes.json();
-          const placeName = locData.locality || locData.city || "หน้าไซต์งาน";
 
-          // 2. ดึงสภาพอากาศ (ปัจจุบัน + ล่วงหน้ารายชั่วโมง + UV)
-          const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code&hourly=temperature_2m,weather_code,precipitation_probability,uv_index&timezone=auto&forecast_days=1`, { signal });
+        // 1. ดึงชื่อสถานที่จริงของผู้ใช้งาน (Reverse Geocoding)
+        let placeName = "";
+        try {
+          const locRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=th`, { signal });
+          if (locRes.ok) {
+            const locData = await locRes.json();
+            const district = locData.localityInfo?.administrative?.find((a: any) => a.adminLevel === 6)?.name || locData.locality || locData.city || '';
+            const province = locData.localityInfo?.administrative?.find((a: any) => a.adminLevel === 4)?.name || locData.principalSubdivision || '';
+            if (district && province && district !== province) {
+              placeName = `${district}, ${province}`;
+            } else {
+              placeName = district || province || '';
+            }
+          }
+        } catch {
+          // หาก BigDataCloud ไม่ตอบสนอง
+        }
+
+        // หากยังไม่ได้ชื่อสถานที่ ให้ลองสำรองด้วย Nominatim (OpenStreetMap)
+        if (!placeName && !signal.aborted) {
+          try {
+            const osmRes = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json&accept-language=th`, { signal });
+            if (osmRes.ok) {
+              const osmData = await osmRes.json();
+              const addr = osmData.address;
+              const d = addr?.district || addr?.city_district || addr?.suburb || addr?.county || addr?.city || '';
+              const p = addr?.province || addr?.state || '';
+              if (d && p && d !== p) {
+                placeName = `${d}, ${p}`;
+              } else {
+                placeName = d || p || '';
+              }
+            }
+          } catch {
+            // สำรองไม่สำเร็จ
+          }
+        }
+
+        // ชื่อหมุดสถานที่จริง (ถ้าดึงได้) หรือชื่อโครงการที่เลือกอยู่
+        const finalLocation = placeName || (selectedProject?.name ? `โครงการ ${selectedProject.name}` : "ตำแหน่งปัจจุบัน");
+
+        if (!isMounted || signal.aborted) return;
+
+        // 2. ดึงสภาพอากาศ (ปัจจุบัน + ล่วงหน้ารายชั่วโมง + UV)
+        try {
+          const weatherController = new AbortController();
+          const weatherTimeout = setTimeout(() => weatherController.abort(), 4000);
+          const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code&hourly=temperature_2m,weather_code,precipitation_probability,uv_index&timezone=auto&forecast_days=2`, { signal: weatherController.signal });
+          clearTimeout(weatherTimeout);
+
+          if (!weatherRes.ok) throw new Error(`Open-Meteo HTTP ${weatherRes.status}`);
           const wData = await weatherRes.json();
 
           // คำนวณพยากรณ์ 4 ชั่วโมงข้างหน้า
           const currentHour = new Date().getHours();
-          const nextHours = wData.hourly?.time?.slice(currentHour + 1, currentHour + 5).map((time: string, idx: number) => ({
+          let nextHours = wData.hourly?.time?.slice(currentHour + 1, currentHour + 5).map((time: string, idx: number) => ({
             time: new Date(time).getHours() + ":00",
             temp: Math.round(wData.hourly.temperature_2m[currentHour + 1 + idx]),
             details: getWeatherDetails(wData.hourly.weather_code[currentHour + 1 + idx]),
             rainProb: wData.hourly.precipitation_probability[currentHour + 1 + idx]
           })) || [];
+
+          if (!nextHours || nextHours.length < 4) {
+            nextHours = generateFallbackHourlyForecast(currentHour).hourly;
+          }
 
           // ระบบเตือนภัยหน้างาน (UV & Rain)
           const currentUV = wData.hourly?.uv_index?.[currentHour] || 0;
@@ -342,7 +427,7 @@ export default function ConstructionApp() {
 
           if (isMounted) {
             setWeatherInfo({
-              location: placeName,
+              location: finalLocation,
               currentTemp: Math.round(wData.current?.temperature_2m || 0),
               currentDetails: getWeatherDetails(wData.current?.weather_code || 0),
               hourly: nextHours,
@@ -350,38 +435,37 @@ export default function ConstructionApp() {
             });
           }
         } catch (e: any) {
-          if (e?.name !== 'AbortError') {
-            console.error("ดึงข้อมูลอากาศไม่สำเร็จ:", e);
-            if (isMounted) {
-              setWeatherInfo({
-                location: "ข้อมูลไม่พร้อม",
-                currentTemp: 0,
-                currentDetails: { icon: '🌤️', text: 'ไม่สามารถดึงข้อมูลได้' },
-                hourly: [],
-                alert: null
-              });
-            }
+          if (isMounted) {
+            const fallbackData = generateFallbackHourlyForecast();
+            setWeatherInfo({
+              location: finalLocation,
+              currentTemp: fallbackData.currentProfile.temp,
+              currentDetails: { icon: fallbackData.currentProfile.icon, text: fallbackData.currentProfile.text },
+              hourly: fallbackData.hourly,
+              alert: fallbackData.alert
+            });
           }
         }
       }, (error) => {
         if (!isMounted) return;
-        console.warn("Geolocation access denied or failed:", error);
+        const fallbackData = generateFallbackHourlyForecast();
         setWeatherInfo({
-          location: "Bangkok (ค่าเริ่มต้น)",
-          currentTemp: 30,
-          currentDetails: { icon: '☀️', text: 'ไม่ได้ระบุตำแหน่ง' },
-          hourly: [],
-          alert: null
+          location: selectedProject?.name ? `โครงการ ${selectedProject.name}` : "ตำแหน่งปัจจุบัน",
+          currentTemp: fallbackData.currentProfile.temp,
+          currentDetails: { icon: fallbackData.currentProfile.icon, text: fallbackData.currentProfile.text },
+          hourly: fallbackData.hourly,
+          alert: fallbackData.alert
         });
       }, { timeout: 10000, maximumAge: 60000 });
     } else {
       if (isMounted) {
+        const fallbackData = generateFallbackHourlyForecast();
         setWeatherInfo({
-          location: "Bangkok (ค่าเริ่มต้น)",
-          currentTemp: 30,
-          currentDetails: { icon: '☀️', text: 'เบราว์เซอร์ไม่รองรับ GPS' },
-          hourly: [],
-          alert: null
+          location: selectedProject?.name ? `โครงการ ${selectedProject.name}` : "ตำแหน่งปัจจุบัน",
+          currentTemp: fallbackData.currentProfile.temp,
+          currentDetails: { icon: fallbackData.currentProfile.icon, text: fallbackData.currentProfile.text },
+          hourly: fallbackData.hourly,
+          alert: fallbackData.alert
         });
       }
     }
@@ -2079,6 +2163,95 @@ export default function ConstructionApp() {
     );
   };
 
+  const handleDefectAdminUndoLatest = async (defectId: string) => {
+    showConfirm(
+      'แอดมิน: ยืนยันการย้อนสถานะล่าสุด ⚠️',
+      'คุณแน่ใจหรือไม่ว่าต้องการ "ลบประวัติการอัปเดตล่าสุด" ของรายการแจ้งซ่อมนี้? ระบบจะย้อนสถานะกลับไปยังประวัติก่อนหน้า (Undo)',
+      async () => {
+        setIsSending(true);
+        try {
+          const { data: currentUpdates } = await supabase.from('defect_updates')
+            .select('*')
+            .eq('defect_id', defectId)
+            .order('created_at', { ascending: false });
+
+          if (!currentUpdates || currentUpdates.length === 0) {
+            showAlert('ข้อผิดพลาด', 'ไม่พบประวัติการอัปเดตให้ย้อนกลับ');
+            setIsSending(false);
+            return;
+          }
+
+          const latestUpdate = currentUpdates[0];
+          const previousUpdate = currentUpdates.length > 1 ? currentUpdates[1] : null;
+
+          const { error: deleteError } = await supabase.from('defect_updates')
+            .delete()
+            .eq('id', latestUpdate.id);
+
+          if (deleteError) throw deleteError;
+
+          const newProgress = previousUpdate ? previousUpdate.progress : 0;
+          await supabase.from('defects').update({ 
+            progress: newProgress,
+            status: newProgress === 100 ? 'resolved' : (newProgress === 0 ? 'reported' : 'in_progress'),
+            ...(newProgress !== 100 ? { actual_end: null } : {})
+          }).eq('id', defectId);
+
+          const { data: newUpdatesData } = await supabase.from('defect_updates')
+            .select('*')
+            .eq('defect_id', defectId)
+            .order('created_at', { ascending: true });
+          
+          setUpdates(newUpdatesData || []);
+          setProgressValue(newProgress);
+          fetchAllData();
+          showAlert('สำเร็จ ✨', 'ย้อนสถานะกลับไปยังประวัติก่อนหน้าเรียบร้อยแล้ว');
+        } catch (e: any) {
+          showAlert('Error', (e as Error).message);
+        }
+        setIsSending(false);
+      }
+    );
+  };
+
+  const handleDefectAdminResetToZero = async (defectId: string) => {
+    showConfirm(
+      'แอดมิน: ยืนยันการย้อนสถานะกลับเป็น 0% ⚠️',
+      'คุณแน่ใจหรือไม่ว่าต้องการย้อนสถานะงานนี้กลับไปเริ่มต้นใหม่ที่ 0% ? ระบบจะเคลียร์วันที่เสร็จสิ้นและลบความคืบหน้าทั้งหมด',
+      async () => {
+        setIsSending(true);
+        try {
+          const username = loggedInUser?.username || loggedInUser?.name || 'Admin';
+          await supabase.from('defect_updates').insert([{ 
+            defect_id: defectId, 
+            created_by: username, 
+            progress: 0, 
+            note: 'แอดมินย้อนความคืบหน้ากลับเป็น 0%'
+          }]);
+
+          await supabase.from('defects').update({ 
+            progress: 0,
+            status: 'in_progress',
+            actual_end: null
+          }).eq('id', defectId);
+
+          const { data } = await supabase.from('defect_updates')
+            .select('*')
+            .eq('defect_id', defectId)
+            .order('created_at', { ascending: true });
+          
+          setUpdates(data || []);
+          setProgressValue(0);
+          fetchAllData();
+          showAlert('สำเร็จ ✨', 'ย้อนสถานะเป็น 0% เรียบร้อยแล้ว');
+        } catch (e: any) {
+          showAlert('Error', (e as Error).message);
+        }
+        setIsSending(false);
+      }
+    );
+  };
+
   // 🌟 Print Export Logic 🌟
   const handleOpenExportModal = () => {
     let imgs: any[] = [];
@@ -2191,6 +2364,9 @@ export default function ConstructionApp() {
   const isTaskCompleted = lastUpd?.progress === 100 && (lastUpd?.action === 'QC อนุมัติ' || lastUpd?.action === 'QC อนุมัติผ่าน');
   const currentAssignment = assignments.slice().reverse().find(a => String(a.plot_id) === String(selectedPlot?.id) && String(a.task_template_id) === String(selectedTask?.id));
   const isLockedForForeman = isForeman && !currentAssignment;
+
+  const activeDefect = (defects || []).find((d: any) => String(d.id) === String(selectedDefect?.id)) || selectedDefect;
+  const isLockedForDefectForeman = isForeman && !(activeDefect?.contractor_id || activeDefect?.contractor_name || activeDefect?.contractor);
 
   const plotBounds: { [key: string]: any } = {};
   mapGrid.filter(c => c.type === 'plot').forEach(c => {
@@ -2804,7 +2980,7 @@ export default function ConstructionApp() {
                       {/* 🌟 ปรับตรงนี้: จัดข้อความให้โชว์ทั้ง สถานที่ และ สภาพอากาศปัจจุบันคู่กับอุณหภูมิ */}
                       <div className="flex flex-col justify-center text-left">
                         {/* บรรทัดบน: โชว์หมุดพิกัดสถานที่ */}
-                        <span className="text-[9px] font-black leading-none text-sky-600 truncate max-w-[100px]">📍 {weatherInfo.location}</span>
+                        <span className="text-[9px] font-black leading-none text-sky-600 truncate max-w-[140px] sm:max-w-[180px]" title={weatherInfo.location}>📍 {weatherInfo.location}</span>
                         {/* บรรทัดล่าง: โชว์คำบอกสภาพอากาศปัจจุบัน + อุณหภูมิ */}
                         <span className="text-xs font-black leading-tight mt-0.5 whitespace-nowrap">
                           {weatherInfo.currentDetails.text} {weatherInfo.currentTemp}°C
@@ -2844,10 +3020,10 @@ export default function ConstructionApp() {
                     <div className="border-t border-slate-100 pt-3">
                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">พยากรณ์ 4 ชม. ข้างหน้า</p>
                       <div className="flex justify-between gap-1">
-                        {weatherInfo.hourly.map((h: any, i: number) => (
+                        {(weatherInfo.hourly && weatherInfo.hourly.length > 0 ? weatherInfo.hourly : generateFallbackHourlyForecast().hourly).map((h: any, i: number) => (
                           <div key={i} className="flex flex-col items-center justify-center bg-slate-50 rounded-lg p-2 flex-1 border border-slate-100">
                             <span className="text-[10px] font-bold text-slate-500">{h.time}</span>
-                            <span className="text-lg my-1">{h.details.icon}</span>
+                            <span className="text-lg my-1">{h.details?.icon || '🌤️'}</span>
                             <span className="text-[11px] font-black text-slate-700">{h.temp}°</span>
                             {h.rainProb > 20 && <span className="text-[8px] font-bold text-blue-500 mt-0.5">{h.rainProb}%</span>}
                           </div>
@@ -3827,12 +4003,13 @@ export default function ConstructionApp() {
                 />
               </div>
 
-              {/* 📊 View: Sales Dashboard */}
-              {view === 'sales-dashboard' && (
+              {/* 📊 View: Sales Dashboard & Daily Visits */}
+              {(view === 'sales-dashboard' || view === 'sales-daily-visits') && (
                 <SalesKanban
                   project={selectedProject}
                   projects={projects}
                   user={loggedInUser}
+                  initialTab={view === 'sales-daily-visits' ? 'daily_visits' : 'lead_tracker'}
                   onBack={() => { setView('dashboard'); setSelectedProject(null); }}
                 />
               )}
@@ -3970,12 +4147,12 @@ export default function ConstructionApp() {
 
                   isTaskCompleted={selectedDefect.progress === 100} handleOpenExportModal={handleOpenExportModal}
                   defects={defects} loggedInUser={loggedInUser}
-                  isLockedForForeman={isLockedForForeman} isSiteEngineer={isSiteEngineer}
+                  isLockedForForeman={isLockedForDefectForeman} isSiteEngineer={isSiteEngineer}
                   isPendingSE={isPendingSE} handleReviewAction={handleReviewAction} isQC={isQC}
                   isPendingQC={isPendingQC} isProcurement={isProcurement} isOwner={isOwner}
                   handleSendPost={handleSendDefectPost} 
-                  handleAdminUndoLatest={handleAdminUndoLatest}
-                  handleAdminResetToZero={handleAdminResetToZero}
+                  handleAdminUndoLatest={handleDefectAdminUndoLatest}
+                  handleAdminResetToZero={handleDefectAdminResetToZero}
                 />
               )}
 
@@ -4244,8 +4421,8 @@ export default function ConstructionApp() {
                 </>
               )}
               {(isAdmin || isOwner || isSales) && (
-                <button onClick={() => setShowMobileSalesMenu(true)} className={`flex flex-col items-center p-2 rounded-xl w-16 ${['sales-dashboard-excel', 'sales-dashboard', 'sales-reports', 'sales-summary-table', 'sales-promotions', 'agent-performance', 'sales-intelligence'].includes(activeView) ? 'text-[#d4af37]' : 'text-slate-400 hover:text-slate-600'}`}>
-                  <Building2 size={20} className={['sales-dashboard-excel', 'sales-dashboard', 'sales-reports', 'sales-summary-table', 'sales-promotions', 'agent-performance', 'sales-intelligence'].includes(activeView) ? 'fill-[#d4af37]/20' : ''} />
+                <button onClick={() => setShowMobileSalesMenu(true)} className={`flex flex-col items-center p-2 rounded-xl w-16 ${['sales-dashboard-excel', 'sales-dashboard', 'sales-daily-visits', 'sales-reports', 'sales-summary-table', 'sales-promotions', 'agent-performance', 'sales-intelligence'].includes(activeView) ? 'text-[#d4af37]' : 'text-slate-400 hover:text-slate-600'}`}>
+                  <Building2 size={20} className={['sales-dashboard-excel', 'sales-dashboard', 'sales-daily-visits', 'sales-reports', 'sales-summary-table', 'sales-promotions', 'agent-performance', 'sales-intelligence'].includes(activeView) ? 'fill-[#d4af37]/20' : ''} />
                   <span className="text-[9px] font-black mt-1">ฝ่ายขาย</span>
                 </button>
               )}
@@ -4269,6 +4446,10 @@ export default function ConstructionApp() {
               </button>
             </div>
             <div className="grid grid-cols-2 gap-4">
+              <button onClick={() => { setView('sales-daily-visits'); setShowMobileSalesMenu(false); }} className={`flex flex-col items-center justify-center p-5 rounded-2xl border-2 transition-all ${activeView === 'sales-daily-visits' ? 'border-[#d4af37] bg-[#d4af37]/10' : 'border-slate-100 bg-slate-50 hover:border-slate-200'}`}>
+                <CalendarDays size={28} className="text-[#d4af37] mb-3" />
+                <span className="text-xs font-bold text-slate-700 text-center">ตารางนัด<br/>เข้าชม (Visits)</span>
+              </button>
               <button onClick={() => { setView('sales-dashboard-excel'); setShowMobileSalesMenu(false); }} className={`flex flex-col items-center justify-center p-5 rounded-2xl border-2 transition-all ${activeView === 'sales-dashboard-excel' ? 'border-[#d4af37] bg-[#d4af37]/10' : 'border-slate-100 bg-slate-50 hover:border-slate-200'}`}>
                 <BarChartHorizontal size={28} className="text-[#d4af37] mb-3" />
                 <span className="text-xs font-bold text-slate-700 text-center">Dashboard<br/>(Excel)</span>

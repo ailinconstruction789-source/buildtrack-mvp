@@ -10,6 +10,7 @@ import SalesIntelligence from './SalesIntelligence';
 import AdminDocsManager from './AdminDocsManager';
 import LeadTrackerView from './LeadTrackerView';
 import SalesFunnelAnalytics from './SalesFunnelAnalytics';
+import DailyVisitsScheduleView from './DailyVisitsScheduleView';
 import { parseExcelRowToLead, downloadLeadTrackerTemplate, ParsedLeadRow } from '@/lib/salesImportHelper';
 
 const initialLeads: any[] = [];
@@ -63,7 +64,19 @@ const formatPhoneNumber = (value: string) => {
   return val;
 };
 
-export default function SalesKanban({ project: externalProject, projects, user, onBack }: { project?: any, projects?: any[], user?: any, onBack?: () => void }) {
+export default function SalesKanban({ 
+  project: externalProject, 
+  projects, 
+  user, 
+  initialTab = 'daily_visits',
+  onBack 
+}: { 
+  project?: any, 
+  projects?: any[], 
+  user?: any, 
+  initialTab?: string,
+  onBack?: () => void 
+}) {
   const [internalProject, setInternalProject] = useState<any>(externalProject || null);
 
   useEffect(() => {
@@ -74,7 +87,7 @@ export default function SalesKanban({ project: externalProject, projects, user, 
 
   const [leads, setLeads] = useState(initialLeads);
   const [rawLeads, setRawLeads] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState<'map' | 'list' | 'pricing' | 'booked' | 'transferred' | 'reports' | 'intelligence' | 'admin_docs' | 'lead_tracker' | 'funnel_analytics'>('lead_tracker');
+  const [activeTab, setActiveTab] = useState<'map' | 'list' | 'pricing' | 'booked' | 'transferred' | 'reports' | 'intelligence' | 'admin_docs' | 'lead_tracker' | 'funnel_analytics' | 'daily_visits'>((initialTab as any) || 'daily_visits');
   const [search, setSearch] = useState('');
   
   const [panelState, setPanelState] = useState<{type: 'default' | 'booking' | 'customer' | 'new-customer', plotId: string, lead: any}>({ type: 'default', plotId: '', lead: null });
@@ -533,6 +546,21 @@ export default function SalesKanban({ project: externalProject, projects, user, 
   const bookedLeads = sortLeadsByPlot(leads.filter(l => ['Reserved', 'Contracted', 'DownPayment', 'DocumentPrep', 'LoanProcessing', 'Approved'].includes(l.status)));
   const transferredLeads = sortLeadsByPlot(leads.filter(l => ['Transferred', 'Handover'].includes(l.status)));
 
+  // Count today's scheduled visits
+  const todayVisitsCount = React.useMemo(() => {
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    return rawLeads.filter(l => {
+      if (!l.appointment_date) return false;
+      const isLost = l.crm_status?.includes('Lost') || l.status === 'Cancelled';
+      if (isLost || l.actual_visit_date) return false;
+      const d = new Date(l.appointment_date);
+      if (isNaN(d.getTime())) return false;
+      const dStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      return dStr === todayStr;
+    }).length;
+  }, [rawLeads]);
+
   const handleUpdateTransferDate = async (leadId: string, newDate: string) => {
     // Optimistic UI update
     setLeads(prev => prev.map(l => l.id === leadId ? { ...l, expectedTransferDate: newDate } : l));
@@ -943,6 +971,18 @@ export default function SalesKanban({ project: externalProject, projects, user, 
       <div className="px-4 md:px-8 pt-4 md:pt-6 pb-2 border-b border-gray-200 bg-white flex flex-col lg:flex-row lg:items-center justify-between gap-4 lg:gap-0">
         <div className="flex gap-4 md:gap-8 overflow-x-auto w-full lg:w-auto pb-1 no-scrollbar shrink-0">
           <button 
+            onClick={() => setActiveTab('daily_visits')}
+            className={`pb-4 px-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'daily_visits' ? 'border-rose-600 text-rose-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+          >
+            <Calendar size={18} className={activeTab === 'daily_visits' ? 'text-rose-600' : ''} />
+            <span>📅 ตารางนัดเข้าชม</span>
+            {todayVisitsCount > 0 && (
+              <span className="bg-rose-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full animate-pulse shadow-sm">
+                {todayVisitsCount}
+              </span>
+            )}
+          </button>
+          <button 
             onClick={() => setActiveTab('lead_tracker')}
             className={`pb-4 px-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'lead_tracker' ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
           >
@@ -1036,6 +1076,27 @@ export default function SalesKanban({ project: externalProject, projects, user, 
         {/* GLOBAL WRAPPER */}
         <div className="h-full bg-white rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.02)] border border-gray-100 flex overflow-hidden relative">
           <div className="flex-1 h-full relative min-w-0 flex flex-col">
+            {/* DAILY VISITS SCHEDULE TAB */}
+            {activeTab === 'daily_visits' && (
+              <div className="h-full overflow-y-auto bg-slate-50">
+                <DailyVisitsScheduleView
+                  leads={rawLeads}
+                  plots={projectPlotsData}
+                  projects={projects}
+                  selectedProjectName={project?.name}
+                  user={user}
+                  onRefresh={fetchData}
+                  onSelectPlotForBooking={(plotId, lead) => {
+                    setActiveTab('map');
+                    handlePlotClick(plotId, 'Available', lead);
+                  }}
+                  onOpenAddLeadModal={() => {
+                    setActiveTab('lead_tracker');
+                  }}
+                />
+              </div>
+            )}
+
             {/* LEAD TRACKER TAB (Ailin Funnel System) */}
             {activeTab === 'lead_tracker' && (
               <div className="h-full overflow-y-auto bg-slate-50">
