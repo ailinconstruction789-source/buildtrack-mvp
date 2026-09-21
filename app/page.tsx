@@ -13,6 +13,7 @@ const HouseDetailView = dynamic(() => import('@/components/HouseDetailView'));
 const TaskProgressView = dynamic(() => import('@/components/TaskProgressView'));
 const DefectProgressView = dynamic(() => import('@/components/DefectProgressView'));
 const OwnerAnalyticsDashboard = dynamic(() => import('@/components/OwnerAnalyticsDashboard'));
+const DailyActivityHub = dynamic(() => import('@/components/DailyActivityHub'));
 const SalesReportsView = dynamic(() => import('@/components/sales/SalesReportsView'));
 const SalesDashboardExcelStyle = dynamic(() => import('@/components/sales/SalesDashboardExcelStyle'));
 const SalesIntelligenceView = dynamic(() => import('@/components/sales/SalesIntelligenceView'));
@@ -38,7 +39,7 @@ import {
   LayoutDashboard, Map as MapIcon, Truck, ChevronRight, ClipboardList, Loader2,
   Send, Camera, CheckCircle, XCircle, UserCog, X, Maximize2, HardHat, PlusCircle, Settings, Building, FolderOpen, Users, Trash2, Search, Filter, LogOut, AlertTriangle, Eraser, Grid, Paintbrush, Clock, SortAsc,
   UserPlus, Phone, CalendarDays, Wrench, FileSpreadsheet, Bell, CalendarClock, TrendingUp, AlertCircle, BarChartHorizontal, Save, Calendar, Smartphone, Monitor, ZoomIn, ZoomOut,
-  PieChart, Home, Activity, Download, Copy, Pickaxe, ShieldAlert, Printer, CheckSquare, Square, ImageIcon, Tag, Hammer, UserCheck, DollarSign, ArrowLeft, Key, Ban, Edit2, Check, Plus, Upload, Calculator, ChevronDown, ChevronUp, Lightbulb, Building2, Gift, Award, MessageSquare
+  PieChart, Home, Activity, Download, Copy, Pickaxe, ShieldAlert, Printer, CheckSquare, Square, ImageIcon, Tag, Hammer, UserCheck, DollarSign, ArrowLeft, Key, Ban, Edit2, Check, Plus, Upload, Calculator, ChevronDown, ChevronUp, Lightbulb, Building2, Gift, Award, MessageSquare, RefreshCw
 } from 'lucide-react';
 
 // 🌟 ฟังก์ชันบีบอัดรูปภาพ Native — อยู่นอก component เพื่อไม่ให้ถูกสร้างใหม่ทุก render 🌟
@@ -129,7 +130,8 @@ export default function ConstructionApp() {
     resetHandoverCycle,
     updateInspectionRound,
     materialRequests, setMaterialRequests,
-    materialReceipts, setMaterialReceipts, inspectionQueueView, plotStatuses, plotOverallStatuses, qcSePerformance } = useBuildTrackData(loggedInUser, selectedProject?.name);
+    materialReceipts, setMaterialReceipts, inspectionQueueView, plotStatuses, plotOverallStatuses, qcSePerformance,
+    isAnalyticsLoading } = useBuildTrackData(loggedInUser, selectedProject?.name);
 
 
   const [view, setViewInternal] = useState('dashboard');
@@ -159,6 +161,8 @@ export default function ConstructionApp() {
   const [selectedTask, setSelectedTask] = useState<any>(null);
   const [isWorkerPresent, setIsWorkerPresent] = useState(true);
   const [expandedProject, setExpandedProject] = useState<string | null>(null);
+  const [reportProjectSearch, setReportProjectSearch] = useState('');
+  const [reportFilterTab, setReportFilterTab] = useState<'all' | 'delayed' | 'on_track'>('all');
 
   // Extracted: [projects,
   // Extracted: [plots,
@@ -716,9 +720,22 @@ export default function ConstructionApp() {
     }
   };
 
+  const plotOverallStatusMap = useMemo(() => {
+    const map = new Map<string, any>();
+    if (Array.isArray(plotOverallStatuses)) {
+      for (let i = 0; i < plotOverallStatuses.length; i++) {
+        const item = plotOverallStatuses[i];
+        if (item && item.plot_id) {
+          map.set(String(item.plot_id), item);
+        }
+      }
+    }
+    return map;
+  }, [plotOverallStatuses]);
+
   const getPlotOverallStatus = useCallback((plotId: any) => {
-    // 🌟 Phase 2 Optimization: Fetch pre-calculated status directly from Database View!
-    const statusRecord = plotOverallStatuses?.find((s: any) => s.plot_id === plotId);
+    // 🌟 Phase 2 Optimization: Fetch pre-calculated status directly from Map (O(1))!
+    const statusRecord = plotOverallStatusMap.get(String(plotId));
     
     if (!statusRecord) {
       return { actual: 0, planned: 0, status: 'none', label: 'รอดำเนินการ', colors: 'bg-white border-slate-300 text-slate-500' };
@@ -735,7 +752,7 @@ export default function ConstructionApp() {
     if (statusCode === 'on-track') return { actual: actualAvg, planned: plannedAvg, status: 'on-track', label: 'ตามแผน', colors: 'bg-blue-100/90 border-blue-500 text-blue-800' };
     
     return { actual: actualAvg, planned: plannedAvg, status: 'none', label: 'รอดำเนินการ', colors: 'bg-white/90 border-slate-300 text-slate-500' };
-  }, [plotOverallStatuses]);
+  }, [plotOverallStatusMap]);
 
   const getAdjacency = useCallback((x: number, y: number, type: string, plotId: string | null) => ({ hasTop: mapGrid.some(c => c.x === x && c.y === y - 1 && c.type === type && (type !== 'plot' || c.plotId === plotId)), hasBottom: mapGrid.some(c => c.x === x && c.y === y + 1 && c.type === type && (type !== 'plot' || c.plotId === plotId)), hasLeft: mapGrid.some(c => c.x === x - 1 && c.y === y && c.type === type && (type !== 'plot' || c.plotId === plotId)), hasRight: mapGrid.some(c => c.x === x + 1 && c.y === y && c.type === type && (type !== 'plot' || c.plotId === plotId)) }), [mapGrid]);
 
@@ -1564,25 +1581,82 @@ export default function ConstructionApp() {
   const handleAssignContractor = async () => {
     setIsSubmitting(true);
     try {
-      // 1. ลบของเก่าออกก่อน
-      const { error: delErr } = await supabase.from('plot_task_assignments').delete().match({ plot_id: selectedPlot.id, task_template_id: assignModal.task.id });
-      if (delErr) throw delErr;
+      // 1. ตรวจสอบว่ามีแถวใน plot_task_assignments อยู่แล้วหรือไม่
+      const { data: existing } = await supabase
+        .from('plot_task_assignments')
+        .select('*')
+        .eq('plot_id', selectedPlot.id)
+        .eq('task_template_id', assignModal.task.id)
+        .maybeSingle();
 
-      // 2. บันทึกข้อมูลใหม่ลงไป และขอข้อมูลกลับมาด้วยคำสั่ง .select()
-      const { data: newAssign, error: insErr } = await supabase.from('plot_task_assignments').insert([{
-        plot_id: selectedPlot.id,
-        task_template_id: assignModal.task.id,
-        contractor_name: assignModal.name,
-        contractor_phone: assignModal.phone
-      }]).select();
+      let updatedRecord: any = null;
 
-      if (insErr) throw insErr;
+      if (existing) {
+        // 2. ถ้ามีอยู่แล้ว ให้ UPDATE เฉพาะชื่อช่างและเบอร์โทร ห้ามลบแถวทิ้งเด็ดขาดเพื่อรักษาความคืบหน้า (current_progress) และวันที่เสร็จสิ้นไว้
+        const { data: updData, error: updErr } = await supabase
+          .from('plot_task_assignments')
+          .update({
+            contractor_name: assignModal.name,
+            contractor_phone: assignModal.phone
+          })
+          .eq('plot_id', selectedPlot.id)
+          .eq('task_template_id', assignModal.task.id)
+          .select();
 
-      // 🌟 3. อัปเดต State ตรงๆ เพื่อให้ตารางฝั่งซ้ายเปลี่ยนชื่อช่าง "ทันที" ไม่ง้อโหลดใหม่ 🌟
-      if (newAssign && newAssign.length > 0) {
+        if (updErr) throw updErr;
+        updatedRecord = updData?.[0] || { ...existing, contractor_name: assignModal.name, contractor_phone: assignModal.phone };
+      } else {
+        // 3. ถ้ายังไม่มีแถว ให้ดึงประวัติล่าสุดจาก task_updates เผื่อว่ามีการอัปเดตงานไปก่อนแล้ว
+        const { data: latestUpdates } = await supabase
+          .from('task_updates')
+          .select('*')
+          .eq('plot_id', selectedPlot.id)
+          .eq('task_template_id', assignModal.task.id)
+          .order('created_at', { ascending: true });
+
+        let currentProgress = 0;
+        let minStart = null;
+        let maxEnd = null;
+        let latestAction = null;
+        let latestRole = null;
+        let latestCreatedAt = null;
+
+        if (latestUpdates && latestUpdates.length > 0) {
+          minStart = latestUpdates[0].created_at;
+          const completed = latestUpdates.find((u: any) => u.progress === 100 || u.is_completed);
+          maxEnd = completed ? completed.created_at : null;
+          const last = latestUpdates[latestUpdates.length - 1];
+          currentProgress = last.progress || 0;
+          latestAction = last.action;
+          latestRole = last.role;
+          latestCreatedAt = last.created_at;
+        }
+
+        const { data: insData, error: insErr } = await supabase
+          .from('plot_task_assignments')
+          .insert([{
+            plot_id: selectedPlot.id,
+            task_template_id: assignModal.task.id,
+            contractor_name: assignModal.name,
+            contractor_phone: assignModal.phone,
+            current_progress: currentProgress,
+            actual_start_date: minStart,
+            actual_end_date: maxEnd,
+            latest_action: latestAction,
+            latest_role: latestRole,
+            latest_update_created_at: latestCreatedAt
+          }])
+          .select();
+
+        if (insErr) throw insErr;
+        updatedRecord = insData?.[0];
+      }
+
+      // 🌟 4. อัปเดต State ตรงๆ เพื่อให้ตารางเปลี่ยนชื่อช่างทันทีโดยไม่โหลดใหม่ 🌟
+      if (updatedRecord) {
         setAssignments(prev => {
           const filtered = prev.filter(a => !(String(a.plot_id) === String(selectedPlot.id) && String(a.task_template_id) === String(assignModal.task.id)));
-          return [...filtered, newAssign[0]];
+          return [...filtered, updatedRecord];
         });
       }
 
@@ -2585,9 +2659,85 @@ export default function ConstructionApp() {
   const readyForSalePlotsCount = useMemo(() => plots.filter(p => p.sale_status === 'ready_for_sale').length, [plots]);
   const pendingFinishesPlotsCount = useMemo(() => plots.filter(p => p.is_completed && p.progress < 100).length, [plots]);
   const customerWaitingPlotsCount = useMemo(() => plots.filter(p => p.has_customer && !p.is_completed).length, [plots]);
-  const delayedPlotsCount = useMemo(() => plots.filter(p => getPlotOverallStatus(p.id).status === 'delayed').length, [plots, latestUpdatesMap, schedules, taskTemplates]);
+  const delayedPlotsCount = useMemo(() => plots.filter(p => getPlotOverallStatus(p.id).status === 'delayed').length, [plots, getPlotOverallStatus]);
   const activePlotsCount = totalPlotsCount - completedPlotsCount;
-  const totalReworks = (allUpdatesRecord || []).filter(u => u.action.includes('แจ้งแก้ไข') || u.action.includes('ไม่อนุมัติ')).length;
+  const totalReworks = useMemo(() => (allUpdatesRecord || []).filter(u => u.action && typeof u.action === 'string' && (u.action.includes('แจ้งแก้ไข') || u.action.includes('ไม่อนุมัติ'))).length, [allUpdatesRecord]);
+
+  // 🌟 Pre-computed project summaries for Reports & Analytics (Super high performance)
+  const projectReportSummaries = useMemo(() => {
+    if (!projects || !plots) return [];
+
+    return projects.map((proj: any) => {
+      const projPlots = plots.filter((p: any) => p.project_name === proj.name);
+      const totalPlots = projPlots.length;
+      
+      let delayedCount = 0;
+      let completedCount = 0;
+      let totalPlannedSum = 0;
+      let plannedValidCount = 0;
+
+      const plotDetails = projPlots.map((plot: any) => {
+        const overall = getPlotOverallStatus(plot.id);
+        const pStatus = overall.status;
+        if (pStatus === 'delayed') delayedCount++;
+        if (pStatus === 'completed' || Number(plot.progress) >= 100) completedCount++;
+
+        let plotPlanned = overall.planned || 0;
+        const pStat = (plotStatuses || []).find((s: any) => String(s.plot_id) === String(plot.id));
+        if (pStat && pStat.planned !== undefined) {
+          plotPlanned = Number(pStat.planned);
+          totalPlannedSum += plotPlanned;
+          plannedValidCount++;
+        }
+
+        return {
+          id: plot.id,
+          name: plot.plot_name || plot.plot_number || `แปลง ${plot.id}`,
+          type: plot.type || 'บ้านเดี่ยว',
+          actualProgress: Math.round(plot.progress || 0),
+          plannedProgress: Math.round(plotPlanned),
+          status: pStatus,
+          foreman: plot.foreman || 'ไม่ระบุ'
+        };
+      });
+
+      const plannedAvg = plannedValidCount > 0 
+        ? Math.round(totalPlannedSum / plannedValidCount) 
+        : Math.round(proj.progress || 0);
+
+      const actualProgress = Math.round(proj.progress || 0);
+      const delta = actualProgress - plannedAvg;
+
+      let healthStatus: 'healthy' | 'warning' | 'critical' = 'healthy';
+      if (delayedCount > 3) {
+        healthStatus = 'critical';
+      } else if (delayedCount > 0) {
+        healthStatus = 'warning';
+      }
+
+      return {
+        name: proj.name,
+        totalPlots: proj.plotCount || totalPlots,
+        actualProgress,
+        plannedAvg,
+        delta,
+        delayedCount,
+        completedCount,
+        healthStatus,
+        plots: plotDetails
+      };
+    });
+  }, [projects, plots, plotStatuses, getPlotOverallStatus]);
+
+  const filteredProjectReportSummaries = useMemo(() => {
+    return projectReportSummaries.filter((p: any) => {
+      const matchesSearch = !reportProjectSearch || p.name.toLowerCase().includes(reportProjectSearch.toLowerCase());
+      if (!matchesSearch) return false;
+      if (reportFilterTab === 'delayed') return p.delayedCount > 0;
+      if (reportFilterTab === 'on_track') return p.delayedCount === 0;
+      return true;
+    });
+  }, [projectReportSummaries, reportProjectSearch, reportFilterTab]);
 
   let globalMinDate = Infinity; let globalMaxDate = -Infinity;
   let plotPlanStart = Infinity; let plotPlanEnd = -Infinity;
@@ -3864,252 +4014,427 @@ export default function ConstructionApp() {
               {/* 📊 🌟 View: Reports & Analytics 🌟 */}
               {view === 'reports' && (
                 <div className="animate-in slide-in-from-bottom-4 duration-500 w-full mx-auto">
+                  {/* 🌟 1. Header & Quick Actions Toolbar 🌟 */}
                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-6 sm:mb-8 gap-3 sm:gap-4">
                     <div>
-                      <h2 className="text-2xl sm:text-4xl font-black text-slate-800 italic uppercase tracking-tighter">Project Reports</h2>
-                      <p className="text-slate-500 text-[10px] sm:text-sm font-bold uppercase tracking-widest mt-0.5 sm:mt-1">ภาพรวมและประสิทธิภาพโครงการ</p>
+                      <h2 className="text-2xl sm:text-4xl font-black text-slate-800 tracking-tight flex items-center gap-3">
+                        <span>Project Reports & Analytics</span>
+                        {isAnalyticsLoading && (
+                          <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full flex items-center gap-1.5 animate-pulse">
+                            <RefreshCw size={12} className="animate-spin" /> กำลังประมวลผล...
+                          </span>
+                        )}
+                      </h2>
+                      <p className="text-slate-500 text-xs sm:text-sm font-bold uppercase tracking-wider mt-1">
+                        สรุปสถานะความคืบหน้าภาพรวมโครงการและการวิเคราะห์ระดับผู้บริหาร
+                      </p>
                     </div>
-                    <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-                      <button onClick={() => setActivityReportOpen(true)} className="bg-indigo-600 text-white font-black px-4 sm:px-6 py-2.5 sm:py-3.5 rounded-lg sm:rounded-xl hover:bg-indigo-700 transition-colors shadow-lg flex items-center justify-center gap-2 text-xs sm:text-base w-full sm:w-auto">
-                        <Printer size={16} className="sm:w-5 sm:h-5" /> Daily Activity (PDF)
+                    <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
+                      <button
+                        onClick={() => fetchOwnerAnalyticsData(true)}
+                        disabled={isAnalyticsLoading}
+                        className="bg-white border border-slate-200 text-slate-700 font-extrabold px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl hover:bg-slate-50 transition-all shadow-sm flex items-center gap-2 text-xs sm:text-sm disabled:opacity-60 cursor-pointer"
+                        title="ดึงข้อมูลล่าสุดจากเซิร์ฟเวอร์"
+                      >
+                        <RefreshCw size={15} className={`text-slate-500 ${isAnalyticsLoading ? 'animate-spin text-indigo-600' : ''}`} />
+                        <span>รีเฟรชข้อมูล</span>
                       </button>
-                      <button onClick={handleExportCSV} className="bg-emerald-600 text-white font-black px-4 sm:px-6 py-2.5 sm:py-3.5 rounded-lg sm:rounded-xl hover:bg-emerald-700 transition-colors shadow-lg flex items-center justify-center gap-2 text-xs sm:text-base w-full sm:w-auto">
-                        <Download size={16} className="sm:w-5 sm:h-5" /> สรุปโครงการ (CSV)
+                      <button
+                        onClick={() => setActivityReportOpen(true)}
+                        className="bg-indigo-600 text-white font-extrabold px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl hover:bg-indigo-700 transition-all shadow-sm flex items-center gap-2 text-xs sm:text-sm cursor-pointer"
+                      >
+                        <Printer size={15} /> Daily Activity (PDF)
+                      </button>
+                      <button
+                        onClick={handleExportCSV}
+                        className="bg-emerald-600 text-white font-extrabold px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl hover:bg-emerald-700 transition-all shadow-sm flex items-center gap-2 text-xs sm:text-sm cursor-pointer"
+                      >
+                        <Download size={15} /> สรุปโครงการ (CSV)
                       </button>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 mb-4 sm:mb-6">
-
-                    <div className="bg-white p-5 sm:p-8 rounded-2xl sm:rounded-[2rem] border border-slate-200 shadow-sm lg:col-span-2">
-                      <h3 className="font-black text-lg sm:text-xl text-slate-800 mb-4 sm:mb-6 flex items-center gap-2"><PieChart className="text-blue-600" size={20} /> สถานะแปลงบ้านทั้งหมด</h3>
-                      <div className="flex flex-col sm:flex-row gap-5 sm:gap-10 items-center">
-                        <div className="relative w-32 h-32 sm:w-40 sm:h-40 shrink-0">
-                          <svg viewBox="0 0 36 36" className="w-full h-full transform -rotate-90">
-                            <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#f1f5f9" strokeWidth="4" />
-                            {totalPlotsCount > 0 && (
-                              <>
-                                <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#10b981" strokeWidth="4" strokeDasharray={`${(completedPlotsCount / totalPlotsCount) * 100}, 100`} />
-                                <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#f43f5e" strokeWidth="4" strokeDasharray={`${(delayedPlotsCount / totalPlotsCount) * 100}, 100`} strokeDashoffset={`-${(completedPlotsCount / totalPlotsCount) * 100}`} />
-                                <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#3b82f6" strokeWidth="4" strokeDasharray={`${((totalPlotsCount - completedPlotsCount - delayedPlotsCount) / totalPlotsCount) * 100}, 100`} strokeDashoffset={`-${((completedPlotsCount + delayedPlotsCount) / totalPlotsCount) * 100}`} />
-                              </>
-                            )}
-                          </svg>
-                          <div className="absolute inset-0 flex flex-col items-center justify-center">
-                            <span className="text-2xl sm:text-3xl font-black text-slate-800">{totalPlotsCount}</span>
-                            <span className="text-[8px] sm:text-[10px] font-black uppercase text-slate-400">Total Plots</span>
+                  {/* 🌟 2. Skeleton Loading UI (During initial fetch) 🌟 */}
+                  {isAnalyticsLoading && (
+                    <div className="space-y-6 animate-pulse mb-6">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
+                        {[1, 2, 3, 4, 5, 6].map((i) => (
+                          <div key={i} className="h-28 bg-white rounded-2xl border border-slate-200 p-4 flex flex-col justify-between shadow-sm">
+                            <div className="h-3 w-1/2 bg-slate-100 rounded"></div>
+                            <div className="h-7 w-3/4 bg-slate-200 rounded"></div>
+                            <div className="h-2.5 w-1/3 bg-slate-100 rounded"></div>
                           </div>
+                        ))}
+                      </div>
+                      <div className="bg-white rounded-3xl border border-slate-200 p-6 space-y-4 shadow-sm">
+                        <div className="h-5 w-1/4 bg-slate-200 rounded"></div>
+                        <div className="h-12 w-full bg-slate-100 rounded-xl"></div>
+                        <div className="h-12 w-full bg-slate-100 rounded-xl"></div>
+                        <div className="h-12 w-full bg-slate-100 rounded-xl"></div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 🌟 3. Modern Executive KPI Ribbon 🌟 */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 mb-6">
+                    {/* Card 1: Total Plots */}
+                    <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">แปลงทั้งหมด</span>
+                        <div className="w-8 h-8 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center">
+                          <Building2 size={16} />
                         </div>
+                      </div>
+                      <div>
+                        <div className="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight">
+                          {totalPlotsCount}
+                        </div>
+                        <p className="text-[11px] font-bold text-slate-500 mt-1 truncate">
+                          {projects.length} โครงการทั้งหมด
+                        </p>
+                      </div>
+                    </div>
 
-                        <div className="flex-1 w-full space-y-3 sm:space-y-4">
-                          <div className="flex justify-between items-center bg-emerald-50 p-2.5 sm:p-3 rounded-lg sm:rounded-xl border border-emerald-100">
-                            <span className="font-bold text-xs sm:text-sm text-emerald-700 flex items-center gap-1.5 sm:gap-2"><div className="w-2 h-2 sm:w-3 sm:h-3 rounded-full bg-emerald-500"></div> เสร็จสมบูรณ์</span>
-                            <span className="font-black text-base sm:text-lg text-emerald-700">{completedPlotsCount} <span className="text-[10px] sm:text-xs text-emerald-500 font-bold">({totalPlotsCount ? Math.round((completedPlotsCount / totalPlotsCount) * 100) : 0}%)</span></span>
-                          </div>
-                          <div className="flex justify-between items-center bg-blue-50 p-2.5 sm:p-3 rounded-lg sm:rounded-xl border border-blue-100">
-                            <span className="font-bold text-xs sm:text-sm text-blue-700 flex items-center gap-1.5 sm:gap-2"><div className="w-2 h-2 sm:w-3 sm:h-3 rounded-full bg-blue-500"></div> ตามแผน</span>
-                            <span className="font-black text-base sm:text-lg text-blue-700">{totalPlotsCount - completedPlotsCount - delayedPlotsCount} <span className="text-[10px] sm:text-xs text-blue-500 font-bold">({totalPlotsCount ? Math.round(((totalPlotsCount - completedPlotsCount - delayedPlotsCount) / totalPlotsCount) * 100) : 0}%)</span></span>
-                          </div>
-                          <div className="flex justify-between items-center bg-rose-50 p-2.5 sm:p-3 rounded-lg sm:rounded-xl border border-rose-100">
-                            <span className="font-bold text-xs sm:text-sm text-rose-700 flex items-center gap-1.5 sm:gap-2"><div className="w-2 h-2 sm:w-3 sm:h-3 rounded-full bg-rose-500"></div> ล่าช้ากว่าแผน</span>
-                            <span className="font-black text-base sm:text-lg text-rose-700">{delayedPlotsCount} <span className="text-[10px] sm:text-xs text-rose-500 font-bold">({totalPlotsCount ? Math.round((delayedPlotsCount / totalPlotsCount) * 100) : 0}%)</span></span>
-                          </div>
-                          
-                          {/* 🌟 New report items */}
-                          <div className="flex justify-between items-center bg-amber-50 p-2.5 sm:p-3 rounded-lg sm:rounded-xl border border-amber-100 mt-2 border-dashed">
-                            <span className="font-bold text-xs sm:text-sm text-amber-700 flex items-center gap-1.5 sm:gap-2"><Tag size={12} className="text-amber-500" /> บ้านพร้อมขาย (หยุดเวลา)</span>
-                            <span className="font-black text-base sm:text-lg text-amber-700">{readyForSalePlotsCount} <span className="text-[10px] sm:text-xs text-amber-500 font-bold">({totalPlotsCount ? Math.round((readyForSalePlotsCount / totalPlotsCount) * 100) : 0}%)</span></span>
-                          </div>
-                          <div className="flex justify-between items-center bg-purple-50 p-2.5 sm:p-3 rounded-lg sm:rounded-xl border border-purple-100 border-dashed">
-                            <span className="font-bold text-xs sm:text-sm text-purple-700 flex items-center gap-1.5 sm:gap-2"><Hammer size={12} className="text-purple-500" /> โอนแล้ว-รอเก็บงาน</span>
-                            <span className="font-black text-base sm:text-lg text-purple-700">{pendingFinishesPlotsCount} <span className="text-[10px] sm:text-xs text-purple-500 font-bold">({totalPlotsCount ? Math.round((pendingFinishesPlotsCount / totalPlotsCount) * 100) : 0}%)</span></span>
-                          </div>
-                          <div className="flex justify-between items-center bg-pink-50 p-2.5 sm:p-3 rounded-lg sm:rounded-xl border border-pink-100 border-dashed">
-                            <span className="font-bold text-xs sm:text-sm text-pink-700 flex items-center gap-1.5 sm:gap-2"><UserCheck size={12} className="text-pink-500" /> เร่งปิดจ๊อบ (มีลูกค้า)</span>
-                            <span className="font-black text-base sm:text-lg text-pink-700">{customerWaitingPlotsCount} <span className="text-[10px] sm:text-xs text-pink-500 font-bold">({totalPlotsCount ? Math.round((customerWaitingPlotsCount / totalPlotsCount) * 100) : 0}%)</span></span>
-                          </div>
+                    {/* Card 2: On Track */}
+                    <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">ตามแผนงาน</span>
+                        <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                          <TrendingUp size={16} />
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-2xl sm:text-3xl font-black text-blue-600 tracking-tight">
+                          {Math.max(0, totalPlotsCount - completedPlotsCount - delayedPlotsCount)}
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <span className="text-[10px] font-extrabold bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded-md">
+                            {totalPlotsCount ? Math.round(((totalPlotsCount - completedPlotsCount - delayedPlotsCount) / totalPlotsCount) * 100) : 0}%
+                          </span>
+                          <span className="text-[11px] font-bold text-slate-400 truncate">ของแปลงทั้งหมด</span>
                         </div>
                       </div>
                     </div>
 
-                    <div className="bg-white p-5 sm:p-8 rounded-2xl sm:rounded-[2rem] border border-slate-200 shadow-sm flex flex-col justify-between space-y-3 sm:space-y-4">
-                      <div className="bg-slate-50 rounded-lg sm:rounded-xl p-4 sm:p-5 border border-slate-100 flex items-center gap-3 sm:gap-4">
-                        <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center"><Building size={20} className="sm:w-6 sm:h-6" /></div>
-                        <div><p className="text-[8px] sm:text-[10px] font-black uppercase tracking-widest text-slate-400">Total Projects</p><p className="text-xl sm:text-2xl font-black text-slate-800">{projects.length}</p></div>
+                    {/* Card 3: Delayed */}
+                    <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">ล่าช้ากว่าแผน</span>
+                        <div className="w-8 h-8 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center">
+                          <AlertTriangle size={16} />
+                        </div>
                       </div>
-
-                      <div className="bg-rose-50 rounded-lg sm:rounded-xl p-4 sm:p-5 border border-rose-100 flex items-center gap-3 sm:gap-4">
-                        <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-rose-200 text-rose-600 flex items-center justify-center"><ShieldAlert size={20} className="sm:w-6 sm:h-6" /></div>
-                        <div><p className="text-[8px] sm:text-[10px] font-black uppercase tracking-widest text-rose-500">Total Reworks (ตีกลับ)</p><p className="text-xl sm:text-2xl font-black text-rose-700">{totalReworks} <span className="text-xs sm:text-sm font-bold opacity-60">ครั้ง</span></p></div>
-                      </div>
-
-                      <div className="bg-slate-50 rounded-lg sm:rounded-xl p-4 sm:p-5 border border-slate-100 flex items-center gap-3 sm:gap-4">
-                        <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center"><HardHat size={20} className="sm:w-6 sm:h-6" /></div>
-                        <div><p className="text-[8px] sm:text-[10px] font-black uppercase tracking-widest text-slate-400">Foremen Team</p><p className="text-xl sm:text-2xl font-black text-slate-800">{foremenList.length}</p></div>
+                      <div>
+                        <div className="text-2xl sm:text-3xl font-black text-rose-600 tracking-tight">
+                          {delayedPlotsCount}
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded-md ${delayedPlotsCount > 0 ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-500'}`}>
+                            {totalPlotsCount ? Math.round((delayedPlotsCount / totalPlotsCount) * 100) : 0}%
+                          </span>
+                          <span className="text-[11px] font-bold text-slate-400 truncate">ต้องเร่งรัดพิเศษ</span>
+                        </div>
                       </div>
                     </div>
 
+                    {/* Card 4: Ready for Sale */}
+                    <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">บ้านพร้อมขาย</span>
+                        <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
+                          <Tag size={16} />
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-2xl sm:text-3xl font-black text-amber-600 tracking-tight">
+                          {readyForSalePlotsCount}
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <span className="text-[10px] font-extrabold bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded-md">
+                            {totalPlotsCount ? Math.round((readyForSalePlotsCount / totalPlotsCount) * 100) : 0}%
+                          </span>
+                          <span className="text-[11px] font-bold text-slate-400 truncate">หยุดนับเวลา</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Card 5: Customer Waiting */}
+                    <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">มีลูกค้ารอโอน</span>
+                        <div className="w-8 h-8 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
+                          <UserCheck size={16} />
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-2xl sm:text-3xl font-black text-purple-600 tracking-tight">
+                          {customerWaitingPlotsCount}
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <span className="text-[10px] font-extrabold bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded-md">
+                            {totalPlotsCount ? Math.round((customerWaitingPlotsCount / totalPlotsCount) * 100) : 0}%
+                          </span>
+                          <span className="text-[11px] font-bold text-slate-400 truncate">เร่งส่งมอบ</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Card 6: Total Reworks */}
+                    <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">สั่งแก้/ตีกลับ</span>
+                        <div className="w-8 h-8 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center">
+                          <ShieldAlert size={16} />
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight flex items-baseline gap-1">
+                          <span>{totalReworks}</span>
+                          <span className="text-xs font-bold text-slate-400">ครั้ง</span>
+                        </div>
+                        <p className="text-[11px] font-bold text-slate-400 mt-1 truncate">
+                          ควบคุมคุณภาพ QC
+                        </p>
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="bg-white rounded-2xl sm:rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden mb-6">
-                    <div className="p-4 sm:p-6 border-b border-slate-100"><h3 className="font-black text-lg sm:text-xl text-slate-800">ความคืบหน้าภาพรวมรายโครงการ</h3></div>
+                  {/* 🌟 4. Project Progress & Health Table 🌟 */}
+                  <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden mb-8">
+                    {/* Header & Filter Toolbar */}
+                    <div className="p-5 sm:p-6 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-50/50">
+                      <div>
+                        <h3 className="font-black text-lg sm:text-xl text-slate-800 flex items-center gap-2">
+                          <Building className="text-indigo-600" size={22} /> ความคืบหน้าภาพรวมรายโครงการ
+                        </h3>
+                        <p className="text-xs font-medium text-slate-500 mt-0.5">
+                          เปรียบเทียบผลงานจริง vs แผนงาน และประเมินสุขภาพโครงการแบบ Real-time
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
+                        {/* Search */}
+                        <div className="relative flex-1 md:w-48">
+                          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                          <input
+                            type="text"
+                            value={reportProjectSearch}
+                            onChange={(e) => setReportProjectSearch(e.target.value)}
+                            placeholder="ค้นหาโครงการ..."
+                            className="w-full pl-8 pr-3 py-1.5 text-xs font-medium bg-white rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-700"
+                          />
+                        </div>
+
+                        {/* Filter Pills */}
+                        <div className="flex items-center bg-slate-100 p-1 rounded-xl text-xs font-bold">
+                          <button
+                            onClick={() => setReportFilterTab('all')}
+                            className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${reportFilterTab === 'all' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                          >
+                            ทั้งหมด ({projects.length})
+                          </button>
+                          <button
+                            onClick={() => setReportFilterTab('delayed')}
+                            className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${reportFilterTab === 'delayed' ? 'bg-white text-rose-600 shadow-sm' : 'text-slate-500 hover:text-rose-600'}`}
+                          >
+                            มีล่าช้า ({projectReportSummaries.filter(p => p.delayedCount > 0).length})
+                          </button>
+                          <button
+                            onClick={() => setReportFilterTab('on_track')}
+                            className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${reportFilterTab === 'on_track' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500 hover:text-emerald-600'}`}
+                          >
+                            ตามแผน ({projectReportSummaries.filter(p => p.delayedCount === 0).length})
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Table */}
                     <div className="overflow-x-auto custom-scrollbar">
-                      <table className="w-full text-left border-collapse min-w-[600px]">
-                        <thead className="bg-slate-50">
-                          <tr>
-                            <th className="p-3 sm:p-4 pl-4 sm:pl-8 text-[10px] sm:text-xs font-black uppercase text-slate-500 tracking-widest w-1/3">Project Name</th>
-                            <th className="p-3 sm:p-4 text-[10px] sm:text-xs font-black uppercase text-slate-500 tracking-widest text-center">Total Plots</th>
-                            <th className="p-3 sm:p-4 text-[10px] sm:text-xs font-black uppercase text-slate-500 tracking-widest text-center">Delayed</th>
-                            <th className="p-3 sm:p-4 pr-4 sm:pr-8 text-[10px] sm:text-xs font-black uppercase text-slate-500 tracking-widest w-1/3">Overall Progress</th>
+                      <table className="w-full text-left border-collapse min-w-[720px]">
+                        <thead>
+                          <tr className="bg-slate-50/80 border-b border-slate-200 text-[11px] font-black uppercase text-slate-500 tracking-wider">
+                            <th className="py-3.5 pl-6 pr-3 w-4/12">โครงการ</th>
+                            <th className="py-3.5 px-3 text-center w-2/12">สถานะสุขภาพ</th>
+                            <th className="py-3.5 px-3 text-center w-2/12">แปลงล่าช้า</th>
+                            <th className="py-3.5 pr-6 pl-3 w-4/12">ความคืบหน้า (จริง vs แผน)</th>
                           </tr>
                         </thead>
-                        <tbody>
-                          {projects.map((proj, idx) => {
-                            const projPlots = plots.filter(p => p.project_name === proj.name);
-                            const dCount = projPlots.filter(p => getPlotOverallStatus(p.id).status === 'delayed').length;
-                            let plannedAvg = 0;
-                            if (plotStatuses && plots) {
-                               const pPlots = plots.filter((p: any) => p.project_name === proj.name);
-                               if (pPlots.length > 0) {
-                                   let totalPlanned = 0;
-                                   let validCount = 0;
-                                   pPlots.forEach((p: any) => {
-                                       const pStat = plotStatuses.find((s: any) => String(s.plot_id) === String(p.id));
-                                       if (pStat && pStat.planned !== undefined) {
-                                           totalPlanned += pStat.planned;
-                                           validCount++;
-                                       }
-                                   });
-                                   if (validCount > 0) plannedAvg = Math.round(totalPlanned / validCount);
-                               }
-                            }
-                            return (
-                              <React.Fragment key={idx}>
-                                <tr 
-                                  className="border-b border-slate-100 hover:bg-slate-50/50 cursor-pointer transition-colors"
-                                  onClick={() => setExpandedProject(expandedProject === proj.name ? null : proj.name)}
-                                >
-                                  <td className="p-3 sm:p-4 pl-4 sm:pl-8 font-bold text-slate-700 text-xs sm:text-sm flex items-center gap-2 group">
-                                    <div className="p-1 rounded-md bg-slate-100 group-hover:bg-indigo-100 transition-colors">
-                                      {expandedProject === proj.name ? <ChevronUp size={14} className="text-slate-500 group-hover:text-indigo-600" /> : <ChevronDown size={14} className="text-slate-500 group-hover:text-indigo-600" />}
-                                    </div>
-                                    {proj.name}
-                                  </td>
-                                  <td className="p-3 sm:p-4 text-center font-bold text-slate-600 text-xs sm:text-sm">{proj.plotCount}</td>
-                                  <td className="p-3 sm:p-4 text-center"><span className={`font-bold px-2 sm:px-3 py-1 rounded-md sm:rounded-lg text-[10px] sm:text-xs ${dCount > 0 ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-400'}`}>{dCount > 0 ? `${dCount} แปลง` : '-'}</span></td>
-                                  <td className="p-3 sm:p-4 pr-4 sm:pr-8">
-                                    <div className="flex flex-col gap-1 sm:gap-2 min-w-[120px]">
-                                      <div className="flex justify-between items-center text-[9px] sm:text-[10px] mb-1">
-                                        <span className="text-blue-500 font-bold">ทำได้จริง: {proj.progress || 0}%</span>
-                                        <span className="text-[#86868b] font-bold">ตามแผน: {plannedAvg}%</span>
+                        <tbody className="divide-y divide-slate-100 text-sm font-medium">
+                          {filteredProjectReportSummaries.length === 0 ? (
+                            <tr>
+                              <td colSpan={4} className="py-12 text-center text-slate-400 font-bold text-sm">
+                                ไม่พบข้อมูลโครงการที่ตรงกับเงื่อนไข
+                              </td>
+                            </tr>
+                          ) : (
+                            filteredProjectReportSummaries.map((proj: any, idx: number) => {
+                              const isExpanded = expandedProject === proj.name;
+                              return (
+                                <React.Fragment key={idx}>
+                                  <tr
+                                    onClick={() => setExpandedProject(isExpanded ? null : proj.name)}
+                                    className={`hover:bg-slate-50/80 cursor-pointer transition-colors ${isExpanded ? 'bg-slate-50/60' : ''}`}
+                                  >
+                                    {/* Project Name */}
+                                    <td className="py-4 pl-6 pr-3">
+                                      <div className="flex items-center gap-3">
+                                        <div className="w-6 h-6 rounded-lg bg-slate-100 flex items-center justify-center text-slate-500 group-hover:bg-indigo-100 transition-colors">
+                                          {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                        </div>
+                                        <div>
+                                          <p className="font-black text-slate-800 text-sm hover:text-indigo-600 transition-colors">
+                                            {proj.name}
+                                          </p>
+                                          <span className="text-[11px] font-bold text-slate-400">
+                                            {proj.totalPlots} แปลงบ้าน
+                                          </span>
+                                        </div>
                                       </div>
-                                      <div className="h-2.5 sm:h-3 bg-black/5 rounded-full overflow-hidden shadow-inner relative">
-                                        <div className="absolute top-0 left-0 h-full bg-slate-400 rounded-full" style={{ width: `${plannedAvg}%` }}></div>
-                                        <div className={`absolute top-0 left-0 h-full ${proj.progress >= plannedAvg ? 'bg-emerald-500' : 'bg-blue-500'} rounded-full transition-all duration-1000 ease-out`} style={{ width: `${proj.progress || 0}%`, zIndex: 10 }}></div>
-                                      </div>
-                                    </div>
-                                  </td>
-                                </tr>
-                                
-                                {/* ซ่อน/แสดง รายการแปลงย่อย */}
-                                {expandedProject === proj.name && projPlots.length > 0 && (
-                                  <tr>
-                                    <td colSpan={4} className="p-0 border-b border-slate-200">
-                                      <div className="bg-slate-50/80 px-4 sm:px-8 py-4 border-t border-slate-200/60 inset-shadow-sm">
-                                        <table className="w-full text-left text-xs sm:text-sm">
-                                          <tbody>
-                                            {projPlots.map((plot: any, pIdx: number) => {
-                                              const pStatus = getPlotOverallStatus(plot.id).status;
-                                              
-                                              // คำนวณความคืบหน้าตามแผนของแปลง
-                                              const pTasks = taskTemplates.filter((t: any) => {
-                                                 if (t.house_type_id !== plot.house_type_id) return false;
-                                                 if (t.is_progress_counted === false) return false;
-                                                 const assign = assignments?.find((a: any) => a.plot_id === plot.id && a.task_template_id === t.id);
-                                                 if (assign && assign.is_excluded === true) return false;
-                                                 return true;
-                                              });
-                                              let plotPlannedTotalWeight = 0;
-                                              let plotTotalCost = 0;
-                                              let plotNaivePlannedTotal = 0;
-                                              pTasks.forEach((t: any) => {
-                                                 const key = `${plot.id}-${t.id}`;
-                                                 const plan = schedules?.[key];
-                                                 let plannedProg = 0;
-                                                 const today = Date.now();
-                                                 if (plan && plan.planned_start && plan.planned_end) {
-                                                   const pStart = new Date(plan.planned_start).getTime();
-                                                   const pEnd = new Date(plan.planned_end).getTime();
-                                                   if (today >= pEnd) plannedProg = 100;
-                                                   else if (today <= pStart) plannedProg = 0;
-                                                   else plannedProg = Math.round(((today - pStart) / (pEnd - pStart)) * 100);
-                                                 }
-                                                 const taskCost = t.cost ? Number(t.cost) : 0;
-                                                 plotPlannedTotalWeight += (plannedProg * taskCost);
-                                                 plotTotalCost += taskCost;
-                                                 plotNaivePlannedTotal += plannedProg;
-                                              });
-                                              const plotPlannedAvg = plotTotalCost > 0 
-                                                ? Math.round(plotPlannedTotalWeight / plotTotalCost) 
-                                                : (pTasks.length > 0 ? Math.round(plotNaivePlannedTotal / pTasks.length) : 0);
-                                                
-                                              const plotActualProgress = Math.round(plot.progress || 0);
+                                    </td>
 
-                                              return (
-                                                <tr key={pIdx} className="border-b border-slate-200/50 last:border-0 hover:bg-white transition-colors">
-                                                  <td className="py-3 pr-2 pl-4 w-1/3 flex items-center gap-3">
-                                                    <div className="w-1.5 h-1.5 rounded-full bg-slate-300"></div>
-                                                    <span className="font-bold text-slate-700">{plot.plot_name || plot.plot_number || `แปลง ${pIdx + 1}`}</span>
-                                                  </td>
-                                                  <td className="py-3 text-center w-1/4">
-                                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${pStatus === 'delayed' ? 'bg-rose-100 text-rose-700' : pStatus === 'completed' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-                                                      {pStatus === 'delayed' ? 'ล่าช้า' : pStatus === 'completed' ? 'เสร็จสิ้น' : 'ปกติ'}
-                                                    </span>
-                                                  </td>
-                                                  <td colSpan={2} className="py-3 pl-4 sm:pr-8">
-                                                    <div className="flex flex-col gap-1 min-w-[120px]">
-                                                      <div className="flex justify-between items-center text-[9px] mb-0.5">
-                                                        <span className="text-blue-500 font-bold">จริง: {plotActualProgress}%</span>
-                                                        <span className="text-slate-400 font-bold">แผน: {plotPlannedAvg}%</span>
-                                                      </div>
-                                                      <div className="h-2 bg-slate-200 rounded-full overflow-hidden relative">
-                                                        <div className="absolute top-0 left-0 h-full bg-slate-400 rounded-full" style={{ width: `${plotPlannedAvg}%` }}></div>
-                                                        <div className={`absolute top-0 left-0 h-full ${plotActualProgress >= plotPlannedAvg ? 'bg-emerald-500' : 'bg-blue-500'} rounded-full transition-all duration-1000 ease-out`} style={{ width: `${plotActualProgress}%`, zIndex: 10 }}></div>
-                                                      </div>
-                                                    </div>
-                                                  </td>
-                                                </tr>
-                                              );
-                                            })}
-                                          </tbody>
-                                        </table>
+                                    {/* Health Status Badge */}
+                                    <td className="py-4 px-3 text-center">
+                                      {proj.healthStatus === 'healthy' ? (
+                                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> ปกติ
+                                        </span>
+                                      ) : proj.healthStatus === 'warning' ? (
+                                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-black bg-amber-50 text-amber-700 border border-amber-200">
+                                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span> เฝ้าระวัง
+                                        </span>
+                                      ) : (
+                                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-black bg-rose-50 text-rose-700 border border-rose-200">
+                                          <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span> วิกฤต
+                                        </span>
+                                      )}
+                                    </td>
+
+                                    {/* Delayed Count */}
+                                    <td className="py-4 px-3 text-center">
+                                      {proj.delayedCount > 0 ? (
+                                        <span className="inline-block px-2.5 py-1 rounded-lg text-xs font-black bg-rose-100 text-rose-700 border border-rose-200">
+                                          {proj.delayedCount} แปลง
+                                        </span>
+                                      ) : (
+                                        <span className="text-slate-300 font-bold text-sm">-</span>
+                                      )}
+                                    </td>
+
+                                    {/* Dual Progress Bar */}
+                                    <td className="py-4 pr-6 pl-3">
+                                      <div className="space-y-1.5 min-w-[180px]">
+                                        <div className="flex justify-between items-center text-xs">
+                                          <span className="font-extrabold text-indigo-600">
+                                            ทำได้จริง {proj.actualProgress}%
+                                          </span>
+                                          <span className="font-bold text-slate-400">
+                                            ตามแผน {proj.plannedAvg}%
+                                          </span>
+                                        </div>
+                                        {/* Dual Bar */}
+                                        <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden relative border border-slate-200/60">
+                                          {/* Planned Bar */}
+                                          <div
+                                            className="absolute top-0 left-0 h-full bg-slate-300 rounded-full transition-all duration-500"
+                                            style={{ width: `${Math.min(proj.plannedAvg, 100)}%` }}
+                                          />
+                                          {/* Actual Bar */}
+                                          <div
+                                            className={`absolute top-0 left-0 h-full rounded-full transition-all duration-700 ${proj.actualProgress >= proj.plannedAvg ? 'bg-gradient-to-r from-emerald-500 to-teal-500' : 'bg-gradient-to-r from-indigo-500 to-blue-500'}`}
+                                            style={{ width: `${Math.min(proj.actualProgress, 100)}%`, zIndex: 10 }}
+                                          />
+                                        </div>
+                                        <div className="flex justify-end">
+                                          <span className={`text-[10px] font-extrabold ${proj.delta >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>
+                                            {proj.delta >= 0 ? `+${proj.delta}% เร็วกว่าแผน` : `${proj.delta}% ช้ากว่าแผน`}
+                                          </span>
+                                        </div>
                                       </div>
                                     </td>
                                   </tr>
-                                )}
-                              </React.Fragment>
-                            );
-                          })}
+
+                                  {/* Expanded Plots Sub-Table */}
+                                  {isExpanded && proj.plots.length > 0 && (
+                                    <tr className="bg-slate-50/70 border-b border-slate-200">
+                                      <td colSpan={4} className="p-4 sm:p-6">
+                                        <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-inner">
+                                          <div className="px-4 py-2.5 bg-slate-100/70 border-b border-slate-200 flex justify-between items-center text-xs font-bold text-slate-500">
+                                            <span>รายการแปลงบ้านใน {proj.name} ({proj.plots.length} หลัง)</span>
+                                            <span>สถานะความคืบหน้า</span>
+                                          </div>
+                                          <div className="max-h-72 overflow-y-auto divide-y divide-slate-100 custom-scrollbar">
+                                            {proj.plots.map((plot: any, pIdx: number) => (
+                                              <div key={pIdx} className="px-4 py-3 flex items-center justify-between hover:bg-slate-50 transition-colors text-xs">
+                                                <div className="flex items-center gap-3 w-1/3">
+                                                  <div className="w-2 h-2 rounded-full bg-slate-300"></div>
+                                                  <div>
+                                                    <p className="font-bold text-slate-800">{plot.name}</p>
+                                                    <p className="text-[10px] font-medium text-slate-400">ช่าง/โฟร์แมน: {plot.foreman}</p>
+                                                  </div>
+                                                </div>
+                                                <div className="text-center w-1/4">
+                                                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black ${
+                                                    plot.status === 'delayed'
+                                                      ? 'bg-rose-100 text-rose-700'
+                                                      : plot.status === 'completed'
+                                                      ? 'bg-emerald-100 text-emerald-700'
+                                                      : plot.status === 'ready_for_sale'
+                                                      ? 'bg-amber-100 text-amber-700'
+                                                      : 'bg-blue-100 text-blue-700'
+                                                  }`}>
+                                                    {plot.status === 'delayed' ? '⚠️ ล่าช้า' : plot.status === 'completed' ? '✓ เสร็จสิ้น' : plot.status === 'ready_for_sale' ? '🏷️ พร้อมขาย' : 'กำลังดำเนินการ'}
+                                                  </span>
+                                                </div>
+                                                <div className="w-1/3 space-y-1">
+                                                  <div className="flex justify-between text-[10px] font-bold">
+                                                    <span className="text-indigo-600">จริง {plot.actualProgress}%</span>
+                                                    <span className="text-slate-400">แผน {plot.plannedProgress}%</span>
+                                                  </div>
+                                                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden relative">
+                                                    <div
+                                                      className={`h-full rounded-full ${plot.actualProgress >= plot.plannedProgress ? 'bg-emerald-500' : 'bg-blue-500'}`}
+                                                      style={{ width: `${Math.min(plot.actualProgress, 100)}%` }}
+                                                    />
+                                                  </div>
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  )}
+                                </React.Fragment>
+                              );
+                            })
+                          )}
                         </tbody>
                       </table>
                     </div>
                   </div>
 
-                  {/* 🌟 New Section: Special Status Plots List */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 mb-6">
-                    <div className="bg-white rounded-2xl sm:rounded-[2rem] border border-amber-200 shadow-sm overflow-hidden">
-                      <div className="p-4 sm:p-6 border-b border-amber-100 bg-amber-50">
-                        <h3 className="font-black text-lg sm:text-xl text-amber-800 flex items-center gap-2"><Tag size={20} className="text-amber-600"/> รายชื่อบ้านพร้อมขาย <span className="text-sm opacity-75 ml-auto md:ml-1">({plots.filter(p => p.sale_status === 'ready_for_sale').length} หลัง)</span></h3>
+                  {/* 🌟 5. Special Status Plots List (Polished Clean Enterprise Cards) 🌟 */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 mb-8">
+                    {/* Ready for Sale */}
+                    <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+                      <div className="p-4 sm:p-5 border-b border-slate-100 bg-amber-50/50 flex items-center justify-between">
+                        <h3 className="font-black text-base text-amber-900 flex items-center gap-2">
+                          <Tag size={18} className="text-amber-600"/> บ้านพร้อมขาย
+                        </h3>
+                        <span className="text-xs font-bold text-amber-700 bg-amber-100 px-2.5 py-0.5 rounded-full">
+                          {plots.filter(p => p.sale_status === 'ready_for_sale').length} หลัง
+                        </span>
                       </div>
-                      <div className="p-4 sm:p-6 max-h-[400px] overflow-y-auto custom-scrollbar">
+                      <div className="p-4 max-h-64 overflow-y-auto custom-scrollbar flex-1">
                         {plots.filter(p => p.sale_status === 'ready_for_sale').length === 0 ? (
-                          <p className="text-slate-400 font-bold text-sm text-center py-4">ไม่มีบ้านสถานะพร้อมขาย</p>
+                          <p className="text-slate-400 font-bold text-xs text-center py-6">ไม่มีบ้านสถานะพร้อมขาย</p>
                         ) : (
                           <div className="flex flex-col gap-2">
                             {plots.filter(p => p.sale_status === 'ready_for_sale').map((p, i) => (
-                              <div key={i} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100">
-                                <span className="font-bold text-slate-700 text-sm">{p.project_name}</span>
-                                <span className="font-black text-amber-600 bg-amber-100 px-3 py-1 rounded-lg text-sm">แปลง {p.id}</span>
+                              <div key={i} className="flex justify-between items-center p-2.5 bg-slate-50 hover:bg-amber-50/30 rounded-xl border border-slate-100 transition-colors">
+                                <span className="font-bold text-slate-700 text-xs truncate max-w-[140px]">{p.project_name}</span>
+                                <span className="font-black text-amber-700 bg-amber-100/80 px-2.5 py-0.5 rounded-lg text-xs">แปลง {p.plot_name || p.id}</span>
                               </div>
                             ))}
                           </div>
@@ -4117,22 +4442,28 @@ export default function ConstructionApp() {
                       </div>
                     </div>
 
-                    <div className="bg-white rounded-2xl sm:rounded-[2rem] border border-purple-200 shadow-sm overflow-hidden">
-                      <div className="p-4 sm:p-6 border-b border-purple-100 bg-purple-50">
-                        <h3 className="font-black text-lg sm:text-xl text-purple-800 flex items-center gap-2"><Hammer size={20} className="text-purple-600"/> รายการโอนแล้ว-รอเก็บงาน <span className="text-sm opacity-75 ml-auto md:ml-1">({plots.filter(p => p.is_completed && p.progress < 100).length} หลัง)</span></h3>
+                    {/* Pending Finishes */}
+                    <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+                      <div className="p-4 sm:p-5 border-b border-slate-100 bg-purple-50/50 flex items-center justify-between">
+                        <h3 className="font-black text-base text-purple-900 flex items-center gap-2">
+                          <Hammer size={18} className="text-purple-600"/> โอนแล้ว-รอเก็บงาน
+                        </h3>
+                        <span className="text-xs font-bold text-purple-700 bg-purple-100 px-2.5 py-0.5 rounded-full">
+                          {plots.filter(p => p.is_completed && p.progress < 100).length} หลัง
+                        </span>
                       </div>
-                      <div className="p-4 sm:p-6 max-h-[400px] overflow-y-auto custom-scrollbar">
+                      <div className="p-4 max-h-64 overflow-y-auto custom-scrollbar flex-1">
                         {plots.filter(p => p.is_completed && p.progress < 100).length === 0 ? (
-                          <p className="text-slate-400 font-bold text-sm text-center py-4">ไม่มีงานค้างเก็บหลังโอน</p>
+                          <p className="text-slate-400 font-bold text-xs text-center py-6">ไม่มีงานค้างเก็บหลังโอน</p>
                         ) : (
                           <div className="flex flex-col gap-2">
                             {plots.filter(p => p.is_completed && p.progress < 100).map((p, i) => (
-                              <div key={i} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100">
+                              <div key={i} className="flex justify-between items-center p-2.5 bg-slate-50 hover:bg-purple-50/30 rounded-xl border border-slate-100 transition-colors">
                                 <div>
-                                  <span className="font-bold text-slate-700 text-sm block">{p.project_name}</span>
-                                  <span className="text-[10px] text-slate-400 font-bold">ความคืบหน้า {p.progress}%</span>
+                                  <span className="font-bold text-slate-700 text-xs block truncate max-w-[140px]">{p.project_name}</span>
+                                  <span className="text-[10px] text-slate-400 font-bold">คืบหน้า {p.progress}%</span>
                                 </div>
-                                <span className="font-black text-purple-600 bg-purple-100 px-3 py-1 rounded-lg text-sm">แปลง {p.id}</span>
+                                <span className="font-black text-purple-700 bg-purple-100/80 px-2.5 py-0.5 rounded-lg text-xs">แปลง {p.plot_name || p.id}</span>
                               </div>
                             ))}
                           </div>
@@ -4140,22 +4471,28 @@ export default function ConstructionApp() {
                       </div>
                     </div>
 
-                    <div className="bg-white rounded-2xl sm:rounded-[2rem] border border-pink-200 shadow-sm overflow-hidden">
-                      <div className="p-4 sm:p-6 border-b border-pink-100 bg-pink-50">
-                        <h3 className="font-black text-lg sm:text-xl text-pink-800 flex items-center gap-2"><UserCheck size={20} className="text-pink-600"/> รายชื่อเร่งปิดจ๊อบ (มีลูกค้า) <span className="text-sm opacity-75 ml-auto md:ml-1">({plots.filter(p => p.has_customer && !p.is_completed).length} หลัง)</span></h3>
+                    {/* Customer Waiting */}
+                    <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+                      <div className="p-4 sm:p-5 border-b border-slate-100 bg-pink-50/50 flex items-center justify-between">
+                        <h3 className="font-black text-base text-pink-900 flex items-center gap-2">
+                          <UserCheck size={18} className="text-pink-600"/> เร่งปิดจ๊อบ (มีลูกค้า)
+                        </h3>
+                        <span className="text-xs font-bold text-pink-700 bg-pink-100 px-2.5 py-0.5 rounded-full">
+                          {plots.filter(p => p.has_customer && !p.is_completed).length} หลัง
+                        </span>
                       </div>
-                      <div className="p-4 sm:p-6 max-h-[400px] overflow-y-auto custom-scrollbar">
+                      <div className="p-4 max-h-64 overflow-y-auto custom-scrollbar flex-1">
                         {plots.filter(p => p.has_customer && !p.is_completed).length === 0 ? (
-                          <p className="text-slate-400 font-bold text-sm text-center py-4">ไม่มีบ้านที่ลูกค้ารอโอน</p>
+                          <p className="text-slate-400 font-bold text-xs text-center py-6">ไม่มีบ้านที่ลูกค้ารอโอน</p>
                         ) : (
                           <div className="flex flex-col gap-2">
                             {plots.filter(p => p.has_customer && !p.is_completed).map((p, i) => (
-                              <div key={i} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100">
+                              <div key={i} className="flex justify-between items-center p-2.5 bg-slate-50 hover:bg-pink-50/30 rounded-xl border border-slate-100 transition-colors">
                                 <div>
-                                  <span className="font-bold text-slate-700 text-sm block">{p.project_name}</span>
-                                  <span className="text-[10px] text-slate-400 font-bold">ความคืบหน้า {p.progress}%</span>
+                                  <span className="font-bold text-slate-700 text-xs block truncate max-w-[140px]">{p.project_name}</span>
+                                  <span className="text-[10px] text-slate-400 font-bold">คืบหน้า {p.progress}%</span>
                                 </div>
-                                <span className="font-black text-pink-600 bg-pink-100 px-3 py-1 rounded-lg text-sm">แปลง {p.id}</span>
+                                <span className="font-black text-pink-700 bg-pink-100/80 px-2.5 py-0.5 rounded-lg text-xs">แปลง {p.plot_name || p.id}</span>
                               </div>
                             ))}
                           </div>
@@ -4163,6 +4500,24 @@ export default function ConstructionApp() {
                       </div>
                     </div>
                   </div>
+
+                  {/* 🌟 6. Daily Activity Hub (Foreman, Site Engineer, QC) 🌟 */}
+                  <DailyActivityHub
+                    allUpdatesRecord={allUpdatesRecord}
+                    defects={defects}
+                    defectUpdates={defectUpdates}
+                    allUsers={allUsers}
+                    plots={plots}
+                    projects={projects}
+                    taskTemplates={taskTemplates}
+                    inspectionQueue={inspectionQueue}
+                    selectedProject={selectedProject}
+                    setSelectedProject={setSelectedProject}
+                    setSelectedPlot={setSelectedPlot}
+                    setSelectedTask={setSelectedTask}
+                    setView={setView}
+                    isMobileLayout={isMobileLayout}
+                  />
 
                   {/* 📊 🌟 Executive Analytics สำหรับผู้บริหารและทีมวางแผน 🌟 */}
                   {(isAdmin || isOwner || isProjectPlanner || isSiteEngineer) && (

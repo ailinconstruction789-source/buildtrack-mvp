@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Activity, DollarSign, Wallet, Hammer, ChevronRight } from 'lucide-react';
+import { Activity, DollarSign, Wallet, Hammer } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 export default function ExecutiveAnalytics({
@@ -97,38 +97,6 @@ export default function ExecutiveAnalytics({
     if (val >= 1000) return `฿ ${(val / 1000).toFixed(0)}k`;
     return `฿ ${val.toLocaleString()}`;
   };
-
-  // 🏅 2. Contractor Quality Score
-  const foremanPerformance = useMemo(() => {
-    if (!foremenList) return [];
-    return foremenList.map((foreman: any) => {
-      const fPlots = plots?.filter((p: any) => p.foreman === foreman.username) || [];
-      let totalTasks = 0;
-      let totalReworks = 0;
-
-      fPlots.forEach((p: any) => {
-        const pTasks = taskTemplates?.filter((t: any) => t.house_type_id === p.house_type_id) || [];
-        totalTasks += pTasks.length;
-      });
-
-      if (allUpdatesRecord) {
-        allUpdatesRecord.forEach((upd: any) => {
-          if (upd.action && upd.action.includes('แจ้งแก้ไข') && fPlots.some((p:any) => String(p.id) === String(upd.plot_id))) {
-            totalReworks++;
-          }
-        });
-      }
-
-      const reworkRate = totalTasks > 0 ? (totalReworks / totalTasks) * 100 : 0;
-      const qualityScore = Math.max(0, Math.round(100 - reworkRate * 2)); 
-      
-      return {
-        name: foreman.username,
-        score: qualityScore,
-        reworks: totalReworks
-      };
-    }).sort((a: any, b: any) => b.score - a.score);
-  }, [foremenList, plots, taskTemplates, allUpdatesRecord]);
 
   // 📈 3. S-Curve Data (Earned Value Management)
   const sCurveData = useMemo(() => {
@@ -406,40 +374,6 @@ export default function ExecutiveAnalytics({
           </div>
         </div>
 
-        {/* 3. Bottom Section: Contractor Quality Score */}
-        <div className="bg-white p-8 rounded-3xl border border-black/[0.03] shadow-[0_2px_10px_rgba(0,0,0,0.02)]">
-          <div className="flex justify-between items-center mb-8">
-            <h3 className="text-xl font-semibold text-[#1d1d1f] tracking-tight">Contractor Quality Score</h3>
-            <span className="text-[#86868b] text-xs font-medium">Based on rework rates</span>
-          </div>
-
-          <div className="space-y-4">
-            {foremanPerformance.length === 0 ? (
-              <p className="text-[#86868b] text-sm text-center py-8">No contractor data.</p>
-            ) : foremanPerformance.slice(0, 5).map((f: any, idx: number) => (
-              <div key={idx} className="flex items-center justify-between p-4 rounded-2xl hover:bg-[#fbfbfd] transition-colors group cursor-pointer border border-transparent hover:border-black/[0.02]">
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-full bg-[#f5f5f7] flex items-center justify-center font-semibold text-[#1d1d1f]">
-                    {idx + 1}
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-semibold text-[#1d1d1f]">{f.name}</h4>
-                    <p className="text-xs text-[#86868b] font-medium">{f.reworks} reworks historically</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-4">
-                  <div className="text-right">
-                    <span className={`text-lg font-semibold tracking-tight ${f.score >= 90 ? 'text-emerald-500' : f.score >= 70 ? 'text-orange-500' : 'text-rose-500'}`}>
-                      {f.score}
-                    </span>
-                    <span className="text-[#86868b] text-xs font-medium ml-1">pts</span>
-                  </div>
-                  <ChevronRight size={16} className="text-[#d2d2d7] group-hover:text-[#1d1d1f] transition-colors" />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
       </div>
       )}
     </div>

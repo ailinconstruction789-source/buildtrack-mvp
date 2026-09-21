@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { TrendingUp, AlertTriangle, Target, ShieldAlert, Award, Users, Activity, CloudRain, Clock } from 'lucide-react';
+import { TrendingUp, AlertTriangle, Target, ShieldAlert, Award, Users, Activity, CloudRain, Clock, CalendarClock, ArrowUpDown } from 'lucide-react';
 import { LineChart, Line, BarChart, Bar, ComposedChart, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
 import WeeklyHeatmap from './Analytics/WeeklyHeatmap';
 import BillingCycleHeatmap from './Analytics/BillingCycleHeatmap';
@@ -31,10 +31,31 @@ export default function OwnerAnalyticsDashboard({
     );
   }, [plots, activeProjectsList, selectedProjectId]);
 
+  // Helper: Strictly exclude completed (100% finished or handed over) and ready-for-sale houses from risk analysis
+  const isPlotCompletedOrReadyForSale = (p: any) => {
+    if (!p) return true;
+    const isCompleted = Boolean(p.is_completed) || Number(p.progress) >= 100 || p.handover_status === 'completed';
+    const isReadyForSale = p.sale_status === 'ready_for_sale';
+    return isCompleted || isReadyForSale;
+  };
+
+  // Only plots that are currently under active construction in the selected project(s)
+  const activeUnderConstructionPlots = useMemo(() => {
+    return (plots || []).filter((p: any) => {
+      if (!activePlots.has(p.id)) return false;
+      return !isPlotCompletedOrReadyForSale(p);
+    });
+  }, [plots, activePlots]);
+
+  const activeUnderConstructionPlotIds = useMemo(() => {
+    return new Set(activeUnderConstructionPlots.map((p: any) => String(p.id)));
+  }, [activeUnderConstructionPlots]);
+
   const schedules = useMemo(() => {
     const res: any = {};
     Object.keys(rawSchedules || {}).forEach(k => {
-      const plotId = k.split('-')[0];
+      const item = rawSchedules[k];
+      const plotId = item?.plot_id || (k.length >= 73 ? k.substring(0, 36) : k.split('-')[0]);
       if (activePlots.has(plotId)) res[k] = rawSchedules[k];
     });
     return res;
@@ -43,7 +64,8 @@ export default function OwnerAnalyticsDashboard({
   const latestUpdatesMap = useMemo(() => {
     const res: any = {};
     Object.keys(rawLatestUpdatesMap || {}).forEach(k => {
-      const plotId = rawLatestUpdatesMap[k].plot_id || k.split('-')[0];
+      const item = rawLatestUpdatesMap[k];
+      const plotId = item?.plot_id || (k.length >= 73 ? k.substring(0, 36) : k.split('-')[0]);
       if (activePlots.has(plotId)) res[k] = rawLatestUpdatesMap[k];
     });
     return res;
@@ -53,17 +75,19 @@ export default function OwnerAnalyticsDashboard({
     return (rawAllUpdatesRecord || []).filter((u: any) => activePlots.has(u.plot_id));
   }, [rawAllUpdatesRecord, activePlots]);
   
-  // 1. Real Bottleneck & Handoff Latency Analysis
+  // 1. Real Bottleneck & Handoff Latency Analysis (Focused on active construction plots)
   const bottleneckData = useMemo(() => {
     const taskWaitTimes: Record<string, { reworks: number, totalWaitMs: number, waitCount: number }> = {};
     const taskInstances: Record<string, any[]> = {};
 
     if (allUpdatesRecord) {
-      allUpdatesRecord.forEach((upd: any) => {
-        const key = `${upd.plot_id}-${upd.task_template_id}`;
-        if (!taskInstances[key]) taskInstances[key] = [];
-        taskInstances[key].push(upd);
-      });
+      allUpdatesRecord
+        .filter((upd: any) => activeUnderConstructionPlotIds.has(String(upd.plot_id)))
+        .forEach((upd: any) => {
+          const key = `${upd.plot_id}-${upd.task_template_id}`;
+          if (!taskInstances[key]) taskInstances[key] = [];
+          taskInstances[key].push(upd);
+        });
     }
 
     Object.keys(taskInstances).forEach(key => {
@@ -78,16 +102,17 @@ export default function OwnerAnalyticsDashboard({
           lastSubmitTime = new Date(u.created_at).getTime();
         }
         
+        const isRejection = (u.action && (u.action.includes('แจ้งแก้ไข') || u.action.includes('ตีกลับ'))) || u.status === 'rejected' || Boolean(u.is_rejected);
+        if (isRejection) {
+           taskWaitTimes[taskId].reworks++;
+        }
+        
         if (u.action && (u.action.includes('QC') || u.action.includes('Site Engineer'))) {
-          if (u.action.includes('แจ้งแก้ไข') || u.action.includes('ตีกลับ')) {
-             taskWaitTimes[taskId].reworks++;
-          }
-          
           if (lastSubmitTime) {
             const checkTime = new Date(u.created_at).getTime();
             if (checkTime >= lastSubmitTime) {
-               taskWaitTimes[taskId].totalWaitMs += (checkTime - lastSubmitTime);
-               taskWaitTimes[taskId].waitCount++;
+                taskWaitTimes[taskId].totalWaitMs += (checkTime - lastSubmitTime);
+                taskWaitTimes[taskId].waitCount++;
             }
             lastSubmitTime = null; 
           }
@@ -105,10 +130,10 @@ export default function OwnerAnalyticsDashboard({
           avgWaitDays: Number(avgWaitDays) 
         };
       })
-      .filter(t => t.count > 0 || t.avgWaitDays > 0)
-      .sort((a, b) => b.avgWaitDays - a.avgWaitDays || b.count - a.count)
+      .filter(t => t.count > 0)
+      .sort((a, b) => b.count - a.count || b.avgWaitDays - a.avgWaitDays)
       .slice(0, 5); 
-  }, [allUpdatesRecord, taskTemplates]);
+  }, [allUpdatesRecord, taskTemplates, activeUnderConstructionPlotIds]);
 
   // 2. Real Team Performance Matrix (Foreman Leaderboard)
   const foremanPerformance = useMemo(() => {
@@ -486,34 +511,26 @@ export default function OwnerAnalyticsDashboard({
     });
   }, [contractors, assignments, schedules, latestUpdatesMap, allUpdatesRecord, defects]);
 
-  // 5. Defect Hotspots (Top 3 Problematic Tasks)
-  const defectHotspots = useMemo(() => {
-    if (!defects || !taskTemplates) return [];
-    const defectCounts: Record<string, { count: number; name: string }> = {};
-    
-    defects.forEach((d: any) => {
-       const tId = String(d.task_id);
-       if (!defectCounts[tId]) {
-         const tpl = taskTemplates.find((t:any) => String(t.id) === tId);
-         defectCounts[tId] = { count: 0, name: tpl?.task_name || 'ไม่ทราบชื่องาน' };
-       }
-       defectCounts[tId].count++;
-    });
-    
-    return Object.values(defectCounts)
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 3);
-  }, [defects, taskTemplates]);
+  // Helper to format timestamps to Thai Buddhist Era (พ.ศ.)
+  const formatThaiDate = (val: any) => {
+    if (!val) return 'ไม่ระบุ';
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return 'ไม่ระบุ';
+    const thaiYear = d.getFullYear() + 543;
+    const months = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+    return `${d.getDate()} ${months[d.getMonth()]} ${thaiYear}`;
+  };
 
-  // 6. Overdue Critical Plots (Delay > 7 days)
+
+  // 6. Overdue Critical Plots (Delay > 7 days on active construction plots only)
   const criticalPlots = useMemo(() => {
-    if (!plots || !taskTemplates || !schedules || !latestUpdatesMap) return [];
+    if (!activeUnderConstructionPlots || !taskTemplates || !schedules || !latestUpdatesMap) return [];
     
     const overdueList: any[] = [];
     const nowTime = Date.now();
     const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
-    plots.forEach((p: any) => {
+    activeUnderConstructionPlots.forEach((p: any) => {
        const pTasks = taskTemplates.filter((t: any) => t.house_type_id === p.house_type_id);
        
        pTasks.forEach((t: any) => {
@@ -531,7 +548,7 @@ export default function OwnerAnalyticsDashboard({
                 const delayDays = Math.floor((nowTime - pEnd) / (1000 * 60 * 60 * 24));
                 
                 overdueList.push({
-                   plotName: p.plot_number || p.plot_name || p.id.substring(0,6),
+                   plotName: p.plot_number || p.plot_name || String(p.id).substring(0,6),
                    taskName: t.task_name,
                    delayDays,
                    contractor: assign?.contractor_name || 'ไม่ระบุ',
@@ -543,75 +560,233 @@ export default function OwnerAnalyticsDashboard({
     });
     
     return overdueList.sort((a, b) => b.delayDays - a.delayDays).slice(0, 3);
-  }, [plots, taskTemplates, schedules, latestUpdatesMap, assignments]);
+  }, [activeUnderConstructionPlots, taskTemplates, schedules, latestUpdatesMap, assignments]);
 
-  // 4.5 Predictive Delay Analysis (Local AI Engine)
+  // 4.5 Predictive Delay Analysis (Local AI Engine - Active Construction Plots Only)
   const predictiveAlerts = useMemo(() => {
-    if (!plots || !taskTemplates || !schedules || !latestUpdatesMap || !contractorPerformance) return [];
+    if (!activeUnderConstructionPlots || !taskTemplates || !schedules || !latestUpdatesMap || !contractorPerformance) return [];
     
     const alerts: any[] = [];
     const nowTime = Date.now();
+    const MS_PER_DAY = 24 * 60 * 60 * 1000;
     
-    plots.forEach((p: any) => {
-       if (p.is_completed) return;
-       
+    activeUnderConstructionPlots.forEach((p: any) => {
        const pTasks = taskTemplates.filter((t: any) => t.house_type_id === p.house_type_id);
+       let minPlannedStart = 0;
        let maxPlannedEnd = 0;
        let totalProgress = 0;
        let firstActualStart = 0;
+       let lastActualUpdate = 0;
        
        pTasks.forEach((t: any) => {
           const key = `${p.id}-${t.id}`;
-          const plan = schedules[key];
-          const actual = latestUpdatesMap[key];
+          const plan = schedules[key] || schedules[`${p.id}_${t.id}`];
+          const actual = latestUpdatesMap[key] || latestUpdatesMap[`${p.id}_${t.id}`];
           
-          if (plan && plan.planned_end) {
-             const pEnd = new Date(plan.planned_end).getTime();
-             if (pEnd > maxPlannedEnd) maxPlannedEnd = pEnd;
+          if (plan) {
+             if (plan.planned_start) {
+                const pStart = new Date(plan.planned_start).getTime();
+                if (pStart > 0 && (minPlannedStart === 0 || pStart < minPlannedStart)) minPlannedStart = pStart;
+             }
+             if (plan.planned_end) {
+                const pEnd = new Date(plan.planned_end).getTime();
+                if (pEnd > 0 && pEnd > maxPlannedEnd) maxPlannedEnd = pEnd;
+             }
           }
           
-          if (actual && actual.progress) {
+          if (actual && typeof actual.progress === 'number') {
              totalProgress += actual.progress;
-             const aStart = new Date(actual.created_at).getTime(); 
-             if (firstActualStart === 0 || aStart < firstActualStart) firstActualStart = aStart;
+             if (actual.created_at) {
+                const aTime = new Date(actual.created_at).getTime();
+                if (aTime > 0) {
+                   if (firstActualStart === 0 || aTime < firstActualStart) firstActualStart = aTime;
+                   if (aTime > lastActualUpdate) lastActualUpdate = aTime;
+                }
+             }
           }
        });
        
-       const overallProgress = pTasks.length > 0 ? totalProgress / pTasks.length : 0;
+       const avgTaskProgress = pTasks.length > 0 ? totalProgress / pTasks.length : 0;
+       const overallProgress = Math.min(99.9, Math.max(0, p.progress !== undefined && p.progress !== null ? Math.max(Number(p.progress), avgTaskProgress) : avgTaskProgress));
        
-       if (overallProgress > 0 && overallProgress < 100 && firstActualStart > 0 && maxPlannedEnd > 0) {
-          const daysSinceStart = Math.max(1, (nowTime - firstActualStart) / (1000 * 60 * 60 * 24));
-          const velocityPerDay = overallProgress / daysSinceStart;
-          
-          if (velocityPerDay > 0) {
-             const remainingProgress = 100 - overallProgress;
-             const daysToFinish = remainingProgress / velocityPerDay;
-             
-             const mainContractor = assignments?.find((a:any) => String(a.plot_id) === String(p.id))?.contractor_name;
-             const contractorStat = contractorPerformance.find((c:any) => c.name === mainContractor);
-             
-             // เพิ่มบทลงโทษ (Penalty) หากผู้รับเหมามีประวัติล่าช้า
-             const penaltyDays = contractorStat && contractorStat.delayProbability > 50 ? (contractorStat.delayProbability / 10) : 0;
-             
-             const expectedEnd = nowTime + ((daysToFinish + penaltyDays) * 24 * 60 * 60 * 1000);
-             
-             // ถ้าระยะเวลาที่พยากรณ์ เกินกว่าแผนที่ตั้งไว้ > 7 วัน ให้แจ้งเตือน
-             if (expectedEnd > maxPlannedEnd + (7 * 24 * 60 * 60 * 1000)) { 
-                const delayDays = Math.floor((expectedEnd - maxPlannedEnd) / (1000 * 60 * 60 * 24));
-                alerts.push({
-                   type: 'bottleneck',
-                   severity: delayDays > 14 ? 'high' : 'medium',
-                   title: `Predictive Delay: แปลง ${p.plot_number || p.plot_name}`,
-                   message: `ความเร็วงานปัจจุบัน (Velocity) ต่ำกว่าแผน คาดว่าจะส่งมอบล่าช้า ${delayDays} วัน (กำหนดเสร็จใหม่: ${new Date(expectedEnd).toLocaleDateString('th-TH')})`,
-                   recommendation: `ควรเพิ่มคนงานหรือปรับแผนงานด่วน${contractorStat && contractorStat.delayProbability > 50 ? ` (⚠️ ผู้รับเหมา ${mainContractor} มีความเสี่ยงล่าช้า/แก้งานบ่อย)` : ''}`
-                });
-             }
+       // Fallbacks if schedule bounds are missing
+       if (maxPlannedEnd === 0 && minPlannedStart > 0) {
+          maxPlannedEnd = minPlannedStart + (90 * MS_PER_DAY);
+       }
+       if (minPlannedStart === 0 && maxPlannedEnd > 0) {
+          minPlannedStart = maxPlannedEnd - (90 * MS_PER_DAY);
+       }
+       if (maxPlannedEnd === 0) return; // Cannot forecast without schedule
+       
+       const totalPlannedDays = Math.max(14, Math.round((maxPlannedEnd - minPlannedStart) / MS_PER_DAY));
+       const plannedVelocity = 100 / totalPlannedDays; // % per day planned
+       
+       // Find contractor for this plot
+       const plotAssignments = assignments?.filter((a: any) => String(a.plot_id) === String(p.id)) || [];
+       const mainContractor = plotAssignments[0]?.contractor_name || 'ผู้รับเหมาหลัก';
+       const contractorStat = contractorPerformance.find((c: any) => c.name === mainContractor);
+       
+       let penaltyDays = 0;
+       const riskFactors: string[] = [];
+       
+       if (contractorStat) {
+          if (contractorStat.delayProbability > 50) {
+             const pDays = Math.max(3, Math.round(contractorStat.delayProbability / 10));
+             penaltyDays += pDays;
+             riskFactors.push(`ผู้รับเหมา (${mainContractor}) สถิติล่าช้า ${contractorStat.delayProbability}% (+${pDays}วัน)`);
           }
+          if (contractorStat.totalReworks >= 3) {
+             const rDays = Math.min(5, contractorStat.totalReworks);
+             penaltyDays += rDays;
+             riskFactors.push(`งานแก้งาน/ตีกลับ ${contractorStat.totalReworks} ครั้ง (+${rDays}วัน)`);
+          }
+       }
+       
+       // Check if work has stalled without updates
+       if (lastActualUpdate > 0 && (nowTime - lastActualUpdate > 10 * MS_PER_DAY) && overallProgress < 90) {
+          const stagnantDays = Math.floor((nowTime - lastActualUpdate) / MS_PER_DAY);
+          penaltyDays += Math.min(10, stagnantDays);
+          riskFactors.push(`ไม่มีอัปเดตงานมา ${stagnantDays} วัน`);
+       }
+
+       let expectedEnd = 0;
+       let delayDays = 0;
+       let velocityDesc = '';
+
+       // CASE 1: Plot hasn't started yet (0% progress)
+       if (overallProgress === 0) {
+          if (minPlannedStart > 0 && nowTime > minPlannedStart + (5 * MS_PER_DAY)) {
+             const startDelay = Math.floor((nowTime - minPlannedStart) / MS_PER_DAY);
+             expectedEnd = maxPlannedEnd + ((startDelay + penaltyDays) * MS_PER_DAY);
+             delayDays = Math.ceil((expectedEnd - maxPlannedEnd) / MS_PER_DAY);
+             velocityDesc = `ยังไม่เริ่มงาน (เกินกำหนดเริ่ม ${startDelay} วัน)`;
+          } else {
+             return; // On track to start
+          }
+       } 
+       // CASE 2: Plot in progress
+       else {
+          const effectiveStart = firstActualStart > 0 ? firstActualStart : minPlannedStart;
+          const daysSinceStart = Math.max(7, (nowTime - effectiveStart) / MS_PER_DAY);
+          const actualVelocityPerDay = overallProgress / daysSinceStart;
+          
+          // Blended velocity (70% actual, 30% planned) with a floor of 0.15%/day
+          const blendedVelocity = Math.max(0.15, (actualVelocityPerDay * 0.7) + (plannedVelocity * 0.3));
+          const remainingProgress = 100 - overallProgress;
+          const daysToFinish = remainingProgress / blendedVelocity;
+          
+          expectedEnd = nowTime + Math.round((daysToFinish + penaltyDays) * MS_PER_DAY);
+          delayDays = Math.ceil((expectedEnd - maxPlannedEnd) / MS_PER_DAY);
+          velocityDesc = `ความเร็วเฉลี่ย ${blendedVelocity.toFixed(2)}%/วัน`;
+       }
+       
+       // Alert threshold: Delay >= 5 days
+       if (delayDays >= 5) {
+          const plotLabel = p.plot_number || p.plot_name || `แปลง ${String(p.id).substring(0, 6)}`;
+          const severity = delayDays > 14 ? 'high' : 'medium';
+          
+          alerts.push({
+             type: 'predictive',
+             severity,
+             plotId: p.id,
+             plotName: plotLabel,
+             title: `คาดการณ์ล่าช้า: แปลง ${plotLabel}`,
+             delayDays,
+             overallProgress: Math.round(overallProgress),
+             plannedEndDate: formatThaiDate(maxPlannedEnd),
+             forecastEndDate: formatThaiDate(expectedEnd),
+             contractor: mainContractor,
+             foreman: p.foreman || 'ไม่ระบุ',
+             message: `ความคืบหน้าปัจจุบัน ${Math.round(overallProgress)}% (${velocityDesc}) คาดการณ์ว่าจะส่งมอบล่าช้ากว่าแผน ${delayDays} วัน`,
+             recommendation: riskFactors.length > 0 
+                ? `⚠️ ปัจจัยเสี่ยง: ${riskFactors.join(', ')} ควรเร่งรัดผู้รับเหมา (${mainContractor}) และประสานโฟร์แมน (${p.foreman || 'ประจำแปลง'}) แก้ไขปัญหาหน้างานด่วน`
+                : `ควรเร่งรัดลำดับงานคู่ขนาน (Fast-tracking) และเพิ่มจำนวนช่าง เพื่อชดเชยเวลาที่คาดว่าจะล่าช้า ${delayDays} วัน`
+          });
        }
     });
     
     return alerts;
-  }, [plots, taskTemplates, schedules, latestUpdatesMap, contractorPerformance, assignments]);
+  }, [activeUnderConstructionPlots, taskTemplates, schedules, latestUpdatesMap, contractorPerformance, assignments]);
+
+  // Sorting state for plot predictive alerts (Default: 'plot_asc' as requested)
+  const [plotSortBy, setPlotSortBy] = useState<'plot_asc' | 'delay_desc' | 'progress_asc' | 'risk_severity'>('plot_asc');
+
+  // Sorted list of predictive delay plots
+  const sortedPredictiveAlerts = useMemo(() => {
+    const list = [...predictiveAlerts];
+    if (plotSortBy === 'plot_asc') {
+      return list.sort((a, b) => (a.plotName || '').localeCompare(b.plotName || '', undefined, { numeric: true, sensitivity: 'base' }));
+    }
+    if (plotSortBy === 'delay_desc') {
+      return list.sort((a, b) => b.delayDays - a.delayDays);
+    }
+    if (plotSortBy === 'progress_asc') {
+      return list.sort((a, b) => a.overallProgress - b.overallProgress);
+    }
+    if (plotSortBy === 'risk_severity') {
+      return list.sort((a, b) => {
+        const aSev = a.severity === 'high' ? 2 : 1;
+        const bSev = b.severity === 'high' ? 2 : 1;
+        if (bSev !== aSev) return bSev - aSev;
+        return b.delayDays - a.delayDays;
+      });
+    }
+    return list;
+  }, [predictiveAlerts, plotSortBy]);
+
+  // Weather risk: Categorize active tasks on active plots (Outdoor vs Indoor)
+  const weatherRiskAnalysis = useMemo(() => {
+    let outdoorTasksCount = 0;
+    let indoorTasksCount = 0;
+    
+    activeUnderConstructionPlots.forEach((p: any) => {
+      const pTasks = taskTemplates?.filter((t: any) => t.house_type_id === p.house_type_id) || [];
+      pTasks.forEach((t: any) => {
+        const key = `${p.id}-${t.id}`;
+        const actual = latestUpdatesMap[key];
+        if (!actual || actual.progress < 100) {
+          const name = t.task_name || '';
+          if (/เสาเข็ม|ฐานราก|โครงสร้าง|คาน|เสา|หลังคา|ก่อ|ฉาบ|ภายนอก|รั้ว|ถนน|ดิน|ระบายน้ำ/i.test(name)) {
+            outdoorTasksCount++;
+          } else {
+            indoorTasksCount++;
+          }
+        }
+      });
+    });
+
+    return { outdoorTasksCount, indoorTasksCount };
+  }, [activeUnderConstructionPlots, taskTemplates, latestUpdatesMap]);
+
+  // Contractor capacity & workload on active construction plots
+  const contractorWorkloadStats = useMemo(() => {
+    const plotCounts: Record<string, number> = {};
+    assignments?.forEach((a: any) => {
+      if (activeUnderConstructionPlotIds.has(String(a.plot_id)) && a.contractor_name) {
+        plotCounts[a.contractor_name] = (plotCounts[a.contractor_name] || 0) + 1;
+      }
+    });
+
+    return (contractorPerformance || []).map((c: any) => ({
+      name: c.name,
+      activePlotsCount: plotCounts[c.name] || 0,
+      onTimeRate: c.onTimeRate,
+      totalReworks: c.totalReworks,
+      delayProbability: c.delayProbability
+    })).sort((a: any, b: any) => b.activePlotsCount - a.activePlotsCount);
+  }, [assignments, activeUnderConstructionPlotIds, contractorPerformance]);
+
+  // EVM Schedule Performance Index (SPI) metrics
+  const evmMetrics = useMemo(() => {
+    if (!sCurveData || sCurveData.length === 0) return { spi: '1.00', status: 'On Track' };
+    const pastBuckets = sCurveData.filter((b: any) => b.actual > 0);
+    const latest = pastBuckets[pastBuckets.length - 1];
+    if (!latest || !latest.planned) return { spi: '1.00', status: 'On Track' };
+    const spi = (latest.actual / latest.planned).toFixed(2);
+    const spiNum = Number(spi);
+    const status = spiNum >= 1 ? 'Ahead of Schedule' : spiNum >= 0.9 ? 'Slightly Behind' : 'Critically Delayed';
+    return { spi, planned: latest.planned, actual: latest.actual, status };
+  }, [sCurveData]);
 
   // 5. Smart Risk Alerts (Real AI Analysis)
   const [aiAlerts, setAiAlerts] = useState<any[]>([]);
@@ -627,6 +802,15 @@ export default function OwnerAnalyticsDashboard({
       setIsAnalyzingAI(true);
       setAiAnalysisError(null);
       try {
+        const predictivePayload = predictiveAlerts.slice(0, 5).map(a => ({
+          plot: a.plotName,
+          delayDays: a.delayDays,
+          progress: `${a.overallProgress}%`,
+          plannedEnd: a.plannedEndDate,
+          forecastEnd: a.forecastEndDate,
+          contractor: a.contractor
+        }));
+
         const res = await fetch('/api/ai-risk-analysis', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -634,7 +818,16 @@ export default function OwnerAnalyticsDashboard({
             bottleneckData,
             sCurveData,
             contractorPerformance,
-            weatherInfo
+            contractorWorkloadStats,
+            weatherInfo,
+            weatherRiskAnalysis,
+            evmMetrics,
+            predictiveDelays: predictivePayload,
+            activePlotStats: {
+              totalUnderConstruction: activeUnderConstructionPlots.length,
+              delayedPlotsCount: predictiveAlerts.length,
+              criticalOverdueCount: criticalPlots.length
+            }
           })
         });
         const data = await res.json();
@@ -699,9 +892,6 @@ export default function OwnerAnalyticsDashboard({
         if (isMounted) setAiAnalysisError(err.message);
       }
     };
-
-    // Store fetch function in ref or just bind to window for manual trigger if needed
-    // Actually we can just define a separate manual function outside useEffect, but let's define it inside the component.
     
     // Only run if we actually have data loaded
     if (bottleneckData.length > 0 && sCurveData.length > 0) {
@@ -709,12 +899,21 @@ export default function OwnerAnalyticsDashboard({
     }
 
     return () => { isMounted = false; };
-  }, [bottleneckData, sCurveData, contractorPerformance, weatherInfo]);
+  }, [bottleneckData, sCurveData, contractorPerformance, weatherInfo, activeUnderConstructionPlots.length]);
 
   const handleForceRefreshAI = async () => {
     setIsAnalyzingAI(true);
     setAiAnalysisError(null);
     try {
+      const predictivePayload = predictiveAlerts.slice(0, 5).map(a => ({
+        plot: a.plotName,
+        delayDays: a.delayDays,
+        progress: `${a.overallProgress}%`,
+        plannedEnd: a.plannedEndDate,
+        forecastEnd: a.forecastEndDate,
+        contractor: a.contractor
+      }));
+
       const res = await fetch('/api/ai-risk-analysis', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -722,7 +921,16 @@ export default function OwnerAnalyticsDashboard({
           bottleneckData,
           sCurveData,
           contractorPerformance,
-          weatherInfo
+          contractorWorkloadStats,
+          weatherInfo,
+          weatherRiskAnalysis,
+          evmMetrics,
+          predictiveDelays: predictivePayload,
+          activePlotStats: {
+            totalUnderConstruction: activeUnderConstructionPlots.length,
+            delayedPlotsCount: predictiveAlerts.length,
+            criticalOverdueCount: criticalPlots.length
+          }
         })
       });
       const data = await res.json();
@@ -763,13 +971,157 @@ export default function OwnerAnalyticsDashboard({
         </div>
       </div>
 
-      {/* Smart Risk Alerts (Real Data Driven) */}
-      <div className="bg-gradient-to-r from-slate-800 to-slate-900 rounded-[2rem] p-6 shadow-lg border border-slate-700">
-         <div className="flex justify-between items-center mb-6">
-            <h3 className="font-black text-lg text-white flex items-center gap-2">
-              <Activity className="text-rose-400" /> Smart AI Risk Alerts
-            </h3>
-            <div className="flex items-center gap-3">
+      {/* ======================================================== */}
+      {/* กรอบที่ 1: 🏡 คาดการณ์ความล่าช้ารายแปลงก่อสร้าง (Plot-by-Plot Forecast) */}
+      {/* ======================================================== */}
+      <div className="bg-gradient-to-br from-slate-900 via-slate-850 to-slate-900 rounded-[2rem] p-6 shadow-xl border border-slate-750">
+         <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 mb-6">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0">
+                <CalendarClock size={22} />
+              </div>
+              <div>
+                <h3 className="font-black text-lg text-white flex items-center gap-2">
+                  คาดการณ์ความล่าช้ารายแปลงก่อสร้าง
+                </h3>
+                <p className="text-xs text-slate-400 font-medium mt-0.5">
+                  วิเคราะห์ความเร็วงานจริง (Velocity) และความเสี่ยงผู้รับเหมา เฉพาะบ้านกำลังก่อสร้าง
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2.5 self-end sm:self-auto">
+              <span className={`text-[11px] font-bold px-3 py-1 rounded-full border shadow-sm ${
+                sortedPredictiveAlerts.length > 0 
+                  ? 'bg-rose-950/80 text-rose-300 border-rose-800/60' 
+                  : 'bg-emerald-950/80 text-emerald-300 border-emerald-800/60'
+              }`}>
+                {sortedPredictiveAlerts.length > 0 
+                  ? `พบความเสี่ยงล่าช้า ${sortedPredictiveAlerts.length} แปลง` 
+                  : 'ทุกแปลงตามแผน'} 
+                <span className="opacity-70 ml-1">/ กำลังสร้าง {activeUnderConstructionPlots.length} แปลง</span>
+              </span>
+
+              {/* Sorting Dropdown (Default: plot_asc) */}
+              <div className="flex items-center gap-1.5 bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-700 shadow-sm">
+                <ArrowUpDown size={13} className="text-amber-400 shrink-0" />
+                <span className="text-[11px] text-slate-400 font-bold hidden md:inline">เรียงตาม:</span>
+                <select
+                  value={plotSortBy}
+                  onChange={(e: any) => setPlotSortBy(e.target.value)}
+                  className="bg-transparent text-slate-200 text-xs font-bold outline-none cursor-pointer"
+                >
+                  <option value="plot_asc" className="bg-slate-800 text-white">🔢 เลขแปลง (ค่าเริ่มต้น)</option>
+                  <option value="delay_desc" className="bg-slate-800 text-white">⏳ ล่าช้ามากที่สุด ➔ น้อยสุด</option>
+                  <option value="progress_asc" className="bg-slate-800 text-white">📉 % ความคืบหน้าน้อยสุด</option>
+                  <option value="risk_severity" className="bg-slate-800 text-white">🚨 ความเสี่ยงวิกฤตก่อน</option>
+                </select>
+              </div>
+            </div>
+         </div>
+
+         {sortedPredictiveAlerts.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+               {sortedPredictiveAlerts.map((alert, idx) => (
+                 <div key={idx} className="bg-slate-800/80 hover:bg-slate-800 rounded-2xl p-4 border border-slate-700 flex flex-col justify-between hover:border-amber-500/50 transition-all shadow-md group">
+                    <div>
+                      <div className="flex items-start justify-between gap-2 mb-3">
+                          <div className="flex items-center gap-2">
+                            <span className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 font-black text-sm border border-amber-500/30">
+                              แปลง {alert.plotName}
+                            </span>
+                            <span className="text-xs text-slate-400 font-bold">
+                              {alert.foreman ? `โฟร์แมน: ${alert.foreman}` : ''}
+                            </span>
+                          </div>
+
+                          <span className={`px-2.5 py-0.5 rounded-full text-xs font-black border ${
+                            alert.severity === 'high' 
+                              ? 'bg-rose-500/25 text-rose-300 border-rose-500/50 animate-pulse' 
+                              : 'bg-amber-500/25 text-amber-300 border-amber-500/50'
+                          }`}>
+                            +{alert.delayDays} วัน
+                          </span>
+                      </div>
+
+                      {/* Progress Bar & Velocity */}
+                      <div className="space-y-1.5 mb-3 bg-slate-900/90 p-2.5 rounded-xl border border-slate-750">
+                        <div className="flex justify-between text-[11px] font-bold">
+                          <span className="text-slate-400">ความคืบหน้ารวม</span>
+                          <span className="text-white">{alert.overallProgress}%</span>
+                        </div>
+                        <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                          <div 
+                            className={`h-full rounded-full transition-all ${
+                              alert.severity === 'high' ? 'bg-gradient-to-r from-amber-500 to-rose-500' : 'bg-gradient-to-r from-blue-500 to-amber-500'
+                            }`}
+                            style={{ width: `${Math.min(100, Math.max(5, alert.overallProgress))}%` }}
+                          />
+                        </div>
+                        <div className="flex justify-between text-[10px] text-slate-400 pt-0.5">
+                          <span>ช่าง: {alert.contractor || 'ไม่ระบุ'}</span>
+                          <span className="text-amber-400/90 font-medium">ความเร็วต่ำกว่าแผน</span>
+                        </div>
+                      </div>
+
+                      {/* Date Comparison Timeline */}
+                      {alert.plannedEndDate && alert.forecastEndDate && (
+                        <div className="flex items-center justify-between text-[11px] font-medium text-slate-300 bg-slate-900/90 px-3 py-2 rounded-xl border border-slate-750 mb-3">
+                          <div>
+                            <span className="text-slate-400 block text-[10px]">แผนเดิม</span>
+                            <strong className="text-slate-200">{alert.plannedEndDate}</strong>
+                          </div>
+                          <span className="text-slate-500 font-bold">➔</span>
+                          <div className="text-right">
+                            <span className="text-rose-400 block text-[10px]">คาดการณ์เสร็จ</span>
+                            <strong className="text-rose-300 font-bold">{alert.forecastEndDate}</strong>
+                          </div>
+                        </div>
+                      )}
+
+                      <p className="text-slate-300 text-xs leading-relaxed">{alert.message}</p>
+                    </div>
+
+                    <div className="mt-3 pt-3 border-t border-slate-700/60">
+                      <p className="text-indigo-300 text-xs font-bold flex items-start gap-1.5">
+                        <span className="shrink-0">💡</span> <span>{alert.recommendation}</span>
+                      </p>
+                    </div>
+                 </div>
+               ))}
+            </div>
+         ) : (
+            <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-6 text-center text-emerald-300">
+               <p className="font-black text-base flex items-center justify-center gap-2">
+                 🎉 ทุกแปลงที่กำลังก่อสร้างดำเนินงานได้ตามแผนงาน
+               </p>
+               <p className="text-xs text-emerald-400/80 mt-1">
+                 ไม่พบแปลงที่มีแนวโน้มส่งมอบล่าช้าเกินเกณฑ์เตือนภัย (วิเคราะห์จากความเร็วงานจริงและสถิติประวัติผู้รับเหมา)
+               </p>
+            </div>
+         )}
+      </div>
+
+      {/* ======================================================== */}
+      {/* กรอบที่ 2: 🤖 AI Executive Risk Report (4 เสาหลักกลยุทธ์) */}
+      {/* ======================================================== */}
+      <div className="bg-gradient-to-br from-slate-900 via-slate-850 to-slate-900 rounded-[2rem] p-6 shadow-xl border border-slate-700">
+         <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 mb-6">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 shrink-0">
+                <Activity size={22} />
+              </div>
+              <div>
+                <h3 className="font-black text-lg text-white flex items-center gap-2">
+                  AI Executive Risk Report (4 เสาหลักกลยุทธ์)
+                </h3>
+                <p className="text-xs text-indigo-300/80 font-medium mt-0.5">
+                  วิเคราะห์เชิงลึก: สภาพอากาศ • สภาพคล่องผู้รับเหมา • คอขวด QC • มูลค่างาน (EVM)
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 self-end sm:self-auto">
               {lastUpdated && (
                 <span className="text-slate-400 text-xs font-medium">
                   อัปเดตล่าสุด: {lastUpdated.toLocaleTimeString('th-TH')}
@@ -782,7 +1134,7 @@ export default function OwnerAnalyticsDashboard({
               ) : (
                 <button 
                   onClick={handleForceRefreshAI}
-                  className="bg-slate-700 hover:bg-indigo-500 text-slate-300 hover:text-white text-xs font-bold py-1.5 px-3 rounded-lg flex items-center gap-1.5 transition-colors border border-slate-600 hover:border-indigo-400"
+                  className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold py-2 px-3.5 rounded-xl flex items-center gap-1.5 transition-all shadow-md hover:shadow-indigo-500/25 border border-indigo-400/30"
                   title="สั่งให้ AI ประมวลผลสถานการณ์ ณ ปัจจุบันทันที"
                 >
                   <Activity size={14} /> วิเคราะห์เดี๋ยวนี้
@@ -797,41 +1149,61 @@ export default function OwnerAnalyticsDashboard({
             </div>
          )}
 
-         {([...predictiveAlerts, ...aiAlerts]).length > 0 ? (
+         {aiAlerts.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-               {([...predictiveAlerts, ...aiAlerts]).map((alert, idx) => (
-                 <div key={idx} className="bg-white/10 rounded-2xl p-4 border border-white/10 flex flex-col justify-between">
+               {aiAlerts.map((alert, idx) => (
+                 <div key={idx} className="bg-slate-800/80 hover:bg-slate-800 rounded-2xl p-5 border border-slate-700 flex flex-col justify-between hover:border-indigo-500/50 transition-all shadow-md">
                     <div>
-                      <div className="flex items-center gap-3 mb-2">
-                          <div className={`p-2 rounded-lg ${
-                            alert.severity === 'high' ? 'bg-rose-500/20' : 
-                            alert.severity === 'medium' ? 'bg-amber-500/20' : 'bg-blue-500/20'
-                          }`}>
-                            {alert.type === 'weather' && <CloudRain className={alert.severity === 'high' ? 'text-rose-400' : 'text-blue-400'} size={20} />}
-                            {alert.type === 'contractor' && <Users className={alert.severity === 'high' ? 'text-rose-400' : 'text-amber-400'} size={20} />}
-                            {alert.type === 'defect' && <ShieldAlert className={alert.severity === 'high' ? 'text-rose-400' : 'text-amber-400'} size={20} />}
-                            {alert.type === 'evm' && <Target className={alert.severity === 'high' ? 'text-rose-400' : 'text-blue-400'} size={20} />}
-                            {alert.type === 'bottleneck' && <Clock className={alert.severity === 'high' ? 'text-rose-400' : 'text-amber-400'} size={20} />}
-                            {!['weather', 'contractor', 'defect', 'evm', 'bottleneck'].includes(alert.type) && <AlertTriangle className="text-rose-400" size={20} />}
+                      <div className="flex items-start justify-between gap-2 mb-3">
+                          <div className="flex items-center gap-2.5">
+                            <div className={`p-2.5 rounded-xl shrink-0 ${
+                              alert.severity === 'high' ? 'bg-rose-500/20 text-rose-400' : 
+                              alert.severity === 'medium' ? 'bg-amber-500/20 text-amber-400' : 'bg-blue-500/20 text-blue-400'
+                            }`}>
+                              {alert.type === 'weather' && <CloudRain size={20} />}
+                              {alert.type === 'contractor' && <Users size={20} />}
+                              {alert.type === 'defect' && <ShieldAlert size={20} />}
+                              {alert.type === 'evm' && <Target size={20} />}
+                              {alert.type === 'bottleneck' && <Clock size={20} />}
+                              {!['weather', 'contractor', 'defect', 'evm', 'bottleneck'].includes(alert.type) && <AlertTriangle size={20} />}
+                            </div>
+                            <div>
+                              <h4 className={`font-bold text-sm ${
+                                alert.severity === 'high' ? 'text-rose-300' : 
+                                alert.severity === 'medium' ? 'text-amber-300' : 'text-blue-300'
+                              }`}>{alert.title}</h4>
+                              <span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">
+                                {alert.type === 'weather' ? 'สภาพอากาศ & งานภายนอก' :
+                                 alert.type === 'contractor' ? 'สภาพคล่อง & ภาระงานผู้รับเหมา' :
+                                 alert.type === 'defect' || alert.type === 'bottleneck' ? 'คอขวด QC & งานแก้งาน' :
+                                 alert.type === 'evm' ? 'EVM S-Curve กำหนดการโครงการ' : 'รายงานความเสี่ยง'}
+                              </span>
+                            </div>
                           </div>
-                          <h4 className={`font-bold text-sm ${
-                            alert.severity === 'high' ? 'text-rose-300' : 
-                            alert.severity === 'medium' ? 'text-amber-300' : 'text-blue-300'
-                          }`}>{alert.title}</h4>
+
+                          <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black shrink-0 uppercase border ${
+                            alert.severity === 'high' ? 'bg-rose-500/20 text-rose-300 border-rose-500/40' :
+                            alert.severity === 'medium' ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' :
+                            'bg-blue-500/20 text-blue-300 border-blue-500/40'
+                          }`}>
+                            {alert.severity === 'high' ? 'ความเสี่ยงสูง' : alert.severity === 'medium' ? 'ควรเฝ้าระวัง' : 'ปกติ'}
+                          </span>
                       </div>
-                      <p className="text-slate-300 text-xs mt-2 leading-relaxed">{alert.message}</p>
+
+                      <p className="text-slate-300 text-xs leading-relaxed mt-2">{alert.message}</p>
                     </div>
-                    <div className="mt-4 pt-3 border-t border-white/10">
-                      <p className="text-indigo-300 text-xs font-bold flex items-center gap-1">
-                        💡 คำแนะนำ: {alert.recommendation}
+
+                    <div className="mt-4 pt-3 border-t border-slate-700/60">
+                      <p className="text-indigo-300 text-xs font-bold flex items-start gap-1.5">
+                        <span className="shrink-0">💡</span> <span>คำแนะนำเชิงกลยุทธ์: {alert.recommendation}</span>
                       </p>
                     </div>
                  </div>
                ))}
             </div>
          ) : !isAnalyzingAI && !aiAnalysisError && (
-            <div className="text-center py-8 text-slate-400 font-bold text-sm">
-               คลิกปุ่ม "Run Deep AI Analysis" เพื่อให้ AI ประมวลผลข้อมูลความเสี่ยงของโครงการ
+            <div className="text-center py-8 text-slate-400 font-bold text-sm bg-slate-900/60 rounded-2xl border border-slate-800">
+               คลิกปุ่ม "วิเคราะห์เดี๋ยวนี้" เพื่อให้ AI ประมวลผลบทวิเคราะห์ 4 เสาหลักของโครงการ
             </div>
          )}
       </div>
@@ -892,29 +1264,58 @@ export default function OwnerAnalyticsDashboard({
           </div>
         </div>
 
-        {/* 2. Bottleneck Analysis (Latency) */}
+        {/* 2. Top QC Rejections (งานที่โดนตีกลับ/สั่งแก้ไขบ่อยที่สุด) */}
         <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex flex-col justify-center hover:shadow-md transition-shadow lg:col-span-2">
           <div className="mb-6">
-            <h3 className="font-black text-lg text-slate-800 flex items-center gap-2"><Clock className="text-amber-500" /> Handoff Latency Bottleneck</h3>
-            <p className="text-xs text-slate-500 mt-1 font-medium">จัดอันดับงานที่เกิด "คอขวด" จากระยะเวลารอ QC เข้าตรวจงานนานที่สุด หรือถูกตีกลับบ่อยที่สุด เพื่อแก้ปัญหาการรอคอยระหว่างขั้นตอน</p>
+            <h3 className="font-black text-lg text-slate-800 flex items-center gap-2">
+              <ShieldAlert className="text-rose-500" /> งานที่โดนตีกลับ/แจ้งแก้ไขบ่อยที่สุด (Top QC Rejections)
+            </h3>
+            <p className="text-xs text-slate-500 mt-1 font-medium">
+              จัดอันดับขั้นตอนงานที่ถูก QC หรือวิศวกรสั่งแก้ไข/ตีกลับบ่อยที่สุด เพื่อชี้เป้าจุดบกพร่องและควบคุมมาตรฐานฝีมือช่างเป็นพิเศษ
+            </p>
           </div>
           <div className="space-y-4">
-            {bottleneckData.length > 0 ? bottleneckData.map((b: any, idx: number) => (
-              <div key={idx} className="flex items-center gap-3">
-                <div className="w-8 h-8 shrink-0 bg-amber-100 text-amber-700 font-black rounded-full flex items-center justify-center text-sm">{idx + 1}</div>
-                <div className="flex-1">
-                  <p className="font-bold text-sm text-slate-700 truncate max-w-[200px] sm:max-w-full">{b.taskName}</p>
-                  <div className="w-full bg-slate-100 h-1.5 rounded-full mt-1.5 overflow-hidden flex">
-                    <div className="bg-amber-500 h-full transition-all" style={{ width: `${Math.min((b.count / bottleneckData[0].count) * 60, 60)}%` }}></div>
-                    <div className="bg-rose-400 h-full transition-all" style={{ width: `${Math.min((b.avgWaitDays / 5) * 40, 40)}%` }}></div>
+            {bottleneckData.length > 0 ? (
+              bottleneckData.map((b: any, idx: number) => {
+                const maxCount = bottleneckData[0]?.count || 1;
+                const fillPercent = Math.max(15, Math.round((b.count / maxCount) * 100));
+                const badgeColor =
+                  idx === 0
+                    ? 'bg-rose-100 text-rose-700 border border-rose-200'
+                    : idx === 1
+                    ? 'bg-amber-100 text-amber-700 border border-amber-200'
+                    : 'bg-slate-100 text-slate-700 border border-slate-200';
+
+                return (
+                  <div key={idx} className="flex items-center gap-3">
+                    <div className={`w-8 h-8 shrink-0 font-black rounded-full flex items-center justify-center text-sm ${badgeColor}`}>
+                      {idx + 1}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-bold text-sm text-slate-700 truncate">{b.taskName}</p>
+                      <div className="w-full bg-slate-100 h-2 rounded-full mt-1.5 overflow-hidden">
+                        <div
+                          className="bg-gradient-to-r from-amber-500 to-rose-500 h-full rounded-full transition-all duration-500"
+                          style={{ width: `${fillPercent}%` }}
+                        />
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="font-black text-rose-600 text-sm">โดนตีกลับ {b.count} ครั้ง</div>
+                      {b.avgWaitDays > 0 ? (
+                        <div className="text-[11px] font-medium text-slate-400">เวลารอตรวจ {b.avgWaitDays} วัน</div>
+                      ) : null}
+                    </div>
                   </div>
-                </div>
-                <div className="text-right shrink-0">
-                  <div className="font-black text-slate-600 text-sm">โดนตีกลับ {b.count} ครั้ง</div>
-                  <div className="text-[10px] font-bold text-rose-500">รอเฉลี่ย {b.avgWaitDays} วัน</div>
-                </div>
+                );
+              })
+            ) : (
+              <div className="text-center py-8 px-4 bg-emerald-50/60 rounded-2xl border border-emerald-100/80">
+                <div className="text-2xl mb-1">🎉</div>
+                <div className="text-emerald-700 font-bold text-sm">ยอดเยี่ยม! ไม่พบงานที่ถูกตีกลับหรือสั่งแก้ไข</div>
+                <div className="text-xs text-emerald-600/80 mt-0.5">ทุกขั้นตอนผ่านการตรวจสอบตามมาตรฐานในโครงการที่เลือก</div>
               </div>
-            )) : <div className="text-slate-400 font-bold text-sm text-center py-8">ไม่มีข้อมูลคอขวด 🎉</div>}
+            )}
           </div>
         </div>
 
@@ -973,60 +1374,6 @@ export default function OwnerAnalyticsDashboard({
               {contractorPerformance.filter((c: any) => c.delayProbability > 50 || c.totalReworks > 3).length === 0 && (
                 <div className="text-center py-6 text-sm font-bold text-rose-600/50">ไม่มีผู้รับเหมาในกลุ่มเสี่ยง 🎉</div>
               )}
-            </div>
-          </div>
-        </div>
-
-        {/* 5. Defect Hotspots and Overdue Plots */}
-        <div className="lg:col-span-2 grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Defect Hotspots */}
-          <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-            <div className="mb-6">
-              <h3 className="font-black text-lg text-slate-800 flex items-center gap-2"><Target className="text-rose-500" /> Defect Hotspots</h3>
-              <p className="text-xs text-slate-500 mt-1 font-medium">จุดบอดงานก่อสร้างที่เกิด Defect บ่อยที่สุด 3 อันดับแรก</p>
-            </div>
-            <div className="space-y-4">
-              {defectHotspots.length > 0 ? defectHotspots.map((d: any, idx: number) => (
-                <div key={idx} className="flex items-center gap-3">
-                  <div className="w-8 h-8 shrink-0 bg-rose-100 text-rose-700 font-black rounded-full flex items-center justify-center text-sm">{idx + 1}</div>
-                  <div className="flex-1">
-                    <p className="font-bold text-sm text-slate-700 truncate">{d.name}</p>
-                    <div className="w-full bg-slate-100 h-1.5 rounded-full mt-1.5 overflow-hidden">
-                      <div className="bg-rose-500 h-full transition-all" style={{ width: `${Math.min((d.count / defectHotspots[0].count) * 100, 100)}%` }}></div>
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <div className="font-black text-slate-600 text-sm">{d.count} ครั้ง</div>
-                  </div>
-                </div>
-              )) : <div className="text-center py-6 text-sm font-bold text-slate-400">ยังไม่มีประวัติ Defect 🎉</div>}
-            </div>
-          </div>
-
-          {/* Overdue Critical Plots */}
-          <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-            <div className="mb-6">
-              <h3 className="font-black text-lg text-slate-800 flex items-center gap-2"><AlertTriangle className="text-amber-500" /> Overdue Critical Plots</h3>
-              <p className="text-xs text-slate-500 mt-1 font-medium">แปลงบ้านที่ล่าช้าเข้าขั้นวิกฤต (Delay &gt; 7 วัน)</p>
-            </div>
-            <div className="space-y-3">
-              {criticalPlots.length > 0 ? criticalPlots.map((p: any, idx: number) => (
-                <div key={idx} className="bg-amber-50 p-4 rounded-xl border border-amber-100 shadow-sm">
-                  <div className="flex justify-between items-start mb-2">
-                    <div>
-                      <p className="font-black text-amber-900">แปลง {p.plotName}</p>
-                      <p className="text-xs font-bold text-slate-600 mt-0.5">{p.taskName}</p>
-                    </div>
-                    <div className="bg-amber-100 text-amber-700 px-2 py-1 rounded-md text-[10px] font-black">
-                      ช้าไป {p.delayDays} วัน
-                    </div>
-                  </div>
-                  <p className="text-[10px] font-bold text-slate-500 flex items-center gap-2">
-                    <span>ช่าง: {p.contractor}</span>
-                    <span>โฟร์แมน: {p.foreman}</span>
-                  </p>
-                </div>
-              )) : <div className="text-center py-6 text-sm font-bold text-slate-400">ไม่มีบ้านที่ล่าช้าวิกฤต 🎉</div>}
             </div>
           </div>
         </div>

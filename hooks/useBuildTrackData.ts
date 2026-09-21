@@ -1,8 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 
 export function useBuildTrackData(loggedInUser: any, selectedProjectName?: string | null) {
   const [loading, setLoading] = useState(true);
+  const [isAnalyticsLoading, setIsAnalyticsLoading] = useState(false);
+  const isAnalyticsFetchedRef = useRef(false);
   
   // 🏢 Core Data States
   const [projects, setProjects] = useState<any[]>([]);
@@ -194,6 +196,15 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
               latestUpdates[key].role = upd.role;
               latestUpdates[key].created_at = upd.created_at;
               latestUpdates[key].progress = upd.progress;
+            } else if ((latestUpdates[key].progress === 0 || latestUpdates[key].progress === undefined) && upd.progress > 0) {
+              // Self-healing fallback: If assignment cache had 0 progress but task_updates has real progress
+              latestUpdates[key].progress = upd.progress;
+              if (upd.action) latestUpdates[key].action = upd.action;
+              if (upd.role) latestUpdates[key].role = upd.role;
+              if (upd.created_at) latestUpdates[key].created_at = upd.created_at;
+            }
+            if (!tDates[key]?.end && (upd.progress === 100 || upd.is_completed)) {
+              tDates[key] = { ...tDates[key], end: upd.created_at };
             }
           } else {
             latestUpdates[key] = {
@@ -303,6 +314,11 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
                       latestUpdates[key].role = upd.role;
                       latestUpdates[key].created_at = upd.created_at;
                       latestUpdates[key].progress = upd.progress;
+                    } else if ((latestUpdates[key].progress === 0 || latestUpdates[key].progress === undefined) && upd.progress > 0) {
+                      latestUpdates[key].progress = upd.progress;
+                      if (upd.action) latestUpdates[key].action = upd.action;
+                      if (upd.role) latestUpdates[key].role = upd.role;
+                      if (upd.created_at) latestUpdates[key].created_at = upd.created_at;
                     }
                   } else {
                     latestUpdates[key] = {
@@ -416,8 +432,12 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
     }
   }, []);
 
-  // 🌟 ฟังก์ชันโหลดข้อมูล Analytics ผู้บริหาร
-  const fetchOwnerAnalyticsData = useCallback(async () => {
+  // 🌟 ฟังก์ชันโหลดข้อมูล Analytics ผู้บริหาร (พร้อม Cache และ Loading State)
+  const fetchOwnerAnalyticsData = useCallback(async (forceRefresh = false) => {
+    if (isAnalyticsFetchedRef.current && !forceRefresh) {
+      return;
+    }
+    setIsAnalyticsLoading(true);
     try {
       const [assignData, schedData, updData, { data: defData }] = await Promise.all([
         fetchWithoutLimit('plot_task_assignments'),
@@ -431,7 +451,6 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
       const newSched: any = {};
 
       schedData?.forEach((s: any) => { newSched[`${s.plot_id}-${s.task_template_id}`] = s; });
-      setSchedules(newSched);
       
       assignData?.forEach((assign: any) => { 
         const key = `${assign.plot_id}-${assign.task_template_id}`; 
@@ -452,13 +471,18 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
         }
       });
       
+      // Batch state updates
+      setSchedules(newSched);
       setLatestUpdatesMap(latestUpdates); 
       setTaskDates(tDates);
       setAllUpdatesRecord(updData || []);
       setDefects(defData || []);
+      isAnalyticsFetchedRef.current = true;
 
     } catch (err) {
       console.error('Error fetching analytics:', err);
+    } finally {
+      setIsAnalyticsLoading(false);
     }
   }, []);
 
@@ -622,6 +646,7 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
 
   return {
     loading, setLoading,
+    isAnalyticsLoading,
     projects, setProjects,
     houseTypes, setHouseTypes,
     taskTemplates, setTaskTemplates,
