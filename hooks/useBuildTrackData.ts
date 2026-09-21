@@ -120,10 +120,10 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
         supabase.from('projects').select('*').order('created_at', { ascending: true }),
         supabase.from('house_types').select('*'),
         fetchWithoutLimit('task_templates', null, 'task_order', true),
-        fetchWithoutLimit('plots', selectedProjectName, 'created_at', true, '*, house_types(type_name)'),
+        fetchWithoutLimit('plots', null, 'created_at', true, '*, house_types(type_name)'),
         supabase.from('contractors').select('*'),
         supabase.from('notifications').select('*').or(`target_user.eq.${loggedInUser.username},target_role.eq.${loggedInUser.role}`).order('created_at', { ascending: false }),
-        fetchWithoutLimit('vw_plot_progress', selectedProjectName, 'plot_id', true, '*', null),
+        fetchWithoutLimit('vw_plot_progress', null, 'plot_id', true, '*', null),
         supabase.from('vw_project_progress').select('*'),
         fetchWithoutLimit('vw_active_plot_task_assignments', selectedProjectName),
         fetchWithoutLimit('plot_task_schedules', selectedProjectName),
@@ -134,7 +134,7 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
         supabase.from('task_material_receipts').select('*').order('created_at', { ascending: true }),
         supabase.from('vw_inspection_queue').select('*'),
         supabase.from('vw_plot_status_dashboard').select('*'),
-        fetchWithoutLimit('vw_plot_overall_status', selectedProjectName, 'plot_id', true, '*', null),
+        fetchWithoutLimit('vw_plot_overall_status', null, 'plot_id', true, '*', null),
         supabase.from('vw_qc_se_performance').select('*')
       ]);
 

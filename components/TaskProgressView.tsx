@@ -1,7 +1,8 @@
 
 import React, { useEffect } from 'react';
 import { 
-  AlertCircle, AlertTriangle, ArrowLeft, Camera, CheckCircle, Clock, Loader2, Printer, Send, ShieldAlert, Trash2, X
+  AlertCircle, AlertTriangle, ArrowLeft, Camera, CheckCircle, Clock, Loader2, Printer, Send, ShieldAlert, Trash2, X,
+  UserCheck, UserX
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -43,6 +44,8 @@ interface TaskProgressViewProps {
   handleSendPost: () => void;
   handleAdminUndoLatest?: (taskTemplateId: string, plotId: string) => void;
   handleAdminResetToZero?: (taskTemplateId: string, plotId: string) => void;
+  isWorkerPresent?: boolean;
+  setIsWorkerPresent?: (b: boolean) => void;
 }
 
 const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps) {
@@ -55,11 +58,13 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
     selectedFiles, setSelectedFiles,
     isTaskCompleted, handleOpenExportModal, setDefectModal, defects, loggedInUser,
     isLockedForForeman, isSiteEngineer, isPendingSE, handleReviewAction, isQC,
-    isPendingQC, isProcurement, isOwner, handleSendPost, handleAdminUndoLatest, handleAdminResetToZero
+    isPendingQC, isProcurement, isOwner, handleSendPost, handleAdminUndoLatest, handleAdminResetToZero,
+    isWorkerPresent = true, setIsWorkerPresent
   } = props;
 
   useEffect(() => {
     if (view === 'task-progress' && selectedTask && selectedPlot) {
+      if (setIsWorkerPresent) setIsWorkerPresent(true);
       supabase.from('task_updates').select('*')
         .eq('task_template_id', selectedTask.id)
         .eq('plot_id', selectedPlot.id)
@@ -69,7 +74,7 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
           setProgressValue(data?.length ? data[data.length - 1].progress : 0);
         });
     }
-  }, [view, selectedTask?.id, selectedPlot?.id, setUpdates, setProgressValue]);
+  }, [view, selectedTask?.id, selectedPlot?.id, setUpdates, setProgressValue, setIsWorkerPresent]);
 
   return (
     <>
@@ -147,16 +152,20 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                            )}
 
                            <main className={`flex-1 overflow-y-auto ${isMobileLayout ? 'p-3 pb-32 space-y-3' : 'p-4 sm:px-8 sm:pt-8 sm:pb-[280px] space-y-4 sm:space-y-6'} bg-slate-50/50`}>
-                                {updates.map((update: any) => {
-                                  const isQC = update.role === 'QC' || (typeof update.action === 'string' && update.action.includes('QC'));
-                                  const isQCPass = isQC && ((typeof update.action === 'string' && (update.action.includes('อนุมัติ') || update.action.includes('ผ่าน'))) || update.progress === 100);
-                                  const isQCFail = isQC && ((typeof update.action === 'string' && (update.action.includes('ไม่อนุมัติ') || update.action.includes('ไม่ผ่าน') || update.action.includes('แจ้งแก้ไข'))) || update.progress === 95);
+                                 {updates.map((update: any) => {
+                                   const authorName = (update.user_name || update.created_by || 'ช่าง').trim();
+                                   const isQC = update.role === 'QC' || authorName === 'QC' || (typeof update.action === 'string' && update.action.includes('QC'));
+                                   const isQCPass = isQC && ((typeof update.action === 'string' && (update.action.includes('อนุมัติ') || update.action.includes('ผ่าน'))) || update.progress === 100);
+                                   const isQCFail = isQC && ((typeof update.action === 'string' && (update.action.includes('ไม่อนุมัติ') || update.action.includes('ไม่ผ่าน') || update.action.includes('แจ้งแก้ไข'))) || update.progress === 95);
+                                   const isWorkerAbsent = update.is_worker_present === false || update.action === 'ไม่มีช่างเข้างาน';
 
-                                  return (
-                               <div key={update.id} className={`flex ${isMobileLayout ? 'gap-2' : 'gap-3 sm:gap-5'} animate-in slide-in-from-bottom-4`}>
-                                   <div className={`${isMobileLayout ? 'w-8 h-8 rounded-lg text-xs' : 'w-10 h-10 sm:w-14 sm:h-14 rounded-2xl text-sm sm:text-base'} flex items-center justify-center text-white font-bold shrink-0 shadow-lg ${isQCPass ? 'bg-emerald-600' : isQCFail ? 'bg-rose-600' : update.role === 'QC' ? 'bg-purple-600' : update.role === 'Site Engineer' ? 'bg-blue-600' : 'bg-slate-600'}`}>{update.user_name.charAt(0)}</div>
+                                   return (
+                                <div key={update.id} className={`flex ${isMobileLayout ? 'gap-2' : 'gap-3 sm:gap-5'} animate-in slide-in-from-bottom-4`}>
+                                    <div className={`${isMobileLayout ? 'w-8 h-8 rounded-lg text-xs' : 'w-10 h-10 sm:w-14 sm:h-14 rounded-2xl text-sm sm:text-base'} flex items-center justify-center text-white font-bold shrink-0 shadow-lg ${isQCPass ? 'bg-emerald-600' : isQCFail ? 'bg-rose-600' : isWorkerAbsent ? 'bg-rose-600' : update.role === 'QC' ? 'bg-purple-600' : update.role === 'Site Engineer' ? 'bg-blue-600' : 'bg-slate-600'}`}>
+                                      {authorName ? authorName.charAt(0).toUpperCase() : 'U'}
+                                    </div>
                                     {/* สังเกตตรงนี้: ผมแอบเติม pr-8 เข้าไปท้ายสุดของบรรทัดเพื่อไม่ให้ข้อความไปบังปุ่มลบครับ */}
-                                   <div className={`flex-1 bg-white ${isMobileLayout ? 'p-3 rounded-2xl' : 'p-5 sm:p-6 rounded-[1.5rem] sm:rounded-[2rem]'} border ${isQCPass ? 'border-emerald-200 bg-emerald-50/20' : isQCFail ? 'border-rose-200 bg-rose-50/20' : 'border-black/5'} shadow-sm relative pr-8`}>
+                                   <div className={`flex-1 bg-white ${isMobileLayout ? 'p-3 rounded-2xl' : 'p-5 sm:p-6 rounded-[1.5rem] sm:rounded-[2rem]'} border ${isQCPass ? 'border-emerald-200 bg-emerald-50/20' : isQCFail ? 'border-rose-200 bg-rose-50/20' : isWorkerAbsent ? 'border-rose-300 bg-rose-50/20' : 'border-black/5'} shadow-sm relative pr-8`}>
                                        
                                        {/* 🗑️ ปุ่มลบรายงาน (สิทธิ์: เฉพาะ Admin เท่านั้น) และงานนั้นต้องยังไม่จบ 100% */}
                                        {isAdmin && !isTaskCompleted && (
@@ -170,14 +179,28 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                        )}
 
                                        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-2 sm:mb-4 gap-1 sm:gap-2">
-                                         <p className={`text-[9px] sm:text-xs font-bold uppercase italic tracking-widest leading-tight ${isQCPass ? 'text-emerald-600' : isQCFail ? 'text-rose-600' : update.role === 'QC' ? 'text-purple-400' : update.role === 'Site Engineer' ? 'text-blue-400' : 'text-slate-400'}`}>{update.action} • {update.user_name} • {update.progress}%</p>
-                                         <span className={`text-[8px] sm:text-xs text-[#86868b] font-bold bg-[#f5f5f7] border border-slate-100 ${isMobileLayout ? 'px-2 py-0.5' : 'px-3 py-1.5'} rounded-lg shrink-0 w-fit`}>{new Date(update.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })} • {new Date(update.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.</span>
-                                         {/* 🌟 ป้ายสภาพอากาศ ณ เวลาที่รายงาน */}
-                                          {update.weather_info && (
-                                            <span className={`text-[8px] sm:text-xs text-sky-700 font-bold bg-sky-50 border border-sky-100 ${isMobileLayout ? 'px-2 py-0.5' : 'px-3 py-1.5'} rounded-lg shrink-0 w-fit flex items-center gap-1`} title="สภาพอากาศขณะรายงาน">
-                                                {update.weather_info}
-                                            </span>
-                                          )}
+                                         <div className="flex items-center gap-1.5 flex-wrap">
+                                           <p className={`text-[9px] sm:text-xs font-bold uppercase italic tracking-widest leading-tight ${isQCPass ? 'text-emerald-600' : isQCFail ? 'text-rose-600' : isWorkerAbsent ? 'text-rose-600' : update.role === 'QC' ? 'text-purple-400' : update.role === 'Site Engineer' ? 'text-blue-400' : 'text-slate-400'}`}>{update.action} • {update.user_name} • {update.progress}%</p>
+                                           {/* 🌟 ป้ายแสดงสถานะช่างเข้างาน / ไม่เข้างาน */}
+                                           {isWorkerAbsent ? (
+                                             <span className="text-[8px] sm:text-[9px] font-bold bg-rose-100 text-rose-700 border border-rose-200 px-1.5 py-0.5 rounded-md flex items-center gap-1 shadow-xs">
+                                               <UserX size={10} className="text-rose-600" /> ไม่มีช่างเข้างาน
+                                             </span>
+                                           ) : (
+                                             <span className="text-[8px] sm:text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded-md flex items-center gap-1 shadow-xs">
+                                               <UserCheck size={10} className="text-emerald-600" /> ช่างเข้างาน
+                                             </span>
+                                           )}
+                                         </div>
+                                         <div className="flex items-center gap-1 sm:gap-1.5 flex-wrap">
+                                           <span className={`text-[8px] sm:text-xs text-[#86868b] font-bold bg-[#f5f5f7] border border-slate-100 ${isMobileLayout ? 'px-2 py-0.5' : 'px-3 py-1.5'} rounded-lg shrink-0 w-fit`}>{new Date(update.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })} • {new Date(update.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.</span>
+                                           {/* 🌟 ป้ายสภาพอากาศ ณ เวลาที่รายงาน */}
+                                           {update.weather_info && (
+                                             <span className={`text-[8px] sm:text-xs text-sky-700 font-bold bg-sky-50 border border-sky-100 ${isMobileLayout ? 'px-2 py-0.5' : 'px-3 py-1.5'} rounded-lg shrink-0 w-fit flex items-center gap-1`} title="สภาพอากาศขณะรายงาน">
+                                                 {update.weather_info}
+                                             </span>
+                                           )}
+                                         </div>
                                        </div>
                                        <p className={`text-[#1d1d1f] ${isMobileLayout ? 'text-xs mb-2' : 'text-sm sm:text-base mb-4'} font-medium leading-relaxed`}>{update.text_content}</p>
                                        {update.image_url && (
@@ -242,18 +265,85 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                  isPendingSE || isPendingQC ? (
                                    <div className={`bg-orange-100 text-orange-600 py-3 sm:py-4 px-4 sm:px-6 rounded-xl sm:rounded-[1.5rem] font-bold text-center uppercase tracking-widest border border-orange-200 flex items-center justify-center gap-2 ${isMobileLayout ? 'text-[10px]' : 'text-xs sm:text-sm'}`}><Clock size={18}/> งานรอตรวจสอบ ({isPendingSE ? 'Site Engineer' : 'QC'})</div>
                                  ) : (
-                                   <div className={`space-y-2 sm:space-y-4`}>
-                                       <div className={`flex items-center gap-2 sm:gap-4 ${isMobileLayout ? 'px-1' : 'px-2'}`}>
-                                           <span className={`font-bold text-[#86868b] uppercase italic tracking-widest ${isMobileLayout ? 'text-[8px]' : 'text-[10px] sm:text-xs'}`}>Progress</span>
-                                           <input type="range" min={updates.length > 0 ? updates[updates.length-1].progress : 0} max="100" step="5" value={progressValue} onChange={(e) => setProgressValue(Number(e.target.value))} className={`flex-1 accent-blue-600 ${isMobileLayout ? 'h-1.5' : 'h-2 sm:h-2.5'} bg-slate-200 rounded-lg appearance-none cursor-pointer`} />
-                                           <span className={`font-bold text-blue-600 text-right italic ${isMobileLayout ? 'text-sm w-10' : 'text-xl sm:text-2xl w-16 sm:w-20'}`}>{progressValue}%</span>
-                                       </div>
-                                       <div className={`flex items-center ${isMobileLayout ? 'gap-1.5' : 'gap-2 sm:gap-3'}`}>
-                                           <label className={`text-slate-400 hover:text-blue-600 ${isMobileLayout ? 'p-2 rounded-lg' : 'p-3 sm:p-4 rounded-xl sm:rounded-[1.5rem]'} bg-[#f5f5f7] cursor-pointer shadow-sm active:scale-90 transition-transform flex flex-col items-center justify-center`} title="รูปผลงาน"><Camera size={isMobileLayout ? 18 : 24} /><span className="text-[8px] font-bold mt-0.5">ผลงาน</span><input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { const files = Array.from(e.target.files || []).map(f => ({ file: f, previewUrl: URL.createObjectURL(f) })); setSelectedFiles([...selectedFiles, ...files].slice(0, 10)); }} /></label>
-                                           <input type="text" value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendPost()} placeholder="อธิบายงาน..." className={`flex-1 bg-[#f5f5f7] ${isMobileLayout ? 'rounded-lg px-3 py-2 text-[10px]' : 'rounded-xl sm:rounded-[1.5rem] px-5 sm:px-6 py-3 sm:py-4 text-sm'} font-bold outline-none border-2 border-transparent focus:border-blue-500 shadow-inner`} />
-                                           <button onClick={handleSendPost} disabled={isSending} className={`${isMobileLayout ? 'p-2 rounded-lg' : 'p-3 sm:p-4 rounded-xl sm:rounded-[1.5rem]'} text-white shadow-md disabled:opacity-50 ${progressValue === 100 ? 'bg-orange-500 hover:bg-orange-600' : 'bg-blue-600 hover:bg-blue-700'}`}>{isSending ? <Loader2 className="animate-spin" size={isMobileLayout ? 18 : 24}/> : <Send size={isMobileLayout ? 18 : 24}/>}</button>
-                                       </div>
-                                   </div>
+                                    <div className={`space-y-2 sm:space-y-4`}>
+                                        {/* 🌟 ติ๊กถูก: ช่างเข้างาน / ช่างไม่เข้างาน 🌟 */}
+                                        <div className="flex items-center justify-between px-1 sm:px-2 pt-0.5">
+                                            <label className="flex items-center gap-2 cursor-pointer select-none group">
+                                                <input 
+                                                    type="checkbox" 
+                                                    checked={isWorkerPresent} 
+                                                    onChange={(e) => {
+                                                        const checked = e.target.checked;
+                                                        if (setIsWorkerPresent) setIsWorkerPresent(checked);
+                                                        if (!checked) {
+                                                            const currentProgress = updates.length > 0 ? updates[updates.length - 1].progress : 0;
+                                                            setProgressValue(currentProgress);
+                                                        }
+                                                    }}
+                                                    className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer accent-blue-600" 
+                                                />
+                                                <span className={`text-xs sm:text-sm font-bold flex items-center gap-1.5 transition-colors ${isWorkerPresent ? 'text-emerald-700' : 'text-rose-600'}`}>
+                                                    {isWorkerPresent ? (
+                                                        <>
+                                                            <UserCheck size={16} className="text-emerald-600" />
+                                                            <span>ช่างเข้างาน</span>
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <UserX size={16} className="text-rose-600 animate-pulse" />
+                                                            <span>ช่างไม่เข้างาน</span>
+                                                            <span className="text-[10px] text-rose-500/80 font-normal hidden sm:inline">(ล็อก % เท่าเดิม)</span>
+                                                        </>
+                                                    )}
+                                                </span>
+                                            </label>
+                                            {!isWorkerPresent && (
+                                                <span className="text-[9px] sm:text-xs font-bold text-rose-600 bg-rose-100/80 border border-rose-200 px-2 py-0.5 rounded-full animate-in fade-in flex items-center gap-1">
+                                                    <UserX size={12}/> รายงานไม่มีช่าง
+                                                </span>
+                                            )}
+                                        </div>
+
+                                        <div className={`flex items-center gap-2 sm:gap-4 ${isMobileLayout ? 'px-1' : 'px-2'} ${!isWorkerPresent ? 'opacity-40 pointer-events-none' : ''}`}>
+                                            <span className={`font-bold text-[#86868b] uppercase italic tracking-widest ${isMobileLayout ? 'text-[8px]' : 'text-[10px] sm:text-xs'}`}>Progress</span>
+                                            <input 
+                                                type="range" 
+                                                disabled={!isWorkerPresent}
+                                                min={updates.length > 0 ? updates[updates.length-1].progress : 0} 
+                                                max="100" 
+                                                step="5" 
+                                                value={progressValue} 
+                                                onChange={(e) => setProgressValue(Number(e.target.value))} 
+                                                className={`flex-1 accent-blue-600 ${isMobileLayout ? 'h-1.5' : 'h-2 sm:h-2.5'} bg-slate-200 rounded-lg appearance-none ${!isWorkerPresent ? 'cursor-not-allowed' : 'cursor-pointer'}`} 
+                                            />
+                                            <span className={`font-bold text-blue-600 text-right italic ${isMobileLayout ? 'text-sm w-10' : 'text-xl sm:text-2xl w-16 sm:w-20'}`}>{progressValue}%</span>
+                                        </div>
+                                        <div className={`flex items-center ${isMobileLayout ? 'gap-1.5' : 'gap-2 sm:gap-3'}`}>
+                                            <label className={`text-slate-400 hover:text-blue-600 ${isMobileLayout ? 'p-2 rounded-lg' : 'p-3 sm:p-4 rounded-xl sm:rounded-[1.5rem]'} bg-[#f5f5f7] cursor-pointer shadow-sm active:scale-90 transition-transform flex flex-col items-center justify-center`} title="รูปผลงาน"><Camera size={isMobileLayout ? 18 : 24} /><span className="text-[8px] font-bold mt-0.5">ผลงาน</span><input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { const files = Array.from(e.target.files || []).map(f => ({ file: f, previewUrl: URL.createObjectURL(f) })); setSelectedFiles([...selectedFiles, ...files].slice(0, 10)); }} /></label>
+                                            <input 
+                                                type="text" 
+                                                value={inputText} 
+                                                onChange={(e) => setInputText(e.target.value)} 
+                                                onKeyDown={(e) => e.key === 'Enter' && handleSendPost()} 
+                                                placeholder={!isWorkerPresent ? 'ระบุสาเหตุที่ไม่มีช่าง หรือกดส่งได้ทันที...' : 'อธิบายงาน...'} 
+                                                className={`flex-1 bg-[#f5f5f7] ${isMobileLayout ? 'rounded-lg px-3 py-2 text-[10px]' : 'rounded-xl sm:rounded-[1.5rem] px-5 sm:px-6 py-3 sm:py-4 text-sm'} font-bold outline-none border-2 border-transparent ${!isWorkerPresent ? 'focus:border-rose-500' : 'focus:border-blue-500'} shadow-inner`} 
+                                            />
+                                            <button 
+                                                onClick={handleSendPost} 
+                                                disabled={isSending} 
+                                                className={`${isMobileLayout ? 'p-2 rounded-lg' : 'p-3 sm:p-4 rounded-xl sm:rounded-[1.5rem]'} text-white shadow-md disabled:opacity-50 transition-all ${
+                                                    !isWorkerPresent 
+                                                        ? 'bg-rose-600 hover:bg-rose-700' 
+                                                        : progressValue === 100 
+                                                        ? 'bg-orange-500 hover:bg-orange-600' 
+                                                        : 'bg-blue-600 hover:bg-blue-700'
+                                                }`}
+                                                title={!isWorkerPresent ? 'ส่งรายงาน: ไม่มีช่างเข้างาน' : 'ส่งอัปเดตงาน'}
+                                            >
+                                                {isSending ? <Loader2 className="animate-spin" size={isMobileLayout ? 18 : 24}/> : <Send size={isMobileLayout ? 18 : 24}/>}
+                                            </button>
+                                        </div>
+                                    </div>
                                  )
                                )}
                            </footer>

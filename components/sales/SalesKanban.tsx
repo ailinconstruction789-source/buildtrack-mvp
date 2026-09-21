@@ -257,7 +257,7 @@ export default function SalesKanban({
             if (plotData.sale_status === 'ready_for_sale') statusInfo = { status: 'ready_for_sale', label: 'พร้อมขาย/รอโอน', color: 'text-amber-600' };
             else if (actualAvg === 0 && plannedAvg === 0) statusInfo = { status: 'none', label: 'รอดำเนินการ', color: 'text-slate-500' };
             else if (actualAvg >= 100 && plannedAvg >= 100) statusInfo = { status: 'completed', label: 'เสร็จสมบูรณ์', color: 'text-emerald-600' };
-            else if (actualAvg < plannedAvg - 10) statusInfo = { status: 'delayed', label: 'ล่าช้ากว่าแผน', color: 'text-rose-600' };
+            else if (actualAvg < plannedAvg) statusInfo = { status: 'delayed', label: 'ล่าช้ากว่าแผน', color: 'text-rose-600' };
             else if (actualAvg > plannedAvg + 10) statusInfo = { status: 'ahead', label: 'เร็วกว่าแผน', color: 'text-indigo-600' };
             else statusInfo = { status: 'on-track', label: 'ตามแผน', color: 'text-blue-600' };
           }

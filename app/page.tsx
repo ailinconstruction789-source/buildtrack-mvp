@@ -38,7 +38,7 @@ import {
   LayoutDashboard, Map as MapIcon, Truck, ChevronRight, ClipboardList, Loader2,
   Send, Camera, CheckCircle, XCircle, UserCog, X, Maximize2, HardHat, PlusCircle, Settings, Building, FolderOpen, Users, Trash2, Search, Filter, LogOut, AlertTriangle, Eraser, Grid, Paintbrush, Clock, SortAsc,
   UserPlus, Phone, CalendarDays, Wrench, FileSpreadsheet, Bell, CalendarClock, TrendingUp, AlertCircle, BarChartHorizontal, Save, Calendar, Smartphone, Monitor, ZoomIn, ZoomOut,
-  PieChart, Home, Activity, Download, Copy, Pickaxe, ShieldAlert, Printer, CheckSquare, Square, ImageIcon, Tag, Hammer, UserCheck, DollarSign, ArrowLeft, Key, Ban, Edit2, Check, Plus, Upload, Calculator, ChevronDown, ChevronUp, Lightbulb, Building2, Gift, Award
+  PieChart, Home, Activity, Download, Copy, Pickaxe, ShieldAlert, Printer, CheckSquare, Square, ImageIcon, Tag, Hammer, UserCheck, DollarSign, ArrowLeft, Key, Ban, Edit2, Check, Plus, Upload, Calculator, ChevronDown, ChevronUp, Lightbulb, Building2, Gift, Award, MessageSquare
 } from 'lucide-react';
 
 // 🌟 ฟังก์ชันบีบอัดรูปภาพ Native — อยู่นอก component เพื่อไม่ให้ถูกสร้างใหม่ทุก render 🌟
@@ -136,6 +136,9 @@ export default function ConstructionApp() {
   const [loadingView, setLoadingView] = useState<string | null>(null);
 
   const setView = useCallback((newView: any) => {
+    if (newView === 'global-feed') {
+      setSelectedProject(null);
+    }
     if (newView === 'project-detail') {
       setViewInternal(newView); // No skeleton for map visualizer
       return;
@@ -154,6 +157,7 @@ export default function ConstructionApp() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
   const [selectedPlot, setSelectedPlot] = useState<any>(null);
   const [selectedTask, setSelectedTask] = useState<any>(null);
+  const [isWorkerPresent, setIsWorkerPresent] = useState(true);
   const [expandedProject, setExpandedProject] = useState<string | null>(null);
 
   // Extracted: [projects,
@@ -497,21 +501,38 @@ export default function ConstructionApp() {
   const [assignModal, setAssignModal] = useState<any>({ isOpen: false, task: null, name: '', phone: '' });
   const [dialogConfig, setDialogConfig] = useState<any>({ isOpen: false, title: '', message: '', type: 'confirm', onConfirm: null });
 
-  // 🌟 Scroll Position Memory for HouseDetailView 🌟
+  // 🌟 Scroll Position Memory for HouseDetailView & GlobalFeed 🌟
   const mainScrollRef = React.useRef<HTMLDivElement>(null);
   const houseDetailScrollPos = React.useRef<number>(0);
+  const globalFeedScrollPos = React.useRef<number>(0);
 
   const handleMainScroll = (e: React.UIEvent<HTMLDivElement>) => {
     if (view === 'house-detail') {
       houseDetailScrollPos.current = e.currentTarget.scrollTop;
+    } else if (view === 'global-feed') {
+      globalFeedScrollPos.current = e.currentTarget.scrollTop;
     }
   };
 
   React.useEffect(() => {
-    if (view === 'house-detail' && mainScrollRef.current) {
+    if (view === 'house-detail' && !loadingView && mainScrollRef.current) {
       mainScrollRef.current.scrollTop = houseDetailScrollPos.current;
+    } else if (view === 'global-feed' && !loadingView && mainScrollRef.current) {
+      const savedPos = globalFeedScrollPos.current;
+      if (savedPos > 0) {
+        requestAnimationFrame(() => {
+          if (mainScrollRef.current) {
+            mainScrollRef.current.scrollTop = savedPos;
+          }
+        });
+        setTimeout(() => {
+          if (mainScrollRef.current) {
+            mainScrollRef.current.scrollTop = savedPos;
+          }
+        }, 60);
+      }
     }
-  }, [view]);
+  }, [view, loadingView]);
 
   // 🌟 Infinite Scroll State สำหรับ Live Feed 🌟
   const [visibleFeedCount, setVisibleFeedCount] = useState(50);
@@ -547,6 +568,7 @@ export default function ConstructionApp() {
         const isCompleted = du.progress === 100;
         items.push({
           id: `defect-upd-${du.id}`,
+          defect: defect,
           plot_id: defect.plot_id,
           task_template_id: defect.task_template_id || defect.task_id,
           task_name: defect.description || task?.task_name || 'งานแก้ไขตรวจรับมอบบ้าน',
@@ -574,6 +596,7 @@ export default function ConstructionApp() {
       const contractor = (contractors || []).find((c: any) => String(c.id) === String(d.contractor_id));
       items.push({
         id: `defect-init-${d.id}`,
+        defect: d,
         plot_id: d.plot_id,
         task_template_id: d.task_template_id || d.task_id,
         task_name: d.description || task?.task_name || 'แจ้งรายการตรวจรับมอบบ้าน',
@@ -1949,7 +1972,9 @@ export default function ConstructionApp() {
   };
 
   const handleSendPost = async () => {
-    if ((!inputText.trim() && selectedFiles.length === 0) || isSending) return;
+    const isAbsent = !isWorkerPresent;
+    const postContent = inputText.trim() || (isAbsent ? 'ไม่มีช่างเข้างาน' : '');
+    if ((!postContent && selectedFiles.length === 0) || isSending) return;
     setIsSending(true);
     if (selectedFiles.length > 0) {
       setGlobalUploadState({ isUploading: true, isSuccess: false, message: 'กำลังบีบอัดและอัปโหลดรูปภาพงาน... ห้ามปิดหน้าต่าง' });
@@ -1966,13 +1991,39 @@ export default function ConstructionApp() {
           return supabase.storage.from('task_images').getPublicUrl(path).data.publicUrl;
         }));
       }
-      const actionLabel = progressValue === 100 ? 'ส่งงาน 100%' : 'อัปเดตงาน';
-      const { error } = await supabase.from('task_updates').insert([{ plot_id: selectedPlot.id, task_template_id: selectedTask.id, user_name: loggedInUser.username, role: currentUserRole, action: actionLabel, text_content: inputText || actionLabel, progress: progressValue, is_completed: progressValue === 100, image_url: imageUrls.join(','), weather_info: weatherInfo ? `${weatherInfo.currentDetails.icon} ${weatherInfo.currentDetails.text} (${weatherInfo.currentTemp}°C)` : null }]);
+      const finalProgress = isAbsent ? (updates.length > 0 ? updates[updates.length - 1].progress : 0) : progressValue;
+      const actionLabel = isAbsent ? 'ไม่มีช่างเข้างาน' : (finalProgress === 100 ? 'ส่งงาน 100%' : 'อัปเดตงาน');
+      const textContent = inputText.trim() || actionLabel;
+
+      const payload: any = {
+        plot_id: selectedPlot.id,
+        task_template_id: selectedTask.id,
+        user_name: loggedInUser.username,
+        role: currentUserRole,
+        action: actionLabel,
+        text_content: textContent,
+        progress: finalProgress,
+        is_completed: finalProgress === 100,
+        image_url: imageUrls.join(','),
+        weather_info: weatherInfo ? `${weatherInfo.currentDetails.icon} ${weatherInfo.currentDetails.text} (${weatherInfo.currentTemp}°C)` : null,
+        is_worker_present: isWorkerPresent
+      };
+
+      let { error } = await supabase.from('task_updates').insert([payload]);
+      // Fallback in case is_worker_present column has not been added to Supabase yet
+      if (error && (error.message?.includes('is_worker_present') || (error as any).details?.includes('is_worker_present') || (error as any).code === 'PGRST204')) {
+        delete payload.is_worker_present;
+        const retry = await supabase.from('task_updates').insert([payload]);
+        error = retry.error;
+      }
       if (error) throw error;
 
       // 🌟 ดึงประวัติงานสดๆ ทันที เพื่ออัปเดต chat view ให้ผู้ใช้เห็นว่าส่งแล้ว (Instant UI Feedback)
       const { data } = await supabase.from('task_updates').select('*').eq('task_template_id', selectedTask.id).eq('plot_id', selectedPlot.id).order('created_at', { ascending: true });
-      setUpdates(data || []); setInputText(''); setSelectedFiles([]);
+      setUpdates(data || []); 
+      setInputText(''); 
+      setSelectedFiles([]);
+      setIsWorkerPresent(true);
       
       // 🌟 โหลดข้อมูลภาพรวมเบื้องหลัง (Background refresh) โดยไม่ใช้ await เพื่อไม่ให้แชทกระตุก
       // ให้ Database Trigger เป็นคนจัดการ update plot_task_assignments อัตโนมัติ (Single Source of Truth)
@@ -2420,8 +2471,57 @@ export default function ConstructionApp() {
   const todayDateString = new Date().toLocaleDateString('en-CA');
   const plotsActiveToday = useMemo(() => {
     if (!allUpdatesRecord || !Array.isArray(allUpdatesRecord)) return new Set<string>();
-    return new Set<string>(allUpdatesRecord.filter(u => new Date(u.created_at).toLocaleDateString('en-CA') === todayDateString).map(u => u.plot_id));
-  }, [allUpdatesRecord, todayDateString]);
+    return new Set<string>(
+      allUpdatesRecord
+        .filter(u => {
+          if (new Date(u.created_at).toLocaleDateString('en-CA') !== todayDateString) return false;
+          if (u.is_worker_present === false || u.action === 'ไม่มีช่างเข้างาน') return false;
+          // แยกงานก่อสร้างออกจากงานตรวจรับมอบบ้าน (งานตรวจรับใช้ plotsHandoverActiveToday สีม่วง)
+          const task = taskTemplates?.find((t: any) => String(t.id) === String(u.task_template_id));
+          const isHandover = Boolean(
+            (task?.task_name && task.task_name.includes('ตรวจรับ')) || 
+            (typeof u.action === 'string' && u.action.includes('ตรวจรับ')) || 
+            u.is_handover
+          );
+          return !isHandover;
+        })
+        .map(u => String(u.plot_id))
+    );
+  }, [allUpdatesRecord, taskTemplates, todayDateString]);
+
+  const plotsHandoverActiveToday = useMemo(() => {
+    const set = new Set<string>();
+    
+    // 1. จาก defect_updates ที่เกิดขึ้นวันนี้ (และช่างเข้างาน)
+    (defectUpdates || []).forEach((du: any) => {
+      if (new Date(du.created_at).toLocaleDateString('en-CA') === todayDateString && du.is_worker_present !== false && du.action !== 'ไม่มีช่างเข้างาน') {
+        const defect = (defects || []).find((d: any) => String(d.id) === String(du.defect_id));
+        if (defect?.plot_id) set.add(String(defect.plot_id));
+      }
+    });
+
+    // 2. จาก defects (ตรวจรับมอบบ้าน) ที่บันทึกใหม่วันนี้
+    (defects || []).filter((d: any) => d.defect_stage === 'handover').forEach((d: any) => {
+      if (new Date(d.created_at).toLocaleDateString('en-CA') === todayDateString) {
+        if (d.plot_id) set.add(String(d.plot_id));
+      }
+    });
+
+    // 3. จาก allUpdatesRecord ที่เป็นงานตรวจรับมอบบ้าน
+    (allUpdatesRecord || []).forEach((u: any) => {
+      if (new Date(u.created_at).toLocaleDateString('en-CA') === todayDateString && u.is_worker_present !== false && u.action !== 'ไม่มีช่างเข้างาน') {
+        const task = taskTemplates?.find((t: any) => String(t.id) === String(u.task_template_id));
+        const isHandover = Boolean(
+          (task?.task_name && task.task_name.includes('ตรวจรับ')) || 
+          (typeof u.action === 'string' && u.action.includes('ตรวจรับ')) || 
+          u.is_handover
+        );
+        if (isHandover && u.plot_id) set.add(String(u.plot_id));
+      }
+    });
+
+    return set;
+  }, [defectUpdates, defects, allUpdatesRecord, taskTemplates, todayDateString]);
 
   const displayPlots = useMemo(() => plots.filter(p => {
     const isCurrentProject = p.project_name === selectedProject?.name;
@@ -2510,6 +2610,14 @@ export default function ConstructionApp() {
       if (aEnd) { if (aEnd > globalMaxDate) globalMaxDate = aEnd; if (aEnd > plotActualEnd) plotActualEnd = aEnd; }
     });
     if (globalMinDate === Infinity) { globalMinDate = Date.now() - (7 * 86400000); globalMaxDate = Date.now() + (14 * 86400000); }
+
+    // 🌟 ถ้าแปลงยังสร้างไม่เสร็จ และมีงานที่วางแผน/เริ่มทำแล้ว ให้ขยาย globalMaxDate ครอบคลุมถึงวันปัจจุบัน (todayTs)
+    // เพื่อให้ปฏิทินกางมารองรับงานที่กำลังทำอยู่จนถึงปัจจุบันเสมอ และเส้น "ปัจจุบัน" อยู่ในกรอบตารางอย่างถูกต้อง
+    if (hasAnySchedule && !selectedPlot.is_completed) {
+      if (todayTs > globalMaxDate) {
+        globalMaxDate = todayTs;
+      }
+    }
   }
 
   const minD = new Date(globalMinDate); minD.setHours(0, 0, 0, 0);
@@ -2524,13 +2632,19 @@ export default function ConstructionApp() {
 
   const getChartLeft = (timestamp: any) => {
     const d = new Date(timestamp); d.setHours(0, 0, 0, 0);
-    return Math.max(0, ((d.getTime() - chartStart) / totalChartMs) * 100);
+    const clampedTs = Math.max(chartStart, Math.min(chartEnd, d.getTime()));
+    return Math.max(0, Math.min(100, ((clampedTs - chartStart) / totalChartMs) * 100));
   };
 
   const getChartWidth = (startTs: any, endTs: any) => {
     const dStart = new Date(startTs); dStart.setHours(0, 0, 0, 0);
     const dEnd = new Date(endTs); dEnd.setHours(0, 0, 0, 0);
-    return Math.max(0, (((dEnd.getTime() + 86400000) - dStart.getTime()) / totalChartMs) * 100);
+    const clampedStart = Math.max(chartStart, dStart.getTime());
+    const clampedEnd = Math.min(chartEnd, dEnd.getTime());
+    if (clampedEnd < clampedStart) return 0;
+    const widthPct = (((clampedEnd + 86400000) - clampedStart) / totalChartMs) * 100;
+    const leftPct = getChartLeft(clampedStart);
+    return Math.max(0, Math.min(100 - leftPct, widthPct));
   };
 
   const timeMarkers: any[] = [];
@@ -2562,7 +2676,7 @@ export default function ConstructionApp() {
   const totalPlannedDays = (plotPlanEnd !== -Infinity && plotPlanStart !== Infinity) ? Math.ceil((plotPlanEnd - plotPlanStart) / 86400000) : 0;
   const daysElapsed = (plotPlanStart !== Infinity) ? Math.ceil((todayTs - plotPlanStart) / 86400000) : 0;
   const daysRemaining = (plotPlanEnd !== -Infinity) ? Math.ceil((plotPlanEnd - todayTs) / 86400000) : 0;
-  const isSummaryDelayed = daysElapsed > 0 && selectedPlot?.progress < (daysElapsed / totalPlannedDays) * 100 && (daysElapsed / totalPlannedDays) * 100 - selectedPlot?.progress > 10;
+  const isSummaryDelayed = daysElapsed > 0 && totalPlannedDays > 0 && (selectedPlot?.progress ?? 0) < (daysElapsed / totalPlannedDays) * 100;
 
   // ==========================================
   // 6. RENDER UI
@@ -3042,12 +3156,17 @@ export default function ConstructionApp() {
                       if (houseReturnView) { setView(houseReturnView); setHouseReturnView(''); }
                       else setView('project-detail');
                     }} className="text-sm font-bold text-slate-500 hover:text-blue-600 flex items-center gap-1.5 hover:-translate-x-1 transition-transform cursor-pointer">
-                       <ArrowLeft size={16}/> BACK TO {houseReturnView === 'sales-dashboard-excel' ? 'SALES DASHBOARD' : selectedProject?.name || 'PROJECT'}
+                       <ArrowLeft size={16}/> BACK TO {houseReturnView === 'sales-dashboard-excel' ? 'SALES DASHBOARD' : houseReturnView === 'global-feed' ? 'LIVE FEED' : selectedProject?.name || 'PROJECT'}
                     </button>
                  )}
                  {view === 'task-progress' && (
                     <button onClick={() => setView(taskReturnView)} className="text-sm font-bold text-slate-500 hover:text-blue-600 flex items-center gap-1.5 hover:-translate-x-1 transition-transform">
-                       <ArrowLeft size={16}/> BACK TO {taskReturnView === 'dashboard' ? 'DASHBOARD' : 'PLOT'}
+                       <ArrowLeft size={16}/> BACK TO {taskReturnView === 'global-feed' ? 'LIVE FEED' : taskReturnView === 'dashboard' ? 'DASHBOARD' : 'PLOT'}
+                    </button>
+                 )}
+                 {view === 'defect-progress' && (
+                    <button onClick={() => setView(defectReturnView || 'house-detail')} className="text-sm font-bold text-slate-500 hover:text-blue-600 flex items-center gap-1.5 hover:-translate-x-1 transition-transform">
+                       <ArrowLeft size={16}/> BACK TO {defectReturnView === 'global-feed' ? 'LIVE FEED' : defectReturnView === 'dashboard' ? 'DASHBOARD' : 'PLOT'}
                     </button>
                  )}
               </div>
@@ -3352,8 +3471,15 @@ export default function ConstructionApp() {
                           const taskName = update.task_name || (update.task_template_id ? taskTemplates.find(t => t.id === update.task_template_id)?.task_name : update.action);
 
                           // 🌟 ดึงข้อมูลชื่อโครงการของแปลงนี้ขึ้นมา
-                          const currentPlotInfo = plots.find(p => String(p.id) === String(update.plot_id));
-                          const projectNameText = currentPlotInfo ? currentPlotInfo.project_name : 'ไม่ระบุโครงการ';
+                          const currentPlotInfo = plots.find(p => 
+                            String(p.id).trim().toLowerCase() === String(update.plot_id).trim().toLowerCase() ||
+                            (p.plot_name && String(p.plot_name).trim().toLowerCase() === String(update.plot_id).trim().toLowerCase())
+                          );
+                          const projectNameText = currentPlotInfo?.project_name || (
+                            String(update.plot_id).includes('-') 
+                              ? String(update.plot_id).split('-')[0] 
+                              : (projects.find((pr: any) => (pr.layout_data || []).some((l: any) => String(l.id) === String(update.plot_id)))?.name || 'ไม่ระบุโครงการ')
+                          );
 
                           // 🔍 ตรวจสอบว่าเป็นรายงาน/การตรวจของ QC หรือไม่
                           const isQC = update.role === 'QC' || (typeof update.action === 'string' && update.action.includes('QC'));
@@ -3556,28 +3682,93 @@ export default function ConstructionApp() {
                                   </div>
                                 )}
 
-                                {/* ปุ่มกดดูรายละเอียดแปลง */}
-                                {currentPlotInfo && (
-                                  <div className="pt-2 flex justify-end">
-                                    <button
-                                      onClick={() => {
-                                        setSelectedPlot(currentPlotInfo);
-                                        if (isHandover) {
-                                          setActiveHouseTab('handover');
-                                        }
-                                        setView('house-detail');
-                                      }}
-                                      className={`text-[11px] font-bold flex items-center gap-1 px-3 py-1.5 rounded-xl transition-all ${
-                                        isHandover 
-                                          ? 'text-purple-600 bg-purple-50 hover:bg-purple-100 border border-purple-200/60' 
-                                          : 'text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200/60'
-                                      }`}
-                                    >
-                                      <span>ดูรายละเอียดแปลง {update.plot_id}</span>
-                                      <ChevronRight size={14} />
-                                    </button>
-                                  </div>
-                                )}
+                                 {/* ปุ่มกดดูรายละเอียดแปลง และ เข้าห้องแชท */}
+                                 {update.plot_id && (() => {
+                                   const plotObj = currentPlotInfo || {
+                                     id: update.plot_id,
+                                     plot_name: String(update.plot_id).includes('-') ? String(update.plot_id).split('-')[1] : String(update.plot_id),
+                                     project_name: projectNameText !== 'ไม่ระบุโครงการ' ? projectNameText : ''
+                                   };
+
+                                   return (
+                                     <div className="pt-2 flex flex-wrap items-center justify-end gap-2">
+                                       {/* 💬 ปุ่มเข้าห้องแชทงานนี้โดยตรง */}
+                                       {!update.is_handover_completed && (
+                                         <button
+                                           onClick={() => {
+                                             if (mainScrollRef.current) {
+                                               globalFeedScrollPos.current = mainScrollRef.current.scrollTop;
+                                             }
+                                             setUpdates([]);
+                                             const proj = projects.find(p => p.name === plotObj.project_name);
+                                             if (proj) setSelectedProject(proj);
+                                             setSelectedPlot(plotObj);
+
+                                             if (isHandover) {
+                                               const defectObj = update.defect || (defects || []).find((d: any) =>
+                                                 (update.id && String(update.id).includes(String(d.id))) ||
+                                                 (String(d.plot_id) === String(update.plot_id) && (d.task_template_id === update.task_template_id || d.task_id === update.task_template_id))
+                                               );
+                                               if (defectObj) {
+                                                 setSelectedDefect(defectObj);
+                                                 setDefectReturnView('global-feed');
+                                                 setView('defect-progress');
+                                                 return;
+                                               }
+                                             }
+
+                                             // สำหรับงานก่อสร้างทั่วไป
+                                             const targetTask = taskTemplates.find((t: any) => t.id === update.task_template_id) ||
+                                               taskTemplates.find((t: any) => t.house_type_id === plotObj.house_type_id && t.task_name === update.task_name) || {
+                                                 id: update.task_template_id || 0,
+                                                 task_name: update.task_name || 'งานก่อสร้าง',
+                                                 task_order: 1,
+                                                 house_type_id: plotObj.house_type_id
+                                               };
+
+                                             setSelectedTask(targetTask);
+                                             setTaskReturnView('global-feed');
+                                             setView('task-progress');
+                                           }}
+                                           className={`text-[11px] font-bold flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition-all shadow-xs active:scale-95 cursor-pointer ${
+                                             isHandover
+                                               ? 'text-white bg-purple-600 hover:bg-purple-700 shadow-purple-200'
+                                               : 'text-white bg-blue-600 hover:bg-blue-700 shadow-blue-200'
+                                           }`}
+                                           title="เข้าห้องแชทและอัปเดตงานนี้โดยตรง"
+                                         >
+                                           <MessageSquare size={13} className="stroke-[2.5]" />
+                                           <span>เข้าห้องแชทงานนี้</span>
+                                         </button>
+                                       )}
+
+                                       {/* 📋 ปุ่มดูรายละเอียดแปลง */}
+                                       <button
+                                         onClick={() => {
+                                           if (mainScrollRef.current) {
+                                             globalFeedScrollPos.current = mainScrollRef.current.scrollTop;
+                                           }
+                                           const proj = projects.find(p => p.name === plotObj.project_name);
+                                           if (proj) setSelectedProject(proj);
+                                           setSelectedPlot(plotObj);
+                                           setHouseReturnView('global-feed');
+                                           if (isHandover) {
+                                             setActiveHouseTab('handover');
+                                           }
+                                           setView('house-detail');
+                                         }}
+                                         className={`text-[11px] font-bold flex items-center gap-1 px-3 py-1.5 rounded-xl transition-all cursor-pointer active:scale-95 ${
+                                           isHandover 
+                                             ? 'text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200/80' 
+                                             : 'text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200/80'
+                                         }`}
+                                       >
+                                         <span>ดูรายละเอียดแปลง {update.plot_id}</span>
+                                         <ChevronRight size={14} />
+                                       </button>
+                                     </div>
+                                   );
+                                 })()}
                               </div>
 
                             </div>
@@ -4247,11 +4438,12 @@ export default function ConstructionApp() {
                   plots={plots} isSubmitting={isSubmitting} handleSaveMap={handleSaveMap}
                   mapGrid={mapGrid} getAdjacency={getAdjacency} handleMouseDown={handleMouseDown}
                   handleMouseEnter={handleMouseEnter} handleMouseUp={handleMouseUp}
-                  setSelectedPlot={setSelectedPlot} plotBounds={plotBounds} getPlotOverallStatus={getPlotOverallStatus}
+                  setSelectedPlot={setSelectedPlot} setSelectedTask={setSelectedTask} setTaskReturnView={setTaskReturnView}
+                  plotBounds={plotBounds} getPlotOverallStatus={getPlotOverallStatus}
                   allUpdatesRecord={allUpdatesRecord} taskTemplates={taskTemplates} assignments={assignments}
                   searchTask={searchTask} setSearchTask={setSearchTask}
                   schedules={schedules} taskDates={taskDates}
-                  plotsActiveToday={plotsActiveToday} searchPlot={searchPlot} setSearchPlot={setSearchPlot}
+                  plotsActiveToday={plotsActiveToday} plotsHandoverActiveToday={plotsHandoverActiveToday} searchPlot={searchPlot} setSearchPlot={setSearchPlot}
                   filterForeman={filterForeman} setFilterForeman={setFilterForeman} foremenList={foremenList}
                   displayPlots={displayPlots} handleDeletePlot={handleDeletePlot} handleEditPlot={handleEditPlot} handleMarkPlot={handleMarkPlot}
                   handleLegacyProjectComplete={handleLegacyProjectComplete}
@@ -4319,6 +4511,8 @@ export default function ConstructionApp() {
                   handleSendPost={handleSendPost} 
                   handleAdminUndoLatest={handleAdminUndoLatest}
                   handleAdminResetToZero={handleAdminResetToZero}
+                  isWorkerPresent={isWorkerPresent}
+                  setIsWorkerPresent={setIsWorkerPresent}
                 />
               )}
               {/* 🛠️ LEVEL 4: Defect Progress */}
@@ -4554,7 +4748,7 @@ export default function ConstructionApp() {
             <nav className="bg-white border-t border-slate-200 p-2 fixed bottom-0 left-[14px] right-[14px] rounded-b-[2rem] z-[100] shadow-[0_-10px_40px_rgba(0,0,0,0.1)] flex justify-around">
               {/* 📜 ปุ่มแรกบนมือถือ: ฟีดรวม */}
               {(isAdmin || isOwner) && (
-                <button onClick={() => setView('global-feed')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'global-feed' ? 'text-blue-600' : 'text-slate-400'}`}>
+                <button onClick={() => { setSelectedProject(null); setView('global-feed'); }} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'global-feed' ? 'text-blue-600' : 'text-slate-400'}`}>
                   <ClipboardList size={20} className={activeView === 'global-feed' ? 'fill-blue-100' : ''} />
                   <span className="text-[9px] font-black mt-1">ฟีดรวม</span>
                 </button>

@@ -35,6 +35,8 @@ interface MapVisualizerProps {
   handleMouseEnter: (x: number, y: number) => void;
   handleMouseUp: () => void;
   setSelectedPlot: (p: any) => void;
+  setSelectedTask?: (t: any) => void;
+  setTaskReturnView?: (v: string) => void;
   plotBounds: any;
   getPlotOverallStatus: (id: string) => any;
   allUpdatesRecord: any[];
@@ -45,6 +47,7 @@ interface MapVisualizerProps {
   schedules?: any;
   taskDates?: any;
   plotsActiveToday: Set<string>;
+  plotsHandoverActiveToday?: Set<string>;
   searchPlot: string;
   setSearchPlot: (s: string) => void;
   filterForeman: string;
@@ -138,9 +141,9 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
     mapZoom, handleZoomIn, handleZoomOut, handleZoomReset, mapTool, setMapTool,
     mapSelectedPlot, setMapSelectedPlot, plots, isSubmitting, handleSaveMap,
     mapGrid, getAdjacency, handleMouseDown, handleMouseEnter, handleMouseUp,
-    setSelectedPlot, plotBounds, getPlotOverallStatus, allUpdatesRecord,
+    setSelectedPlot, setSelectedTask, setTaskReturnView, plotBounds, getPlotOverallStatus, allUpdatesRecord,
     taskTemplates, assignments, searchTask, setSearchTask, schedules, taskDates,
-    plotsActiveToday, searchPlot, setSearchPlot, filterForeman, setFilterForeman,
+    plotsActiveToday, plotsHandoverActiveToday, searchPlot, setSearchPlot, filterForeman, setFilterForeman,
     foremenList, displayPlots, handleDeletePlot, handleEditPlot, handleMarkPlot,
     setIsPresentationOpen, setCurrentSlideIndex,
     handleTogglePlotCustomer, handleTogglePlotCompleted,
@@ -167,6 +170,24 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
       .map((t:any) => t.task_name)
     )).sort();
   }, [taskTemplates, plots, selectedProject?.name]);
+
+  // 🌟 เมื่อคลิกที่แปลงบ้าน: ถ้ากำลังค้นหางานอยู่และแปลงนั้นมีงานที่ค้นหา ให้เปิดห้องแชท/ไทม์ไลน์ของงานนั้นโดยตรง
+  const handlePlotClick = (plotInfo: any) => {
+    if (isEditMapMode) return;
+    setSelectedPlot(plotInfo);
+    const hasSearched = Boolean(searchTask && searchTask.trim() !== '');
+    const plotTaskMatch = hasSearched 
+      ? taskTemplates?.find((t: any) => String(t.house_type_id) === String(plotInfo.house_type_id) && (t.task_name === searchTask || t.task_name === searchTask.trim())) 
+      : null;
+
+    if (hasSearched && plotTaskMatch && setSelectedTask && setTaskReturnView) {
+      setSelectedTask(plotTaskMatch);
+      setTaskReturnView('project-detail');
+      setView('task-progress');
+    } else {
+      setView('house-detail');
+    }
+  };
 
   return (
     <>
@@ -290,10 +311,10 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                              if (isEditMapMode) return;
                              const t = (e.target as HTMLElement).closest('[data-plot-id]');
                              const plotId = t?.getAttribute('data-plot-id');
-                             if (plotId) {
-                               const plotInfo = plots.find(p => p.id === plotId);
-                               if (plotInfo) { setSelectedPlot(plotInfo); setView('house-detail'); }
-                             }
+                              if (plotId) {
+                                const plotInfo = plots.find(p => p.id === plotId);
+                                if (plotInfo) { handlePlotClick(plotInfo); }
+                              }
                            }}
                          >
                            {Array.from({length: gridCols * gridRows}).map((_, i) => {
@@ -466,11 +487,12 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
 
                            // ดักจับว่าแปลงนี้ใช้ช่างที่เรากำลังค้นหาอยู่หรือไม่
 
-                           const hasSearchedTask = searchTask.trim() !== '';
-                           const plotTaskMatch = hasSearchedTask ? taskTemplates?.find((t: any) => t.house_type_id === plotInfo.house_type_id && t.task_name === searchTask) : null;
-                           const isMatchTask = !!plotTaskMatch;
+                            const hasSearchedTask = searchTask.trim() !== '';
+                            const plotTaskMatch = hasSearchedTask ? taskTemplates?.find((t: any) => String(t.house_type_id) === String(plotInfo.house_type_id) && t.task_name === searchTask) : null;
+                            const isMatchTask = !!plotTaskMatch;
 
-                           const isActiveToday = plotsActiveToday.has(plotId);
+                            const isActiveToday = plotsActiveToday.has(plotId) || plotsActiveToday.has(String(plotId));
+                            const isHandoverActiveToday = plotsHandoverActiveToday?.has(plotId) || plotsHandoverActiveToday?.has(String(plotId));
 
                            // ปรับสไตล์เอฟเฟกต์ไฮไลท์งาน
                            let searchHighlightClass = "opacity-100 scale-100";
@@ -549,15 +571,18 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                                  searchHighlightClass = "opacity-10 scale-95 grayscale pointer-events-none";
                               }
                            } else {
-                              // ถ้าไม่ได้ค้นหาช่าง ให้ใส่สไตล์ Overdue
+                              // ถ้าไม่ได้ค้นหาช่าง ให้ใส่สไตล์ Overdue / ล่าช้ากว่าแผน
                               const isOverdue = statusInfo.planned === 100 && statusInfo.actual < 100 && statusInfo.status !== 'ready_for_sale' && !plotInfo.is_completed;
-                              const isCritical = isOverdue && plotInfo.has_customer;
+                              const isDelayed = statusInfo.status === 'delayed' && statusInfo.status !== 'ready_for_sale' && !plotInfo.is_completed;
+                              const isCritical = (isOverdue || isDelayed) && plotInfo.has_customer;
 
                               if (isCritical) {
                                   cardBorderClass = "bg-rose-50 border-rose-600 text-rose-900 shadow-[0_0_15px_rgba(225,29,72,0.6)] border-[3px]";
                                   searchHighlightClass = "animate-pulse";
                               } else if (isOverdue) {
                                   cardBorderClass = "bg-orange-50 border-orange-500 text-orange-900 border-[2px]";
+                              } else if (isDelayed) {
+                                  cardBorderClass = "bg-rose-50 border-rose-500 text-rose-900 border-[2px]";
                               }
                            }
 
@@ -579,11 +604,18 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                              }
 
                            return (
-                             <div key={`label-${plotId}`} className={`absolute flex items-center justify-center p-1 transition-all ${isEditMapMode ? 'opacity-50 pointer-events-none' : 'hover:z-50 cursor-pointer group'} ${searchHighlightClass} ${utilityModeClass}`} style={{ left: `${(bounds.minX / gridCols) * 100}%`, top: `${(bounds.minY / gridRows) * 100}%`, width: `${(w / gridCols) * 100}%`, height: `${(h / gridRows) * 100}%` }} onClick={() => { if (!isEditMapMode) { setSelectedPlot(plotInfo); setView('house-detail'); } }}>
+                             <div key={`label-${plotId}`} className={`absolute flex items-center justify-center p-1 transition-all ${isEditMapMode ? 'opacity-50 pointer-events-none' : 'hover:z-50 cursor-pointer group'} ${searchHighlightClass} ${utilityModeClass}`} style={{ left: `${(bounds.minX / gridCols) * 100}%`, top: `${(bounds.minY / gridRows) * 100}%`, width: `${(w / gridCols) * 100}%`, height: `${(h / gridRows) * 100}%` }} onClick={() => handlePlotClick(plotInfo)}>
                              
                                 {/* ✅ โค้ดใหม่: จัดวางไอคอน Pickaxe ไว้ที่จุดกึ่งกลางของแปลงพอดี */}
                                 {isActiveToday && !isEditMapMode && !isUtilityMode && (
                                    <div className="absolute top-1/5 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-yellow-400 text-slate-900 rounded-full p-1 sm:p-1.5 shadow-lg animate-bounce z-[60] border-2 border-white" title="มีการทำงานในแปลงนี้วันนี้">
+                                      <Pickaxe size={14} className="w-3 h-3 sm:w-4 sm:h-4"/>
+                                   </div>
+                                )}
+
+                                {/* 🟣 โค้ดใหม่: จัดวางไอคอน Pickaxe สีม่วงสำหรับงานตรวจรับมอบบ้าน ไว้ที่กึ่งกลางขอบล่างของแปลง (ไม่ทับเปอร์เซ็นต์ผลต่าง และซ่อนเมื่อค้นหางานเพื่อไม่บังป้ายค้นหา) */}
+                                {isHandoverActiveToday && !isEditMapMode && !isUtilityMode && !hasSearchedTask && (
+                                   <div className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 bg-purple-600 text-white rounded-full p-1 sm:p-1.5 shadow-lg animate-bounce z-[60] border-2 border-white" title="มีการอัปเดตงานตรวจรับมอบบ้านในแปลงนี้วันนี้">
                                       <Pickaxe size={14} className="w-3 h-3 sm:w-4 sm:h-4"/>
                                    </div>
                                 )}
@@ -611,11 +643,11 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
 
                                    {/* แสดงชื่อแปลงเป็นหลัก */}
                                    <div className="flex items-center gap-0.5 sm:gap-1 relative z-10">
-                                      <span className={`font-bold text-[10px] sm:text-sm ${isGrassPlanted ? 'bg-white/80 px-1.5 py-0.5 rounded shadow-sm' : ''}`}>{plotInfo.plot_name || plotInfo.id}</span>
-                                      {plotInfo.is_completed && <span className={`text-[8px] sm:text-[10px] ${isGrassPlanted ? 'bg-white/80 rounded-full shadow-sm px-0.5' : ''}`} title="สร้างเสร็จพร้อมโอน">🔑</span>}
+                                      <span className={`font-black text-xs sm:text-base tracking-tight ${isGrassPlanted ? 'bg-white/80 px-1.5 py-0.5 rounded shadow-sm' : ''}`}>{plotInfo.plot_name || plotInfo.id}</span>
+                                      {plotInfo.is_completed && <span className={`text-[10px] sm:text-xs ${isGrassPlanted ? 'bg-white/80 rounded-full shadow-sm px-0.5' : ''}`} title="สร้างเสร็จพร้อมโอน">🔑</span>}
                                       {plotInfo.has_customer && (
                                          <span 
-                                            className={`text-[8px] sm:text-[10px] px-0.5 rounded-full transition-all ${
+                                            className={`text-[10px] sm:text-xs px-0.5 rounded-full transition-all ${
                                                statusInfo.status === 'delayed' && !plotInfo.is_completed 
                                                ? 'bg-orange-400 shadow-[0_0_8px_rgba(251,146,60,0.8)] animate-pulse border border-orange-300' 
                                                : (isGrassPlanted ? 'bg-white/80 shadow-sm' : '')
@@ -626,15 +658,57 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                                          </span>
                                       )}
                                    </div>
+
+                                   {/* 🌟 บรรทัดที่ 2: ป้ายความต่าง แผน vs จริง (แบบที่ 1 - ขยายขนาดตัวเลขให้ชัดเจน) 🌟 */}
+                                   {(!hasSearchedTask) && (() => {
+                                      const actualVal = Math.round(Number(statusInfo.actual) || 0);
+                                      const plannedVal = Math.round(Number(statusInfo.planned) || 0);
+                                      const diff = actualVal - plannedVal;
+
+                                      if (plotInfo.is_completed || actualVal === 100) {
+                                         return (
+                                            <span className="relative z-10 text-[9px] sm:text-xs font-black px-1.5 sm:px-2 py-[2px] rounded-md bg-emerald-100 text-emerald-800 border border-emerald-300 leading-none mt-0.5 sm:mt-1 shadow-xs whitespace-nowrap" title={`เสร็จสมบูรณ์ 100% (แผน ${plannedVal}%)`}>
+                                               100%
+                                            </span>
+                                         );
+                                      }
+
+                                      if (actualVal > 0 || plannedVal > 0) {
+                                         if (diff < 0) {
+                                            return (
+                                               <span className="relative z-10 text-[9px] sm:text-xs font-black px-1.5 sm:px-2 py-[2px] rounded-md bg-rose-100 text-rose-700 border border-rose-300 leading-none mt-0.5 sm:mt-1 shadow-xs whitespace-nowrap" title={`ทำจริง ${actualVal}% | แผน ${plannedVal}% (ช้ากว่าแผน ${diff}%)`}>
+                                                  {diff}%
+                                               </span>
+                                            );
+                                         } else if (diff > 0) {
+                                            return (
+                                               <span className="relative z-10 text-[9px] sm:text-xs font-black px-1.5 sm:px-2 py-[2px] rounded-md bg-emerald-100 text-emerald-700 border border-emerald-300 leading-none mt-0.5 sm:mt-1 shadow-xs whitespace-nowrap" title={`ทำจริง ${actualVal}% | แผน ${plannedVal}% (เร็วกว่าแผน +${diff}%)`}>
+                                                  +{diff}%
+                                               </span>
+                                            );
+                                         } else {
+                                            return (
+                                               <span className="relative z-10 text-[9px] sm:text-xs font-black px-1.5 sm:px-2 py-[2px] rounded-md bg-blue-50 text-blue-700 border border-blue-200 leading-none mt-0.5 sm:mt-1 shadow-xs whitespace-nowrap" title={`ทำจริง ${actualVal}% | แผน ${plannedVal}% (ตรงตามแผน 0%)`}>
+                                                  0%
+                                               </span>
+                                            );
+                                         }
+                                      }
+
+                                      return (
+                                         <span className="relative z-10 text-[9px] sm:text-xs font-bold px-1.5 sm:px-2 py-[2px] rounded-md bg-slate-100 text-slate-400 border border-slate-200 leading-none mt-0.5 sm:mt-1 whitespace-nowrap" title="ยังไม่เริ่มดำเนินงาน (0%)">
+                                            0%
+                                         </span>
+                                      );
+                                   })()}
                                    
-                                   {/* 🌟 ไอคอนแจ้งเตือน Overdue 🌟 */}
+                                   {/* 🌟 ไอคอนแจ้งเตือนเร่งด่วนพิเศษ (แสดงเฉพาะแปลงที่มีลูกค้า + งานล่าช้า โดยไม่บังเลขแปลง) 🌟 */}
                                    {(!hasSearchedTask) && (() => {
                                       const isOverdue = statusInfo.planned === 100 && statusInfo.actual < 100 && statusInfo.status !== 'ready_for_sale' && !plotInfo.is_completed;
-                                      const isCritical = isOverdue && plotInfo.has_customer;
+                                      const isDelayed = statusInfo.status === 'delayed' && statusInfo.status !== 'ready_for_sale' && !plotInfo.is_completed;
+                                      const isCritical = (isOverdue || isDelayed) && plotInfo.has_customer;
                                       if (isCritical) {
-                                         return <div className="absolute top-0 right-0 bg-rose-600 text-white rounded-bl-lg px-1 py-0.5 text-[8px] sm:text-[9px] font-bold shadow-md z-30 flex items-center gap-0.5" title="เร่งด่วนพิเศษ! ลูกค้ารออยู่และเลยแผนแล้ว"><span className="text-[10px]">🚨</span> เร่งด่วน</div>;
-                                      } else if (isOverdue) {
-                                         return <div className="absolute top-0 right-0 bg-orange-500 text-white rounded-bl-lg px-1 py-0.5 text-[8px] sm:text-[9px] font-bold shadow z-30 flex items-center gap-0.5" title="เลยกำหนดแผนงาน"><span className="text-[10px]">⚠️</span> ล่าช้า</div>;
+                                         return <div className="absolute top-0.5 right-0.5 text-[9px] sm:text-xs z-30 animate-pulse" title="เร่งด่วนพิเศษ! ลูกค้ารออยู่และงานล่าช้ากว่าแผน">🚨</div>;
                                       }
                                       return null;
                                    })()}
@@ -670,7 +744,17 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                                          <div className="flex justify-between text-[8px] sm:text-[10px] font-bold text-slate-400 leading-none"><span>Plan</span><span>{statusInfo.planned}%</span></div>
                                          <div className="w-full bg-slate-700 h-1 sm:h-1.5 rounded-full overflow-hidden"><div className="bg-slate-400 h-full" style={{width:`${statusInfo.planned}%`}}></div></div>
                                          
-                                         <div className="flex justify-between text-[8px] sm:text-[10px] font-bold text-slate-400 leading-none pt-1"><span>Actual</span><span className={statusInfo.status === 'delayed' ? 'text-rose-400' : 'text-blue-400'}>{statusInfo.actual}%</span></div>
+                                         <div className="flex justify-between text-[8px] sm:text-[10px] font-bold text-slate-400 leading-none pt-1">
+                                            <span>Actual</span>
+                                            <div className="flex items-center gap-1">
+                                               <span className={statusInfo.status === 'delayed' ? 'text-rose-400' : 'text-blue-400'}>{statusInfo.actual}%</span>
+                                               {Math.round(statusInfo.actual - statusInfo.planned) !== 0 && (
+                                                  <span className={`text-[8px] font-bold ${statusInfo.actual < statusInfo.planned ? 'text-rose-400' : 'text-emerald-400'}`}>
+                                                     ({statusInfo.actual >= statusInfo.planned ? '+' : ''}{Math.round(statusInfo.actual - statusInfo.planned)}%)
+                                                  </span>
+                                               )}
+                                            </div>
+                                         </div>
                                          <div className="w-full bg-slate-700 h-1 sm:h-1.5 rounded-full overflow-hidden"><div className={`h-full ${statusInfo.status === 'delayed' ? 'bg-rose-500' : 'bg-blue-500'}`} style={{width:`${statusInfo.actual}%`}}></div></div>
                                       </div>
                                       <div className="absolute top-full left-1/2 -translate-x-1/2 border-[5px] sm:border-[6px] border-transparent border-t-slate-900"></div>
@@ -743,7 +827,11 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
 
                            return (
                              <div key={`badge-${plotId}`} className="absolute pointer-events-none z-[80]" style={{ left: `${(bounds.minX / gridCols) * 100}%`, top: `${(bounds.minY / gridRows) * 100}%`, width: `${(w / gridCols) * 100}%`, height: `${(h / gridRows) * 100}%` }}>
-                                <div className="absolute -bottom-3 sm:-bottom-4 left-1/2 -translate-x-1/2 flex flex-col rounded-md overflow-hidden shadow-lg border border-white/20 transition-transform hover:scale-110 pointer-events-auto">
+                                <div 
+                                  onClick={() => handlePlotClick(plotInfo)} 
+                                  className="absolute -bottom-3 sm:-bottom-4 left-1/2 -translate-x-1/2 flex flex-col rounded-md overflow-hidden shadow-lg border border-white/20 transition-transform hover:scale-110 pointer-events-auto cursor-pointer"
+                                  title="คลิกเพื่อเข้าห้องแชทของงานนี้"
+                                >
                                    <div className={`flex flex-col items-center justify-center text-white font-bold px-1.5 sm:px-2 py-0.5 sm:py-1 ${badgeColorClass} min-w-[50px] sm:min-w-[60px] max-w-[80px]`}>
                                       <span className="text-[7px] sm:text-[8px] whitespace-nowrap">{badgeLine1}</span>
                                       {badgeLine2 && <span className="text-[6px] sm:text-[7px] text-white/80 whitespace-nowrap leading-tight mt-[1px]">{badgeLine2}</span>}
@@ -783,7 +871,7 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                         const latestTaskStr = latestTask ? `${latestTask.task_name} (${latestUpdate.progress}%)` : 'ยังไม่มีงานอัปเดต';
 
                         return (
-                          <div key={plot.id} onClick={() => { setSelectedPlot(plot); setView('house-detail'); }} className="relative group w-full bg-white p-4 sm:p-8 rounded-xl sm:rounded-[2.5rem] border border-black/5 text-left hover:border-blue-500 hover:shadow-xl hover:-translate-y-1 transition-all flex flex-col justify-between h-full cursor-pointer">
+                          <div key={plot.id} onClick={() => handlePlotClick(plot)} className="relative group w-full bg-white p-4 sm:p-8 rounded-xl sm:rounded-[2.5rem] border border-black/5 text-left hover:border-blue-500 hover:shadow-xl hover:-translate-y-1 transition-all flex flex-col justify-between h-full cursor-pointer">
                            {/* 🌟 ปุ่มลบแปลงบ้าน (เห็นเฉพาะ Admin) 🌟 */}
                             {isAdmin && (
                               <button onClick={(e) => { e.stopPropagation(); handleDeletePlot(plot.id); }} className="absolute top-3 right-3 sm:top-5 sm:right-5 p-1.5 sm:p-2 bg-rose-50 text-rose-500 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-rose-500 hover:text-white transition-all z-20 shadow-sm" title="ลบแปลงนี้">
@@ -883,7 +971,14 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                                  {/* ไอคอนจอบสีเหลืองในการ์ด (ผมปรับให้อยู่ตรงกลางบนเหมือนกันเพื่อความสวยงามครับ) */}
 
                             {plotsActiveToday.has(plot.id) && !isEditMapMode && ( 
-<div className="absolute -top-2 left-1/2 -translate-x-1/2 sm:-top-3 bg-yellow-400 text-slate-900 rounded-full p-1 sm:p-1.5 shadow-sm sm:shadow-md animate-bounce border-2 border-white">
+<div className="absolute -top-2 left-1/2 -translate-x-1/2 sm:-top-3 bg-yellow-400 text-slate-900 rounded-full p-1 sm:p-1.5 shadow-sm sm:shadow-md animate-bounce border-2 border-white" title="มีการทำงานในแปลงนี้วันนี้">
+                                  <Pickaxe size={isMobileLayout ? 12 : 16} />
+                              </div> 
+                            )}
+
+                            {/* 🟣 ไอคอนจอบสีม่วงในการ์ด (งานตรวจรับมอบบ้านวันนี้) */}
+                            {plotsHandoverActiveToday?.has(plot.id) && !isEditMapMode && ( 
+                              <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 sm:-bottom-3 bg-purple-600 text-white rounded-full p-1 sm:p-1.5 shadow-sm sm:shadow-md animate-bounce border-2 border-white" title="มีการอัปเดตงานตรวจรับมอบบ้านในแปลงนี้วันนี้">
                                   <Pickaxe size={isMobileLayout ? 12 : 16} />
                               </div> 
                             )}

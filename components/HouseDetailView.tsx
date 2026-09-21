@@ -138,14 +138,13 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
         setTimeout(() => {
           const container = tableScrollRef.current;
           if (container && typeof todayTs !== 'undefined' && typeof chartStart !== 'undefined') {
-            if (todayTs > chartEnd) {
-              container.scrollTo({ left: container.scrollWidth, behavior: 'smooth' });
-            } else if (todayTs < chartStart) {
+            const isMobile = window.innerWidth < 640;
+            const fixedWidth = isMobile ? 520 : 660; // Approximate width of sticky columns
+            if (todayTs < chartStart) {
               container.scrollTo({ left: 0, behavior: 'smooth' });
             } else {
-              const dayDiff = Math.floor((todayTs - chartStart) / (1000 * 60 * 60 * 24));
-              const isMobile = window.innerWidth < 640;
-              const fixedWidth = isMobile ? 520 : 660; // Approximate width of sticky columns
+              const effectiveTs = Math.min(todayTs, chartEnd);
+              const dayDiff = Math.floor((effectiveTs - chartStart) / (1000 * 60 * 60 * 24));
               const targetLeft = fixedWidth + (dayDiff * 36) - (container.clientWidth / 2);
               container.scrollTo({ left: Math.max(0, targetLeft), behavior: 'smooth' });
             }
@@ -421,7 +420,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                         <div className="text-xs">
                           <span className="text-slate-400 font-bold uppercase block text-[9px]">สถานะ</span>
                           {plotPlanStart === Infinity ? <span className="text-slate-400">รอแผน</span> :
-                            isSummaryDelayed ? <span className="text-rose-500 font-bold">ล่าช้า</span> : 
+                            (isSummaryDelayed || currentPlotStatus?.status === 'delayed') ? <span className="text-rose-500 font-bold">ล่าช้า</span> : 
                             selectedPlot?.progress === 100 ? <span className="text-emerald-500 font-bold">เสร็จ</span> :
                             <span className="text-blue-500 font-bold">กำลังทำ</span>}
                         </div>
@@ -606,7 +605,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                          style={{ maxHeight: '800px', overflowY: 'auto' }}
                        >
                        {isMobileLayout && <div className="text-center text-[10px] text-slate-400 font-bold py-2 bg-[#f5f5f7] border-b border-black/5">↔️ ปัดซ้าย-ขวา เพื่อดูตาราง ↔️</div>}
-                         <table className={`text-left border-collapse w-full relative ${isMobileLayout ? 'block' : 'min-w-[1200px]'}`}>
+                         <table className={`text-left border-separate border-spacing-0 w-full relative ${isMobileLayout ? 'block' : 'min-w-[1200px]'}`}>
                          {!isMobileLayout && (
                          <thead className="sticky top-0 z-[60] bg-[#f5f5f7] shadow-sm text-[10px] sm:text-xs font-bold uppercase text-[#86868b] tracking-widest">
                            <tr>
@@ -944,7 +943,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                                   }}>
                                 {/* 🌟 2. [ฉบับแก้ไข] บีบความสูงแถวฝั่งซ้าย ล็อก Task Name 2 บรรทัด และล็อกคอลัมน์ให้อยู่กับที่ 🌟 */}
                                 {/* 🌟 ปรับขยายความสูงแถว เพื่อไม่ให้เบอร์โทรโดนทับ (มือถือ 90px / คอม 100px) */}
-                                 <td className={`p-2 sm:p-3 border-b border-black/5 ${isMobileLayout ? 'h-[110px] w-[220px] min-w-[220px] max-w-[220px] z-[45]' : 'h-[120px] w-[280px] min-w-[280px] max-w-[280px] z-20'} flex flex-col justify-between bg-white sticky left-0 shadow-[4px_0_10px_-4px_rgba(0,0,0,0.1)]`}>
+                                 <td className={`p-2 sm:p-3 border-b border-r border-black/5 ${isMobileLayout ? 'h-[110px] w-[220px] min-w-[220px] max-w-[220px] z-[45]' : 'h-[120px] w-[280px] min-w-[280px] max-w-[280px] z-[45]'} flex flex-col justify-between bg-white sticky left-0 shadow-[4px_0_10px_-4px_rgba(0,0,0,0.1)]`}>
                                     <div className="min-w-0">
                                         <div className="flex items-start gap-1.5">
                                           <span className="text-[10px] sm:text-xs font-bold text-slate-400 shrink-0 bg-[#f5f5f7] px-1.5 py-0.5 rounded border mt-0.5">#{task.task_order}</span>
@@ -1250,28 +1249,28 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                                     );
                                  })()}
 
-                                    {/* 🌟 3. บีบความสูงช่องกราฟฝั่งขวาลงให้เท่าฝั่งซ้าย และจัดตำแหน่งแท่งกราฟใหม่ 🌟 */}
-                                    {/* 🌟 ปรับขยายความสูงช่องกราฟ ให้เท่ากับฝั่งซ้ายเป๊ะๆ */}
-                                     <td className="border-b border-black/5 p-0 relative z-10 w-full" style={{ minWidth: `${totalChartDays * 36}px`, height: isMobileLayout ? '90px' : '100px' }}>
-                                       <div className="absolute inset-0 pointer-events-none z-0" style={{ 
-                                            backgroundImage: `repeating-linear-gradient(to right, transparent, transparent calc(100% / ${totalChartDays} - 1px), #f1f5f9 calc(100% / ${totalChartDays} - 1px), #f1f5f9 calc(100% / ${totalChartDays}))`,
-                                            backgroundSize: `calc(100% / ${totalChartDays}) 100%`
-                                         }}>
-                                          {todayTs >= chartStart && todayTs <= chartEnd && ( <div className="absolute top-0 bottom-0 border-l-2 sm:border-l-[3px] border-dashed border-rose-500/80 z-[15] pointer-events-none" style={{ left: `${getChartLeft(todayTs)}%` }}></div> )}
-                                       </div>
-                                       
-                                       {/* 🌟 ปรับขนาดและตำแหน่งแท่งกราฟให้อยู่ตรงกลางช่องพอดี (ใช้ % แทน px) */}
-                                       <div className="relative w-full h-full flex flex-col px-0">
-                                          {pStartTs && pEndTs && ( 
-                                             <div className="absolute h-2 bg-slate-800 rounded-sm z-[20] shadow-sm opacity-90" style={{ left: `${getChartLeft(pStartTs)}%`, width: `${getChartWidth(pStartTs, pEndTs)}%`, top: '25%' }} /> 
-                                          )}
-                                          
-                                          {aStartTs && ( 
-                                             <div className={`absolute h-4 rounded-sm z-[25] shadow-sm ${statusObj.barColor}`} style={{ left: `${getChartLeft(aStartTs)}%`, width: `${getChartWidth(aStartTs, aEndTs as number)}%`, top: '45%' }}>
-                                                <span className="absolute -top-3.5 text-[8px] sm:text-[9px] font-bold text-[#86868b] bg-white/95 border border-black/5 px-1 py-0 rounded shadow-sm" style={{ left: '2px' }}>{tProgress}%</span>
-                                             </div> 
-                                          )}
-                                       </div>
+                                     {/* 🌟 3. บีบความสูงช่องกราฟฝั่งขวาลงให้เท่าฝั่งซ้าย และจัดตำแหน่งแท่งกราฟใหม่ 🌟 */}
+                                     {/* 🌟 ปรับขยายความสูงช่องกราฟ ให้เท่ากับฝั่งซ้ายเป๊ะๆ พร้อม overflow-hidden ป้องกันแท่งกราฟทะลุ */}
+                                      <td className="border-b border-black/5 p-0 relative z-10 w-full overflow-hidden" style={{ minWidth: `${totalChartDays * 36}px`, height: isMobileLayout ? '90px' : '100px' }}>
+                                        <div className="absolute inset-0 pointer-events-none z-0" style={{ 
+                                             backgroundImage: `repeating-linear-gradient(to right, transparent, transparent calc(100% / ${totalChartDays} - 1px), #f1f5f9 calc(100% / ${totalChartDays} - 1px), #f1f5f9 calc(100% / ${totalChartDays}))`,
+                                             backgroundSize: `calc(100% / ${totalChartDays}) 100%`
+                                          }}>
+                                           {todayTs >= chartStart && todayTs <= chartEnd && ( <div className="absolute top-0 bottom-0 border-l-2 sm:border-l-[3px] border-dashed border-rose-500/80 z-[15] pointer-events-none" style={{ left: `${getChartLeft(todayTs)}%` }}></div> )}
+                                        </div>
+                                        
+                                        {/* 🌟 ปรับขนาดและตำแหน่งแท่งกราฟให้อยู่ตรงกลางช่องพอดี (ใช้ % แทน px) */}
+                                        <div className="relative w-full h-full flex flex-col px-0">
+                                           {pStartTs && pEndTs && ( 
+                                              <div className="absolute h-2 bg-slate-800 rounded-sm z-[20] shadow-sm opacity-90" style={{ left: `${getChartLeft(pStartTs)}%`, width: `${getChartWidth(pStartTs, pEndTs)}%`, maxWidth: `${Math.max(0, 100 - getChartLeft(pStartTs))}%`, top: '25%' }} /> 
+                                           )}
+                                           
+                                           {aStartTs && ( 
+                                              <div className={`absolute h-4 rounded-sm z-[25] shadow-sm ${statusObj.barColor}`} style={{ left: `${getChartLeft(aStartTs)}%`, width: `${getChartWidth(aStartTs, aEndTs as number)}%`, maxWidth: `${Math.max(0, 100 - getChartLeft(aStartTs))}%`, top: '45%' }}>
+                                                 <span className="absolute -top-3.5 text-[8px] sm:text-[9px] font-bold text-[#86868b] bg-white/95 border border-black/5 px-1 py-0 rounded shadow-sm" style={{ left: '2px' }}>{tProgress}%</span>
+                                              </div> 
+                                           )}
+                                        </div>
                                        
 
                                      </td>

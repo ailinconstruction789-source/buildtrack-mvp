@@ -1,10 +1,17 @@
 -- ==============================================================================
--- PHASE 2: ADVANCED PERFORMANCE OPTIMIZATION (VIEWS & TRIGGERS)
+-- MIGRATION: Update Delayed Status Threshold in vw_plot_overall_status
+-- ==============================================================================
+-- เกณฑ์การคำนวณ:
+-- 1. ทำจริง < แผน (actual_avg < planned_avg) => 'delayed' (ล่าช้ากว่าแผน - ไม่มีหัก 10% แล้ว)
+-- 2. แผน <= ทำจริง <= แผน + 10 => 'on-track' (ตามแผน - เกินแผน 1-10% ถือว่าตามแผน)
+-- 3. ทำจริง > แผน + 10 => 'ahead' (เร็วกว่าแผน - เกินกว่า 10%)
+-- 4. ทำจริง >= 100 และ แผน >= 100 => 'completed' (เสร็จสมบูรณ์)
+-- 5. sale_status = 'ready_for_sale' => 'ready_for_sale'
 -- ==============================================================================
 
--- Create a view that accurately computes the planned and actual progress
--- exactly like the getPlotOverallStatus JavaScript function, but fully in SQL.
-CREATE OR REPLACE VIEW vw_plot_overall_status AS
+DROP VIEW IF EXISTS vw_plot_overall_status CASCADE;
+
+CREATE VIEW vw_plot_overall_status AS
 WITH task_status AS (
     SELECT 
         p.id AS plot_id,
@@ -82,3 +89,5 @@ SELECT
         ELSE 'on-track'
     END AS status_code
 FROM plot_averages;
+
+GRANT SELECT ON vw_plot_overall_status TO authenticated, anon, service_role;

@@ -475,7 +475,7 @@ export default function HouseHandoverView({
 
   if (hasDates) {
     if (minStart !== Infinity) chartStart = minStart - (5 * 86400000);
-    if (maxEnd !== -Infinity) chartEnd = maxEnd + (5 * 86400000);
+    if (maxEnd !== -Infinity) chartEnd = Math.max(maxEnd, todayTs) + (5 * 86400000);
     if (chartEnd <= chartStart) chartEnd = chartStart + (30 * 86400000);
   }
 
@@ -484,13 +484,19 @@ export default function HouseHandoverView({
 
   const getChartLeft = (timestamp: any) => {
     const d = new Date(timestamp); d.setHours(0, 0, 0, 0);
-    return Math.max(0, ((d.getTime() - chartStart) / totalChartMs) * 100);
+    const clampedTs = Math.max(chartStart, Math.min(chartEnd, d.getTime()));
+    return Math.max(0, Math.min(100, ((clampedTs - chartStart) / totalChartMs) * 100));
   };
 
   const getChartWidth = (startTs: any, endTs: any) => {
     const dStart = new Date(startTs); dStart.setHours(0, 0, 0, 0);
     const dEnd = new Date(endTs); dEnd.setHours(0, 0, 0, 0);
-    return Math.max(0, (((dEnd.getTime() + 86400000) - dStart.getTime()) / totalChartMs) * 100);
+    const clampedStart = Math.max(chartStart, dStart.getTime());
+    const clampedEnd = Math.min(chartEnd, dEnd.getTime());
+    if (clampedEnd < clampedStart) return 0;
+    const widthPct = (((clampedEnd + 86400000) - clampedStart) / totalChartMs) * 100;
+    const leftPct = getChartLeft(clampedStart);
+    return Math.max(0, Math.min(100 - leftPct, widthPct));
   };
 
   const timeMarkers: any[] = [];
@@ -776,7 +782,7 @@ export default function HouseHandoverView({
       <div className="mx-3 sm:mx-4 mb-6 bg-white rounded-2xl shadow-xl border border-black/5 overflow-hidden flex flex-col relative">
           <div className="overflow-x-auto custom-scrollbar flex-1" style={{ maxHeight: '800px', overflowY: 'auto' }}>
              {isMobileLayout && <div className="text-center text-[10px] text-slate-400 font-bold py-2 bg-[#f5f5f7] border-b border-black/5">↔️ ปัดซ้าย-ขวา เพื่อดูตาราง ↔️</div>}
-             <table className={`text-left border-collapse w-full relative ${isMobileLayout ? 'block' : 'min-w-[1200px]'}`}>
+             <table className={`text-left border-separate border-spacing-0 w-full relative ${isMobileLayout ? 'block' : 'min-w-[1200px]'}`}>
                {!isMobileLayout && (
                <thead className="sticky top-0 z-[60] bg-[#f5f5f7] shadow-sm text-[10px] sm:text-xs font-bold uppercase text-[#86868b] tracking-widest">
                  <tr>
@@ -1187,7 +1193,7 @@ export default function HouseHandoverView({
                             </td>
 
                             {/* Col 6: Gantt Chart Timeline */}
-                            <td className="p-0 border-b border-black/5 relative z-10 w-full bg-[#fcfcfd]" style={{ minWidth: `${totalChartDays * 36}px`, height: '120px' }}>
+                            <td className="p-0 border-b border-black/5 relative z-10 w-full bg-[#fcfcfd] overflow-hidden" style={{ minWidth: `${totalChartDays * 36}px`, height: '120px' }}>
                                <div className="absolute inset-0 pointer-events-none z-0" style={{ 
                                     backgroundImage: `repeating-linear-gradient(to right, transparent, transparent calc(100% / ${totalChartDays} - 1px), #f1f5f9 calc(100% / ${totalChartDays} - 1px), #f1f5f9 calc(100% / ${totalChartDays}))`,
                                     backgroundSize: `calc(100% / ${totalChartDays}) 100%`
@@ -1197,7 +1203,7 @@ export default function HouseHandoverView({
                                
                                <div className="relative w-full h-full flex flex-col px-0">
                                   {dStartTs && dEndTs && ( 
-                                     <div className={`absolute h-5 rounded-md z-[20] shadow-sm opacity-90 flex items-center px-1.5 ${defect.progress === 100 ? 'bg-emerald-500' : 'bg-purple-600'}`} style={{ left: `${getChartLeft(dStartTs)}%`, width: `${getChartWidth(dStartTs, dEndTs)}%`, top: '40%' }}>
+                                     <div className={`absolute h-5 rounded-md z-[20] shadow-sm opacity-90 flex items-center px-1.5 ${defect.progress === 100 ? 'bg-emerald-500' : 'bg-purple-600'}`} style={{ left: `${getChartLeft(dStartTs)}%`, width: `${getChartWidth(dStartTs, dEndTs)}%`, maxWidth: `${Math.max(0, 100 - getChartLeft(dStartTs))}%`, top: '40%' }}>
                                         <span className="text-[8px] sm:text-[9px] font-black text-white truncate">{defect.progress || 0}%</span>
                                      </div> 
                                   )}
