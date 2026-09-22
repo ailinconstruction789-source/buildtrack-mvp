@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo, useTransition } from 'react';
 import { 
   Map as MapIcon, Monitor, Search, ZoomOut, ZoomIn, Loader2, Paintbrush, 
-  Eraser, Pickaxe, HardHat, Activity, Trash2, Settings, PlusCircle, Grid, Filter, X, TreePine, Check, Flag
+  Eraser, Pickaxe, HardHat, Activity, Trash2, Settings, PlusCircle, Grid, Filter, X, TreePine, Check, Flag, FileSpreadsheet
 } from 'lucide-react';
+import WeeklyProgressReportModal from './WeeklyProgressReportModal';
 
 interface MapVisualizerProps {
   view: string;
@@ -40,6 +41,7 @@ interface MapVisualizerProps {
   plotBounds: any;
   getPlotOverallStatus: (id: string) => any;
   allUpdatesRecord: any[];
+  defects?: any[];
   taskTemplates: any[];
   assignments: any[];
   searchTask: string;
@@ -148,11 +150,66 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
     setIsPresentationOpen, setCurrentSlideIndex,
     handleTogglePlotCustomer, handleTogglePlotCompleted,
     handleLegacyProjectComplete, handleLegacyProjectUndoTransfer,
-    loading, houseTypes, gridMap
+    loading, houseTypes, gridMap, defects
   } = props;
 
   const [isUtilityMode, setIsUtilityMode] = useState(false);
+  const [isWeeklyReportOpen, setIsWeeklyReportOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
+
+  // 👷‍♂️ วิศวกรโครงการ (Site Engineer - หมวกขาว) และ 👷‍♀️ QC (หมวกเขียว) ที่เข้าตรวจในแปลงวันนี้
+  const roleActivitiesToday = useMemo(() => {
+    const today = new Date().toLocaleDateString('en-CA');
+    const engineerMap = new Map<string, { user: string; action: string; time: string }>();
+    const qcMap = new Map<string, { user: string; action: string; time: string }>();
+
+    (allUpdatesRecord || []).forEach((u: any) => {
+      if (!u.created_at || !u.plot_id) return;
+      const updDate = new Date(u.created_at).toLocaleDateString('en-CA');
+      if (updDate !== today) return;
+
+      const pId = String(u.plot_id);
+      const roleLower = (u.role || '').toLowerCase();
+      const actionLower = (u.action || '').toLowerCase();
+
+      // Check Site Engineer
+      const isEng = roleLower.includes('engineer') || roleLower.includes('วิศวกร') || actionLower.includes('site engineer') || actionLower.includes('วิศวกร');
+      if (isEng && !engineerMap.has(pId)) {
+        engineerMap.set(pId, {
+          user: u.user_name || 'วิศวกรโครงการ',
+          action: u.action || 'เข้าตรวจสอบงาน',
+          time: new Date(u.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
+        });
+      }
+
+      // Check QC
+      const isQc = roleLower.includes('qc') || roleLower.includes('ควบคุมคุณภาพ') || actionLower.includes('qc');
+      if (isQc && !qcMap.has(pId)) {
+        qcMap.set(pId, {
+          user: u.user_name || 'เจ้าหน้าที่ QC',
+          action: u.action || 'เข้าตรวจงาน QC',
+          time: new Date(u.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
+        });
+      }
+    });
+
+    // ตรวจสอบจาก defects วันนี้ด้วย (กรณี QC แจ้ง Defect)
+    (defects || []).forEach((d: any) => {
+      if (!d.created_at || !d.plot_id) return;
+      const dDate = new Date(d.created_at).toLocaleDateString('en-CA');
+      if (dDate !== today) return;
+      const pId = String(d.plot_id);
+      if (!qcMap.has(pId)) {
+        qcMap.set(pId, {
+          user: d.reported_by || 'เจ้าหน้าที่ QC',
+          action: 'แจ้งรายการแก้ไข (Defect)',
+          time: new Date(d.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
+        });
+      }
+    });
+
+    return { engineerMap, qcMap };
+  }, [allUpdatesRecord, defects]);
 
   // 🚀 Performance Fix: Memoize Plot Statuses
   const plotStatusCache = useMemo(() => {
@@ -217,9 +274,31 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                         <div>
                           <h2 className="text-xl sm:text-4xl font-bold text-[#1d1d1f] italic uppercase tracking-tighter">{selectedProject.name} MAP</h2>
                           <p className="text-[#86868b] text-[10px] sm:text-sm font-bold uppercase tracking-widest flex items-center gap-1.5 sm:gap-2 mt-0.5 sm:mt-1"><MapIcon size={12} className="sm:w-4 sm:h-4"/> จำลองผังโครงการ ({gridCols}x{gridRows} Grid)</p>
+                          <div className="flex items-center gap-1 sm:gap-2 mt-1.5 flex-wrap">
+                            <span className="inline-flex items-center gap-1 text-[9px] sm:text-[11px] font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md shadow-2xs">
+                              <span className="w-2 h-2 rounded-full bg-yellow-400"></span> ⛏️ ช่างเข้างาน
+                            </span>
+                            <span className="inline-flex items-center gap-1 text-[9px] sm:text-[11px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md shadow-2xs">
+                              <span className="w-2 h-2 rounded-full bg-sky-800"></span> ⛑️ วิศวกรตรวจ (หมวกขาว)
+                            </span>
+                            <span className="inline-flex items-center gap-1 text-[9px] sm:text-[11px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md shadow-2xs">
+                              <span className="w-2 h-2 rounded-full bg-emerald-600"></span> ⛑️ QC ตรวจ (หมวกเขียว)
+                            </span>
+                          </div>
                         </div>
                         
                         <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
+                          {/* 📊 ปุ่มสรุปความคืบหน้ารายสัปดาห์ (Weekly Progress Report & Export) */}
+                          <button 
+                            onClick={() => setIsWeeklyReportOpen(true)} 
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl font-bold text-xs sm:text-sm shadow-md transition-all flex items-center gap-1.5 shrink-0"
+                            title="สรุปความคืบหน้ารายสัปดาห์ และส่งออกรายงาน (Excel/PDF)"
+                          >
+                            <FileSpreadsheet size={16} /> 
+                            <span className="hidden sm:inline">สรุปรายสัปดาห์ / Export</span>
+                            <span className="inline sm:hidden">สรุปสัปดาห์</span>
+                          </button>
+
                           {/* 🌟 ปุ่มเปิด Presentation Mode */}
                           {['Project Planner', 'Admin', 'Owner'].includes(currentUserRole) && (
                               <button onClick={() => { setIsPresentationOpen(true); setCurrentSlideIndex(0); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl font-bold text-xs sm:text-sm shadow-md transition-all flex items-center gap-1.5 shrink-0">
@@ -603,13 +682,48 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                                  cardBorderClass = "bg-white border-slate-200 text-slate-500 border-[2px]";
                              }
 
+                           const engVisit = roleActivitiesToday.engineerMap.get(String(plotId));
+                           const qcVisit = roleActivitiesToday.qcMap.get(String(plotId));
+                           const isEngineerActiveToday = !!engVisit;
+                           const isQcActiveToday = !!qcVisit;
+
                            return (
                              <div key={`label-${plotId}`} className={`absolute flex items-center justify-center p-1 transition-all ${isEditMapMode ? 'opacity-50 pointer-events-none' : 'hover:z-50 cursor-pointer group'} ${searchHighlightClass} ${utilityModeClass}`} style={{ left: `${(bounds.minX / gridCols) * 100}%`, top: `${(bounds.minY / gridRows) * 100}%`, width: `${(w / gridCols) * 100}%`, height: `${(h / gridRows) * 100}%` }} onClick={() => handlePlotClick(plotInfo)}>
                              
-                                {/* ✅ โค้ดใหม่: จัดวางไอคอน Pickaxe ไว้ที่จุดกึ่งกลางของแปลงพอดี */}
-                                {isActiveToday && !isEditMapMode && !isUtilityMode && (
-                                   <div className="absolute top-1/5 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-yellow-400 text-slate-900 rounded-full p-1 sm:p-1.5 shadow-lg animate-bounce z-[60] border-2 border-white" title="มีการทำงานในแปลงนี้วันนี้">
-                                      <Pickaxe size={14} className="w-3 h-3 sm:w-4 sm:h-4"/>
+                                {/* 🌟 Role Activity Badges Row (ขอบบนของแปลง) 🌟 */}
+                                {!isEditMapMode && !isUtilityMode && (isActiveToday || isEngineerActiveToday || isQcActiveToday) && (
+                                   <div className="absolute top-1/5 left-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center gap-0.5 sm:gap-1 z-[60] pointer-events-auto">
+                                      {/* ⛏️ 1. อัปเดตงานก่อสร้าง (อันเดิม 100%: Pickaxe สีเหลือง) */}
+                                      {isActiveToday && (
+                                         <div 
+                                            className="bg-yellow-400 text-slate-900 rounded-full p-1 sm:p-1.5 shadow-lg animate-bounce border-2 border-white flex items-center justify-center shrink-0 cursor-pointer" 
+                                            title="มีการอัปเดตงานก่อสร้างในแปลงนี้วันนี้"
+                                         >
+                                            <Pickaxe size={14} className="w-3 h-3 sm:w-4 sm:h-4"/>
+                                         </div>
+                                      )}
+
+                                      {/* ⛑️ 2. Site Engineer (หมวกสีขาว) */}
+                                      {isEngineerActiveToday && (
+                                         <div 
+                                            className="bg-sky-800 text-white rounded-full p-1 sm:p-1.5 shadow-lg animate-bounce border-2 border-white flex items-center justify-center shrink-0 cursor-pointer" 
+                                            style={{ animationDelay: '0.15s' }}
+                                            title={`วิศวกรโครงการ (${engVisit?.user || 'Site Engineer'}) เข้าตรวจวันนี้ เวลา ${engVisit?.time || ''} น. [${engVisit?.action || ''}]`}
+                                         >
+                                            <HardHat size={14} className="w-3 h-3 sm:w-4 sm:h-4 text-white fill-white"/>
+                                         </div>
+                                      )}
+
+                                      {/* ⛑️ 3. QC (หมวกสีเขียว) */}
+                                      {isQcActiveToday && (
+                                         <div 
+                                            className="bg-emerald-600 text-white rounded-full p-1 sm:p-1.5 shadow-lg animate-bounce border-2 border-white flex items-center justify-center shrink-0 cursor-pointer" 
+                                            style={{ animationDelay: '0.3s' }}
+                                            title={`เจ้าหน้าที่ QC (${qcVisit?.user || 'QC'}) เข้าตรวจวันนี้ เวลา ${qcVisit?.time || ''} น. [${qcVisit?.action || ''}]`}
+                                         >
+                                            <HardHat size={14} className="w-3 h-3 sm:w-4 sm:h-4 text-emerald-100 fill-emerald-200"/>
+                                         </div>
+                                      )}
                                    </div>
                                 )}
 
@@ -987,9 +1101,25 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                       })}
                    </div>
                   </div>
-               )}
+                )}
 
-               
+                <WeeklyProgressReportModal
+                  isOpen={isWeeklyReportOpen}
+                  onClose={() => setIsWeeklyReportOpen(false)}
+                  selectedProject={selectedProject}
+                  plots={plots}
+                  houseTypes={houseTypes}
+                  foremenList={foremenList}
+                  assignments={assignments}
+                  taskTemplates={taskTemplates}
+                  allUpdatesRecord={allUpdatesRecord}
+                  getPlotOverallStatus={getPlotOverallStatus}
+                  onSelectPlot={(plot) => {
+                    setIsWeeklyReportOpen(false);
+                    setSelectedPlot(plot);
+                    setView('house-detail');
+                  }}
+                />
     </>
   );
 }

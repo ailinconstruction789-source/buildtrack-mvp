@@ -131,7 +131,9 @@ export default function ConstructionApp() {
     updateInspectionRound,
     materialRequests, setMaterialRequests,
     materialReceipts, setMaterialReceipts, inspectionQueueView, plotStatuses, plotOverallStatuses, qcSePerformance,
-    isAnalyticsLoading } = useBuildTrackData(loggedInUser, selectedProject?.name);
+    isAnalyticsLoading,
+    isArchiveSyncing,
+    archiveSyncSuccess } = useBuildTrackData(loggedInUser, selectedProject?.name);
 
 
   const [view, setViewInternal] = useState('dashboard');
@@ -834,14 +836,12 @@ export default function ConstructionApp() {
     }
   }, [selectedPlot?.id, view, fetchPlotDetails]);
 
-  // 🌟 Lazy load Owner Analytics when opening reports
+  // 🌟 Lazy load Analytics when opening reports (สำหรับทุกบทบาทที่มีสิทธิ์เข้าถึงหน้ารายงาน)
   useEffect(() => {
-    const isRoleAdmin = loggedInUser?.role?.toLowerCase() === 'admin';
-    const isRoleOwner = loggedInUser?.role?.toLowerCase() === 'owner';
-    if (view === 'reports' && (isRoleAdmin || isRoleOwner)) {
+    if (view === 'reports') {
       fetchOwnerAnalyticsData();
     }
-  }, [view, loggedInUser?.role, fetchOwnerAnalyticsData]);
+  }, [view, fetchOwnerAnalyticsData]);
 
   // 🌟 ระบบจับการกดปุ่มคีย์บอร์ด (ซ้าย, ขวา, ESC) สำหรับโหมด Presentation
   useEffect(() => {
@@ -2705,7 +2705,13 @@ export default function ConstructionApp() {
         ? Math.round(totalPlannedSum / plannedValidCount) 
         : Math.round(proj.progress || 0);
 
-      const actualProgress = Math.round(proj.progress || 0);
+      const calculatedActualAvg = projPlots.length > 0
+        ? Math.round(projPlots.reduce((sum: number, p: any) => sum + (Number(p.progress) || 0), 0) / projPlots.length)
+        : Math.round(proj.progress || 0);
+
+      const actualProgress = (proj.progress !== undefined && proj.progress !== null && Number(proj.progress) > 0)
+        ? Math.round(proj.progress)
+        : calculatedActualAvg;
       const delta = actualProgress - plannedAvg;
 
       let healthStatus: 'healthy' | 'warning' | 'critical' = 'healthy';
@@ -4054,6 +4060,44 @@ export default function ConstructionApp() {
                     </div>
                   </div>
 
+                  {/* 🌟 Top Sync Notification Banner 🌟 */}
+                  {isArchiveSyncing && (
+                    <div className="mb-6 p-3.5 sm:p-4 bg-indigo-50/90 border border-indigo-200/80 rounded-2xl flex items-center justify-between gap-3 shadow-xs animate-in fade-in slide-in-from-top-2 duration-300">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-7 h-7 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                          <RefreshCw size={14} className="animate-spin" />
+                        </div>
+                        <div>
+                          <p className="text-xs sm:text-sm font-extrabold text-indigo-900 leading-tight">
+                            🔄 กำลังซิงค์ประวัติย้อนหลังในพื้นหลัง...
+                          </p>
+                          <p className="text-[11px] font-bold text-indigo-600/80 mt-0.5">
+                            คุณสามารถดูข้อมูลสรุปและสถานะปัจจุบันของทุกแปลงได้ทันที
+                          </p>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-black uppercase px-2.5 py-1 bg-white text-indigo-700 rounded-lg shrink-0 border border-indigo-100 shadow-2xs">
+                        พร้อมใช้งานทันที
+                      </span>
+                    </div>
+                  )}
+
+                  {archiveSyncSuccess && (
+                    <div className="mb-6 p-3.5 sm:p-4 bg-emerald-50/90 border border-emerald-200/80 rounded-2xl flex items-center gap-3 shadow-xs animate-in fade-in slide-in-from-top-2 duration-300">
+                      <div className="w-7 h-7 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                        <Check size={14} />
+                      </div>
+                      <div>
+                        <p className="text-xs sm:text-sm font-extrabold text-emerald-900 leading-tight">
+                          ✅ อัปเดตข้อมูลครบถ้วนสมบูรณ์แล้ว
+                        </p>
+                        <p className="text-[11px] font-bold text-emerald-700/80 mt-0.5">
+                          ข้อมูลประวัติย้อนหลังและการวิเคราะห์ทั้งหมดถูกซิงค์เรียบร้อย
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
                   {/* 🌟 2. Skeleton Loading UI (During initial fetch) 🌟 */}
                   {isAnalyticsLoading && (
                     <div className="space-y-6 animate-pulse mb-6">
@@ -4520,7 +4564,7 @@ export default function ConstructionApp() {
                   />
 
                   {/* 📊 🌟 Executive Analytics สำหรับผู้บริหารและทีมวางแผน 🌟 */}
-                  {(isAdmin || isOwner || isProjectPlanner || isSiteEngineer) && (
+                  {(isAdmin || isOwner || isProjectPlanner || isSiteEngineer || isQC || isForeman) && (
                     <div className="space-y-8">
                       <OwnerAnalyticsDashboard
                         projects={projects}
@@ -4536,16 +4580,18 @@ export default function ConstructionApp() {
                         weatherInfo={weatherInfo}
                         qcSePerformance={qcSePerformance}
                       />
-                      <ExecutiveAnalytics
-                        loading={loading}
-                        projects={projects}
-                        plots={plots}
-                        taskTemplates={taskTemplates}
-                        schedules={schedules}
-                        latestUpdatesMap={latestUpdatesMap}
-                        foremenList={foremenList}
-                        allUpdatesRecord={allUpdatesRecord}
-                      />
+                      {(isAdmin || isOwner || isProjectPlanner || isSiteEngineer) && (
+                        <ExecutiveAnalytics
+                          loading={loading}
+                          projects={projects}
+                          plots={plots}
+                          taskTemplates={taskTemplates}
+                          schedules={schedules}
+                          latestUpdatesMap={latestUpdatesMap}
+                          foremenList={foremenList}
+                          allUpdatesRecord={allUpdatesRecord}
+                        />
+                      )}
                     </div>
                   )}
                 </div>
@@ -4795,7 +4841,7 @@ export default function ConstructionApp() {
                   handleMouseEnter={handleMouseEnter} handleMouseUp={handleMouseUp}
                   setSelectedPlot={setSelectedPlot} setSelectedTask={setSelectedTask} setTaskReturnView={setTaskReturnView}
                   plotBounds={plotBounds} getPlotOverallStatus={getPlotOverallStatus}
-                  allUpdatesRecord={allUpdatesRecord} taskTemplates={taskTemplates} assignments={assignments}
+                  allUpdatesRecord={allUpdatesRecord} defects={defects} taskTemplates={taskTemplates} assignments={assignments}
                   searchTask={searchTask} setSearchTask={setSearchTask}
                   schedules={schedules} taskDates={taskDates}
                   plotsActiveToday={plotsActiveToday} plotsHandoverActiveToday={plotsHandoverActiveToday} searchPlot={searchPlot} setSearchPlot={setSearchPlot}
@@ -4804,7 +4850,7 @@ export default function ConstructionApp() {
                   handleLegacyProjectComplete={handleLegacyProjectComplete}
                   handleLegacyProjectUndoTransfer={handleLegacyProjectUndoTransfer}
                   handleTogglePlotCompleted={handleTogglePlotCompleted}
-
+                  houseTypes={houseTypes}
                   setIsPresentationOpen={setIsPresentationOpen} setCurrentSlideIndex={setCurrentSlideIndex}
                 />
               )}
@@ -5131,7 +5177,7 @@ export default function ConstructionApp() {
                 </button>
               )}
               {(isAdmin || isProjectPlanner || isQC || isSiteEngineer || isOwner || isForeman) && (
-                <button onClick={() => setView('reports')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'reports' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
+                <button onClick={() => { setView('reports'); setSelectedProject(null); }} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'reports' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
                   <PieChart size={20} className={activeView === 'reports' ? 'fill-blue-100' : ''} />
                   <span className="text-[9px] font-black mt-1">รายงาน</span>
                 </button>

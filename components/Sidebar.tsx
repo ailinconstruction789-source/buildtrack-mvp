@@ -87,7 +87,7 @@ const Sidebar = React.memo(({
                       )}
                       <button onClick={() => { setView('dashboard'); setSelectedProject(null); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'dashboard' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Home size={18} /> Dashboard</button>
                       {(isAdmin || isProjectPlanner || isQC || isSiteEngineer || isOwner || isForeman) && (
-                        <button onClick={() => setView('reports')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'reports' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><PieChart size={18} /> Reports & Analytics</button>
+                        <button onClick={() => { setView('reports'); setSelectedProject(null); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'reports' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><PieChart size={18} /> Reports & Analytics</button>
                       )}
                     </nav>
                   </div>

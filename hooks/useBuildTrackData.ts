@@ -4,6 +4,8 @@ import { supabase } from '@/lib/supabase';
 export function useBuildTrackData(loggedInUser: any, selectedProjectName?: string | null) {
   const [loading, setLoading] = useState(true);
   const [isAnalyticsLoading, setIsAnalyticsLoading] = useState(false);
+  const [isArchiveSyncing, setIsArchiveSyncing] = useState(false);
+  const [archiveSyncSuccess, setArchiveSyncSuccess] = useState(false);
   const isAnalyticsFetchedRef = useRef(false);
   
   // 🏢 Core Data States
@@ -229,7 +231,7 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
           has_customer: !!plot.has_customer,
           type: plot.house_types?.type_name || 'ไม่ระบุแบบ', 
           foreman: plot.foreman_name, 
-          progress: progressRecord ? Number(progressRecord.overall_progress) : 0 
+          progress: Number(progressRecord?.overall_progress ?? 0)
         };
       }).sort((a: any, b: any) => (a.id || '').localeCompare(b.id || '', undefined, { numeric: true, sensitivity: 'base' }));
 
@@ -240,7 +242,7 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
           name: proj.name, 
           layout_data: uniqueMigrated, 
           plotCount: plotsData?.filter((p: any) => p.project_name === proj.name).length || 0, 
-          progress: progressRecord ? Number(progressRecord.project_progress) : 0,
+          progress: Number(progressRecord?.project_progress ?? 0),
           is_closed: !!proj.is_closed 
         };
       });
@@ -261,19 +263,31 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
           ]);
           const archiveUpdates = archiveUpdatesData || [];
           
-          if (!archiveAssign || archiveAssign.length === 0) return;
+          if (archiveAssign && archiveAssign.length > 0) {
+            setAssignments((prev: any) => {
+              const newMap = new Map(archiveAssign.map((a: any) => [a.id, a]));
+              prev?.forEach((p: any) => { if (!newMap.has(p.id)) newMap.set(p.id, p); });
+              return Array.from(newMap.values());
+            });
+            setTaskDates((prev: any) => {
+               const tDates = { ...prev };
+               archiveAssign.forEach((assign: any) => {
+                 const key = `${assign.plot_id}-${assign.task_template_id}`; 
+                 if (!tDates[key]) {
+                    tDates[key] = { start: assign.actual_start_date, end: assign.actual_end_date };
+                 }
+               });
+               return tDates;
+            });
+          }
 
-          setAssignments((prev: any) => {
-            const newMap = new Map(archiveAssign.map((a: any) => [a.id, a]));
-            prev?.forEach((p: any) => { if (!newMap.has(p.id)) newMap.set(p.id, p); });
-            return Array.from(newMap.values());
-          });
-          
-          setAllUpdatesRecord((prev: any) => {
-            const newMap = new Map(archiveUpdates?.map((u: any) => [u.id, u]) || []);
-            prev?.forEach((p: any) => { if (!newMap.has(p.id)) newMap.set(p.id, p); });
-            return Array.from(newMap.values()).sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-          });
+          if (archiveUpdates && archiveUpdates.length > 0) {
+            setAllUpdatesRecord((prev: any) => {
+              const newMap = new Map(archiveUpdates.map((u: any) => [u.id, u]));
+              prev?.forEach((p: any) => { if (!newMap.has(p.id)) newMap.set(p.id, p); });
+              return Array.from(newMap.values()).sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+            });
+          }
 
           setTaskDates((prev: any) => {
              const tDates = { ...prev };
@@ -432,17 +446,21 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
     }
   }, []);
 
-  // 🌟 ฟังก์ชันโหลดข้อมูล Analytics ผู้บริหาร (พร้อม Cache และ Loading State)
+  // 🌟 ฟังก์ชันโหลดข้อมูล Analytics ผู้บริหาร (พร้อม Progressive Loading ป้องกันเน็ตมือถือหลุด)
   const fetchOwnerAnalyticsData = useCallback(async (forceRefresh = false) => {
     if (isAnalyticsFetchedRef.current && !forceRefresh) {
       return;
     }
     setIsAnalyticsLoading(true);
+    setIsArchiveSyncing(true);
+    setArchiveSyncSuccess(false);
+
     try {
-      const [assignData, schedData, updData, { data: defData }] = await Promise.all([
+      // 🚀 สเต็ปที่ 1 (Fast Load): ดึงข้อมูลสถานะล่าสุดและประวัติล่าสุด 2,000 รายการ โหลดเสร็จใน < 1 วิ!
+      const [assignData, schedData, recentUpdData, { data: defData }] = await Promise.all([
         fetchWithoutLimit('plot_task_assignments'),
         fetchWithoutLimit('plot_task_schedules'),
-        fetchWithoutLimit('task_updates', null, 'created_at', false),
+        supabase.from('task_updates').select('*').order('created_at', { ascending: false }).limit(2000).then(res => res.data || []),
         supabase.from('defects').select('*').order('created_at', { ascending: false })
       ]);
 
@@ -458,31 +476,110 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
            plot_id: assign.plot_id,
            task_template_id: assign.task_template_id,
            progress: assign.current_progress || 0,
+           actual_end_date: assign.actual_end_date,
+           action: assign.latest_action,
+           role: assign.latest_role,
+           created_at: assign.latest_update_created_at || assign.actual_end_date
         }; 
         tDates[key] = { start: assign.actual_start_date, end: assign.actual_end_date };
       });
       
-      updData?.forEach((upd: any) => {
+      recentUpdData?.forEach((upd: any) => {
         const key = `${upd.plot_id}-${upd.task_template_id}`;
-        if (latestUpdates[key] && !latestUpdates[key].action) {
-          latestUpdates[key].action = upd.action;
-          latestUpdates[key].role = upd.role;
-          latestUpdates[key].created_at = upd.created_at;
+        if (latestUpdates[key]) {
+          if (!latestUpdates[key].action) {
+            latestUpdates[key].action = upd.action;
+            latestUpdates[key].role = upd.role;
+          }
+          if (!latestUpdates[key].created_at) {
+            latestUpdates[key].created_at = upd.created_at;
+          }
+          if ((latestUpdates[key].progress === 0 || latestUpdates[key].progress === undefined) && upd.progress > 0) {
+            latestUpdates[key].progress = upd.progress;
+          }
+          if (!tDates[key]?.end && (upd.progress === 100 || upd.is_completed)) {
+            tDates[key] = { ...tDates[key], end: upd.created_at };
+          }
+        } else {
+          latestUpdates[key] = {
+            plot_id: upd.plot_id,
+            task_template_id: upd.task_template_id,
+            progress: upd.progress,
+            action: upd.action,
+            role: upd.role,
+            created_at: upd.created_at
+          };
         }
       });
       
-      // Batch state updates
+      // Batch state updates ทันที
+      setAssignments(assignData || []);
       setSchedules(newSched);
       setLatestUpdatesMap(latestUpdates); 
       setTaskDates(tDates);
-      setAllUpdatesRecord(updData || []);
+      setAllUpdatesRecord(recentUpdData || []);
       setDefects(defData || []);
       isAnalyticsFetchedRef.current = true;
+      setIsAnalyticsLoading(false); // แสดงผลหน้าจอพร้อมตัวเลขและผลวิเคราะห์ทันที!
+
+      // 🔄 สเต็ปที่ 2 (Background Sync): ทยอยดึงประวัติย้อนหลังส่วนที่เหลือเงียบๆ ในพื้นหลัง
+      (async () => {
+        try {
+          const fullUpdates = await fetchWithoutLimit('task_updates', null, 'created_at', false, 'id, plot_id, task_template_id, progress, action, role, created_at, user_name, text_content, image_url, is_silent', 'id');
+          if (fullUpdates && fullUpdates.length > 0) {
+            setAllUpdatesRecord((prev: any) => {
+              const newMap = new Map(fullUpdates.map((u: any) => [u.id, u]));
+              prev?.forEach((p: any) => {
+                if (!newMap.has(p.id)) {
+                  newMap.set(p.id, p);
+                } else {
+                  const existing = newMap.get(p.id);
+                  if (!existing.user_name && p.user_name) existing.user_name = p.user_name;
+                  if (!existing.text_content && p.text_content) existing.text_content = p.text_content;
+                  if (!existing.image_url && p.image_url) existing.image_url = p.image_url;
+                }
+              });
+              return Array.from(newMap.values()).sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+            });
+            setLatestUpdatesMap((prev: any) => {
+              const updated = { ...prev };
+              fullUpdates.forEach((upd: any) => {
+                const key = `${upd.plot_id}-${upd.task_template_id}`;
+                if (updated[key]) {
+                  if (!updated[key].action) {
+                    updated[key].action = upd.action;
+                    updated[key].role = upd.role;
+                  }
+                  if (!updated[key].created_at) {
+                    updated[key].created_at = upd.created_at;
+                  }
+                } else {
+                  updated[key] = {
+                    plot_id: upd.plot_id,
+                    task_template_id: upd.task_template_id,
+                    progress: upd.progress,
+                    action: upd.action,
+                    role: upd.role,
+                    created_at: upd.created_at
+                  };
+                }
+              });
+              return updated;
+            });
+          }
+          setIsArchiveSyncing(false);
+          setArchiveSyncSuccess(true);
+          setTimeout(() => setArchiveSyncSuccess(false), 4000);
+        } catch (bgErr) {
+          console.warn('Background full updates fetch warning:', bgErr);
+          setIsArchiveSyncing(false);
+        }
+      })();
 
     } catch (err) {
       console.error('Error fetching analytics:', err);
-    } finally {
       setIsAnalyticsLoading(false);
+      setIsArchiveSyncing(false);
     }
   }, []);
 
@@ -647,6 +744,8 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
   return {
     loading, setLoading,
     isAnalyticsLoading,
+    isArchiveSyncing,
+    archiveSyncSuccess,
     projects, setProjects,
     houseTypes, setHouseTypes,
     taskTemplates, setTaskTemplates,

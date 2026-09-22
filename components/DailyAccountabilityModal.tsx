@@ -101,7 +101,7 @@ export default function DailyAccountabilityModal({
           id: `upd-${u.id}`,
           rawTime: new Date(u.created_at).getTime(),
           timeStr: new Date(u.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }),
-          user: u.user_name || 'ไม่ระบุชื่อ',
+          user: u.user_name || u.username || u.user || 'ไม่ระบุชื่อ',
           role,
           plot: u.plot_id,
           taskName: task ? task.task_name : (u.action || 'อัปเดตงาน'),

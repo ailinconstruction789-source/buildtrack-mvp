@@ -287,8 +287,8 @@ export default function OwnerAnalyticsDashboard({
                 taskId = key.substring(37);
              }
              const cost = taskCostMap[taskId] || 0;
-             if (actual.progress === 100 && actual.created_at) {
-                const aTime = new Date(actual.created_at).getTime();
+             if (actual.progress === 100 && (actual.created_at || actual.actual_end_date)) {
+                const aTime = new Date(actual.created_at || actual.actual_end_date).getTime();
                 if (aTime <= bucket.time) {
                    ev += cost;
                 }

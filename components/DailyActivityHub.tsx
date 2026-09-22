@@ -49,6 +49,90 @@ export default function DailyActivityHub({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedPlotDetail, setSelectedPlotDetail] = useState<string | null>(null);
 
+  // 🌟 Key สำหรับจำโครงการที่เลือกใน Daily Activity Hub
+  const STORAGE_KEY = 'buildtrack_daily_activity_hub_project';
+
+  // รายชื่อโครงการที่ยังไม่ปิด
+  const activeProjectsList = useMemo(() => {
+    return (projects || []).filter((p: any) => !p.is_closed);
+  }, [projects]);
+
+  // ค้นหาโครงการที่มีแปลงกำลังก่อสร้างจริง เพื่อเป็นค่าเริ่มต้น
+  const defaultProjectName = useMemo(() => {
+    const projWithActive = activeProjectsList.find((proj: any) => {
+      const projPlots = (plots || []).filter((p: any) => p.project_name === proj.name);
+      return projPlots.some((p: any) => {
+        const prog = Number(p.progress || 0);
+        return prog > 0 && prog < 100 && !p.is_completed && p.handover_status !== 'completed' && p.sale_status !== 'ready_for_sale';
+      });
+    });
+    return projWithActive?.name || activeProjectsList[0]?.name || 'ไอลิน6';
+  }, [activeProjectsList, plots]);
+
+  // โครงการที่เลือก: ดึงจาก localStorage หรือ prop selectedProject หรือ default
+  const [savedProjectName, setSavedProjectName] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (saved) return saved;
+      } catch (e) {
+        console.warn('Cannot read from localStorage:', e);
+      }
+    }
+    return selectedProject?.name || '';
+  });
+
+  // โครงการที่ใช้งานจริง: ถ้าไม่มีการเลือก ให้ใช้ค่าเริ่มต้นโครงการที่กำลังก่อสร้าง
+  const effectiveProjectName = useMemo(() => {
+    if (savedProjectName) {
+      if (savedProjectName === 'all') return 'all';
+      const exists = (projects || []).some((p: any) => p.name === savedProjectName);
+      if (exists) return savedProjectName;
+    }
+    if (selectedProject?.name && selectedProject.name !== 'all') {
+      return selectedProject.name;
+    }
+    return defaultProjectName;
+  }, [savedProjectName, selectedProject, projects, defaultProjectName]);
+
+  // บันทึกโครงการลง localStorage และอัปเดต state
+  const handleProjectChange = (newName: string) => {
+    setSavedProjectName(newName);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(STORAGE_KEY, newName);
+      } catch (e) {
+        console.warn('Cannot save to localStorage:', e);
+      }
+    }
+    if (setSelectedProject) {
+      if (newName === 'all') {
+        setSelectedProject(null);
+      } else {
+        const projObj = (projects || []).find((p: any) => p.name === newName);
+        setSelectedProject(projObj || { name: newName });
+      }
+    }
+  };
+
+  // 🌟 Helper: ตรวจสอบว่าแปลงนี้กำลังอยู่ระหว่างการก่อสร้างจริงหรือไม่
+  // 1. ตัดบ้านที่ยังไม่มีการเริ่มก่อสร้างใดๆ (progress <= 0 และไม่มีงานเริ่ม)
+  // 2. ตัดบ้านที่ก่อสร้างเสร็จแล้วตามเงื่อนไข (progress >= 100, is_completed, handover_status completed, หรือ ready_for_sale)
+  const isPlotActiveUnderConstruction = (plot: any) => {
+    if (!plot) return false;
+    const prog = Number(plot.progress || 0);
+
+    // 1. ตัดบ้านที่ยังไม่เริ่มก่อสร้างใดๆ
+    if (prog <= 0) return false;
+
+    // 2. ตัดบ้านที่ก่อสร้างเสร็จแล้วตามเงื่อนไข
+    const isCompleted = Boolean(plot.is_completed) || prog >= 100 || plot.handover_status === 'completed';
+    const isReadyForSale = plot.sale_status === 'ready_for_sale';
+    if (isCompleted || isReadyForSale) return false;
+
+    return true;
+  };
+
   // Map users for fast lookup
   const userMap = useMemo(() => {
     const map = new Map<string, any>();
@@ -117,7 +201,7 @@ export default function DailyActivityHub({
           id: `upd-${u.id}`,
           rawTime: new Date(u.created_at).getTime(),
           timeStr: new Date(u.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }),
-          user: u.user_name || 'ไม่ระบุชื่อ',
+          user: u.user_name || u.username || u.user || (roleCat === 'Foreman' && plotObj?.foreman ? plotObj.foreman : 'ไม่ระบุชื่อ'),
           role: roleCat,
           rawRole: u.role,
           plot: String(u.plot_id),
@@ -171,9 +255,9 @@ export default function DailyActivityHub({
 
   // Filter activities for timeline based on project selection (if any)
   const scopedActivities = useMemo(() => {
-    if (!selectedProject?.name || selectedProject.name === 'all') return dayActivities;
-    return dayActivities.filter(a => !a.projectName || a.projectName === selectedProject.name);
-  }, [dayActivities, selectedProject]);
+    if (!effectiveProjectName || effectiveProjectName === 'all') return dayActivities;
+    return dayActivities.filter(a => !a.projectName || a.projectName === effectiveProjectName);
+  }, [dayActivities, effectiveProjectName]);
 
   // 🌟 3 Role Pillars Metrics (แบบที่ 2)
   const roleMetrics = useMemo(() => {
@@ -190,6 +274,14 @@ export default function DailyActivityHub({
       !(a.action || '').includes('ส่ง') && a.progress !== 100
     ).length;
 
+    // 🏠 รวบรวมแปลงที่กำลังอยู่ระหว่างการก่อสร้างในโครงการที่เลือก
+    const activePlotsInScope = (plots || []).filter(p => {
+      if (effectiveProjectName && effectiveProjectName !== 'all') {
+        if (p.project_name !== effectiveProjectName) return false;
+      }
+      return isPlotActiveUnderConstruction(p);
+    });
+
     // 👷 จัดกลุ่มโฟร์แมนรายบุคคล พร้อมนับจำนวนกิจกรรมและแปลงที่เข้า
     const foremanByStaff = new Map<string, {
       user: string;
@@ -199,6 +291,7 @@ export default function DailyActivityHub({
       submits: number;
     }>();
 
+    // 1. นำโฟร์แมนที่มีการบันทึกกิจกรรมเข้ามา
     foremanActs.forEach(a => {
       const name = a.user || 'โฟร์แมน';
       if (!foremanByStaff.has(name)) {
@@ -219,7 +312,48 @@ export default function DailyActivityHub({
         item.updates++;
       }
     });
-    const foremanStaffList = Array.from(foremanByStaff.values()).sort((a, b) => b.totalActivities - a.totalActivities);
+
+    // 2. นำโฟร์แมนทุกคนที่มีแปลงรับผิดชอบกำลังสร้างอยู่เข้ามาด้วย (เพื่อให้เห็นว่าเข้าครบหรือไม่)
+    activePlotsInScope.forEach(p => {
+      const fName = (p.foreman || p.foreman_name || '').trim();
+      if (fName && !foremanByStaff.has(fName)) {
+        foremanByStaff.set(fName, {
+          user: fName,
+          totalActivities: 0,
+          totalPlots: new Set<string>(),
+          updates: 0,
+          submits: 0
+        });
+      }
+    });
+
+    // 3. คำนวณความครอบคลุมการเข้าตรวจเทียบกับแปลงที่รับผิดชอบ
+    const foremanStaffList = Array.from(foremanByStaff.values()).map(f => {
+      const assignedActive = activePlotsInScope.filter(p => {
+        const pForeman = (p.foreman || p.foreman_name || '').trim().toLowerCase();
+        return pForeman === f.user.toLowerCase();
+      });
+      const totalAssigned = assignedActive.length;
+      const visitedAssigned = assignedActive.filter(p => f.totalPlots.has(String(p.id)));
+      const visitedAssignedCount = visitedAssigned.length;
+      const unvisitedPlots = assignedActive
+        .filter(p => !f.totalPlots.has(String(p.id)))
+        .map(p => String(p.plot_name || p.id));
+      const coverageRate = totalAssigned > 0 ? Math.round((visitedAssignedCount / totalAssigned) * 100) : (f.totalPlots.size > 0 ? 100 : 0);
+      const isComplete = totalAssigned > 0 && visitedAssignedCount >= totalAssigned;
+
+      return {
+        ...f,
+        totalAssigned,
+        visitedAssignedCount,
+        unvisitedPlots,
+        coverageRate,
+        isComplete
+      };
+    }).sort((a, b) => {
+      if (b.totalActivities !== a.totalActivities) return b.totalActivities - a.totalActivities;
+      return b.totalAssigned - a.totalAssigned;
+    });
     const foremanUsers = foremanStaffList.map(s => s.user);
 
     // Site Engineer metrics
@@ -275,7 +409,7 @@ export default function DailyActivityHub({
         staffList: qcStaffList
       }
     };
-  }, [scopedActivities, inspectionQueue]);
+  }, [scopedActivities, inspectionQueue, plots, effectiveProjectName]);
 
   // 🌟 Timeline Feed Filtered Items (แบบที่ 1)
   const timelineFilteredItems = useMemo(() => {
@@ -300,12 +434,15 @@ export default function DailyActivityHub({
 
   // 🌟 Walkthrough Heatmap & Blind Spot Data (แบบที่ 3)
   const walkthroughPlots = useMemo(() => {
-    // Current pool of plots (either selected project or all active plots)
+    // Current pool of plots (เฉพาะโครงการที่เลือก และเฉพาะบ้านที่กำลังก่อสร้างจริง)
     const basePlots = (plots || []).filter(p => {
-      if (selectedProject?.name && selectedProject.name !== 'all') {
-        return p.project_name === selectedProject.name;
+      // 1. กรองเฉพาะโครงการที่เลือก
+      if (effectiveProjectName && effectiveProjectName !== 'all') {
+        if (p.project_name !== effectiveProjectName) return false;
       }
-      return true;
+
+      // 2. ไม่ต้องแสดงบ้านหลังที่ยังไม่มีการเริ่มก่อสร้างใดๆ เลย กับที่ก่อสร้างเสร็จแล้วตามเงื่อนไข
+      return isPlotActiveUnderConstruction(p);
     });
 
     // Group activities by plot
@@ -340,7 +477,7 @@ export default function DailyActivityHub({
         activities: acts
       };
     });
-  }, [plots, selectedProject, scopedActivities]);
+  }, [plots, effectiveProjectName, scopedActivities]);
 
   // Filtered walkthrough plots
   const displayWalkthroughPlots = useMemo(() => {
@@ -350,7 +487,9 @@ export default function DailyActivityHub({
         const q = searchQuery.toLowerCase();
         const matchId = wp.id.toLowerCase().includes(q);
         const matchProj = (wp.projectName || '').toLowerCase().includes(q);
-        if (!matchId && !matchProj) return false;
+        const matchInspector = wp.activities.some((a: any) => (a.user || '').toLowerCase().includes(q));
+        const matchForeman = ((wp.plot as any)?.foreman || (wp.plot as any)?.foreman_name || '').toLowerCase().includes(q);
+        if (!matchId && !matchProj && !matchInspector && !matchForeman) return false;
       }
       return true;
     });
@@ -393,6 +532,21 @@ export default function DailyActivityHub({
 
         {/* Date Selector & View Switcher */}
         <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
+          {/* Project Selector */}
+          <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 shadow-sm">
+            <Building2 size={14} className="text-indigo-600 shrink-0" />
+            <select
+              value={effectiveProjectName}
+              onChange={(e) => handleProjectChange(e.target.value)}
+              className="text-xs font-bold text-slate-700 bg-transparent outline-none cursor-pointer max-w-[140px] truncate"
+            >
+              <option value="all">ทุกโครงการ (All)</option>
+              {activeProjectsList.map((p: any) => (
+                <option key={p.name} value={p.name}>{p.name}</option>
+              ))}
+            </select>
+          </div>
+
           {/* Date Picker */}
           <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl px-3 py-1.5 shadow-sm">
             <Calendar size={14} className="text-slate-400" />
@@ -520,16 +674,42 @@ export default function DailyActivityHub({
                         title={`คลิกเพื่อกรองดูเฉพาะงานของ ${f.user}`}
                       >
                         <div className="flex items-center gap-2 min-w-0">
-                          <div className="w-6 h-6 rounded-lg bg-amber-200 text-amber-800 flex items-center justify-center text-xs font-black shrink-0">
+                          <div className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs font-black shrink-0 ${
+                            f.isComplete 
+                              ? 'bg-emerald-200 text-emerald-800' 
+                              : f.totalAssigned > 0 
+                              ? 'bg-amber-200 text-amber-800' 
+                              : 'bg-slate-200 text-slate-700'
+                          }`}>
                             👷
                           </div>
                           <div className="min-w-0">
-                            <span className="text-xs font-black text-slate-800 truncate block">
-                              {f.user}
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-xs font-black text-slate-800 truncate block">
+                                {f.user}
+                              </span>
+                              {f.totalAssigned > 0 && (
+                                f.isComplete ? (
+                                  <span className="text-[9px] font-black bg-emerald-100 text-emerald-700 px-1 py-0.2 rounded border border-emerald-200">
+                                    ครบ 100%
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] font-black bg-amber-100 text-amber-800 px-1 py-0.2 rounded border border-amber-200">
+                                    ขาด {f.totalAssigned - f.visitedAssignedCount} หลัง
+                                  </span>
+                                )
+                              )}
+                            </div>
+                            <span className="text-[10px] font-bold text-slate-500 block">
+                              {f.totalAssigned > 0 
+                                ? `เข้าดู ${f.visitedAssignedCount}/${f.totalAssigned} หลังที่รับผิดชอบ (${f.coverageRate}%)`
+                                : `เข้า ${f.totalPlots.size} แปลง (นอกสังกัด)`}
                             </span>
-                            <span className="text-[10px] font-bold text-slate-400 block">
-                              เข้า {f.totalPlots.size} แปลง
-                            </span>
+                            {f.unvisitedPlots && f.unvisitedPlots.length > 0 && f.unvisitedPlots.length <= 4 && (
+                              <span className="text-[9px] font-medium text-rose-500 block truncate">
+                                แปลงค้าง: {f.unvisitedPlots.join(', ')}
+                              </span>
+                            )}
                           </div>
                         </div>
                         <div className="text-right shrink-0">
@@ -860,7 +1040,7 @@ export default function DailyActivityHub({
                   <div className="flex items-baseline gap-1.5">
                     <span className="text-2xl font-black text-slate-800">{coveragePercent}%</span>
                     <span className="text-xs font-bold text-slate-400">
-                      ({inspectedPlotsCount}/{totalPlotsCount} แปลง)
+                      ({inspectedPlotsCount}/{totalPlotsCount} แปลงกำลังก่อสร้าง)
                     </span>
                   </div>
                 </div>
@@ -878,8 +1058,21 @@ export default function DailyActivityHub({
                 </div>
               </div>
 
-              {/* Toggle to show only blind spots */}
-              <div className="flex items-center gap-2">
+              {/* Controls: Search filter badge and toggle blind spots */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {searchQuery.trim() !== '' && (
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-100 text-amber-900 rounded-xl text-xs font-bold border border-amber-300 shadow-2xs">
+                    <span>กำลังกรอง: "{searchQuery}" ({displayWalkthroughPlots.length} แปลง)</span>
+                    <button 
+                      onClick={() => setSearchQuery('')}
+                      className="ml-1 p-0.5 hover:bg-amber-200 rounded text-amber-700 cursor-pointer"
+                      title="ล้างตัวกรอง"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                )}
+
                 <button
                   onClick={() => setShowBlindSpotsOnly(!showBlindSpotsOnly)}
                   className={`text-xs font-black px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${
@@ -896,7 +1089,26 @@ export default function DailyActivityHub({
             {/* Plot Grid */}
             {displayWalkthroughPlots.length === 0 ? (
               <div className="bg-slate-50 rounded-2xl border border-dashed border-slate-200 p-10 text-center text-slate-400 font-bold text-sm">
-                ไม่พบแปลงบ้านตามเงื่อนไขที่เลือก
+                {searchQuery.trim() !== '' ? (
+                  <div>
+                    <p className="text-slate-700 font-black text-sm mb-1">
+                      ไม่พบแปลงบ้านที่ตรงกับคำค้นหา "{searchQuery}"
+                    </p>
+                    <p className="text-xs text-slate-400 mb-3">
+                      (ในโครงการนี้มีแปลงที่กำลังอยู่ระหว่างการก่อสร้าง {totalPlotsCount} แปลง)
+                    </p>
+                    <button
+                      onClick={() => setSearchQuery('')}
+                      className="px-3.5 py-1.5 bg-white border border-slate-300 text-slate-700 rounded-xl text-xs font-bold hover:bg-slate-100 cursor-pointer shadow-2xs inline-flex items-center gap-1.5"
+                    >
+                      <X size={13} /> ล้างคำค้นหาเพื่อดูแปลงทั้งหมด
+                    </button>
+                  </div>
+                ) : effectiveProjectName && effectiveProjectName !== 'all' ? (
+                  `ไม่พบแปลงบ้านที่กำลังอยู่ระหว่างการก่อสร้างในโครงการ "${effectiveProjectName}" (แปลงทั้งหมดสร้างเสร็จแล้ว หรือยังไม่เริ่มก่อสร้าง)`
+                ) : (
+                  'ไม่พบแปลงบ้านที่กำลังอยู่ระหว่างการก่อสร้างตามเงื่อนไขที่เลือก'
+                )}
               </div>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">

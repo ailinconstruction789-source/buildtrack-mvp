@@ -277,5 +277,169 @@ describe('Daily Activity Hub & Accountability Logic', () => {
       expect(extractFirstValidImageUrl('https://example.com/photo.png')).toBe('https://example.com/photo.png');
     });
   });
+
+  describe('Walkthrough Style 3: Active Under Construction Filtering & Project Scoping', () => {
+    // Replica of isPlotActiveUnderConstruction
+    function isPlotActiveUnderConstruction(plot: any) {
+      if (!plot) return false;
+      const prog = Number(plot.progress || 0);
+      if (prog <= 0) return false;
+      const isCompleted = Boolean(plot.is_completed) || prog >= 100 || plot.handover_status === 'completed';
+      const isReadyForSale = plot.sale_status === 'ready_for_sale';
+      if (isCompleted || isReadyForSale) return false;
+      return true;
+    }
+
+    it('excludes plots that have not started construction at all (progress <= 0)', () => {
+      expect(isPlotActiveUnderConstruction({ id: 'P01', progress: 0 })).toBe(false);
+      expect(isPlotActiveUnderConstruction({ id: 'P02', progress: -5 })).toBe(false);
+      expect(isPlotActiveUnderConstruction({ id: 'P03', progress: null })).toBe(false);
+      expect(isPlotActiveUnderConstruction({ id: 'P04', progress: undefined })).toBe(false);
+    });
+
+    it('excludes plots that are 100% completed or marked completed', () => {
+      expect(isPlotActiveUnderConstruction({ id: 'P05', progress: 100 })).toBe(false);
+      expect(isPlotActiveUnderConstruction({ id: 'P06', progress: 105 })).toBe(false);
+      expect(isPlotActiveUnderConstruction({ id: 'P07', progress: 85, is_completed: true })).toBe(false);
+    });
+
+    it('excludes plots that are handed over or ready for sale', () => {
+      expect(isPlotActiveUnderConstruction({ id: 'P08', progress: 95, handover_status: 'completed' })).toBe(false);
+      expect(isPlotActiveUnderConstruction({ id: 'P09', progress: 90, sale_status: 'ready_for_sale' })).toBe(false);
+    });
+
+    it('includes plots that are actively under construction (0 < progress < 100 and not completed)', () => {
+      expect(isPlotActiveUnderConstruction({ id: 'P10', progress: 15 })).toBe(true);
+      expect(isPlotActiveUnderConstruction({ id: 'P11', progress: 50, sale_status: 'active' })).toBe(true);
+      expect(isPlotActiveUnderConstruction({ id: 'P12', progress: 99, handover_status: 'in_progress' })).toBe(true);
+    });
+
+    it('filters walkthrough plots by selected project and active status only', () => {
+      const allPlots = [
+        { id: 'A01', project_name: 'ไอลิน6', progress: 0 },                        // unstarted -> exclude
+        { id: 'A02', project_name: 'ไอลิน6', progress: 50 },                       // active -> include
+        { id: 'A03', project_name: 'ไอลิน6', progress: 100 },                      // completed -> exclude
+        { id: 'A04', project_name: 'ไอลิน6', progress: 80, sale_status: 'ready_for_sale' }, // ready for sale -> exclude
+        { id: 'A05', project_name: 'ไอลิน6', progress: 75 },                       // active -> include
+        { id: 'B01', project_name: 'ไอลิน 4', progress: 40 }                       // wrong project -> exclude
+      ];
+
+      const selectedProj: string = 'ไอลิน6';
+      const basePlots = allPlots.filter(p => {
+        if (selectedProj && selectedProj !== 'all' && p.project_name !== selectedProj) return false;
+        return isPlotActiveUnderConstruction(p);
+      });
+
+      expect(basePlots.length).toBe(2);
+      expect(basePlots.map(p => p.id)).toEqual(['A02', 'A05']);
+
+      // Walkthrough calculation only on active plots
+      const activities = [{ plot: 'A02', role: 'Foreman' }];
+      const status = calculateWalkthroughStatus(basePlots, activities);
+
+      expect(status.total).toBe(2);
+      expect(status.inspected).toBe(1);
+      expect(status.blindSpots).toBe(1);
+      expect(status.coverage).toBe(50); // 1 out of 2 inspected
+    });
+  });
+
+  describe('Foreman Assigned Active House Coverage & Daily Tracking', () => {
+    function calculateForemanCoverage(
+      foremanName: string,
+      assignedPlots: any[],
+      visitedPlotsSet: Set<string>
+    ) {
+      const activeAssigned = assignedPlots.filter(p => {
+        const pForeman = (p.foreman || p.foreman_name || '').trim().toLowerCase();
+        return pForeman === foremanName.toLowerCase();
+      });
+      const totalAssigned = activeAssigned.length;
+      const visitedAssigned = activeAssigned.filter(p => visitedPlotsSet.has(String(p.id)));
+      const visitedCount = visitedAssigned.length;
+      const unvisitedPlots = activeAssigned
+        .filter(p => !visitedPlotsSet.has(String(p.id)))
+        .map(p => String(p.plot_name || p.id));
+      const coverageRate = totalAssigned > 0 ? Math.round((visitedCount / totalAssigned) * 100) : 100;
+      const isComplete = totalAssigned > 0 && visitedCount >= totalAssigned;
+
+      return { totalAssigned, visitedCount, unvisitedPlots, coverageRate, isComplete };
+    }
+
+    it('calculates 100% completion when all assigned active plots are visited', () => {
+      const activePlots = [
+        { id: '10', foreman: 'LEAB' },
+        { id: '12', foreman: 'LEAB' },
+        { id: '14', foreman: 'LEAB' }
+      ];
+      const visitedSet = new Set(['10', '12', '14']);
+      const coverage = calculateForemanCoverage('LEAB', activePlots, visitedSet);
+
+      expect(coverage.totalAssigned).toBe(3);
+      expect(coverage.visitedCount).toBe(3);
+      expect(coverage.coverageRate).toBe(100);
+      expect(coverage.isComplete).toBe(true);
+      expect(coverage.unvisitedPlots).toEqual([]);
+    });
+
+    it('correctly tracks missing/unvisited plots and partial coverage percentage', () => {
+      const activePlots = [
+        { id: '21', foreman: 'VIEW' },
+        { id: '22', foreman: 'VIEW' },
+        { id: '23', foreman: 'VIEW' },
+        { id: '24', foreman: 'VIEW' }
+      ];
+      const visitedSet = new Set(['21', '23']); // Visited 2 out of 4
+      const coverage = calculateForemanCoverage('VIEW', activePlots, visitedSet);
+
+      expect(coverage.totalAssigned).toBe(4);
+      expect(coverage.visitedCount).toBe(2);
+      expect(coverage.coverageRate).toBe(50);
+      expect(coverage.isComplete).toBe(false);
+      expect(coverage.unvisitedPlots).toEqual(['22', '24']);
+    });
+  });
+
+  describe('Walkthrough Style 3: Staff & Inspector Search Filtering', () => {
+    function filterWalkthrough(walkthroughPlots: any[], searchQuery: string) {
+      if (!searchQuery || searchQuery.trim() === '') return walkthroughPlots;
+      const q = searchQuery.toLowerCase();
+      return walkthroughPlots.filter(wp => {
+        const matchId = wp.id.toLowerCase().includes(q);
+        const matchProj = (wp.projectName || '').toLowerCase().includes(q);
+        const matchInspector = (wp.activities || []).some((a: any) => (a.user || '').toLowerCase().includes(q));
+        const matchForeman = (wp.plot?.foreman || wp.plot?.foreman_name || '').toLowerCase().includes(q);
+        return matchId || matchProj || matchInspector || matchForeman;
+      });
+    }
+
+    it('filters plots when searching by staff name who inspected the plot', () => {
+      const plots = [
+        { id: '49', projectName: 'ไอลิน6', plot: { foreman: 'LEAB' }, activities: [{ user: 'BANK', role: 'Site Engineer' }] },
+        { id: '57', projectName: 'ไอลิน6', plot: { foreman: 'LEAB' }, activities: [{ user: 'LEAB', role: 'Foreman' }] },
+        { id: '69', projectName: 'ไอลิน6', plot: { foreman: 'VIEW' }, activities: [{ user: 'VIEW', role: 'Foreman' }] }
+      ];
+
+      const bankFiltered = filterWalkthrough(plots, 'BANK');
+      expect(bankFiltered.length).toBe(1);
+      expect(bankFiltered[0].id).toBe('49');
+
+      const leabFiltered = filterWalkthrough(plots, 'LEAB');
+      expect(leabFiltered.length).toBe(2); // 49 (foreman LEAB) and 57 (foreman and activity LEAB)
+
+      const viewFiltered = filterWalkthrough(plots, 'VIEW');
+      expect(viewFiltered.length).toBe(1);
+      expect(viewFiltered[0].id).toBe('69');
+    });
+
+    it('returns empty array if search query does not match any plot, inspector, or foreman', () => {
+      const plots = [
+        { id: '49', projectName: 'ไอลิน6', plot: { foreman: 'LEAB' }, activities: [{ user: 'BANK' }] }
+      ];
+      const result = filterWalkthrough(plots, 'NON_EXISTENT_NAME');
+      expect(result.length).toBe(0);
+    });
+  });
 });
+
 
