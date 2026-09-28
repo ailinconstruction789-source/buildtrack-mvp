@@ -4,6 +4,7 @@ import React, { useState, useEffect, useMemo, useCallback, useTransition } from 
 import dynamic from 'next/dynamic';
 import { supabase } from '@/lib/supabase';
 import { useBuildTrackData } from '@/hooks/useBuildTrackData';
+import { GUARDED_ACCOUNT_COMMANDS_ENABLED, runGuardedAccountCommand } from '@/lib/auth/accountCommands';
 
 const LoginView = dynamic(() => import('@/components/LoginView'));
 const DashboardOverview = dynamic(() => import('@/components/DashboardOverview'));
@@ -1332,13 +1333,16 @@ export default function ConstructionApp() {
     if (!newUser.name.trim() || allUsers.some(u => u.username === newUser.name.trim())) return showAlert('แจ้งเตือน', 'ระบุชื่อให้ถูกต้องและไม่ซ้ำ');
     setIsSubmitting(true);
     try {
-      if (newUser.role === 'Foreman') await supabase.from('foremen').insert([{ name: newUser.name.trim() }]);
-      
-      const { error } = await supabase.rpc('admin_create_user', {
-        p_username: newUser.name.trim(),
-        p_role: newUser.role
-      });
-      if (error) throw error;
+      if (GUARDED_ACCOUNT_COMMANDS_ENABLED) {
+        await runGuardedAccountCommand(supabase, { action: 'create', username: newUser.name.trim(), role: newUser.role });
+      } else {
+        // Retain existing behavior only until the coordinated account SQL cutover.
+        if (newUser.role === 'Foreman') await supabase.from('foremen').insert([{ name: newUser.name.trim() }]);
+        const { error } = await supabase.rpc('admin_create_user', {
+          p_username: newUser.name.trim(), p_role: newUser.role
+        });
+        if (error) throw error;
+      }
 
       setNewUser({ ...newUser, name: '' });
       const { data } = await supabase.from('users').select('*').order('role', { ascending: true }).order('username', { ascending: true });
@@ -1350,10 +1354,13 @@ export default function ConstructionApp() {
   const handleDeleteUser = (id: any, name: any, role: any) => {
     showConfirm('ยืนยันลบ', `ลบผู้ใช้งาน ${name}?`, async () => {
       try {
-        if (role === 'Foreman') await supabase.from('foremen').delete().eq('name', name);
-        
-        const { error } = await supabase.rpc('admin_delete_user', { p_username: name });
-        if (error) throw error;
+        if (GUARDED_ACCOUNT_COMMANDS_ENABLED) {
+          await runGuardedAccountCommand(supabase, { action: 'delete', username: name });
+        } else {
+          if (role === 'Foreman') await supabase.from('foremen').delete().eq('name', name);
+          const { error } = await supabase.rpc('admin_delete_user', { p_username: name });
+          if (error) throw error;
+        }
         
         const { data } = await supabase.from('users').select('*').order('role', { ascending: true }).order('username', { ascending: true });
         setAllUsers(data || []); closeDialog();
