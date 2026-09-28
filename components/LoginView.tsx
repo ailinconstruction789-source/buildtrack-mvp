@@ -1,19 +1,18 @@
 
 import React from 'react';
 import { LayoutDashboard, AlertTriangle } from 'lucide-react';
+import type { LoginName } from '@/lib/auth/loginDirectory';
 
-interface LoginViewProps {
-  dialogConfig?: any;
+export interface LoginViewProps {
+  dialogConfig?: { isOpen: boolean; title: string; message: string };
   closeDialog?: () => void;
-  loginData: any;
-  setLoginData: (data: any) => void;
-  setLoggedInUser?: (user: any) => void;
-  setAllUsers?: (data: any) => void;
-  setProjects?: (data: any) => void;
-  setPlots?: (data: any) => void;
-  setHouseTypes?: (data: any) => void;
-  setTaskTemplates?: (data: any) => void;
-  allUsers?: any[];
+  loginData: { username: string; pin: string };
+  setLoginData: (data: { username: string; pin: string }) => void;
+  loginNames?: LoginName[];
+  namesLoading?: boolean;
+  namesError?: string | null;
+  onRetryNames?: () => void;
+  isLoggingIn?: boolean;
   handleLogin?: () => void;
 }
 
@@ -22,12 +21,19 @@ export default function LoginView({
   closeDialog,
   loginData,
   setLoginData,
-  allUsers,
+  loginNames = [],
+  namesLoading = false,
+  namesError = null,
+  onRetryNames,
+  isLoggingIn = false,
   handleLogin
 }: LoginViewProps) {
+  const canSubmit = !namesLoading && !namesError && !isLoggingIn
+    && loginNames.some(row => row.username === loginData.username) && /^\d{4}$/.test(loginData.pin);
+  const submit = () => { if (canSubmit) handleLogin?.(); };
   return (
     <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4">
-      {dialogConfig.isOpen && (
+      {dialogConfig?.isOpen && (
         <div className="fixed inset-0 z-[500] bg-black/30 backdrop-blur-xl flex items-center justify-center p-4">
           <div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full p-6 text-center space-y-4">
             <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-2">
@@ -52,16 +58,21 @@ export default function LoginView({
         <div className="space-y-4 sm:space-y-5 relative z-10">
           <div>
              <label htmlFor="username-select" className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1 mb-1 block">Username</label>
-             <select id="username-select" value={loginData.username} onChange={e => setLoginData({...loginData, username: e.target.value})} className="w-full bg-[#f5f5f7] border border-black/5 rounded-2xl px-5 py-4 font-bold outline-none focus:border-blue-500 focus:bg-white transition-colors text-[#1d1d1f] appearance-none">
-               <option value="" disabled>-- เลือกชื่อของคุณ --</option>
-               {(allUsers || []).map(u => <option key={u.id} value={u.username}>{u.username} ({u.role})</option>)}
+             <select id="username-select" value={loginData.username} disabled={namesLoading || !!namesError || isLoggingIn} onChange={e => setLoginData({...loginData, username: e.target.value})} className="w-full bg-[#f5f5f7] border border-black/5 rounded-2xl px-5 py-4 font-bold outline-none focus:border-blue-500 focus:bg-white transition-colors text-[#1d1d1f] appearance-none disabled:opacity-50">
+               <option value="" disabled>{namesLoading ? 'กำลังโหลดรายชื่อ…' : '-- เลือกชื่อของคุณ --'}</option>
+               {loginNames.map(u => <option key={u.username} value={u.username}>{u.username}</option>)}
              </select>
+             {namesError && <div className="mt-2 text-sm text-red-700" role="alert">
+               <p>{namesError}</p>
+               <button type="button" onClick={onRetryNames} className="mt-1 font-bold underline">ลองโหลดรายชื่ออีกครั้ง</button>
+             </div>}
+             {!namesLoading && !namesError && loginNames.length === 0 && <p role="status" className="mt-2 text-sm text-slate-500">ยังไม่มีรายชื่อสำหรับเข้าสู่ระบบ กรุณาติดต่อ Admin</p>}
           </div>
           <div>
              <label htmlFor="pin-input" className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1 mb-1 block">PIN Code</label>
-             <input id="pin-input" type="password" maxLength={4} value={loginData.pin} onChange={e => setLoginData({...loginData, pin: e.target.value.replace(/[^0-9]/g, '')})} onKeyDown={(e) => e.key === 'Enter' && handleLogin?.()} placeholder="••••" className="w-full bg-[#f5f5f7] border border-black/5 rounded-2xl px-5 py-4 font-bold text-center tracking-[1em] outline-none focus:border-blue-500 focus:bg-white transition-colors text-2xl text-[#1d1d1f]" />
+             <input id="pin-input" type="password" inputMode="numeric" autoComplete="current-password" disabled={isLoggingIn} maxLength={4} value={loginData.pin} onChange={e => setLoginData({...loginData, pin: e.target.value.replace(/[^0-9]/g, '')})} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }} placeholder="••••" className="w-full bg-[#f5f5f7] border border-black/5 rounded-2xl px-5 py-4 font-bold text-center tracking-[1em] outline-none focus:border-blue-500 focus:bg-white transition-colors text-2xl text-[#1d1d1f]" />
           </div>
-          <button onClick={handleLogin} disabled={!loginData.username || loginData.pin.length !== 4} className="w-full bg-slate-900 text-white font-bold py-4 rounded-[2rem] shadow-[0_20px_50px_rgba(0,0,0,0.1)] hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed mt-4">Sign In</button>
+          <button onClick={submit} disabled={!canSubmit} className="w-full bg-slate-900 text-white font-bold py-4 rounded-[2rem] shadow-[0_20px_50px_rgba(0,0,0,0.1)] hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed mt-4">{isLoggingIn ? 'กำลังเข้าสู่ระบบ…' : 'Sign In'}</button>
         </div>
       </div>
     </div>

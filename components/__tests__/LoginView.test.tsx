@@ -14,7 +14,7 @@ describe('LoginView Component', () => {
     closeDialog: vi.fn(),
     loginData: { username: '', pin: '' },
     setLoginData: vi.fn(),
-    allUsers: mockAllUsers,
+    loginNames: mockAllUsers,
     handleLogin: vi.fn(),
   };
 
@@ -30,12 +30,13 @@ describe('LoginView Component', () => {
     expect(screen.getByRole('button', { name: /Sign In/i })).toBeInTheDocument();
   });
 
-  it('populates user select with allUsers data', () => {
+  it('populates the select with names only, even if extra account fields are supplied', () => {
     render(<LoginView {...defaultProps} />);
     const options = screen.getAllByRole('option');
     expect(options).toHaveLength(3); // 1 default + 2 mock users
-    expect(screen.getByText('admin (Admin)')).toBeInTheDocument();
-    expect(screen.getByText('user1 (User)')).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'admin' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'user1' })).toBeInTheDocument();
+    expect(screen.queryByText('admin (Admin)')).not.toBeInTheDocument();
   });
 
   it('calls setLoginData when username is changed', () => {
@@ -103,5 +104,29 @@ describe('LoginView Component', () => {
     const button = screen.getByRole('button', { name: /รับทราบ/i });
     fireEvent.click(button);
     expect(props.closeDialog).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { namesLoading: true }, { namesError: 'โหลดไม่สำเร็จ' }, { isLoggingIn: true },
+    { loginNames: [] }, { loginData: { username: 'admin', pin: '123' } },
+    { loginData: { username: 'not-in-directory', pin: '1234' } },
+  ])('blocks both click and Enter when unavailable: %j', overrides => {
+    render(<LoginView {...defaultProps} loginData={{ username: 'admin', pin: '1234' }} {...overrides} />);
+    fireEvent.keyDown(screen.getByLabelText(/PIN Code/i), { key: 'Enter' });
+    expect(defaultProps.handleLogin).not.toHaveBeenCalled();
+  });
+
+  it('allows Enter only for a selected name and four-digit PIN', () => {
+    render(<LoginView {...defaultProps} loginData={{ username: 'admin', pin: '1234' }} />);
+    fireEvent.keyDown(screen.getByLabelText(/PIN Code/i), { key: 'Enter' });
+    expect(defaultProps.handleLogin).toHaveBeenCalledOnce();
+  });
+
+  it('offers retry instead of a silent empty dropdown on failure', () => {
+    const retry = vi.fn();
+    render(<LoginView {...defaultProps} namesError="โหลดไม่สำเร็จ" onRetryNames={retry} />);
+    expect(screen.getByRole('alert')).toHaveTextContent('โหลดไม่สำเร็จ');
+    fireEvent.click(screen.getByRole('button', { name: 'ลองโหลดรายชื่ออีกครั้ง' }));
+    expect(retry).toHaveBeenCalledOnce();
   });
 });

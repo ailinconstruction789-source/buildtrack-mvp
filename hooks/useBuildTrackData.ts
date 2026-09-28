@@ -15,6 +15,14 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
   const [plots, setPlots] = useState<any[]>([]);
   const [contractors, setContractors] = useState<any[]>([]);
   const [allUsers, setAllUsers] = useState<any[]>([]);
+  const [staffIdentity, setStaffIdentity] = useState(loggedInUser);
+  // Invalidate the previous account's staff snapshot before rendering consumers.
+  // A guarded render-time reset avoids briefly showing stale rows after switching
+  // accounts, and avoids a synchronous state reset inside the loading effect.
+  if (staffIdentity !== loggedInUser) {
+    setStaffIdentity(loggedInUser);
+    setAllUsers([]);
+  }
   
   // 📊 Dynamic Data States
   const [assignments, setAssignments] = useState<any[]>([]);
@@ -583,18 +591,24 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
     }
   }, []);
 
-  const fetchUsers = useCallback(async () => {
-    try {
-      const { data } = await supabase.from('users').select('*').order('role', { ascending: true }).order('username', { ascending: true });
-      if (data) setAllUsers(data);
-    } catch (error) {
-      console.error('Error fetching users:', error);
-    }
-  }, []);
-
   useEffect(() => {
-    fetchUsers();
-  }, [fetchUsers]);
+    // Staff/assignment data is separate from the intentionally public login names.
+    // This UI guard is not authorization: database grants/RLS remain mandatory.
+    let active = true;
+    if (!loggedInUser) return;
+    const fetchStaff = async () => {
+      try {
+        const { data, error } = await supabase.from('users')
+          .select('id,username,role,created_at,last_seen_at')
+          .order('role', { ascending: true }).order('username', { ascending: true });
+        if (active) setAllUsers(error ? [] : data ?? []);
+      } catch {
+        if (active) setAllUsers([]);
+      }
+    };
+    void fetchStaff();
+    return () => { active = false; };
+  }, [loggedInUser]);
 
   useEffect(() => {
     if (loggedInUser) fetchAllData();

@@ -25,7 +25,7 @@ describe('useBuildTrackData Hook', () => {
     vi.clearAllMocks();
   });
 
-  it('initially sets loading to true and fetches only users if user is null', async () => {
+  it('does not fetch staff or other app data before login', async () => {
     (supabase.from as Mock).mockImplementation((table: string) => ({
       select: vi.fn().mockReturnThis(),
       order: vi.fn().mockReturnThis(),
@@ -38,8 +38,8 @@ describe('useBuildTrackData Hook', () => {
       await new Promise(resolve => setTimeout(resolve, 0));
     });
 
-    expect(supabase.from).toHaveBeenCalledWith('users');
-    expect(supabase.from).not.toHaveBeenCalledWith('projects');
+    expect(supabase.from).not.toHaveBeenCalled();
+    expect(result.current.allUsers).toEqual([]);
   });
 
   it('fetches all data when loggedInUser is provided', async () => {
@@ -138,5 +138,57 @@ describe('useBuildTrackData Hook', () => {
     expect(result.current.latestUpdatesMap['p2-2'].task_template_id).toBe(2);
 
     expect(result.current.allUpdatesRecord).toHaveLength(1);
+  });
+
+
+  it.each(['Admin', 'Owner', 'Sales', 'Foreman', 'Site Engineer', 'QC', 'Project Planner', 'Procurement', 'Store'])(
+    'loads staff and construction data after login for %s without using the login directory as a role source',
+    async role => {
+      const staff = [{ id: 1, username: 'Crew A', role: 'Foreman', created_at: null, last_seen_at: null }];
+      const staffSelect = vi.fn().mockReturnThis();
+      (supabase.from as Mock).mockImplementation((table: string) => {
+        const response = Promise.resolve({ data: table === 'users' ? staff : [], error: null });
+        return {
+          select: table === 'users' ? staffSelect : vi.fn().mockReturnThis(),
+          order: vi.fn().mockReturnThis(), or: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(), range: vi.fn().mockReturnThis(),
+          then: response.then.bind(response),
+        };
+      });
+      const caller = { username: 'Approved caller', role };
+      const { result } = renderHook(() => useBuildTrackData(caller));
+      await act(async () => { await Promise.resolve(); });
+      expect(result.current.allUsers).toEqual(staff);
+      expect(staffSelect).toHaveBeenCalledExactlyOnceWith('id,username,role,created_at,last_seen_at');
+      expect(supabase.from).toHaveBeenCalledWith('projects');
+      expect(supabase.from).toHaveBeenCalledWith('plots');
+    },
+  );
+
+  it('ignores a late staff response after logout and reloads staff after the next login', async () => {
+    let resolveStaff!: (value: { data: unknown[]; error: null }) => void;
+    const pending = new Promise(accept => { resolveStaff = accept; });
+    let userRequests = 0;
+    const staffSelect = vi.fn().mockReturnThis();
+    (supabase.from as Mock).mockImplementation((table: string) => {
+      const staffResult = table === 'users' ? (++userRequests === 1 ? pending : Promise.resolve({
+        data: [{ id: 2, username: 'Next user', role: 'Sales' }], error: null,
+      })) : Promise.resolve({ data: [], error: null });
+      return {
+        select: table === 'users' ? staffSelect : vi.fn().mockReturnThis(),
+        order: vi.fn().mockReturnThis(), or: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(), range: vi.fn().mockReturnThis(),
+        then: staffResult.then.bind(staffResult),
+      };
+    });
+    const { result, rerender } = renderHook(({ user }: { user: typeof mockUser | null }) => useBuildTrackData(user), {
+      initialProps: { user: mockUser as typeof mockUser | null },
+    });
+    await act(async () => { rerender({ user: null }); });
+    await act(async () => { resolveStaff({ data: [{ id: 1, username: 'Old user', role: 'Admin' }], error: null }); });
+    expect(result.current.allUsers).toEqual([]);
+    await act(async () => { rerender({ user: mockUser }); });
+    expect(result.current.allUsers).toEqual([{ id: 2, username: 'Next user', role: 'Sales' }]);
+    expect(staffSelect).toHaveBeenCalledWith('id,username,role,created_at,last_seen_at');
   });
 });

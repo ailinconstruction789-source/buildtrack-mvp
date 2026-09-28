@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { useBuildTrackData } from '@/hooks/useBuildTrackData';
 import { GUARDED_ACCOUNT_COMMANDS_ENABLED, runGuardedAccountCommand } from '@/lib/auth/accountCommands';
 
-const LoginView = dynamic(() => import('@/components/LoginView'));
+const LoginScreen = dynamic(() => import('@/components/LoginScreen'));
 const DashboardOverview = dynamic(() => import('@/components/DashboardOverview'));
 const ContractorScheduleView = dynamic(() => import('@/components/ContractorScheduleView'));
 const MapVisualizer = dynamic(() => import('@/components/MapVisualizer'));
@@ -2846,10 +2846,10 @@ export default function ConstructionApp() {
   // ==========================================
   if (!loggedInUser) {
     return (
-      <LoginView
+      <LoginScreen
         loginData={loginData}
         setLoginData={setLoginData}
-        allUsers={allUsers}
+        isLoggingIn={isLoggingIn}
         handleLogin={handleLogin}
         dialogConfig={dialogConfig}
         closeDialog={closeDialog}
