@@ -10,7 +10,7 @@ const { createClient, getUser, rpc, from } = vi.hoisted(() => {
 vi.mock('@supabase/supabase-js', () => ({ createClient }));
 
 import { GET, POST } from '@/app/api/sales-crm/central/route';
-import type { CrmRole } from '../centralContracts';
+import { CENTRAL_SEARCH_CONTRACT_VERSION, EMPTY_CENTRAL_SEARCH, type CentralSearchFilters, type CrmRole } from '../centralContracts';
 
 const USER = '00000000-0000-4000-8000-000000000001';
 const OTHER = '00000000-0000-4000-8000-000000000002';
@@ -32,7 +32,7 @@ function postRequest(value: unknown = payload, headers: Record<string, string> =
     });
 }
 
-function snapshot(role: CrmRole = 'sales', page = 0) {
+function snapshot(role: CrmRole = 'sales', page = 0, filters = EMPTY_CENTRAL_SEARCH) {
     return {
         actor: { userId: USER, role }, projects: [{ name: 'โครงการ A' }], salesOwners: [{ userId: USER, displayName: 'Sales A' }],
         customers: [{
@@ -40,15 +40,17 @@ function snapshot(role: CrmRole = 'sales', page = 0) {
             leadCreatedAt: '2026-09-15T09:00:00Z', intakeStatus: 'new',
             interests: [{ id: INTEREST, projectName: 'โครงการ A', ownerUserId: USER, workspaceState: 'central_interest', engagementStatus: 'new', plotId: 'โครงการ A-1' }],
         }], page, hasMore: false,
+        search: { contractVersion: CENTRAL_SEARCH_CONTRACT_VERSION, filters, projects: ['โครงการ A'], owners: [{ userId: USER, displayName: 'Sales A' }], channels: ['โทร'], hasMoreChannels: false },
     };
 }
 
 function setupRpc(role: unknown = 'sales', overrides: Record<string, { data?: unknown; error?: unknown }> = {}) {
-    rpc.mockImplementation(async (name: string, args?: { p_page?: number }) => {
+    rpc.mockImplementation(async (name: string, args?: { p_page?: number; p_filters?: CentralSearchFilters }) => {
         if (overrides[name]) return { data: null, error: null, ...overrides[name] };
         if (name === 'crm_v2_role') return { data: role, error: null };
         if (name === 'crm_v2_capabilities') return { data: { contract_version: 'central_intake_v1', enabled: true }, error: null };
-        if (name === 'crm_v2_central_snapshot') return { data: snapshot(role as CrmRole, args?.p_page), error: null };
+        if (name === 'crm_v2_central_search_capabilities') return { data: { contract_version: CENTRAL_SEARCH_CONTRACT_VERSION, enabled: true }, error: null };
+        if (name === 'crm_v2_central_search') return { data: snapshot(role as CrmRole, args?.p_page, args?.p_filters), error: null };
         if (name === 'crm_v2_create_customer') return { data: { customerId: CUSTOMER, replayed: false }, error: null };
         throw new Error('Unexpected RPC');
     });
@@ -103,7 +105,7 @@ describe('server-only feature, identity, and migration gates', () => {
             auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
             global: { headers: { Authorization: `Bearer ${TOKEN}` } },
         });
-        expect(rpc.mock.calls.map(call => call[0])).toEqual(['crm_v2_role', 'crm_v2_capabilities', 'crm_v2_central_snapshot']);
+        expect(rpc.mock.calls.map(call => call[0])).toEqual(['crm_v2_role', 'crm_v2_capabilities', 'crm_v2_central_search_capabilities', 'crm_v2_central_search']);
     });
 
     it.each([null, '', 'super_admin', { role: 'sales' }])('ignores both metadata role hints and rejects unmapped trusted role %j', async role => {
@@ -112,7 +114,7 @@ describe('server-only feature, identity, and migration gates', () => {
         expect(rpc).toHaveBeenCalledTimes(1);
     });
 
-    it.each(['crm_v2_role', 'crm_v2_capabilities', 'crm_v2_central_snapshot'])('reports missing %s as setup required without falling back', async name => {
+    it.each(['crm_v2_role', 'crm_v2_capabilities', 'crm_v2_central_search'])('reports missing %s as setup required without falling back', async name => {
         setupRpc('sales', { [name]: { error: { code: 'PGRST202', message: 'private schema diagnostic' } } });
         await expectError(await GET(getRequest()), 503, 'SETUP_REQUIRED');
         expect(rpc.mock.calls.every(call => String(call[0]).startsWith('crm_v2_'))).toBe(true);
@@ -149,13 +151,30 @@ describe('server-only feature, identity, and migration gates', () => {
 });
 
 describe('central snapshot contract', () => {
+    it('passes normalized exact filters before bounded pagination without writing', async () => {
+        const response = await GET(getRequest(`?page=3&search=%20%25_%20&project=A&owner=${OTHER}&status=follow_up&channel=phone`));
+        expect(response.status).toBe(200);
+        expect(rpc).toHaveBeenLastCalledWith('crm_v2_central_search', { p_page: 3, p_filters: {
+            ...EMPTY_CENTRAL_SEARCH, search: '%_', project: 'A', owner: OTHER, status: 'follow_up', channel: 'phone',
+        } });
+        expect(rpc.mock.calls.some(call => call[0] === 'crm_v2_create_customer')).toBe(false);
+    });
+    it.each([null, {}, { contract_version: 'central_intake_v1', enabled: true }, { contract_version: CENTRAL_SEARCH_CONTRACT_VERSION, enabled: false }])('fails closed on missing search contract %j', async data => {
+        setupRpc('sales', { crm_v2_central_search_capabilities: { data } });
+        await expectError(await GET(getRequest()), 503, 'SETUP_REQUIRED');
+        expect(rpc).toHaveBeenCalledTimes(3);
+    });
+    it('rejects a valid-looking list for different filters instead of showing page-local results', async () => {
+        setupRpc('sales', { crm_v2_central_search: { data: snapshot() } });
+        await expectError(await GET(getRequest('?search=other')), 503, 'SETUP_REQUIRED');
+    });
     it.each(['sales', 'admin', 'owner'] as const)('allows %s to read all project data', async role => {
         setupRpc(role);
         const response = await GET(getRequest('?page=2'));
         expect(response.status).toBe(200);
         expect(response.headers.get('cache-control')).toBe('no-store');
         expect(await response.json()).toEqual({ data: snapshot(role, 2) });
-        expect(rpc).toHaveBeenLastCalledWith('crm_v2_central_snapshot', { p_page: 2, p_page_size: 50 });
+        expect(rpc).toHaveBeenLastCalledWith('crm_v2_central_search', { p_page: 2, p_filters: EMPTY_CENTRAL_SEARCH });
     });
 
     it('validates pagination before constructing a client', async () => {
@@ -164,18 +183,18 @@ describe('central snapshot contract', () => {
     });
 
     it('does not mistake a missing/malformed schema response for an empty lead list', async () => {
-        setupRpc('sales', { crm_v2_central_snapshot: { data: [] } });
+        setupRpc('sales', { crm_v2_central_search: { data: [] } });
         await expectError(await GET(getRequest()), 503, 'SETUP_REQUIRED');
     });
 
     it('rejects a snapshot from a different actor', async () => {
-        setupRpc('sales', { crm_v2_central_snapshot: { data: { ...snapshot(), actor: { userId: OTHER, role: 'sales' } } } });
+        setupRpc('sales', { crm_v2_central_search: { data: { ...snapshot(), actor: { userId: OTHER, role: 'sales' } } } });
         await expectError(await GET(getRequest()), 503, 'SETUP_REQUIRED');
     });
 
     it('projects only contracted fields, excluding future private data', async () => {
         const data = snapshot();
-        setupRpc('sales', { crm_v2_central_snapshot: { data: { ...data, privateDump: 'secret', customers: data.customers.map(c => ({ ...c, income: 'secret' })) } } });
+        setupRpc('sales', { crm_v2_central_search: { data: { ...data, privateDump: 'secret', customers: data.customers.map(c => ({ ...c, income: 'secret' })) } } });
         const response = await GET(getRequest());
         expect(await response.json()).toEqual({ data });
     });
@@ -183,7 +202,7 @@ describe('central snapshot contract', () => {
     it('preserves an explicit null phone for historical customers instead of inventing a value', async () => {
         const original = snapshot();
         const data = { ...original, customers: original.customers.map(customer => ({ ...customer, phone: null })) };
-        setupRpc('sales', { crm_v2_central_snapshot: { data } });
+        setupRpc('sales', { crm_v2_central_search: { data } });
         const response = await GET(getRequest());
         expect(response.status).toBe(200);
         expect(await response.json()).toEqual({ data });
@@ -193,7 +212,7 @@ describe('central snapshot contract', () => {
         const original = snapshot();
         // JSON serialization removes an undefined field, reproducing an absent RPC key.
         const data = JSON.parse(JSON.stringify({ ...original, customers: original.customers.map(customer => ({ ...customer, phone })) }));
-        setupRpc('sales', { crm_v2_central_snapshot: { data } });
+        setupRpc('sales', { crm_v2_central_search: { data } });
         await expectError(await GET(getRequest()), 503, 'SETUP_REQUIRED');
     });
 });

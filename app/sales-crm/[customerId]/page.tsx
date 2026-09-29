@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { extendedSalesReleaseAllowed } from '@/lib/sales/releaseScope';
 import LeadWorkView from '@/components/sales/LeadWorkView';
 import { parseLeadWorkScopeQuery, type LeadWorkScope } from '@/lib/sales/leadWorkReadContracts';
 
@@ -24,7 +25,7 @@ function Unavailable({ invalid = false }: { invalid?: boolean }) {
 export default async function LeadWorkPage({ params, searchParams }: Props) {
   // Private server switches gate the component before browser auth/read effects.
   // The API and direct-RPC database switches remain independent enforcement layers.
-  if (process.env.SALES_CRM_V2_ENABLED !== 'true' || process.env.SALES_CRM_LEAD_WORK_ENABLED !== 'true') return <Unavailable />;
+  if (!extendedSalesReleaseAllowed() || process.env.SALES_CRM_V2_ENABLED !== 'true' || process.env.SALES_CRM_LEAD_WORK_ENABLED !== 'true') return <Unavailable />;
   const [{ customerId }, query] = await Promise.all([params, searchParams]);
   if (Object.keys(query).some(key => key !== 'interestId') || Array.isArray(query.interestId)) return <Unavailable invalid />;
   let scope: LeadWorkScope | null = null;

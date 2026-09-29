@@ -15,15 +15,12 @@ const TaskProgressView = dynamic(() => import('@/components/TaskProgressView'));
 const DefectProgressView = dynamic(() => import('@/components/DefectProgressView'));
 const OwnerAnalyticsDashboard = dynamic(() => import('@/components/OwnerAnalyticsDashboard'));
 const DailyActivityHub = dynamic(() => import('@/components/DailyActivityHub'));
-const SalesReportsView = dynamic(() => import('@/components/sales/SalesReportsView'));
-const SalesDashboardExcelStyle = dynamic(() => import('@/components/sales/SalesDashboardExcelStyle'));
-const SalesIntelligenceView = dynamic(() => import('@/components/sales/SalesIntelligenceView'));
-const SalesSummaryTable = dynamic(() => import('@/components/sales/SalesSummaryTable'));
 const HousePromotionsView = dynamic(() => import('@/components/HousePromotionsView'));
 const QCPerformanceDashboard = dynamic(() => import('@/components/QCPerformanceDashboard'));
 const ExecutiveAnalytics = dynamic(() => import('@/components/ExecutiveAnalytics'));
 const MasterGanttChart = dynamic(() => import('@/components/MasterGanttChart'));
-const SalesKanban = dynamic(() => import('@/components/sales/SalesKanban'));
+const SalesWorkspaceEntry = dynamic(() => import('@/components/sales/SalesWorkspaceEntry'));
+const SalesReportingEntry = dynamic(() => import('@/components/sales/SalesReportingEntry'));
 const MaterialStoreDashboard = dynamic(() => import('@/components/MaterialStoreDashboard'));
 const AdminPlotPricing = dynamic(() => import('@/components/AdminPlotPricing'));
 const AdminUsersView = dynamic(() => import('@/components/admin/AdminUsersView'));
@@ -4778,7 +4775,7 @@ export default function ConstructionApp() {
 
               {/* 📊 View: Sales Dashboard Excel (Keep-Alive Cache - Instant 0s Transitions) */}
               <div className={view === 'sales-dashboard-excel' ? 'block h-full' : 'hidden'}>
-                <SalesDashboardExcelStyle 
+                <SalesReportingEntry surface="dashboard" active={view === 'sales-dashboard-excel'}
                   project={selectedProject} 
                   onViewDefects={(plot: any) => {
                     const foundProj = projects.find((p: any) => p.name === plot.project_name || p.project_name === plot.project_name);
@@ -4793,7 +4790,7 @@ export default function ConstructionApp() {
 
               {/* 📊 View: Sales Dashboard & Daily Visits */}
               {(view === 'sales-dashboard' || view === 'sales-daily-visits') && (
-                <SalesKanban
+                <SalesWorkspaceEntry
                   project={selectedProject}
                   projects={projects}
                   user={loggedInUser}
@@ -4804,14 +4801,14 @@ export default function ConstructionApp() {
 
               {/* 📊 View: Sales Reports */}
               {view === 'sales-reports' && (
-                <SalesReportsView project={null} viewType="reports" />
+                <SalesReportingEntry surface="reports" project={null} viewType="reports" />
               )}
               {view === 'agent-performance' && (
-                <SalesReportsView project={null} viewType="agent" />
+                <SalesReportingEntry surface="reports" project={null} viewType="agent" />
               )}
               {/* 💡 View: Sales Strategic Report */}
               {view === 'sales-intelligence' && (
-                <SalesIntelligenceView 
+                <SalesReportingEntry surface="intelligence"
                   project={selectedProject} 
                   projects={projects}
                   onBack={() => { setView('dashboard'); setSelectedProject(null); }}
@@ -4820,7 +4817,7 @@ export default function ConstructionApp() {
 
               {/* 🏢 View: Sales Summary Table */}
               {view === 'sales-summary-table' && (
-                <SalesSummaryTable />
+                <SalesReportingEntry surface="summary" />
               )}
 
               {/* 🎁 View: Sales Promotions Management (Admin & Sales) */}

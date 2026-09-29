@@ -1,5 +1,6 @@
 /** Server adapter only. No legacy fallback, service-role client or direct table access. */
 import { createClient } from '@supabase/supabase-js';
+import { extendedSalesReleaseAllowed } from './releaseScope';
 import { isCentralUuid } from './centralContracts';
 import {
     LEAD_LIFECYCLE_CONTRACT_VERSION, LEAD_LIFECYCLE_MAX_BODY_BYTES, LeadLifecycleInputError,
@@ -27,7 +28,7 @@ function json(data: unknown, status: number): Response {
 
 function gate() {
     // All private server switches must be enabled before constructing a network client.
-    if (process.env.SALES_CRM_V2_ENABLED !== 'true' || process.env.SALES_CRM_LEAD_WORK_ENABLED !== 'true'
+    if (!extendedSalesReleaseAllowed() || process.env.SALES_CRM_V2_ENABLED !== 'true' || process.env.SALES_CRM_LEAD_WORK_ENABLED !== 'true'
         || process.env.SALES_CRM_LIFECYCLE_ENABLED !== 'true') {
         throw new LeadLifecycleHttpError(503, 'FEATURE_DISABLED', 'ยังไม่เปิดการเปลี่ยนผู้ดูแลและปิด Lead ผ่านระบบใหม่นี้');
     }

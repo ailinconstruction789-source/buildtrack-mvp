@@ -1,4 +1,4 @@
-import SalesKanban from '@/components/sales/SalesKanban';
+import SalesWorkspaceEntry from '@/components/sales/SalesWorkspaceEntry';
 
 export const metadata = {
   title: 'Sales Pipeline | BuildTrack',
@@ -6,5 +6,5 @@ export const metadata = {
 };
 
 export default function SalesPage() {
-  return <SalesKanban />;
+  return <SalesWorkspaceEntry />;
 }

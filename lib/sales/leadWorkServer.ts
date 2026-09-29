@@ -1,5 +1,6 @@
 /** Server route only. Deliberately isolated from browser clients and legacy writes. */
 import { createClient } from '@supabase/supabase-js';
+import { extendedSalesReleaseAllowed } from './releaseScope';
 import { isCentralUuid } from './centralContracts';
 import {
     LEAD_WORK_CONTRACT_VERSION, LEAD_WORK_MAX_BODY_BYTES, LeadWorkInputError, parseLeadWorkInput,
@@ -25,7 +26,7 @@ function json(data: unknown, status: number): Response {
 
 function gate() {
     // BOTH server-side switches must be enabled before client construction or any network call.
-    if (process.env.SALES_CRM_V2_ENABLED !== 'true' || process.env.SALES_CRM_LEAD_WORK_ENABLED !== 'true') {
+    if (!extendedSalesReleaseAllowed() || process.env.SALES_CRM_V2_ENABLED !== 'true' || process.env.SALES_CRM_LEAD_WORK_ENABLED !== 'true') {
         throw new LeadWorkHttpError(503, 'FEATURE_DISABLED', 'ยังไม่เปิดการบันทึกงานติดตาม Lead ระบบเดิมยังทำงานตามปกติ');
     }
 }

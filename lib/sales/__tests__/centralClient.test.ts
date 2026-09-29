@@ -3,16 +3,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const { getSession } = vi.hoisted(() => ({ getSession: vi.fn() }));
 vi.mock('@/lib/supabase', () => ({ supabase: { auth: { getSession } } }));
 import { CentralApiError, centralApi } from '../centralClient';
-import type { CentralCreateInput } from '../centralContracts';
+import { CENTRAL_SEARCH_CONTRACT_VERSION, EMPTY_CENTRAL_SEARCH, type CentralCreateInput } from '../centralContracts';
 
 const input: CentralCreateInput = {
   requestId: '00000000-0000-4000-8000-000000000001', name: 'ลูกค้า', phone: '0812345678', channel: 'โทร', notes: '', interests: [],
 };
 const fetchMock = vi.fn();
+const snapshot = (page = 2) => ({ actor: { userId: input.requestId, role: 'sales' }, projects: [], salesOwners: [], customers: [],
+  page, hasMore: false, search: { contractVersion: CENTRAL_SEARCH_CONTRACT_VERSION, filters: EMPTY_CENTRAL_SEARCH,
+    projects: [], owners: [], channels: [], hasMoreChannels: false } });
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubGlobal('fetch', fetchMock);
-  getSession.mockResolvedValue({ data: { session: { access_token: 'caller-token' } }, error: null });
+  getSession.mockResolvedValue({ data: { session: { access_token: 'caller-token', user: { id: input.requestId } } }, error: null });
 });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -23,33 +26,54 @@ describe('central browser transport', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
   it('sends the current bearer token, with no cache or cookies', async () => {
-    fetchMock.mockResolvedValue(Response.json({ data: { customers: [] } }));
+    fetchMock.mockResolvedValue(Response.json({ data: snapshot() }));
     await centralApi.read(2);
     expect(fetchMock).toHaveBeenCalledWith('/api/sales-crm/central?page=2', {
       method: 'GET', cache: 'no-store', credentials: 'omit', headers: { Authorization: 'Bearer caller-token' },
     });
   });
+  it('sends normalized literal filters and rejects a response for another scope', async () => {
+    fetchMock.mockResolvedValue(Response.json({ data: snapshot() }));
+    await expect(centralApi.read(2, { ...EMPTY_CENTRAL_SEARCH, search: ' %_\\ ' })).rejects.toMatchObject({ code: 'UNKNOWN_RESULT' });
+    expect(fetchMock).toHaveBeenCalledWith('/api/sales-crm/central?page=2&search=%25_%5C', expect.any(Object));
+  });
+  it('discards private search results when account identity changes during a read', async () => {
+    fetchMock.mockImplementation(async () => {
+      getSession.mockResolvedValue({ data: { session: { access_token: 'another-token', user: { id: '00000000-0000-4000-8000-000000000099' } } }, error: null });
+      return Response.json({ data: snapshot() });
+    });
+    await expect(centralApi.read(2)).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
+  });
+  it.each([{}, { customers: [] }, { ...snapshot(), page: 0 }, { ...snapshot(), search: undefined },
+    { ...snapshot(), actor: { userId: '00000000-0000-4000-8000-000000000099', role: 'sales' } }])('rejects incompatible read data %j', async data => {
+    fetchMock.mockResolvedValue(Response.json({ data }));
+    await expect(centralApi.read(2)).rejects.toMatchObject({ code: 'UNKNOWN_RESULT' });
+  });
   it('preserves the request ID and does not retry or fall back to a legacy write', async () => {
     fetchMock.mockResolvedValue(Response.json({ data: { customerId: input.requestId, replayed: true } }));
-    await expect(centralApi.create(input)).resolves.toMatchObject({ replayed: true });
+    await expect(centralApi.create(input, input.requestId)).resolves.toMatchObject({ replayed: true });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith('/api/sales-crm/central', expect.objectContaining({ method: 'POST', body: JSON.stringify(input) }));
+  });
+  it('refuses to send the original pending payload under another signed-in account', async () => {
+    await expect(centralApi.create(input, '00000000-0000-4000-8000-000000000099')).rejects.toMatchObject({ code: 'ACTOR_CHANGED', definitelyNotSaved: true });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
   it.each([
     ['FEATURE_DISABLED', 503, true], ['SETUP_REQUIRED', 503, true], ['PLOT_UNAVAILABLE', 409, true],
     ['DUPLICATE_REVIEW_REQUIRED', 409, true], ['IDEMPOTENCY_CONFLICT', 409, false], ['SERVICE_UNAVAILABLE', 503, false],
   ])('classifies %s without treating uncertain outcomes as safe to recreate', async (code, status, definitelyNotSaved) => {
     fetchMock.mockResolvedValue(Response.json({ error: { code, message: 'ข้อความจากระบบ' } }, { status: Number(status) }));
-    const error = await centralApi.create(input).catch(failure => failure as CentralApiError);
+    const error = await centralApi.create(input, input.requestId).catch(failure => failure as CentralApiError);
     expect(error).toBeInstanceOf(CentralApiError);
     expect(error).toHaveProperty('definitelyNotSaved', definitelyNotSaved);
   });
   it.each(['<html>gateway failure</html>', '{}', '{"data":null}'])('never treats an invalid response as a safe failed write: %s', async body => {
     fetchMock.mockResolvedValue(new Response(body, { status: 502 }));
-    await expect(centralApi.create(input)).rejects.toMatchObject({ code: 'UNKNOWN_RESULT', definitelyNotSaved: false });
+    await expect(centralApi.create(input, input.requestId)).rejects.toMatchObject({ code: 'UNKNOWN_RESULT', definitelyNotSaved: false });
   });
   it.each([null, {}, { customerId: 'not-a-uuid', replayed: false }])('does not show success for malformed HTTP 200 data: %j', async data => {
     fetchMock.mockResolvedValue(Response.json({ data }));
-    await expect(centralApi.create(input)).rejects.toMatchObject({ code: 'UNKNOWN_RESULT', definitelyNotSaved: false });
+    await expect(centralApi.create(input, input.requestId)).rejects.toMatchObject({ code: 'UNKNOWN_RESULT', definitelyNotSaved: false });
   });
 });

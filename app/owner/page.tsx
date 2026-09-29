@@ -1,4 +1,4 @@
-import OwnerAnalyticsDashboard from '@/components/sales/OwnerAnalyticsDashboard';
+import SalesReportingEntry from '@/components/sales/SalesReportingEntry';
 
 export const metadata = {
   title: 'Owner Analytics | BuildTrack',
@@ -6,5 +6,5 @@ export const metadata = {
 };
 
 export default function OwnerPage() {
-  return <OwnerAnalyticsDashboard />;
+  return <SalesReportingEntry surface="owner" />;
 }

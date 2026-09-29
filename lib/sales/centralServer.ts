@@ -1,9 +1,10 @@
 /** Server route helpers only. Do not import this module into a client component. */
 import { createClient } from '@supabase/supabase-js';
+import { centralBookingReleaseAllowed } from './releaseScope';
 import {
-    CENTRAL_CONTRACT_VERSION, CENTRAL_MAX_BODY_BYTES, CENTRAL_PAGE_SIZE,
-    CentralInputError, isCentralUuid, parseCentralCreateInput, parseCentralPage,
-    type CentralCreateResult, type CentralSnapshot, type CrmRole,
+    CENTRAL_CONTRACT_VERSION, CENTRAL_SEARCH_CONTRACT_VERSION, CENTRAL_MAX_BODY_BYTES,
+    CentralInputError, isCentralUuid, parseCentralCreateInput, parseCentralSearchQuery, parseCentralSearchSnapshot,
+    type CentralCreateResult, type CrmRole,
 } from './centralContracts';
 
 class CentralHttpError extends Error {
@@ -38,7 +39,7 @@ function isRole(value: unknown): value is CrmRole {
 
 function gate() {
     // This guard intentionally precedes client construction, authentication, and all RPC calls.
-    if (process.env.SALES_CRM_V2_ENABLED !== 'true') {
+    if (!centralBookingReleaseAllowed() || process.env.SALES_CRM_V2_ENABLED !== 'true') {
         throw new CentralHttpError(503, 'FEATURE_DISABLED', 'Lead ส่วนกลางยังปิดใช้งานอยู่ ระบบเดิมยังทำงานตามปกติ');
     }
 }
@@ -147,63 +148,18 @@ async function readInput(request: Request) {
     }
 }
 
-function textField(value: unknown): string {
-    if (typeof value !== 'string') throw setupRequired();
-    return value;
-}
-
-function nullableText(value: unknown): string | null {
-    return value === null ? null : textField(value);
-}
-
-function idField(value: unknown): string {
-    if (!isCentralUuid(value)) throw setupRequired();
-    return value;
-}
-
-/** Explicit projection avoids returning unexpected database fields to the browser. */
-function snapshotData(value: unknown, actor: CentralSnapshot['actor'], page: number): CentralSnapshot {
-    if (!isRecord(value) || !isRecord(value.actor) || value.actor.userId !== actor.userId || value.actor.role !== actor.role
-        || !Array.isArray(value.projects) || !Array.isArray(value.salesOwners) || !Array.isArray(value.customers)
-        || value.customers.length > CENTRAL_PAGE_SIZE || value.page !== page || typeof value.hasMore !== 'boolean') throw setupRequired();
-    return {
-        actor,
-        page,
-        hasMore: value.hasMore,
-        projects: value.projects.map(project => {
-            if (!isRecord(project)) throw setupRequired();
-            return { name: textField(project.name) };
-        }),
-        salesOwners: value.salesOwners.map(owner => {
-            if (!isRecord(owner)) throw setupRequired();
-            return { userId: idField(owner.userId), displayName: textField(owner.displayName) };
-        }),
-        customers: value.customers.map(customer => {
-            if (!isRecord(customer) || !Array.isArray(customer.interests)) throw setupRequired();
-            return {
-                id: idField(customer.id), name: textField(customer.name), phone: nullableText(customer.phone),
-                channel: nullableText(customer.channel), notes: nullableText(customer.notes), ownerUserId: idField(customer.ownerUserId),
-                leadCreatedAt: nullableText(customer.leadCreatedAt), intakeStatus: textField(customer.intakeStatus),
-                interests: customer.interests.map(interest => {
-                    if (!isRecord(interest) || (interest.workspaceState !== 'central_interest' && interest.workspaceState !== 'project_active')) throw setupRequired();
-                    return {
-                        id: idField(interest.id), projectName: textField(interest.projectName), ownerUserId: idField(interest.ownerUserId),
-                        workspaceState: interest.workspaceState, engagementStatus: textField(interest.engagementStatus), plotId: nullableText(interest.plotId),
-                    };
-                }),
-            };
-        }),
-    };
-}
-
 export async function handleCentralGet(request: Request): Promise<Response> {
     try {
         gate();
-        const page = parseCentralPage(request.url);
+        const { page, filters } = parseCentralSearchQuery(request.url);
         const { client, actor } = await authorize(request, false);
-        const { data, error } = await client.rpc('crm_v2_central_snapshot', { p_page: page, p_page_size: CENTRAL_PAGE_SIZE });
+        const { data: capability, error: capabilityError } = await client.rpc('crm_v2_central_search_capabilities');
+        if (capabilityError) throw rpcError(capabilityError);
+        if (!isRecord(capability) || capability.contract_version !== CENTRAL_SEARCH_CONTRACT_VERSION || capability.enabled !== true) throw setupRequired();
+        const { data, error } = await client.rpc('crm_v2_central_search', { p_filters: filters, p_page: page });
         if (error) throw rpcError(error);
-        return json({ data: snapshotData(data, actor, page) });
+        try { return json({ data: parseCentralSearchSnapshot(data, filters, page, actor) }); }
+        catch { throw setupRequired(); }
     } catch (error) { return errorResponse(error); }
 }
 

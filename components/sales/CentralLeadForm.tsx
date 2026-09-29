@@ -1,14 +1,15 @@
 'use client';
 
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { CentralApiError } from '@/lib/sales/centralClient';
 import { parseCentralCreateInput, type CentralCreateInput, type CentralCreateResult, type CentralSnapshot } from '@/lib/sales/centralContracts';
 import type { InterestedPlot } from '@/lib/sales/plotAvailability';
 import AvailablePlotSelect from './AvailablePlotSelect';
+import { CentralPendingError, clearCentralPending, readCentralPending, writeCentralPending } from '@/lib/sales/centralPending';
 
 interface Props {
   snapshot: CentralSnapshot;
-  save: (input: CentralCreateInput) => Promise<CentralCreateResult>;
+  save: (input: CentralCreateInput, expectedActor: string) => Promise<CentralCreateResult>;
   onSaved: (result: CentralCreateResult) => void;
   onClose: () => void;
 }
@@ -21,27 +22,47 @@ function requestId(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-export default function CentralLeadForm({ snapshot, save, onSaved, onClose }: Props) {
-  const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [channel, setChannel] = useState('โทร');
-  const [notes, setNotes] = useState('');
-  const [owner, setOwner] = useState('');
-  const [interests, setInterests] = useState<{ projectName: string; plot: InterestedPlot | null }[]>([]);
+export default function CentralLeadForm(props: Props) {
+  return <CentralLeadFormSession key={props.snapshot.actor.userId} {...props} />;
+}
+function CentralLeadFormSession({ snapshot, save, onSaved, onClose }: Props) {
+  const [recovery] = useState(() => {
+    try { return { input: readCentralPending(snapshot.actor.userId), error: '' }; }
+    catch (failure) { return { input: null, error: failure instanceof Error ? failure.message : 'ตรวจคำขอค้างไม่ได้' }; }
+  });
+  const [name, setName] = useState(recovery.input?.name ?? '');
+  const [phone, setPhone] = useState(recovery.input?.phone ?? '');
+  const [channel, setChannel] = useState(recovery.input?.channel ?? 'โทร');
+  const [notes, setNotes] = useState(recovery.input?.notes ?? '');
+  const [owner, setOwner] = useState(recovery.input?.assignedSalesUserId ?? '');
+  const [interests, setInterests] = useState<{ projectName: string; plot: InterestedPlot | null }[]>(() => recovery.input?.interests.map(interest => ({
+    projectName: interest.projectName, plot: interest.plotId ? { id: interest.plotId, project_name: interest.projectName,
+      plot_name: null, has_customer: null, sale_status: null } : null,
+  })) ?? []);
   const [saving, setSaving] = useState(false);
-  const [uncertain, setUncertain] = useState(false);
+  const [uncertain, setUncertain] = useState(!!recovery.input);
   const [error, setError] = useState('');
-  const pending = useRef<CentralCreateInput | null>(null);
+  const [storageError, setStorageError] = useState(recovery.error);
+  const pending = useRef<CentralCreateInput | null>(recovery.input);
   const inFlight = useRef(false);
-  const frozen = saving || uncertain;
+  const mounted = useRef(false);
+  const completed = useRef(false);
+  const frozen = saving || uncertain || !!storageError;
   const isAdmin = snapshot.actor.role === 'admin';
   const fieldClass = 'w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100';
+
+  useEffect(() => {
+    mounted.current = true;
+    const unload = (event: BeforeUnloadEvent) => { if (pending.current || inFlight.current) { event.preventDefault(); event.returnValue = ''; } };
+    window.addEventListener('beforeunload', unload);
+    return () => { mounted.current = false; window.removeEventListener('beforeunload', unload); };
+  }, []);
 
   if (snapshot.actor.role === 'owner') return <p>Owner อ่านข้อมูลได้ แต่ไม่มีสิทธิ์สร้าง Lead</p>;
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (inFlight.current) return;
+    if (inFlight.current || storageError || completed.current) return;
     setError('');
     try {
       const input = pending.current || parseCentralCreateInput({
@@ -49,25 +70,33 @@ export default function CentralLeadForm({ snapshot, save, onSaved, onClose }: Pr
         interests: interests.map(interest => ({ projectName: interest.projectName, plotId: interest.plot?.id || null })),
         ...(isAdmin ? { assignedSalesUserId: owner } : {}),
       });
-      pending.current = input;
+      pending.current = writeCentralPending(snapshot.actor.userId, input);
       inFlight.current = true;
       setSaving(true);
-      const result = await save(input);
+      const result = await save(input, snapshot.actor.userId);
+      completed.current = true;
+      clearCentralPending(snapshot.actor.userId, input);
       pending.current = null;
-      setUncertain(false);
-      onSaved(result);
+      if (mounted.current) { setUncertain(false); onSaved(result); }
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'บันทึกไม่สำเร็จ กรุณาลองใหม่');
+      if (failure instanceof CentralPendingError) {
+        if (mounted.current) setStorageError(failure.message);
+        return;
+      }
+      if (mounted.current) setError(failure instanceof Error ? failure.message : 'บันทึกไม่สำเร็จ กรุณาลองใหม่');
       if (pending.current) {
         if (!uncertain && failure instanceof CentralApiError && failure.definitelyNotSaved) {
-          pending.current = null; setUncertain(false);
+          try {
+            clearCentralPending(snapshot.actor.userId, pending.current);
+            pending.current = null; if (mounted.current) setUncertain(false);
+          } catch (storageFailure) { if (mounted.current) setStorageError(storageFailure instanceof Error ? storageFailure.message : 'ตรวจคำขอค้างไม่ได้'); }
         } else {
           // The request may have committed before the connection was interrupted.
           // Freeze its payload and reuse the SAME idempotency key on a retry.
-          setUncertain(true);
+          if (mounted.current) setUncertain(true);
         }
       }
-    } finally { inFlight.current = false; setSaving(false); }
+    } finally { inFlight.current = false; if (mounted.current) setSaving(false); }
   };
 
   return (
@@ -110,13 +139,14 @@ export default function CentralLeadForm({ snapshot, save, onSaved, onClose }: Pr
           <AvailablePlotSelect projectName={interest.projectName} value={interest.plot} disabled={frozen}
             onChange={plot => setInterests(items => items.map(item => item.projectName === interest.projectName ? { ...item, plot } : item))} />
         </div>)}
-        <p className="text-xs text-slate-500">ความสนใจยังอยู่ส่วนกลาง การเลือกแปลงไม่จองหรือล็อกแปลง งานในโครงการจะเริ่มเมื่อเข้าชมหรือจอง</p>
+        <p className="text-xs text-slate-500">เลือกแปลงที่เล็งได้โดยไม่จองหรือล็อกแปลง การติดตามและเข้าชมยังอยู่ส่วนกลาง เมื่อจองจึงเชื่อมลูกค้าคนเดิมกับข้อมูลจองของโครงการ</p>
       </fieldset>
       {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</div>}
+      {storageError && <p role="alert" className="text-sm text-rose-800">{storageError}</p>}
       {uncertain && <p className="text-sm text-amber-800">ยังยืนยันผลบันทึกไม่ได้ กรุณาลองซ้ำด้วยคำขอเดิม ข้อมูลถูกพักไว้เพื่อป้องกันสร้าง Lead ซ้ำ</p>}
       <div className="flex flex-wrap justify-end gap-3">
-        <button type="button" onClick={onClose} disabled={saving || uncertain} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm disabled:opacity-50">ยกเลิก</button>
-        <button type="submit" disabled={saving} className="rounded-xl bg-blue-700 text-white px-5 py-2.5 font-semibold text-sm disabled:opacity-50">
+        <button type="button" onClick={onClose} disabled={frozen} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm disabled:opacity-50">ยกเลิก</button>
+        <button type="submit" disabled={saving || !!storageError} className="rounded-xl bg-blue-700 text-white px-5 py-2.5 font-semibold text-sm disabled:opacity-50">
           {saving ? 'กำลังบันทึก…' : uncertain ? 'ลองบันทึกซ้ำด้วยคำขอเดิม' : 'บันทึก Lead ส่วนกลาง'}</button>
       </div>
     </form>

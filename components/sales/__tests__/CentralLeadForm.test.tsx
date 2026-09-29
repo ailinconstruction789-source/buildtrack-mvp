@@ -8,6 +8,7 @@ vi.mock('@/lib/sales/plotAvailabilityClient', () => ({ loadAvailablePlots }));
 import CentralLeadForm from '../CentralLeadForm';
 import { CentralApiError } from '@/lib/sales/centralClient';
 import type { CentralSnapshot } from '@/lib/sales/centralContracts';
+import { centralPendingKey, readCentralPending, writeCentralPending } from '@/lib/sales/centralPending';
 
 const SALES = '00000000-0000-4000-8000-000000000001';
 const CUSTOMER = '00000000-0000-4000-8000-000000000002';
@@ -27,6 +28,7 @@ function fill() {
 function submit() { fireEvent.submit(screen.getByRole('form', { name: 'บันทึก Lead ส่วนกลาง' })); }
 beforeEach(() => {
   vi.clearAllMocks();
+  window.sessionStorage.clear();
   loadAvailablePlots.mockImplementation(async (project: string) => [{ id: `${project}-A1`, plot_name: 'A1', project_name: project, has_customer: false, sale_status: 'active' }]);
 });
 afterEach(cleanup);
@@ -44,7 +46,7 @@ describe('central intake form', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Sales');
     expect(save).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText('Sales ผู้ดูแล *'), { target: { value: SALES } }); submit();
-    await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ assignedSalesUserId: SALES })));
+    await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ assignedSalesUserId: SALES }), SALES));
   });
   it('keeps multiple optional project interests and selects a TEXT plot ID', async () => {
     const { save } = setup(); fill();
@@ -55,7 +57,7 @@ describe('central intake form', () => {
     submit();
     await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({
       interests: [{ projectName: 'โครงการ A', plotId: 'โครงการ A-A1' }, { projectName: 'โครงการ B', plotId: null }],
-    })));
+    }), SALES));
   });
   it('does not offer creation to Owner', () => {
     setup('owner');
@@ -101,5 +103,53 @@ describe('central intake form', () => {
     expect(screen.getByLabelText('ชื่อลูกค้า *')).not.toBeDisabled();
     expect(screen.getByRole('button', { name: 'ยกเลิก' })).not.toBeDisabled();
     expect(save).toHaveBeenCalledTimes(1);
+  });
+  it('stores a write-ahead immutable command before sending and binds its actor', async () => {
+    const save = vi.fn().mockImplementation(async input => {
+      expect(readCentralPending(SALES)).toEqual(input);
+      return { customerId: CUSTOMER, replayed: false };
+    });
+    const { onSaved } = setup('sales', save); fill(); submit();
+    await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
+    expect(save).toHaveBeenCalledWith(expect.any(Object), SALES);
+    expect(readCentralPending(SALES)).toBeNull();
+  });
+  it('recovers original account command after unmount without showing it to another account or auto-sending', async () => {
+    const original = { requestId: CUSTOMER, name: 'ลูกค้าคำขอค้าง', phone: '0891111111', channel: 'โทร', notes: '',
+      interests: [{ projectName: 'โครงการ A', plotId: 'โครงการ A-A1' }] };
+    writeCentralPending(SALES, original);
+    const save = vi.fn().mockResolvedValue({ customerId: CUSTOMER, replayed: true });
+    const props = { save, onSaved: vi.fn(), onClose: vi.fn() };
+    const other = { ...snapshot(), actor: { ...snapshot().actor, userId: CUSTOMER } };
+    const view = render(<CentralLeadForm {...props} snapshot={other} />);
+    expect(screen.getByLabelText('ชื่อลูกค้า *')).toHaveValue('');
+    expect(save).not.toHaveBeenCalled();
+    view.rerender(<CentralLeadForm {...props} snapshot={snapshot()} />);
+    expect(screen.getByLabelText('ชื่อลูกค้า *')).toHaveValue('ลูกค้าคำขอค้าง');
+    expect(screen.getByLabelText('ชื่อลูกค้า *')).toBeDisabled();
+    expect(save).not.toHaveBeenCalled();
+    submit(); await waitFor(() => expect(props.onSaved).toHaveBeenCalledOnce());
+    expect(save).toHaveBeenCalledWith(original, SALES);
+    expect(readCentralPending(SALES)).toBeNull();
+  });
+  it('retains an in-flight request after unmount and suppresses old callbacks', async () => {
+    let reject!: (reason: Error) => void;
+    const save = vi.fn(() => new Promise<{ customerId: string; replayed: boolean }>((_resolve, fail) => { reject = fail; }));
+    const onSaved = vi.fn();
+    const view = render(<CentralLeadForm snapshot={snapshot()} save={save} onSaved={onSaved} onClose={vi.fn()} />);
+    fill(); submit(); const original = readCentralPending(SALES); expect(original).not.toBeNull();
+    view.unmount(); await act(async () => reject(new Error('lost response')));
+    expect(readCentralPending(SALES)).toEqual(original);
+    expect(onSaved).not.toHaveBeenCalled();
+    const retry = vi.fn().mockResolvedValue({ customerId: CUSTOMER, replayed: true });
+    setup('sales', retry); expect(retry).not.toHaveBeenCalled(); submit();
+    await waitFor(() => expect(retry).toHaveBeenCalledWith(original, SALES));
+  });
+  it('blocks storage corruption or failed persistence before any network request', () => {
+    window.sessionStorage.setItem(centralPendingKey(SALES), 'broken');
+    const { save } = setup();
+    expect(screen.getByRole('alert')).toHaveTextContent('คำขอ Lead ค้าง');
+    submit(); expect(save).not.toHaveBeenCalled();
+    expect(window.sessionStorage.getItem(centralPendingKey(SALES))).toBe('broken');
   });
 });
