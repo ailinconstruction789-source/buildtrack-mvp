@@ -45,6 +45,7 @@ describe('project map original geometry and current booking identity', () => {
   it('returns off-map plots separately without fabricating their positions on the map', () => {
     const snapshot = projectMapSnapshot(); snapshot.layout.cells = [];
     expect(buildProjectMap(snapshot)).toMatchObject({ regions: [], unmappedPlots: [expect.objectContaining({ plotId: 'P-1' }), expect.objectContaining({ plotId: 'P-2' })] });
+    expect(buildProjectMap(snapshot).unmappedPlots[1].status).toBe('unknown');
   });
   it('preserves roads, parks, fences and infrastructure', () => {
     expect(parseStoredProjectMapLayout([{ type: 'config', cols: 3, rows: 2 },

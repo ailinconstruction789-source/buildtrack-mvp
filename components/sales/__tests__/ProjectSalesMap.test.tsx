@@ -105,6 +105,15 @@ describe('central booking read-only project map', () => {
     fireEvent.click(await bookedButton());
     expect(screen.getByRole('complementary', { name: 'รายละเอียดแปลง 2' })).toBeInTheDocument();
   });
+  it('does not count unmapped infrastructure registry entries as vacant sale plots', async () => {
+    const api = apiFor(); api.read.mockImplementation(async () => {
+      const data = fixture(); data.plots.push({ id: 'WALKWAY', name: 'ทางเท้าจำลอง', hasCustomer: false, isCompleted: true, saleStatus: 'active' }); return data;
+    });
+    render(<ProjectSalesMap projectName="โครงการ A" api={api} />); await bookedButton();
+    expect(within(screen.getByRole('list', { name: 'สถานะแปลง' })).getByText('ว่าง: 1')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'แปลง ทางเท้าจำลอง — ต้องตรวจสอบ' }));
+    expect(within(screen.getByRole('complementary')).queryByRole('link', { name: 'Lead ส่วนกลาง →' })).not.toBeInTheDocument();
+  });
   it('marks ambiguous occupied plots for review and exposes native buttons and zoom', async () => {
     const api = apiFor(); api.read.mockImplementation(async () => { const data = fixture(); data.plots[0].hasCustomer = true; return data; });
     render(<ProjectSalesMap projectName="โครงการ A" api={api} />); await bookedButton();

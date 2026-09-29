@@ -77,7 +77,7 @@ function ProjectMapSession({ projectName, api = projectMapApi }: Props) {
   const allRegions = model ? [...model.regions, ...model.unmappedPlots] : [];
   const selected = allRegions.find(region => region.key === selectedKey);
   // Counts describe unique plot identities, even when a stored layout repeats a region.
-  const unique = [...new Map(allRegions.map(region => [region.plotId ?? region.key, region])).values()];
+  const unique = [...new Map((model?.regions ?? []).map(region => [region.plotId ?? region.key, region])).values()];
   const unit = 40 * zoom;
   const plotButton = (region: ProjectMapRegion, positioned: boolean) => <button type="button" key={region.key}
     aria-label={`แปลง ${region.name} — ${statuses[region.status].label}`} aria-pressed={selectedKey === region.key}
@@ -99,6 +99,7 @@ function ProjectMapSession({ projectName, api = projectMapApi }: Props) {
     {!snapshot && !error && <p role="status" className="rounded-xl bg-slate-50 p-5 text-slate-600">กำลังโหลดผังและสถานะการจอง…</p>}
     {error && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-950">{error}</p>}
     {snapshot && model && <>
+      <p className="text-xs text-slate-500">จำนวนด้านล่างนับเฉพาะแปลงที่วางบนผัง ไม่รวมรายการทะเบียนนอกผัง เช่น งานสาธารณูปโภค</p>
       <ul aria-label="สถานะแปลง" className="flex flex-wrap gap-2">{(Object.keys(statuses) as Array<keyof typeof statuses>).map(status => <li key={status} className={`rounded-lg border px-3 py-2 text-xs font-semibold ${statuses[status].style}`}>{statuses[status].label}: {unique.filter(region => region.status === status).length}</li>)}</ul>
       <div className="flex flex-col gap-4 lg:flex-row">
         <div className="min-w-0 flex-1 space-y-3">

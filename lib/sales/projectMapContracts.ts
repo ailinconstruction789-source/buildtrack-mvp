@@ -99,7 +99,8 @@ export function buildProjectMap(snapshot: ProjectMapSnapshot): { regions: Projec
     }
     return { key: id, plotId: plot?.id ?? null, name: plot?.name ?? id, x: b?.minX ?? 0, y: b?.minY ?? 0,
       width: b ? b.maxX - b.minX + 1 : 1, height: b ? b.maxY - b.minY + 1 : 1,
-      status, isCompleted: plot?.isCompleted ?? null, currentSale, history };
+      // Unplaced registry entries may be infrastructure, not saleable house plots.
+      status: !b && status === 'available' ? 'unknown' : status, isCompleted: plot?.isCompleted ?? null, currentSale, history };
   };
   return { regions: [...bounds.keys()].map(region), unmappedPlots: snapshot.plots.filter(p => !bounds.has(p.id)).map(p => region(p.id)) };
 }
