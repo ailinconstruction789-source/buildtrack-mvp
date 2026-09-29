@@ -151,7 +151,7 @@ describe('read-only project booked customers', () => {
     renderWorkspace(api); await ready();
     expect(screen.queryByRole('tab', { name: /Lead/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /สร้าง|เพิ่มลูกค้า|บันทึก|ยกเลิกจอง|ลบ|นำเข้า|Import|Clear Data/ })).not.toBeInTheDocument();
-    expect(screen.getByText(/โมดูลโครงการเดิมส่วนอื่นยังไม่ได้เชื่อมครบ/)).toBeInTheDocument();
+    expect(screen.getByText(/แบบสอบถาม เตรียมบ้าน และโมดูลโครงการส่วนอื่นยังไม่เปิดในรอบนี้/)).toBeInTheDocument();
   });
 
   it('allows Owner to read every round and follow customer history links', async () => {

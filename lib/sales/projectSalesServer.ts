@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { bookingRecord, bookingUuid } from './bookingContracts';
 import { PROJECT_SALES_CONTRACT_VERSION, ProjectSalesInputError, parseProjectSalesQuery, parseProjectSalesSnapshot } from './projectSalesContracts';
 import { projectSalesEnabled } from './projectSalesFlags';
+import { PROJECT_MAP_MAX_PAGES, PROJECT_MAP_MAX_PLOTS, parseProjectMapName, parseProjectMapSnapshot, parseStoredProjectMapLayout } from './projectMapContracts';
 export { projectSalesEnabled } from './projectSalesFlags';
 
 const messages: Record<string, string> = {
@@ -27,10 +28,22 @@ function rpcFailure(value: unknown): never {
   }
   return fail(503, 'READ_UNAVAILABLE');
 }
+export async function handleProjectMapGet(request: Request): Promise<Response> {
+  return handleProjectRead(request, true);
+}
 export async function handleProjectSalesGet(request: Request): Promise<Response> {
+  return handleProjectRead(request, false);
+}
+async function handleProjectRead(request: Request, map: boolean): Promise<Response> {
   try {
     if (!projectSalesEnabled()) return fail(503, 'FEATURE_DISABLED');
-    const scope = parseProjectSalesQuery(request.url);
+    let scope;
+    if (map) {
+      const params = new URL(request.url).searchParams;
+      if ([...params.keys()].some(key => key !== 'projectName') || params.getAll('projectName').length !== 1) return fail(400, 'INVALID_INPUT');
+      try { scope = { projectName: parseProjectMapName(params.get('projectName')), tab: 'all' as const, query: '', page: 0 }; }
+      catch { return fail(400, 'INVALID_INPUT'); }
+    } else scope = parseProjectSalesQuery(request.url);
     const match = request.headers.get('authorization')?.match(/^Bearer ([^\s]+)$/i);
     if (!match || match[1].length > 8192) return fail(401, 'UNAUTHENTICATED');
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL, key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -55,7 +68,31 @@ export async function handleProjectSalesGet(request: Request): Promise<Response>
       snapshot = parseProjectSalesSnapshot(reply.data, scope);
       if (snapshot.actor.userId !== actor || snapshot.actor.role !== role.data) return fail(503, 'SETUP_REQUIRED');
     } catch { return fail(503, 'SETUP_REQUIRED'); }
-    return json({ data: snapshot }, 200);
+    if (!map) return json({ data: snapshot }, 200);
+    // A full project history is required: never derive vacant plots from one filtered page.
+    const salePages = [snapshot];
+    while (salePages[salePages.length - 1].hasMore) {
+      if (salePages.length >= PROJECT_MAP_MAX_PAGES || request.signal.aborted) return fail(503, 'READ_UNAVAILABLE');
+      const nextScope = { ...scope, page: salePages.length };
+      const next = await client.rpc('crm_v2_project_sales', { p_project_name: scope.projectName, p_tab: 'all', p_query: '', p_page: nextScope.page });
+      if (next.error) rpcFailure(next.error);
+      salePages.push(parseProjectSalesSnapshot(next.data, nextScope));
+    }
+    // Same caller JWT and existing RLS. No service key, new grants, customer-table reads or writes.
+    const project = await client.from('projects').select('name,layout_data').eq('name', scope.projectName).maybeSingle();
+    if (project.error) rpcFailure(project.error);
+    if (!project.data || project.data.name !== scope.projectName) return fail(503, 'READ_UNAVAILABLE');
+    const plotReply = await client.from('plots').select('id,plot_name,project_name,has_customer,is_completed,sale_status', { count: 'exact' })
+      .eq('project_name', scope.projectName).order('id').range(0, PROJECT_MAP_MAX_PLOTS - 1);
+    if (plotReply.error) rpcFailure(plotReply.error);
+    if (!Array.isArray(plotReply.data) || plotReply.count !== plotReply.data.length || plotReply.count > PROJECT_MAP_MAX_PLOTS) return fail(503, 'READ_UNAVAILABLE');
+    const plots = plotReply.data.map(plot => {
+      if (plot.project_name !== scope.projectName) return fail(503, 'READ_UNAVAILABLE');
+      return { id: plot.id, name: plot.plot_name || plot.id, hasCustomer: plot.has_customer, isCompleted: plot.is_completed, saleStatus: plot.sale_status };
+    });
+    const mapSnapshot = parseProjectMapSnapshot({ projectName: scope.projectName, actor: snapshot.actor,
+      layout: parseStoredProjectMapLayout(project.data.layout_data), plots, salePages }, scope.projectName!);
+    return json({ data: mapSnapshot }, 200);
   } catch (failure) {
     const safe = failure instanceof ReadError ? failure : failure instanceof ProjectSalesInputError ? new ReadError(400, 'INVALID_INPUT') : new ReadError(503, 'READ_UNAVAILABLE');
     return json({ error: { code: safe.code, message: safe.message } }, safe.status);

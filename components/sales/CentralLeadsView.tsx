@@ -74,6 +74,7 @@ export default function CentralLeadsView({ api = centralApi, leadWorkEnabled = f
             <Link href="/" className="underline">กลับหน้าหลัก{needsLogin ? 'เพื่อเข้าสู่ระบบ' : ''}</Link></div>
         </section>}
         {snapshot && <>
+          {projectSalesEnabled && !showForm && <Link href="/sales-crm/projects/map" prefetch={false} className="inline-block rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm font-semibold text-indigo-800">ผังแปลงทุกโครงการ →</Link>}
           {projectSalesEnabled && !showForm && <Link href="/sales-crm/projects" prefetch={false} className="inline-block rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-semibold text-blue-800">ลูกค้าจองและประวัติแยกโครงการ →</Link>}
           {reportsEnabled && !showForm && <Link href="/sales-crm/reports" prefetch={false} className="inline-block rounded-xl border border-blue-200 bg-white px-4 py-2.5 text-sm font-semibold text-blue-800">รายงานจองจากส่วนกลาง →</Link>}
           {bookingEnabled && snapshot.actor.role !== 'owner' && !showForm && <Link href="/sales-crm/bookings" prefetch={false} className="inline-block rounded-xl border border-orange-200 bg-orange-50 px-4 py-2.5 text-sm font-semibold text-orange-800">ลูกค้ามาจองเลย: ค้นหา / สร้าง Lead พร้อมจอง →</Link>}

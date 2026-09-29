@@ -9,12 +9,14 @@ import type { SaleStage } from '@/lib/sales/workflow';
 import { LeadTrackerTable } from './LeadTrackerPresentation';
 import PostBookingLink from './PostBookingLink';
 import { useSalesReportsEnabled } from './SalesWorkspaceModeProvider';
+import ProjectSalesMap from './ProjectSalesMap';
 
 interface Props {
   initialProjectName?: string | null;
   initialTab?: ProjectSalesTab;
   onBack?: () => void;
   api?: ProjectSalesApi;
+  initialView?: 'list' | 'map';
 }
 const tabs: ReadonlyArray<{ value: ProjectSalesTab; label: string }> = [
   { value: 'booked', label: 'ลูกค้าจอง / อยู่ระหว่างดำเนินการ' },
@@ -34,11 +36,12 @@ const money = (value: number | null) => value === null ? 'ไม่ทราบ'
 const historyDate = (value: string | null | undefined) => value ? value.split('-').reverse().join('/') : 'ไม่ทราบ';
 
 export default function ProjectSalesWorkspace(props: Props) {
-  return <ProjectSalesSession key={JSON.stringify([props.initialProjectName ?? null, props.initialTab ?? 'booked'])} {...props} />;
+  return <ProjectSalesSession key={JSON.stringify([props.initialProjectName ?? null, props.initialTab ?? 'booked', props.initialView ?? 'list'])} {...props} />;
 }
 
-function ProjectSalesSession({ initialProjectName = null, initialTab = 'booked', onBack, api = projectSalesApi }: Props) {
+function ProjectSalesSession({ initialProjectName = null, initialTab = 'booked', initialView = 'list', onBack, api = projectSalesApi }: Props) {
   const reportsEnabled = useSalesReportsEnabled();
+  const [view, setView] = useState(initialView);
   const [scope, setScope] = useState<ProjectSalesScope>({ projectName: initialProjectName, tab: initialTab, query: '', page: 0 });
   const [queryDraft, setQueryDraft] = useState(''), [queryError, setQueryError] = useState(''), [refresh, setRefresh] = useState(0);
   const [loaded, setLoaded] = useState<{ key: string; snapshot?: ProjectSalesSnapshot; error?: string }>({ key: '' });
@@ -86,7 +89,7 @@ function ProjectSalesSession({ initialProjectName = null, initialTab = 'booked',
     </header>
 
     <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-      หน้านี้เตรียมไว้สำหรับข้อมูลจอง โอน และประวัติเท่านั้น โมดูลโครงการเดิมส่วนอื่นยังไม่ได้เชื่อมครบ จึงยังไม่ใช่การแทนระบบโครงการทั้งหมด
+      ผังแปลงเชื่อมข้อมูลจองจากส่วนกลางแล้ว · แบบสอบถาม เตรียมบ้าน และโมดูลโครงการส่วนอื่นยังไม่เปิดในรอบนี้
     </p>
 
     {snapshot?.prepared && <section aria-label="ตัวอย่างข้อมูลเตรียมนำเข้า" className="space-y-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
@@ -105,7 +108,7 @@ function ProjectSalesSession({ initialProjectName = null, initialTab = 'booked',
             {scope.projectName && !projects.some(project => project.name === scope.projectName) && <option value={scope.projectName}>{scope.projectName}</option>}
           </select>
         </label>
-        <form aria-label="ค้นหาการจองในโครงการ" className="flex min-w-64 flex-1 items-end gap-2" onSubmit={event => { event.preventDefault(); search(); }}>
+        {view === 'list' && <form aria-label="ค้นหาการจองในโครงการ" className="flex min-w-64 flex-1 items-end gap-2" onSubmit={event => { event.preventDefault(); search(); }}>
           <label className="flex flex-1 flex-col gap-1 text-xs font-semibold text-slate-600">ค้นหาชื่อ เบอร์โทร หรือแปลง
             <input value={queryDraft} disabled={!scope.projectName} onChange={event => { setQueryDraft(event.target.value); setQueryError(''); }}
               className={fieldClass} placeholder="อย่างน้อย 2 ตัวอักษร…" maxLength={400} />
@@ -114,16 +117,20 @@ function ProjectSalesSession({ initialProjectName = null, initialTab = 'booked',
           <button disabled={!scope.projectName || (!scope.query && !queryDraft)} type="button" className={buttonClass} onClick={() => {
             setQueryDraft(''); setQueryError(''); setScope(current => ({ ...current, query: '', page: 0 }));
           }}>ล้างค้นหา</button>
-        </form>
+        </form>}
+      </div>
+      <div className="flex flex-wrap gap-2" role="group" aria-label="รูปแบบการแสดงโครงการ">
+        <button type="button" aria-pressed={view === 'map'} onClick={() => setView('map')} className={`${buttonClass} ${view === 'map' ? 'border-blue-600 text-blue-700' : ''}`}>ผังโครงการ (Project Map)</button>
+        <button type="button" aria-pressed={view === 'list'} onClick={() => setView('list')} className={`${buttonClass} ${view === 'list' ? 'border-blue-600 text-blue-700' : ''}`}>รายการจองและประวัติ</button>
       </div>
       {queryError && <p role="alert" className="text-sm text-rose-700">{queryError}</p>}
-      <div role="tablist" aria-label="สถานะการจอง" className="flex flex-wrap gap-2">
+      {view === 'list' && <div role="tablist" aria-label="สถานะการจอง" className="flex flex-wrap gap-2">
         {tabs.map(tab => <button key={tab.value} type="button" role="tab" aria-selected={scope.tab === tab.value} disabled={!scope.projectName}
           onClick={() => { setQueryError(''); setScope(current => ({ ...current, tab: tab.value, page: 0 })); }}
           className={`rounded-xl border px-3 py-2 text-sm font-semibold disabled:opacity-40 ${scope.tab === tab.value ? 'border-blue-700 bg-blue-700 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}>
           {tab.label}</button>)}
-      </div>
-      <p className="text-xs text-slate-500">ค้นหาจากรายการทั้งหมดในโครงการและสถานะที่เลือก ไม่ได้ค้นหาเฉพาะหน้าที่โหลด · การรับ Lead และติดตามลูกค้าอยู่ที่ส่วนกลาง</p>
+      </div>}
+      <p className="text-xs text-slate-500">{view === 'map' ? 'ผังแสดงทุกแปลงโดยไม่ใช้ตัวกรองหรือตารางหน้าปัจจุบัน · กดแปลงเพื่อดูผู้จองและประวัติ' : 'ค้นหาจากรายการทั้งหมดในโครงการและสถานะที่เลือก ไม่ได้ค้นหาเฉพาะหน้าที่โหลด · การรับ Lead และติดตามลูกค้าอยู่ที่ส่วนกลาง'}</p>
     </section>
 
     {loading && <p role="status" className="rounded-xl border border-slate-200 bg-white p-5 text-slate-600">กำลังโหลดข้อมูลโครงการ…</p>}
@@ -134,7 +141,9 @@ function ProjectSalesSession({ initialProjectName = null, initialTab = 'booked',
     {snapshot && !snapshot.projectName && <p className="rounded-xl border border-slate-200 bg-white p-5 text-slate-600">
       {snapshot.projects.length ? 'เลือกโครงการเพื่อดูรายการจองและประวัติ' : 'ยังไม่มีโครงการที่บัญชีนี้เข้าถึงได้'}
     </p>}
-    {snapshot && snapshot.projectName && <section aria-label={`รายการจองโครงการ ${snapshot.projectName}`} className="space-y-3">
+    {view === 'map' && snapshot?.projectName && !snapshot.prepared && <ProjectSalesMap key={snapshot.projectName} projectName={snapshot.projectName} />}
+    {view === 'map' && snapshot?.prepared && <p role="status">ข้อมูลเตรียมนำเข้ายังใช้แสดงสถานะแปลงจริงไม่ได้</p>}
+    {view === 'list' && snapshot && snapshot.projectName && <section aria-label={`รายการจองโครงการ ${snapshot.projectName}`} className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3 px-1">
         <div><h2 className="text-lg font-bold text-slate-900">{snapshot.projectName}</h2>
           <p className="text-xs text-slate-500">หน้า {snapshot.page + 1} · แสดง {snapshot.rows.length} รายการในหน้านี้ · ไม่เกิน 50 รายการต่อหน้า · ไม่ใช่ยอดรวม / KPI</p>

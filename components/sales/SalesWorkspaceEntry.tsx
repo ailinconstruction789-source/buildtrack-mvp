@@ -30,5 +30,5 @@ export default function SalesWorkspaceEntry(props: Props) {
       {props.onBack && <button className="text-blue-700 underline" onClick={props.onBack}>กลับหน้าก่อนหน้า</button>}
     </main>;
   }
-  return <ProjectSalesWorkspace initialProjectName={projectName} initialTab={props.initialTab === 'transferred' ? 'transferred' : 'booked'} onBack={props.onBack} />;
+  return <ProjectSalesWorkspace initialProjectName={projectName} initialTab={props.initialTab === 'transferred' ? 'transferred' : 'booked'} initialView={props.initialTab === 'transferred' || props.initialTab === 'booked' ? 'list' : 'map'} onBack={props.onBack} />;
 }
