@@ -4,6 +4,7 @@ import { bookingRecord, bookingUuid } from './bookingContracts';
 import { PROJECT_SALES_CONTRACT_VERSION, ProjectSalesInputError, parseProjectSalesQuery, parseProjectSalesSnapshot } from './projectSalesContracts';
 import { projectSalesEnabled } from './projectSalesFlags';
 import { PROJECT_MAP_MAX_PAGES, PROJECT_MAP_MAX_PLOTS, parseProjectMapName, parseProjectMapSnapshot, parseStoredProjectMapLayout } from './projectMapContracts';
+import { parseExcelReportProject } from './excelReportContracts';
 export { projectSalesEnabled } from './projectSalesFlags';
 
 const messages: Record<string, string> = {
@@ -31,10 +32,13 @@ function rpcFailure(value: unknown): never {
 export async function handleProjectMapGet(request: Request): Promise<Response> {
   return handleProjectRead(request, true);
 }
+export async function handleExcelReportGet(request: Request): Promise<Response> {
+  return handleProjectRead(request, true, true);
+}
 export async function handleProjectSalesGet(request: Request): Promise<Response> {
   return handleProjectRead(request, false);
 }
-async function handleProjectRead(request: Request, map: boolean): Promise<Response> {
+async function handleProjectRead(request: Request, map: boolean, excel = false): Promise<Response> {
   try {
     if (!projectSalesEnabled()) return fail(503, 'FEATURE_DISABLED');
     let scope;
@@ -92,6 +96,29 @@ async function handleProjectRead(request: Request, map: boolean): Promise<Respon
     });
     const mapSnapshot = parseProjectMapSnapshot({ projectName: scope.projectName, actor: snapshot.actor,
       layout: parseStoredProjectMapLayout(project.data.layout_data), plots, salePages }, scope.projectName!);
+    if (excel) {
+      // Existing plot/house-type RLS and the same caller JWT. Never read legacy sales or customer tables.
+      const catalogReply = await client.from('plots')
+        .select('id,project_name,selling_price,land_appraisal_price,house_types(is_infrastructure)', { count: 'exact' })
+        .eq('project_name', scope.projectName).order('id').range(0, PROJECT_MAP_MAX_PLOTS - 1);
+      if (catalogReply.error) rpcFailure(catalogReply.error);
+      if (!Array.isArray(catalogReply.data) || catalogReply.count !== catalogReply.data.length
+        || catalogReply.count !== plots.length || request.signal.aborted) return fail(503, 'READ_UNAVAILABLE');
+      const catalog = catalogReply.data.map(plot => {
+        if (plot.project_name !== scope.projectName) return fail(503, 'READ_UNAVAILABLE');
+        // A missing joined type is unknown, not an assertion that the plot is saleable.
+        const relation: unknown = plot.house_types;
+        const type = relation === null ? null : bookingRecord(Array.isArray(relation) && relation.length === 1 ? relation[0] : relation);
+        // Both legacy catalog columns default to zero. Without entry evidence zero
+        // is unknown, not a verified free house/appraisal. Actual sale money is separate.
+        return { plotId: plot.id, basePrice: plot.selling_price === 0 ? null : plot.selling_price,
+          appraisalPrice: plot.land_appraisal_price === 0 ? null : plot.land_appraisal_price,
+          isInfrastructure: type?.is_infrastructure ?? null };
+      });
+      const evidenceReply = await client.rpc('crm_v2_excel_evidence', { p_project_name: scope.projectName });
+      if (evidenceReply.error) rpcFailure(evidenceReply.error);
+      return json({ data: parseExcelReportProject({ map: mapSnapshot, catalog, evidence: evidenceReply.data }, scope.projectName!) }, 200);
+    }
     return json({ data: mapSnapshot }, 200);
   } catch (failure) {
     const safe = failure instanceof ReadError ? failure : failure instanceof ProjectSalesInputError ? new ReadError(400, 'INVALID_INPUT') : new ReadError(503, 'READ_UNAVAILABLE');

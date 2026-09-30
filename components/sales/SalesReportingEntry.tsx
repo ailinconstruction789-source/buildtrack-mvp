@@ -7,6 +7,7 @@ import type SalesDashboardExcelStyle from './SalesDashboardExcelStyle';
 import type SalesReportsView from './SalesReportsView';
 import type SalesIntelligenceView from './SalesIntelligenceView';
 import { useSalesWorkspaceMode } from './SalesWorkspaceModeProvider';
+import CentralExcelReportWorkspace from './CentralExcelReportWorkspace';
 
 const LegacyDashboard = dynamic(() => import('./SalesDashboardExcelStyle'));
 const LegacyReports = dynamic(() => import('./SalesReportsView'));
@@ -39,6 +40,7 @@ export default function SalesReportingEntry(props: Props) {
     <Link href="/sales-crm" prefetch={false}>ไป Lead ส่วนกลาง →</Link>
   </main>;
   const projectName = 'project' in props && typeof props.project?.name === 'string' && props.project.name.trim() ? props.project.name : null;
+  if (props.surface === 'dashboard' || props.surface === 'summary') return <CentralExcelReportWorkspace surface={props.surface} initialProjectName={projectName} />;
   return <main className="mx-auto max-w-3xl space-y-4 p-8">
     <h1 className="text-2xl font-bold">รอบนี้เปิดเฉพาะ Lead ส่วนกลางและการจอง</h1>
     <p>รายงานและ KPI ยังไม่เปิดใช้งาน ไม่แสดงข้อมูลเดิมปนกับข้อมูลส่วนกลาง</p>
