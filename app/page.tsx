@@ -5369,19 +5369,27 @@ export default function ConstructionApp() {
               <div className="p-3 sm:p-4 border-t border-slate-200 bg-white shrink-0">
                 {/* โซนแสดงรูปที่เลือก */}
                 {defectFiles.length > 0 && (
-                  <div className="flex gap-2 sm:gap-3 mb-2 overflow-x-auto pb-1">
+                  <div className="flex flex-col mb-2">
+                    <div className="flex items-center justify-between text-[10px] sm:text-xs text-slate-500 font-bold mb-1 px-1">
+                      <span>รูปที่แนบ ({defectFiles.length}/{(isQC || currentUserRole === 'QC' || currentUserRole?.toLowerCase() === 'qc') ? 20 : 10} รูป)</span>
+                      {defectFiles.length >= ((isQC || currentUserRole === 'QC' || currentUserRole?.toLowerCase() === 'qc') ? 20 : 10) && (
+                        <span className="text-amber-600 font-semibold">แนบครบสูงสุด {(isQC || currentUserRole === 'QC' || currentUserRole?.toLowerCase() === 'qc') ? 20 : 10} รูปแล้ว</span>
+                      )}
+                    </div>
+                    <div className="flex gap-2 sm:gap-3 overflow-x-auto pb-1">
                     {defectFiles.map((file, idx) => (
                       <div key={idx} className="relative shrink-0 animate-in fade-in zoom-in duration-300">
                         <img src={file.previewUrl} className="w-12 h-12 sm:w-14 sm:h-14 object-cover rounded-xl border-2 border-rose-500 shadow-sm" />
                         <button onClick={() => { const n = [...defectFiles]; n.splice(idx, 1); setDefectFiles(n); }} className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full p-0.5 sm:p-1 border-2 border-white hover:bg-red-600"><X size={10} /></button>
                       </div>
                     ))}
+                    </div>
                   </div>
                 )}
                 <div className="flex items-center gap-2">
                   <label className="text-slate-400 hover:text-rose-600 p-2.5 sm:p-3 rounded-xl bg-slate-100 cursor-pointer shadow-sm active:scale-90 transition-transform">
                     <Camera size={isMobileLayout ? 20 : 22} />
-                    <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { const files = Array.from(e.target.files || []).map(f => ({ file: f, previewUrl: URL.createObjectURL(f) })); setDefectFiles([...defectFiles, ...files].slice(0, 4)); }} />
+                    <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { const files = Array.from(e.target.files || []).map(f => ({ file: f, previewUrl: URL.createObjectURL(f) })); setDefectFiles([...defectFiles, ...files].slice(0, (isQC || currentUserRole === 'QC' || currentUserRole?.toLowerCase() === 'qc') ? 20 : 10)); }} />
                   </label>
                   <input
                     type="text" value={newDefectText} onChange={(e) => setNewDefectText(e.target.value)}

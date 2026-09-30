@@ -198,13 +198,21 @@ export default function DefectProgressModal({
                         ></textarea>
                         
                         {files.length > 0 && (
-                            <div className="flex gap-2 overflow-x-auto">
+                            <div className="flex flex-col gap-1">
+                                <div className="flex items-center justify-between text-[10px] text-slate-500 font-bold px-1">
+                                    <span>รูปที่แนบ ({files.length}/20 รูป)</span>
+                                    {files.length >= 20 && (
+                                        <span className="text-amber-600 font-semibold">แนบครบสูงสุด 20 รูปแล้ว</span>
+                                    )}
+                                </div>
+                                <div className="flex gap-2 overflow-x-auto pb-1">
                                 {files.map((f, i) => (
                                     <div key={i} className="relative">
                                         <img src={f.previewUrl} className="w-12 h-12 object-cover rounded border" />
                                         <button onClick={() => setFiles(files.filter((_, idx) => idx !== i))} className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5"><X size={10}/></button>
                                     </div>
                                 ))}
+                                </div>
                             </div>
                         )}
 
@@ -213,7 +221,7 @@ export default function DefectProgressModal({
                                 <ImageIcon size={16} /> แนบรูปภาพ
                                 <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => {
                                     const fs = Array.from(e.target.files || []).map(f => ({ file: f, previewUrl: URL.createObjectURL(f) }));
-                                    setFiles([...files, ...fs]);
+                                    setFiles([...files, ...fs].slice(0, 20));
                                 }} />
                             </label>
                             <button 
