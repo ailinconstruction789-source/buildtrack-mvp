@@ -1,6 +1,7 @@
 /** Read-only receipt review. The processing kill switch can remain OFF while an
  * Admin recovers a historical receipt. No processor, clock or direct-table call. */
 import { createClient } from '@supabase/supabase-js';
+import { extendedSalesReleaseAllowed } from './releaseScope';
 import { isCentralUuid } from './centralContracts';
 import { SLA_RECEIPT_CONTRACT_VERSION, SlaReceiptInputError, parseSlaReceiptContext, parseSlaReceiptLookup, parseSlaReceiptQuery } from './slaReceiptContracts';
 
@@ -14,7 +15,7 @@ const unavailable = () => new ReceiptHttpError(503, 'READ_UNAVAILABLE', 'ตร�
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const strictUuid = (value: unknown): value is string => isCentralUuid(value) && value.length === 36;
 function gate() {
-    if (process.env.SALES_CRM_V2_ENABLED !== 'true' || process.env.SALES_CRM_LEAD_WORK_ENABLED !== 'true'
+    if (!extendedSalesReleaseAllowed() || process.env.SALES_CRM_V2_ENABLED !== 'true' || process.env.SALES_CRM_LEAD_WORK_ENABLED !== 'true'
         || process.env.SALES_CRM_LIFECYCLE_ENABLED !== 'true' || process.env.SALES_CRM_SCHEDULE_ENABLED !== 'true'
         || process.env.SALES_CRM_NOTIFICATIONS_ENABLED !== 'true' || process.env.SALES_CRM_SLA_PREVIEW_ENABLED !== 'true') {
         throw new ReceiptHttpError(503, 'FEATURE_DISABLED', 'ยังไม่เปิดระบบตรวจผล SLA');

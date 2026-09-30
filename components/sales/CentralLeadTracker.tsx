@@ -13,12 +13,13 @@ interface Props {
   onApply: (filters: CentralTrackerFilters) => void;
   leadWorkEnabled: boolean;
   bookingEnabled?: boolean;
+  visitsEnabled?: boolean;
   disabled?: boolean;
 }
 const selectClass = 'rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500';
 const columns = ['No.', 'วันที่เป็น Lead', 'ชื่อลูกค้า', 'เบอร์โทร', 'โครงการที่สนใจ', 'ช่องทาง', 'ผู้ดูแล', 'แปลงที่เล็ง', 'สถานะ CRM', 'Follow-up'];
 
-export default function CentralLeadTracker({ snapshot, filters, onFilterChange, onApply, leadWorkEnabled, bookingEnabled = false, disabled = false }: Props) {
+export default function CentralLeadTracker({ snapshot, filters, onFilterChange, onApply, leadWorkEnabled, bookingEnabled = false, visitsEnabled = false, disabled = false }: Props) {
   const visible = snapshot.customers;
   const ownerName = (id: string) => snapshot.search.owners.find(owner => owner.userId === id)?.displayName || 'ไม่ทราบชื่อผู้ดูแล';
   const change = (next: Partial<CentralTrackerFilters>) => onFilterChange({ ...filters, ...next });
@@ -79,6 +80,11 @@ export default function CentralLeadTracker({ snapshot, filters, onFilterChange, 
           {customer.interests.map(interest => <p key={interest.id}>{interest.projectName}: {trackerStatusLabel(interest.engagementStatus)}</p>)}
         </td>
         <td className="min-w-44 space-y-2 p-3 text-blue-700">
+          {visitsEnabled && !disabled && customer.interests.map(interest => <Link key={`visit-${interest.id}`}
+            href={`/sales-crm/visits?${new URLSearchParams({ customerId: customer.id, interestId: interest.id })}`} prefetch={false}
+            aria-label={`นัดหมายและเข้าชม ${interest.projectName} ของ ${customer.name}`}
+            className="block rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1.5 font-semibold text-indigo-800">
+            นัดหมาย / เข้าชม {interest.projectName} →</Link>)}
           {bookingEnabled && !disabled && <Link href={`/sales-crm/bookings?customerId=${encodeURIComponent(customer.id)}`} prefetch={false}
             aria-label={`จองและประวัติของ ${customer.name}`} className="block rounded-lg border border-orange-200 bg-orange-50 px-2 py-1.5 font-semibold text-orange-800">จอง / ประวัติการจอง →</Link>}
           {leadWorkEnabled && !disabled ? <>

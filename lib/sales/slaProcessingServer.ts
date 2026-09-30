@@ -2,6 +2,7 @@
  * only the command, never a browser/preview-derived deadline, owner or calendar.
  * No scheduler is installed and no processing happens on import or GET. */
 import { createClient } from '@supabase/supabase-js';
+import { extendedSalesReleaseAllowed } from './releaseScope';
 import { isCentralUuid } from './centralContracts';
 import { SLA_PROCESSING_CONTRACT_VERSION, SLA_PROCESSING_MAX_BODY_BYTES, SlaProcessingInputError,
     parseSlaProcessingInput, parseSlaProcessingResult } from './slaProcessingContracts';
@@ -17,7 +18,7 @@ const precheck = () => new ProcessingHttpError(503, 'PRECHECK_UNAVAILABLE', 'ต
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const strictUuid = (value: unknown): value is string => isCentralUuid(value) && value.length === 36;
 function gate() {
-    if (process.env.SALES_CRM_V2_ENABLED !== 'true' || process.env.SALES_CRM_LEAD_WORK_ENABLED !== 'true'
+    if (!extendedSalesReleaseAllowed() || process.env.SALES_CRM_V2_ENABLED !== 'true' || process.env.SALES_CRM_LEAD_WORK_ENABLED !== 'true'
         || process.env.SALES_CRM_LIFECYCLE_ENABLED !== 'true' || process.env.SALES_CRM_SCHEDULE_ENABLED !== 'true'
         || process.env.SALES_CRM_NOTIFICATIONS_ENABLED !== 'true' || process.env.SALES_CRM_SLA_PREVIEW_ENABLED !== 'true'
         || process.env.SALES_CRM_SLA_PROCESSING_ENABLED !== 'true') {

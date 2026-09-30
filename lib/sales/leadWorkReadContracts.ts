@@ -126,7 +126,7 @@ function historyRows<T extends { id: string; recordedAt: string }>(value: unknow
 }
 
 /** Validate/projection only. This does not grant write permission or establish evidence truth. */
-export function parseLeadWorkSnapshot(value: unknown, expectedScope?: LeadWorkScope): LeadWorkSnapshot {
+export function parseLeadWorkSnapshot(value: unknown, expectedScope?: LeadWorkScope, writePolicy: 'lead_work' | 'sales_owned_only' = 'lead_work'): LeadWorkSnapshot {
     const root = record(value);
     const scope = scopeData(root.scope);
     if (expectedScope !== undefined && !sameScope(scope, scopeData(expectedScope))) return bad();
@@ -142,7 +142,7 @@ export function parseLeadWorkSnapshot(value: unknown, expectedScope?: LeadWorkSc
     const scopeClosed = bool(root.scopeClosed);
     const lifecycleRevision = uuid(root.lifecycleRevision);
     const canWrite = bool(root.canWrite);
-    if (canWrite !== (!scopeClosed && owner.active && (actor.role === 'admin' || (actor.role === 'sales' && actor.userId === owner.userId)))) return bad();
+    if (canWrite !== (!scopeClosed && owner.active && ((writePolicy === 'lead_work' && actor.role === 'admin') || (actor.role === 'sales' && actor.userId === owner.userId)))) return bad();
     const asOf = timestamp(root.asOf);
     const asOfTime = instant(asOf);
     const currentAction = root.currentAction === null ? null : actionData(root.currentAction, scope, asOfTime);

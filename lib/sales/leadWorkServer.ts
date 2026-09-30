@@ -1,6 +1,7 @@
 /** Server route only. Deliberately isolated from browser clients and legacy writes. */
 import { createClient } from '@supabase/supabase-js';
 import { extendedSalesReleaseAllowed } from './releaseScope';
+import { visitSopEnabled } from './visitSopServer';
 import { isCentralUuid } from './centralContracts';
 import {
     LEAD_WORK_CONTRACT_VERSION, LEAD_WORK_MAX_BODY_BYTES, LeadWorkInputError, parseLeadWorkInput,
@@ -24,7 +25,16 @@ function json(data: unknown, status: number): Response {
     return Response.json(data, { status, headers: { 'Cache-Control': 'no-store', Vary: 'Authorization', 'X-Content-Type-Options': 'nosniff' } });
 }
 
-function gate() {
+type WorkMode = 'lead_work' | 'visit_follow_up';
+export function visitFollowUpEnabled(): boolean {
+    return visitSopEnabled() && process.env.SALES_CRM_VISIT_FOLLOW_UP_ENABLED === 'true';
+}
+
+function gate(mode: WorkMode) {
+    if (mode === 'visit_follow_up') {
+        if (!visitFollowUpEnabled()) throw new LeadWorkHttpError(503, 'FEATURE_DISABLED', 'ยังไม่เปิดการกำหนดงานติดตามก่อนปิดบ้าน');
+        return;
+    }
     // BOTH server-side switches must be enabled before client construction or any network call.
     if (!extendedSalesReleaseAllowed() || process.env.SALES_CRM_V2_ENABLED !== 'true' || process.env.SALES_CRM_LEAD_WORK_ENABLED !== 'true') {
         throw new LeadWorkHttpError(503, 'FEATURE_DISABLED', 'ยังไม่เปิดการบันทึกงานติดตาม Lead ระบบเดิมยังทำงานตามปกติ');
@@ -68,7 +78,7 @@ function rpcError(error: unknown): LeadWorkHttpError {
     return unavailable();
 }
 
-async function authorize(request: Request, writing = true) {
+async function authorize(request: Request, writing: boolean, mode: WorkMode) {
     const match = request.headers.get('authorization')?.match(/^Bearer ([^\s]+)$/i);
     if (!match || match[1].length > 8192) throw unauthorized();
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -86,10 +96,10 @@ async function authorize(request: Request, writing = true) {
     if (roleError) throw rpcError(roleError);
     // Never trust metadata or posted roles. Current ownership is checked again by the command RPC.
     if (role !== 'sales' && role !== 'admin' && role !== 'owner') throw forbidden();
-    if (writing && role === 'owner') throw forbidden();
-    const { data: capabilities, error: capabilityError } = await client.rpc('crm_v2_lead_work_capabilities');
+    if (writing && (role === 'owner' || mode === 'visit_follow_up' && role !== 'sales')) throw forbidden();
+    const { data: capabilities, error: capabilityError } = await client.rpc(mode === 'visit_follow_up' ? 'crm_v2_visit_follow_up_capabilities' : 'crm_v2_lead_work_capabilities');
     if (capabilityError) throw rpcError(capabilityError);
-    if (!isRecord(capabilities) || capabilities.contract_version !== LEAD_WORK_CONTRACT_VERSION || capabilities.enabled !== true) throw setup();
+    if (!isRecord(capabilities) || capabilities.contract_version !== (mode === 'visit_follow_up' ? 'visit_follow_up_v1' : LEAD_WORK_CONTRACT_VERSION) || capabilities.enabled !== true) throw setup();
     if (!writing && capabilities.read_contract_version !== LEAD_WORK_READ_CONTRACT_VERSION) throw setup();
     return { client, actor: { userId: authData.user.id.toLowerCase(), role } };
 }
@@ -128,13 +138,14 @@ async function readInput(request: Request) {
     }
 }
 
-export async function handleLeadWorkPost(request: Request): Promise<Response> {
+async function handlePost(request: Request, mode: WorkMode): Promise<Response> {
     try {
-        gate();
+        gate(mode);
         const input = await readInput(request);
-        const { client } = await authorize(request);
+        if (mode === 'visit_follow_up' && (input.command !== 'set_next_action' || input.interestId === null)) throw new LeadWorkInputError('กำหนดได้เฉพาะงานครั้งถัดไปของโครงการที่สนใจ');
+        const { client } = await authorize(request, true, mode);
         const { requestId, ...payload } = input;
-        const { data, error } = await client.rpc('crm_v2_record_lead_work', { p_request_id: requestId, p_payload: payload });
+        const { data, error } = await client.rpc(mode === 'visit_follow_up' ? 'crm_v2_visit_follow_up_command' : 'crm_v2_record_lead_work', { p_request_id: requestId, p_payload: payload });
         if (error) throw rpcError(error);
         // A successful RPC can already have committed. Never generate a new key or
         // retry with different data merely because its response could not be verified.
@@ -153,15 +164,16 @@ export async function handleLeadWorkPost(request: Request): Promise<Response> {
     }
 }
 
-export async function handleLeadWorkGet(request: Request): Promise<Response> {
+async function handleGet(request: Request, mode: WorkMode): Promise<Response> {
     try {
-        gate();
+        gate(mode);
         const scope = parseLeadWorkScopeQuery(request.url);
-        const { client, actor } = await authorize(request, false);
-        const { data, error } = await client.rpc('crm_v2_lead_work_snapshot', { p_customer_id: scope.customerId, p_interest_id: scope.interestId });
+        if (mode === 'visit_follow_up' && scope.interestId === null) throw new LeadWorkInputError('ต้องระบุโครงการที่สนใจ');
+        const { client, actor } = await authorize(request, false, mode);
+        const { data, error } = await client.rpc(mode === 'visit_follow_up' ? 'crm_v2_visit_follow_up_context' : 'crm_v2_lead_work_snapshot', { p_customer_id: scope.customerId, p_interest_id: scope.interestId });
         if (error) throw rpcError(error);
         let snapshot;
-        try { snapshot = parseLeadWorkSnapshot(data, scope); } catch { throw setup(); }
+        try { snapshot = parseLeadWorkSnapshot(data, scope, mode === 'visit_follow_up' ? 'sales_owned_only' : 'lead_work'); } catch { throw setup(); }
         if (snapshot.actor.userId !== actor.userId || snapshot.actor.role !== actor.role) throw setup();
         return json({ data: snapshot }, 200);
     } catch (error) {
@@ -171,3 +183,8 @@ export async function handleLeadWorkGet(request: Request): Promise<Response> {
         return json({ error: { code: safe.code, message: safe.message } }, safe.status);
     }
 }
+
+export const handleLeadWorkGet = (request: Request) => handleGet(request, 'lead_work');
+export const handleLeadWorkPost = (request: Request) => handlePost(request, 'lead_work');
+export const handleVisitFollowUpGet = (request: Request) => handleGet(request, 'visit_follow_up');
+export const handleVisitFollowUpPost = (request: Request) => handlePost(request, 'visit_follow_up');

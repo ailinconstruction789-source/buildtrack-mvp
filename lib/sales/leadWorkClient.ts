@@ -67,20 +67,24 @@ async function request(path: string, input?: LeadWorkInput, expectedActorId?: st
     return { data: envelope.data, status: response.status };
 }
 
-export const leadWorkApi: LeadWorkApi = {
+/** Fixed same-origin transports only; the narrow adapter never falls back to the general RPC path. */
+export function createLeadWorkApi(mode: 'lead_work' | 'visit_follow_up'): LeadWorkApi {
+  const endpoint = mode === 'visit_follow_up' ? '/api/sales-crm/visit-follow-up' : '/api/sales-crm/lead-work';
+  return {
     read: async scope => {
         if (!scope || !isCentralUuid(scope.customerId) || scope.customerId.length !== 36
+            || mode === 'visit_follow_up' && scope.interestId === null
             || (scope.interestId !== null && (!isCentralUuid(scope.interestId) || scope.interestId.length !== 36))) {
             throw new LeadWorkApiError('INVALID_INPUT', 'ขอบเขตงานไม่ถูกต้อง', 400);
         }
         const params = new URLSearchParams({ customerId: scope.customerId });
         if (scope.interestId !== null) params.set('interestId', scope.interestId);
-        const path = `/api/sales-crm/lead-work?${params}`;
+        const path = `${endpoint}?${params}`;
         const expected = parseLeadWorkScopeQuery(`https://local.invalid${path}`);
         const result = await request(path);
         try {
             if (result.status !== 200) throw unknownResult(false);
-            return parseLeadWorkSnapshot(result.data, expected);
+            return parseLeadWorkSnapshot(result.data, expected, mode === 'visit_follow_up' ? 'sales_owned_only' : 'lead_work');
         } catch { throw unknownResult(false); }
     },
     save: async (input, expectedActorId) => {
@@ -90,11 +94,17 @@ export const leadWorkApi: LeadWorkApi = {
             if (error instanceof LeadWorkInputError) throw new LeadWorkApiError(error.code, error.message, 400);
             throw new LeadWorkApiError('INVALID_INPUT', 'ข้อมูลการติดตามไม่ถูกต้อง', 400);
         }
-        const response = await request('/api/sales-crm/lead-work', normalized, expectedActorId);
+        if (mode === 'visit_follow_up' && (normalized.command !== 'set_next_action' || normalized.interestId === null)) {
+            throw new LeadWorkApiError('INVALID_INPUT', 'กำหนดได้เฉพาะงานครั้งถัดไปของโครงการที่สนใจ', 400);
+        }
+        const response = await request(endpoint, normalized, expectedActorId);
         try {
             const result = parseLeadWorkResult(response.data, normalized.command);
             if (response.status !== (result.replayed ? 200 : 201)) throw unknownResult(true);
             return result;
         } catch { throw unknownResult(true); }
     },
-};
+  };
+}
+
+export const leadWorkApi: LeadWorkApi = createLeadWorkApi('lead_work');

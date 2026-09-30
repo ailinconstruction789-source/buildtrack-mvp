@@ -9,7 +9,7 @@ import CentralLeadTracker from './CentralLeadTracker';
 import { LeadTrackerHeader } from './LeadTrackerPresentation';
 import { EMPTY_TRACKER_FILTERS } from '@/lib/sales/centralTracker';
 
-export default function CentralLeadsView({ api = centralApi, leadWorkEnabled = false, workScheduleEnabled = false, notificationsEnabled = false, slaPreviewEnabled = false, queueMonitorEnabled = false, bookingEnabled = false, projectSalesEnabled = false, reportsEnabled = projectSalesEnabled }: { api?: CentralApi; leadWorkEnabled?: boolean; workScheduleEnabled?: boolean; notificationsEnabled?: boolean; slaPreviewEnabled?: boolean; queueMonitorEnabled?: boolean; bookingEnabled?: boolean; projectSalesEnabled?: boolean; reportsEnabled?: boolean }) {
+export default function CentralLeadsView({ api = centralApi, visitsEnabled = false, leadWorkEnabled = false, workScheduleEnabled = false, notificationsEnabled = false, slaPreviewEnabled = false, queueMonitorEnabled = false, bookingEnabled = false, projectSalesEnabled = false, reportsEnabled = projectSalesEnabled }: { api?: CentralApi; visitsEnabled?: boolean; leadWorkEnabled?: boolean; workScheduleEnabled?: boolean; notificationsEnabled?: boolean; slaPreviewEnabled?: boolean; queueMonitorEnabled?: boolean; bookingEnabled?: boolean; projectSalesEnabled?: boolean; reportsEnabled?: boolean }) {
   const [page, setPage] = useState(0);
   const [revision, setRevision] = useState(0);
   const [state, setState] = useState<{ key: string; api?: CentralApi; data: CentralSearchSnapshot | null; error: Error | null }>({ key: '', data: null, error: null });
@@ -90,7 +90,7 @@ export default function CentralLeadsView({ api = centralApi, leadWorkEnabled = f
           }} />}
           <section>
             {filterError && <p role="alert" className="mb-3 text-sm text-red-700">{filterError}</p>}
-            <CentralLeadTracker snapshot={snapshot} filters={filters} onFilterChange={setFilters} onApply={applyFilters} leadWorkEnabled={leadWorkEnabled} bookingEnabled={bookingEnabled} disabled={showForm} />
+            <CentralLeadTracker snapshot={snapshot} filters={filters} onFilterChange={setFilters} onApply={applyFilters} visitsEnabled={visitsEnabled} leadWorkEnabled={leadWorkEnabled} bookingEnabled={bookingEnabled} disabled={showForm} />
             <div className="border-t border-slate-200 p-4 flex items-center justify-between text-sm">
               <button type="button" disabled={page === 0 || showForm} onClick={() => setPage(n => n - 1)} className="disabled:opacity-30">← ก่อนหน้า</button>
               <span className="text-slate-500">หน้า {page + 1} · หน้าละ 50 รายการ</span>

@@ -1,9 +1,10 @@
 import SlaPreviewView from '@/components/sales/SlaPreviewView';
+import { extendedSalesReleaseAllowed } from '@/lib/sales/releaseScope';
 
 export const metadata = { title: 'ตรวจแผนแจ้งเตือน | BuildTrack', description: 'Admin ตรวจการคำนวณ SLA ติดต่อครั้งแรกแบบไม่บันทึกและไม่ส่ง' };
 
 export default function SlaPreviewPage() {
-    if (process.env.SALES_CRM_V2_ENABLED !== 'true' || process.env.SALES_CRM_LEAD_WORK_ENABLED !== 'true'
+    if (!extendedSalesReleaseAllowed() || process.env.SALES_CRM_V2_ENABLED !== 'true' || process.env.SALES_CRM_LEAD_WORK_ENABLED !== 'true'
         || process.env.SALES_CRM_LIFECYCLE_ENABLED !== 'true' || process.env.SALES_CRM_SCHEDULE_ENABLED !== 'true'
         || process.env.SALES_CRM_NOTIFICATIONS_ENABLED !== 'true' || process.env.SALES_CRM_SLA_PREVIEW_ENABLED !== 'true') {
         return <main className="mx-auto max-w-3xl space-y-4 p-8"><h1 className="text-2xl font-bold">ยังไม่เปิดหน้าตรวจแผนแจ้งเตือน</h1>

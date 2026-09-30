@@ -2,6 +2,7 @@
  * direct-table access. This adapter does not produce or dispatch reminders.
  */
 import { createClient } from '@supabase/supabase-js';
+import { extendedSalesReleaseAllowed } from './releaseScope';
 import { isCentralUuid } from './centralContracts';
 import {
     NOTIFICATION_CONTRACT_VERSION, NOTIFICATION_MAX_BODY_BYTES, NotificationInputError,
@@ -22,7 +23,7 @@ function json(data: unknown, status: number) {
     return Response.json(data, { status, headers: { 'Cache-Control': 'no-store', Vary: 'Authorization', 'X-Content-Type-Options': 'nosniff' } });
 }
 function gate() {
-    if (process.env.SALES_CRM_V2_ENABLED !== 'true' || process.env.SALES_CRM_LEAD_WORK_ENABLED !== 'true'
+    if (!extendedSalesReleaseAllowed() || process.env.SALES_CRM_V2_ENABLED !== 'true' || process.env.SALES_CRM_LEAD_WORK_ENABLED !== 'true'
         || process.env.SALES_CRM_LIFECYCLE_ENABLED !== 'true' || process.env.SALES_CRM_SCHEDULE_ENABLED !== 'true'
         || process.env.SALES_CRM_NOTIFICATIONS_ENABLED !== 'true') {
         throw new NotificationHttpError(503, 'FEATURE_DISABLED', 'ยังไม่เปิดระบบแจ้งเตือนในแอป');

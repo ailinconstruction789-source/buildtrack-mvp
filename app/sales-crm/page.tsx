@@ -2,6 +2,7 @@ import CentralLeadsView from '@/components/sales/CentralLeadsView';
 import { projectSalesEnabled, salesReportsEnabled } from '@/lib/sales/projectSalesFlags';
 import { bookingsEnabled } from '@/lib/sales/bookingServer';
 import { extendedSalesReleaseAllowed } from '@/lib/sales/releaseScope';
+import { visitsEnabled } from '@/lib/sales/visitsServer';
 
 export const metadata = {
   title: 'Lead ส่วนกลาง | BuildTrack',
@@ -15,5 +16,5 @@ export default function CentralSalesPage() {
   const slaPreviewEnabled = notificationsEnabled && process.env.SALES_CRM_SLA_PREVIEW_ENABLED === 'true';
   const queueMonitorEnabled = slaPreviewEnabled && process.env.SALES_CRM_QUEUE_MONITOR_ENABLED === 'true';
   const bookingEnabled = bookingsEnabled();
-  return <CentralLeadsView leadWorkEnabled={leadWorkEnabled} workScheduleEnabled={workScheduleEnabled} notificationsEnabled={notificationsEnabled} slaPreviewEnabled={slaPreviewEnabled} queueMonitorEnabled={queueMonitorEnabled} bookingEnabled={bookingEnabled} projectSalesEnabled={projectSalesEnabled()} reportsEnabled={salesReportsEnabled()} />;
+  return <CentralLeadsView visitsEnabled={visitsEnabled()} leadWorkEnabled={leadWorkEnabled} workScheduleEnabled={workScheduleEnabled} notificationsEnabled={notificationsEnabled} slaPreviewEnabled={slaPreviewEnabled} queueMonitorEnabled={queueMonitorEnabled} bookingEnabled={bookingEnabled} projectSalesEnabled={projectSalesEnabled()} reportsEnabled={salesReportsEnabled()} />;
 }

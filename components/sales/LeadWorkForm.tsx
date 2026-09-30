@@ -8,6 +8,7 @@ import { bangkokInputTimestamp, bangkokTimestampInput } from '@/lib/sales/leadWo
 import { clearLeadWorkPending, LeadWorkPendingError, readLeadWorkPending, writeLeadWorkPending } from '@/lib/sales/leadWorkPending';
 
 interface Props {
+    mode?: 'lead_work' | 'visit_follow_up';
     snapshot: LeadWorkSnapshot;
     save: (input: LeadWorkInput) => Promise<LeadWorkResult>;
     onSaved: (result: LeadWorkResult) => void;
@@ -37,12 +38,18 @@ export default function LeadWorkForm(props: Props) {
     // sessionStorage is only read after hydration; no server/client markup mismatch.
     const ready = useSyncExternalStore(subscribeHydration, clientReady, serverReady);
     if (!ready) return <p role="status" className="text-sm text-slate-500">กำลังตรวจคำขอค้างในแท็บนี้…</p>;
-    return <LeadWorkFormSession key={`${props.snapshot.actor.userId}:${props.snapshot.scope.customerId}:${props.snapshot.scope.interestId ?? 'central'}`} {...props} />;
+    return <LeadWorkFormSession key={`${props.mode ?? 'lead_work'}:${props.snapshot.actor.userId}:${props.snapshot.scope.customerId}:${props.snapshot.scope.interestId ?? 'central'}`} {...props} />;
 }
 
-function LeadWorkFormSession({ snapshot, save, onSaved, onLockedChange, onRefreshRequired }: Props) {
+function LeadWorkFormSession({ snapshot, save, onSaved, onLockedChange, onRefreshRequired, mode = 'lead_work' }: Props) {
     const [recovery] = useState(() => {
-        try { return { input: readLeadWorkPending(snapshot.actor.userId, snapshot.scope), error: '' }; }
+        try {
+            const input = readLeadWorkPending(snapshot.actor.userId, snapshot.scope);
+            if (mode === 'visit_follow_up' && input && (input.command !== 'set_next_action' || input.interestId === null)) {
+                return { input: null, error: 'มีคำขอค้างจากงานติดตามอีกประเภท หน้านี้ส่งได้เฉพาะแผนถัดไปของโครงการ กรุณาให้ Admin ตรวจคำขอเดิม ห้ามล้างข้อมูลแท็บ' };
+            }
+            return { input, error: '' };
+        }
         catch (failure) { return { input: null, error: (failure as Error).message }; }
     });
     const [fields, setFields] = useState(() => recovery.input ? fieldsFrom(recovery.input) : emptyFields);
@@ -59,7 +66,8 @@ function LeadWorkFormSession({ snapshot, save, onSaved, onLockedChange, onRefres
     const refreshRequiredRef = useRef(false);
     const [error, setError] = useState(recovery.error);
     const actor = snapshot.actor.userId, customerId = snapshot.scope.customerId, interestId = snapshot.scope.interestId;
-    const writable = canWriteLeadWork(snapshot);
+    const writable = canWriteLeadWork(snapshot) && (mode === 'lead_work'
+        || (interestId !== null && snapshot.actor.role === 'sales' && snapshot.actor.userId === snapshot.owner.userId));
     const locked = storageBlocked || !!pending || saving;
     const frozen = locked || !writable || refreshRequired || confirmed;
     const fieldClass = 'mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 disabled:text-slate-600';
@@ -92,6 +100,9 @@ function LeadWorkFormSession({ snapshot, save, onSaved, onLockedChange, onRefres
                 ...(fields.command === 'record_attempt' ? { attempt: { action: fields.attemptAction, channel: fields.channel,
                     result: fields.result, occurredAt: bangkokInputTimestamp(fields.occurred) } } : {}),
             });
+            if (mode === 'visit_follow_up' && (input.command !== 'set_next_action' || input.interestId === null)) {
+                throw new Error('หน้านี้บันทึกได้เฉพาะงานถัดไปของโครงการที่เลือก');
+            }
             // This write-ahead receipt and verified read-back MUST precede every send.
             writeLeadWorkPending(actor, { customerId, interestId }, input);
         } catch (failure) {
@@ -153,8 +164,8 @@ function LeadWorkFormSession({ snapshot, save, onSaved, onLockedChange, onRefres
 
     return <section className="rounded-2xl border border-blue-200 bg-white p-5 sm:p-6 space-y-4">
         <div><h2 className="text-lg font-bold text-slate-900">บันทึกงานติดตาม</h2>
-            <p className="mt-1 text-sm text-slate-500">เก็บกิจกรรมและแผนถัดไปพร้อมกัน ไม่เปลี่ยนสถานะ Lead และไม่ให้คะแนน KPI อัตโนมัติ</p></div>
-        {!writable && <p className="rounded-xl bg-slate-100 p-3 text-sm text-slate-700">อ่านอย่างเดียว: {snapshot.scopeClosed ? 'ขอบเขตงานนี้ปิดแล้ว' : !snapshot.owner.active ? 'ผู้ดูแลไม่ใช่ Sales ที่ใช้งานอยู่' : 'แก้ไขได้เฉพาะ Sales เจ้าของงานนี้กับ Admin'}</p>}
+            <p className="mt-1 text-sm text-slate-500">{mode === 'visit_follow_up' ? 'ตั้งหรือเปลี่ยนแผนถัดไปของโครงการนี้เท่านั้น ไม่บันทึกกิจกรรมแทนการทำจริง ไม่เปลี่ยนผู้ดูแลหรือสถานะ Lead' : 'เก็บกิจกรรมและแผนถัดไปพร้อมกัน ไม่เปลี่ยนสถานะ Lead และไม่ให้คะแนน KPI อัตโนมัติ'}</p></div>
+        {!writable && <p className="rounded-xl bg-slate-100 p-3 text-sm text-slate-700">อ่านอย่างเดียว: {snapshot.scopeClosed ? 'ขอบเขตงานนี้ปิดแล้ว' : !snapshot.owner.active ? 'ผู้ดูแลไม่ใช่ Sales ที่ใช้งานอยู่' : mode === 'visit_follow_up' ? 'แก้ไขได้เฉพาะ Sales เจ้าของโครงการที่สนใจนี้ Admin และ Owner ดูได้อย่างเดียว' : 'แก้ไขได้เฉพาะ Sales เจ้าของงานนี้กับ Admin'}</p>}
         {error && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</p>}
         {pending && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
             <p>{confirmed ? 'ยืนยันว่าบันทึกแล้ว ห้ามส่งใหม่' : 'มีคำขอค้าง: ยังไม่ทราบผลแน่ชัด ข้อมูลถูกล็อกและส่งซ้ำได้เฉพาะคำขอเดิม'}</p>
@@ -163,10 +174,10 @@ function LeadWorkFormSession({ snapshot, save, onSaved, onLockedChange, onRefres
         </div>}
         {(writable || pending) && <form aria-label="บันทึกงานติดตาม Lead" onSubmit={submit} className="space-y-4">
             <fieldset disabled={frozen} className="grid gap-4 sm:grid-cols-2">
-                <label className="text-sm font-medium text-slate-700 sm:col-span-2">ประเภทการบันทึก<select value={fields.command} onChange={event => change('command', event.target.value)} className={fieldClass}>
+                {mode === 'lead_work' && <label className="text-sm font-medium text-slate-700 sm:col-span-2">ประเภทการบันทึก<select value={fields.command} onChange={event => change('command', event.target.value)} className={fieldClass}>
                     <option value="set_next_action">ตั้ง / เปลี่ยนงานถัดไป</option><option value="record_attempt">บันทึกการติดต่อ + งานถัดไป</option>
-                </select></label>
-                {fields.command === 'record_attempt' && <>
+                </select></label>}
+                {mode === 'lead_work' && fields.command === 'record_attempt' && <>
                     <label className="text-sm font-medium text-slate-700 sm:col-span-2">สิ่งที่ทำจริง *<input required value={fields.attemptAction} onChange={event => change('attemptAction', event.target.value)} className={fieldClass} /></label>
                     <label className="text-sm font-medium text-slate-700">ช่องทางติดต่อ *<select required value={fields.channel} onChange={event => change('channel', event.target.value)} className={fieldClass}>
                         <option value="">เลือกช่องทาง</option><option value="phone">โทรศัพท์</option><option value="chat">แชท</option><option value="email">อีเมล</option><option value="in_person">พบด้วยตนเอง</option><option value="other">อื่น ๆ</option>

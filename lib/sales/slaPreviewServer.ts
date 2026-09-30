@@ -1,6 +1,7 @@
 /** Read-only Admin preview. A caller JWT/public key is used for the source RPC;
  * no service-role, emitter, direct-table access or persistence is involved. */
 import { createClient } from '@supabase/supabase-js';
+import { extendedSalesReleaseAllowed } from './releaseScope';
 import { isCentralUuid } from './centralContracts';
 import { buildSlaPreview } from './slaPreviewEngine';
 import { SLA_PREVIEW_CONTRACT_VERSION, SlaPreviewInputError, parseSlaPreviewQuery, parseSlaPreviewSnapshot, parseSlaPreviewSource } from './slaPreviewContracts';
@@ -15,7 +16,7 @@ const unavailable = () => new PreviewHttpError(503, 'READ_UNAVAILABLE', 'โห�
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const strictUuid = (value: unknown): value is string => isCentralUuid(value) && value.length === 36;
 function gate() {
-    if (process.env.SALES_CRM_V2_ENABLED !== 'true' || process.env.SALES_CRM_LEAD_WORK_ENABLED !== 'true'
+    if (!extendedSalesReleaseAllowed() || process.env.SALES_CRM_V2_ENABLED !== 'true' || process.env.SALES_CRM_LEAD_WORK_ENABLED !== 'true'
         || process.env.SALES_CRM_LIFECYCLE_ENABLED !== 'true' || process.env.SALES_CRM_SCHEDULE_ENABLED !== 'true'
         || process.env.SALES_CRM_NOTIFICATIONS_ENABLED !== 'true' || process.env.SALES_CRM_SLA_PREVIEW_ENABLED !== 'true') {
         throw new PreviewHttpError(503, 'FEATURE_DISABLED', 'ยังไม่เปิดหน้าตัวอย่าง SLA');

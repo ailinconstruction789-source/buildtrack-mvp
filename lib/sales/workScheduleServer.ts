@@ -1,5 +1,6 @@
 /** Server-only adapter: caller JWT + public key, never legacy or direct-table writes. */
 import { createClient } from '@supabase/supabase-js';
+import { extendedSalesReleaseAllowed } from './releaseScope';
 import { isCentralUuid } from './centralContracts';
 import {
     WORK_SCHEDULE_CONTRACT_VERSION, WORK_SCHEDULE_MAX_BODY_BYTES, WorkScheduleInputError,
@@ -20,7 +21,7 @@ function json(data: unknown, status: number) {
     return Response.json(data, { status, headers: { 'Cache-Control': 'no-store', Vary: 'Authorization', 'X-Content-Type-Options': 'nosniff' } });
 }
 function gate() {
-    if (process.env.SALES_CRM_V2_ENABLED !== 'true' || process.env.SALES_CRM_LEAD_WORK_ENABLED !== 'true'
+    if (!extendedSalesReleaseAllowed() || process.env.SALES_CRM_V2_ENABLED !== 'true' || process.env.SALES_CRM_LEAD_WORK_ENABLED !== 'true'
         || process.env.SALES_CRM_LIFECYCLE_ENABLED !== 'true' || process.env.SALES_CRM_SCHEDULE_ENABLED !== 'true') {
         throw new WorkScheduleHttpError(503, 'FEATURE_DISABLED', 'ยังไม่เปิดระบบจัดการตารางงาน Sales');
     }

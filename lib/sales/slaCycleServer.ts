@@ -2,6 +2,7 @@
  * access, browser caller or background runner. One POST invokes one bounded SQL
  * transaction; GET never processes tasks or advances the private global cursor. */
 import { createClient } from '@supabase/supabase-js';
+import { extendedSalesReleaseAllowed } from './releaseScope';
 import { isCentralUuid } from './centralContracts';
 import { SLA_CYCLE_CONTRACT_VERSION, SLA_CYCLE_MAX_BODY_BYTES, SLA_CYCLE_MAX_ITEMS, SlaCycleInputError,
     parseSlaCycleContext, parseSlaCycleInput, parseSlaCycleLookup, parseSlaCycleQuery, parseSlaCycleResult } from './slaCycleContracts';
@@ -21,7 +22,7 @@ function writingEnabled() {
     return process.env.SALES_CRM_SLA_PROCESSING_ENABLED === 'true' && process.env.SALES_CRM_SLA_CYCLE_ENABLED === 'true';
 }
 function gate(write: boolean) {
-    if (process.env.SALES_CRM_V2_ENABLED !== 'true' || process.env.SALES_CRM_LEAD_WORK_ENABLED !== 'true'
+    if (!extendedSalesReleaseAllowed() || process.env.SALES_CRM_V2_ENABLED !== 'true' || process.env.SALES_CRM_LEAD_WORK_ENABLED !== 'true'
         || process.env.SALES_CRM_LIFECYCLE_ENABLED !== 'true' || process.env.SALES_CRM_SCHEDULE_ENABLED !== 'true'
         || process.env.SALES_CRM_NOTIFICATIONS_ENABLED !== 'true' || process.env.SALES_CRM_SLA_PREVIEW_ENABLED !== 'true'
         || (write && !writingEnabled())) throw new CycleHttpError(503, 'FEATURE_DISABLED', 'ยังไม่เปิดระบบรอบประมวลผล SLA');

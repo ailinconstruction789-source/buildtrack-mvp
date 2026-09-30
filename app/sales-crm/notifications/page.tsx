@@ -1,9 +1,10 @@
 import NotificationsView from '@/components/sales/NotificationsView';
+import { extendedSalesReleaseAllowed } from '@/lib/sales/releaseScope';
 
 export const metadata = { title: 'การแจ้งเตือนฝ่ายขาย | BuildTrack', description: 'แจ้งเตือนงานติดตามที่ส่งถึงผู้ใช้งานปัจจุบัน' };
 
 export default function NotificationsPage() {
-    if (process.env.SALES_CRM_V2_ENABLED !== 'true' || process.env.SALES_CRM_LEAD_WORK_ENABLED !== 'true'
+    if (!extendedSalesReleaseAllowed() || process.env.SALES_CRM_V2_ENABLED !== 'true' || process.env.SALES_CRM_LEAD_WORK_ENABLED !== 'true'
         || process.env.SALES_CRM_LIFECYCLE_ENABLED !== 'true' || process.env.SALES_CRM_SCHEDULE_ENABLED !== 'true'
         || process.env.SALES_CRM_NOTIFICATIONS_ENABLED !== 'true') {
         return <main className="mx-auto max-w-3xl space-y-4 p-8"><h1 className="text-2xl font-bold">ยังไม่เปิดระบบแจ้งเตือนฝ่ายขาย</h1>
