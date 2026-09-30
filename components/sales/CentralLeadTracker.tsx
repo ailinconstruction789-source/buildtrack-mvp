@@ -20,12 +20,12 @@ const selectClass = 'rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 te
 const columns = ['No.', 'วันที่เป็น Lead', 'ชื่อลูกค้า', 'เบอร์โทร', 'โครงการที่สนใจ', 'ช่องทาง', 'ผู้ดูแล', 'แปลงที่เล็ง', 'สถานะ CRM', 'Follow-up'];
 
 export default function CentralLeadTracker({ snapshot, filters, onFilterChange, onApply, leadWorkEnabled, bookingEnabled = false, visitsEnabled = false, disabled = false }: Props) {
-  const visible = snapshot.customers;
-  const ownerName = (id: string) => snapshot.search.owners.find(owner => owner.userId === id)?.displayName || 'ไม่ทราบชื่อผู้ดูแล';
+  const visible = snapshot.customers || [];
+  const ownerName = (id: string) => snapshot.search?.owners?.find(owner => owner.userId === id)?.displayName || 'ไม่ทราบชื่อผู้ดูแล';
   const change = (next: Partial<CentralTrackerFilters>) => onFilterChange({ ...filters, ...next });
-  const projects = snapshot.search.projects;
-  const channels = snapshot.search.channels;
-  const changed = JSON.stringify(filters) !== JSON.stringify(snapshot.search.filters);
+  const projects = snapshot.search?.projects || [];
+  const channels = snapshot.search?.channels || [];
+  const changed = JSON.stringify(filters) !== JSON.stringify(snapshot.search?.filters || {});
   const scopeLink = (customerId: string, interestId?: string) => `/sales-crm/${encodeURIComponent(customerId)}${interestId ? `?interestId=${encodeURIComponent(interestId)}` : ''}`;
 
   return <div className="space-y-3">
@@ -40,7 +40,7 @@ export default function CentralLeadTracker({ snapshot, filters, onFilterChange, 
         value={filters.channel} onChange={event => change({ channel: event.target.value })} />
       <datalist id="central-channel-options">{channels.map(channel => <option key={channel} value={channel}>{channel}</option>)}</datalist>
       <select aria-label="Sales ผู้ดูแล" className={selectClass} value={filters.owner} onChange={event => change({ owner: event.target.value })}>
-        <option value="">Sales ทุกคน</option>{snapshot.search.owners.map(owner => <option key={owner.userId} value={owner.userId}>{owner.displayName}</option>)}
+        <option value="">Sales ทุกคน</option>{snapshot.search?.owners?.map(owner => <option key={owner.userId} value={owner.userId}>{owner.displayName}</option>)}
       </select>
       <select aria-label="สถานะ CRM" className={selectClass} value={filters.status} onChange={event => change({ status: event.target.value })}>
         <option value="">ทุกสถานะ CRM</option>{Object.entries(TRACKER_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}

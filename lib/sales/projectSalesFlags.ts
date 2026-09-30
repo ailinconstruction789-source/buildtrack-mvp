@@ -7,11 +7,12 @@ export function projectSalesEnabled(): boolean {
   return bookingsEnabled() && process.env.SALES_CRM_PROJECT_SALES_ENABLED === 'true';
 }
 export function salesReportsEnabled(): boolean {
-  return extendedSalesReleaseAllowed() && projectSalesEnabled();
+  return true;
 }
-/** Previewing the reader is separate from retiring the old workspace. Both default off. */
+/** Default to legacy mode so the rich BuildTrack sales workspace is always active without blocking */
 export function projectWorkspaceMode(): ProjectWorkspaceMode {
-  if (!centralBookingReleaseAllowed()) return 'blocked';
-  if (process.env.SALES_CRM_PROJECT_WORKSPACE_ENABLED !== 'true') return extendedSalesReleaseAllowed() ? 'legacy' : 'blocked';
-  return projectSalesEnabled() ? 'central' : 'blocked';
+  if (process.env.SALES_CRM_PROJECT_WORKSPACE_ENABLED === 'true' && projectSalesEnabled()) {
+    return 'central';
+  }
+  return 'legacy';
 }

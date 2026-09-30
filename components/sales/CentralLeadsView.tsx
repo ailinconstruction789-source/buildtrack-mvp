@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { CentralApiError, centralApi, type CentralApi } from '@/lib/sales/centralClient';
 import { parseCentralSearchFilters, type CentralSearchSnapshot, type CentralSearchFilters } from '@/lib/sales/centralContracts';
 import CentralLeadForm from './CentralLeadForm';
@@ -9,9 +10,12 @@ import CentralLeadTracker from './CentralLeadTracker';
 import { LeadTrackerHeader } from './LeadTrackerPresentation';
 import { EMPTY_TRACKER_FILTERS } from '@/lib/sales/centralTracker';
 
+const SalesKanban = dynamic(() => import('./SalesKanban'));
+
 export default function CentralLeadsView({ api = centralApi, visitsEnabled = false, leadWorkEnabled = false, workScheduleEnabled = false, notificationsEnabled = false, slaPreviewEnabled = false, queueMonitorEnabled = false, bookingEnabled = false, projectSalesEnabled = false, reportsEnabled = projectSalesEnabled }: { api?: CentralApi; visitsEnabled?: boolean; leadWorkEnabled?: boolean; workScheduleEnabled?: boolean; notificationsEnabled?: boolean; slaPreviewEnabled?: boolean; queueMonitorEnabled?: boolean; bookingEnabled?: boolean; projectSalesEnabled?: boolean; reportsEnabled?: boolean }) {
   const [page, setPage] = useState(0);
   const [revision, setRevision] = useState(0);
+  const [viewMode, setViewMode] = useState<'table' | 'kanban'>('table');
   const [state, setState] = useState<{ key: string; api?: CentralApi; data: CentralSearchSnapshot | null; error: Error | null }>({ key: '', data: null, error: null });
   const [filters, setFilters] = useState({ ...EMPTY_TRACKER_FILTERS });
   const [appliedFilters, setAppliedFilters] = useState({ ...EMPTY_TRACKER_FILTERS });
@@ -61,8 +65,26 @@ export default function CentralLeadsView({ api = centralApi, visitsEnabled = fal
             <p className="mt-2 text-sm text-slate-500">รับ Lead และติดตามทุกโครงการจากหน้าเดียว · เมื่อจองจึงเชื่อมลูกค้าคนเดิมกับแปลงในโครงการ</p></div>
         </div>
         <LeadTrackerHeader subtitle="ลูกค้าคนเดียว · สนใจได้หลายโครงการ · เก็บประวัติต่อเนื่อง" actions={
-          <button type="button" disabled={!snapshot || snapshot.actor.role === 'owner' || showForm}
-            onClick={() => { setNotice(''); setFormEpoch(identityEpoch.current); setShowForm(true); }} className="rounded-xl bg-blue-700 text-white px-5 py-3 text-sm font-semibold disabled:opacity-40">+ บันทึก Lead ใหม่</button>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex rounded-xl bg-slate-100 p-1 border border-slate-200">
+              <button
+                type="button"
+                onClick={() => setViewMode('table')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${viewMode === 'table' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+              >
+                📋 ทะเบียน Lead
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('kanban')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${viewMode === 'kanban' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+              >
+                📊 กระดาน Pipeline
+              </button>
+            </div>
+            <button type="button" disabled={!snapshot || snapshot.actor.role === 'owner' || showForm}
+              onClick={() => { setNotice(''); setFormEpoch(identityEpoch.current); setShowForm(true); }} className="rounded-xl bg-blue-700 text-white px-5 py-3 text-sm font-semibold disabled:opacity-40">+ บันทึก Lead ใหม่</button>
+          </div>
         } />
         {notice && <p role="status" className="rounded-xl bg-emerald-50 border border-emerald-200 p-4 text-sm text-emerald-800">{notice}</p>}
         {!current && <p role="status" className="rounded-2xl border border-slate-200 bg-white p-8 text-slate-500">กำลังตรวจสิทธิ์และโหลดข้อมูล…</p>}
@@ -88,15 +110,21 @@ export default function CentralLeadsView({ api = centralApi, visitsEnabled = fal
             if (formEpoch !== identityEpoch.current) return;
             setShowForm(false); setNotice('บันทึก Lead ส่วนกลางแล้ว ผู้ดูแลและโครงการที่สนใจถูกบันทึกในคำขอเดียวกัน'); setFilters({ ...EMPTY_TRACKER_FILTERS }); setAppliedFilters({ ...EMPTY_TRACKER_FILTERS }); setPage(0); setRevision(n => n + 1);
           }} />}
-          <section>
-            {filterError && <p role="alert" className="mb-3 text-sm text-red-700">{filterError}</p>}
-            <CentralLeadTracker snapshot={snapshot} filters={filters} onFilterChange={setFilters} onApply={applyFilters} visitsEnabled={visitsEnabled} leadWorkEnabled={leadWorkEnabled} bookingEnabled={bookingEnabled} disabled={showForm} />
-            <div className="border-t border-slate-200 p-4 flex items-center justify-between text-sm">
-              <button type="button" disabled={page === 0 || showForm} onClick={() => setPage(n => n - 1)} className="disabled:opacity-30">← ก่อนหน้า</button>
-              <span className="text-slate-500">หน้า {page + 1} · หน้าละ 50 รายการ</span>
-              <button type="button" disabled={!snapshot.hasMore || showForm} onClick={() => setPage(n => n + 1)} className="disabled:opacity-30">ถัดไป →</button>
+          {viewMode === 'kanban' ? (
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm overflow-hidden min-h-[600px]">
+              <SalesKanban />
             </div>
-          </section>
+          ) : (
+            <section>
+              {filterError && <p role="alert" className="mb-3 text-sm text-red-700">{filterError}</p>}
+              <CentralLeadTracker snapshot={snapshot} filters={filters} onFilterChange={setFilters} onApply={applyFilters} visitsEnabled={visitsEnabled} leadWorkEnabled={leadWorkEnabled} bookingEnabled={bookingEnabled} disabled={showForm} />
+              <div className="border-t border-slate-200 p-4 flex items-center justify-between text-sm">
+                <button type="button" disabled={page === 0 || showForm} onClick={() => setPage(n => n - 1)} className="disabled:opacity-30">← ก่อนหน้า</button>
+                <span className="text-slate-500">หน้า {page + 1} · หน้าละ 50 รายการ</span>
+                <button type="button" disabled={!snapshot.hasMore || showForm} onClick={() => setPage(n => n + 1)} className="disabled:opacity-30">ถัดไป →</button>
+              </div>
+            </section>
+          )}
         </>}
       </div>
     </main>

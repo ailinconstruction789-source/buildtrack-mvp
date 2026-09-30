@@ -4775,7 +4775,9 @@ export default function ConstructionApp() {
 
               {/* 📊 View: Sales Dashboard Excel (Keep-Alive Cache - Instant 0s Transitions) */}
               <div className={view === 'sales-dashboard-excel' ? 'block h-full' : 'hidden'}>
-                <SalesReportingEntry surface="dashboard" active={view === 'sales-dashboard-excel'}
+                <SalesReportingEntry 
+                  surface="dashboard"
+                  active={view === 'sales-dashboard-excel'}
                   project={selectedProject} 
                   onViewDefects={(plot: any) => {
                     const foundProj = projects.find((p: any) => p.name === plot.project_name || p.project_name === plot.project_name);
@@ -4808,7 +4810,8 @@ export default function ConstructionApp() {
               )}
               {/* 💡 View: Sales Strategic Report */}
               {view === 'sales-intelligence' && (
-                <SalesReportingEntry surface="intelligence"
+                <SalesReportingEntry 
+                  surface="intelligence"
                   project={selectedProject} 
                   projects={projects}
                   onBack={() => { setView('dashboard'); setSelectedProject(null); }}

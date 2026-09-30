@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono, Noto_Sans_Thai } from "next/font/google";
 import "./globals.css";
 import SalesWorkspaceModeProvider from '@/components/sales/SalesWorkspaceModeProvider';
-import { projectWorkspaceMode, salesReportsEnabled } from '@/lib/sales/projectSalesFlags';
+import { projectWorkspaceMode } from '@/lib/sales/projectSalesFlags';
+import { postBookingEnabled } from '@/lib/sales/postBookingServer';
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -35,7 +36,7 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} ${notoSansThai.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col"><SalesWorkspaceModeProvider mode={projectWorkspaceMode()} postBookingEnabled={false} reportsEnabled={salesReportsEnabled()}>{children}</SalesWorkspaceModeProvider></body>
+      <body className="min-h-full flex flex-col"><SalesWorkspaceModeProvider mode={projectWorkspaceMode()} postBookingEnabled={postBookingEnabled()}>{children}</SalesWorkspaceModeProvider></body>
     </html>
   );
 }
