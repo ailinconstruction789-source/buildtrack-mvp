@@ -1,7 +1,8 @@
 import React from 'react';
-import { Calendar, CircleHelp, Clock, FileText, Gift, Home, Search } from 'lucide-react';
+import { Calendar, CheckCircle2, CircleHelp, Clock, FileText, Gift, Home, Search } from 'lucide-react';
 import type { buildExcelReport, ExcelSaleRow } from '@/lib/sales/excelReportMetrics';
 import type { SaleStage } from '@/lib/sales/workflow';
+import { EXCEL_FOREMAN_TASKS, type ExcelInspectionStatus } from '@/lib/sales/excelHouseDetails';
 
 interface Props { report: ReturnType<typeof buildExcelReport> }
 
@@ -10,29 +11,34 @@ const stages: Record<SaleStage, string> = {
   loan_submitted: 'ยื่นกู้', loan_rejected: 'กู้ไม่ผ่าน', loan_approved: 'กู้อนุมัติ',
   transfer_pending: 'รอโอน', transferred: 'โอนแล้ว', handover: 'ส่งมอบ', cancelled: 'ยกเลิกจอง',
 };
-const foremanTasks = ['งานติดตั้งสุขภัณฑ์', 'งานติดตั้งถังเก็บน้ำ และ ปั้มน้ำ', 'งานปูหญ้า', 'งานทำทรายล้าง', 'งานทาสีเก็บรายละเอียด'];
+const inspectionLabels: Record<ExcelInspectionStatus, string> = { pending: 'รอลงวัน', scheduled: 'นัดแล้ว', passed: 'ผ่านแล้ว', failed: 'มีงานต้องแก้' };
 const adminDocs = ['ใบอนุญาตก่อสร้าง', 'ทะเบียนบ้าน', 'มิเตอร์น้ำ', 'มิเตอร์ไฟฟ้า'];
 
-/** The original handover-card layout, without the legacy construction reader or writer. */
+/** Original layout, caller-authorized read-only house evidence; no construction writes. */
 function TransferCard({ row }: { row: ExcelSaleRow }) {
   const transferred = ['transferred', 'handover'].includes(row.sale.stage);
+  const house = row.houseDetails;
+  const progress = house?.overallProgress ?? null;
   return <article aria-label={`รายละเอียด ${row.sale.projectName} แปลง ${row.sale.plotName ?? 'ไม่ทราบ'}`}
     className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col md:flex-row">
     <div className="md:w-1/2 lg:w-2/5 relative bg-slate-100 min-h-[250px]">
-      <div className="w-full h-full flex flex-col items-center justify-center text-slate-400 absolute inset-0">
-        <Home size={48} opacity={0.2} /><span className="text-xs mt-2">ยังไม่เชื่อมภาพบ้าน</span>
-      </div>
+      {house?.imageUrl ? <img src={house.imageUrl} alt={`บ้านโครงการ ${row.sale.projectName} แปลง ${row.sale.plotName ?? 'ไม่ทราบ'}`} referrerPolicy="no-referrer" loading="lazy" className="w-full h-full object-cover absolute inset-0" /> :
+        <div className="w-full h-full flex flex-col items-center justify-center text-slate-400 absolute inset-0">
+          <Home size={48} opacity={0.2} /><span className="text-xs mt-2">{house ? 'ไม่มีภาพบ้าน' : 'ยังไม่เชื่อมภาพบ้าน'}</span>
+        </div>}
       <div className="absolute inset-0 bg-gradient-to-t from-slate-900/80 to-transparent" />
       <div className="absolute bottom-4 left-4 right-4 text-white">
         <div className={`text-sm font-bold px-2 py-1 rounded inline-block mb-2 text-white ${transferred ? 'bg-emerald-500/90' : 'bg-amber-500/90'}`}>
           {transferred ? 'โอนสำเร็จ' : 'รอโอน'}
         </div>
-        <h4 className="font-black text-xl">ไม่ทราบแบบบ้าน</h4>
+        <h4 className="font-black text-xl">{house?.houseType ?? 'ไม่ทราบแบบบ้าน'}</h4>
         <div className="flex items-center gap-1.5 text-slate-200 text-sm mt-1 mb-3">
           <Home size={14} /><span>โครงการ {row.sale.projectName} - แปลง {row.sale.plotName ?? 'ไม่ทราบ'}</span>
         </div>
-        <div className="flex justify-between items-center mt-2 text-sm"><span>ความคืบหน้าก่อสร้าง:</span><span className="font-bold">ไม่ทราบ</span></div>
-        <div className="w-full bg-slate-700 h-2 rounded-full mt-1 overflow-hidden" aria-label="ความคืบหน้าก่อสร้างยังไม่เชื่อมข้อมูล" />
+        <div className="flex justify-between items-center mt-2 text-sm"><span>ความคืบหน้าก่อสร้าง:</span><span className="font-bold">{progress === null ? 'ไม่ทราบ' : `${progress}%`}</span></div>
+        <div className="w-full bg-slate-700 h-2 rounded-full mt-1 overflow-hidden" aria-label={`ความคืบหน้าก่อสร้าง ${progress === null ? 'ไม่ทราบ' : `${progress}%`}`}>
+          {progress !== null && <div className="bg-emerald-400 h-full" style={{ width: `${progress}%` }} />}
+        </div>
       </div>
     </div>
     <div className="md:w-1/2 lg:w-3/5 p-6 flex flex-col gap-6">
@@ -55,24 +61,29 @@ function TransferCard({ row }: { row: ExcelSaleRow }) {
           <div>
             <div className="flex justify-between items-center mb-4 gap-2">
               <h5 className="text-xs font-black text-slate-400 uppercase tracking-wider">ตรวจสอบงานก่อสร้าง & นัดตรวจบ้าน</h5>
-              <button type="button" disabled title="ยังไม่เชื่อมระบบนัดตรวจบ้านในรายงานนี้"
+              <button type="button" disabled title="รายงานนี้อ่านนัดตรวจเดิมเท่านั้น ยังไม่เปิดแก้ไข"
                 className="text-[11px] font-extrabold text-purple-700 bg-purple-100 px-2.5 py-1 rounded-lg flex items-center gap-1 opacity-50 cursor-not-allowed">
                 <Calendar size={13} /><span>+ ลงวันนัดตรวจ</span>
               </button>
             </div>
             <div className="grid grid-cols-2 gap-y-3 gap-x-2">
-              {foremanTasks.map(task => <div key={task} className="flex items-center gap-2 text-xs text-slate-600 font-medium" title={`${task}: ยังไม่เชื่อมข้อมูล`}>
-                <CircleHelp size={14} className="text-slate-300 shrink-0" /><span className="truncate">{task}</span>
-              </div>)}
+              {EXCEL_FOREMAN_TASKS.map(name => {
+                const task = house?.tasks.find(task => task.name === name);
+                const label = task?.excluded === true ? 'ไม่เกี่ยวข้อง' : task?.progress === null || task?.progress === undefined ? 'ไม่ทราบ' : `${task.progress}%`;
+                return <div key={name} className="flex items-center gap-2 text-xs text-slate-600 font-medium" title={`${name}: ${label}`}>
+                  {task?.progress === 100 ? <CheckCircle2 size={14} className="text-emerald-500 shrink-0" /> : <CircleHelp size={14} className="text-slate-300 shrink-0" />}
+                  <span className="truncate">{name}</span><span className="shrink-0">{label}</span>
+                </div>;
+              })}
             </div>
-            <p className="text-[10px] text-slate-400 mt-2">สถานะงานก่อสร้าง: ยังไม่เชื่อมข้อมูล</p>
+            <p className="text-[10px] text-slate-400 mt-2">{house ? 'ข้อมูลก่อสร้างและนัดตรวจปัจจุบันจากระบบเดิม (อ่านอย่างเดียว)' : 'สถานะงานก่อสร้าง: ยังไม่เชื่อมข้อมูล'}</p>
             <div className="mt-3 pt-3 border-t border-slate-200/80 space-y-2">
               {['ตรวจครั้งที่ 1', 'ตรวจครั้งที่ 2 (เก็บงาน)'].map((label, index) => <div key={label} className="flex items-center justify-between text-xs bg-white p-2 rounded-xl border border-slate-200">
                 <div className="flex items-center gap-2">
                   <Calendar size={14} className={`${index === 0 ? 'text-purple-600' : 'text-amber-600'} shrink-0`} />
-                  <div><span className="font-extrabold text-slate-800 block">{label}</span><span className="text-[10px] text-slate-400 italic">ไม่ทราบวันนัดหมาย</span></div>
+                  <div><span className="font-extrabold text-slate-800 block">{label}</span><span className="text-[10px] text-slate-400 italic">{house?.inspections[index].date ?? 'ไม่ทราบวันนัดหมาย'}</span></div>
                 </div>
-                <span className="text-[10px] font-black px-2 py-0.5 rounded-lg border bg-slate-100 text-slate-500 border-slate-200">ยังไม่เชื่อม</span>
+                <span className="text-[10px] font-black px-2 py-0.5 rounded-lg border bg-slate-100 text-slate-500 border-slate-200">{house?.inspections[index].status ? inspectionLabels[house.inspections[index].status!] : house ? 'ไม่ทราบสถานะ' : 'ยังไม่เชื่อม'}</span>
               </div>)}
             </div>
           </div>

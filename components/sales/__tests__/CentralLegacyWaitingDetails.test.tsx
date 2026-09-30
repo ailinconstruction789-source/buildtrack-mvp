@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { buildExcelReport, type ExcelSaleRow } from '@/lib/sales/excelReportMetrics';
 import CentralLegacyWaitingDetails from '../CentralLegacyWaitingDetails';
 import { projectSalesSnapshot } from './projectSalesFixtures';
+import { EXCEL_FOREMAN_TASKS } from '@/lib/sales/excelHouseDetails';
 
 function fixture() {
   const report = buildExcelReport({ projects: [], loadedAt: '2026-09-30T06:00:00Z' }, null, '2026-09-30', '2026');
@@ -17,6 +18,20 @@ function fixture() {
 
 afterEach(cleanup);
 describe('original waiting-for-transfer layout with central read-only evidence', () => {
+  it('displays current house evidence without enabling any construction writer', () => {
+    const report = fixture(); report.forecast[0].houseDetails = { imageUrl: 'https://example.com/house.jpg', houseType: 'บ้านแบบ A', overallProgress: 75,
+      tasks: EXCEL_FOREMAN_TASKS.map((name, i) => ({ name, progress: i === 0 ? 100 : null, excluded: i === 1 ? true : null })),
+      inspections: [{ date: '2026-09-30', status: 'passed' }, { date: null, status: 'pending' }] };
+    render(<CentralLegacyWaitingDetails report={report} />);
+    expect(screen.getByRole('img')).toHaveAttribute('src', 'https://example.com/house.jpg');
+    expect(screen.getByText('บ้านแบบ A')).toBeInTheDocument();
+    expect(screen.getByText('75%')).toBeInTheDocument();
+    expect(screen.getByText('100%')).toBeInTheDocument();
+    expect(screen.getByText('ไม่เกี่ยวข้อง')).toBeInTheDocument();
+    expect(screen.getByText('2026-09-30')).toBeInTheDocument();
+    expect(screen.getByText('ผ่านแล้ว')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '+ ลงวันนัดตรวจ' })).toBeDisabled();
+  });
   it('restores the house, inspection, administration and promotion card sections', () => {
     render(<CentralLegacyWaitingDetails report={fixture()} />);
     expect(screen.getByRole('heading', { name: 'รายละเอียดบ้านที่รอโอน (Waiting for Transfer)' })).toBeInTheDocument();

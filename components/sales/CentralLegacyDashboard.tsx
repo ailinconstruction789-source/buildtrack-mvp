@@ -75,7 +75,6 @@ export default function CentralLegacyDashboard({ data, projectName, onProjectCha
       viewsMonth: report.monthly.visits, bookedMonth: report.monthly.booked.map(recordPresentation),
       transferMonth: report.monthly.transferred.map(recordPresentation), cancelMonth: report.monthly.cancelled.map(recordPresentation),
       expectingTransfer: report.forecast.map(recordPresentation), projectGroups, activeProjects: Object.entries(projectGroups),
-      saleTotal: report.unknownStock > 0 ? null : sumReportMoney([...transferred, ...waiting].map(row => row.sale?.salePrice ?? null)),
       sumTransVal: sumReportMoney(transferred.map(row => row.basePrice)),
       sumWaitVal: sumReportMoney(waiting.map(row => row.basePrice)),
       sumAvailVal: sumReportMoney(available.map(row => row.basePrice)),
@@ -112,20 +111,20 @@ export default function CentralLegacyDashboard({ data, projectName, onProjectCha
             <div className="bg-indigo-50 p-3 px-5 rounded-xl border border-indigo-100 shadow-sm flex flex-col sm:flex-row gap-4 sm:gap-6">
               <div>
                 <div className="text-indigo-800 text-xs font-bold uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                  <div className="w-1.5 h-1.5 rounded-full bg-indigo-500"></div> ยอดขายรวม (โอน + จอง)
+                  <div className="w-1.5 h-1.5 rounded-full bg-indigo-500"></div> ยอดขายทั้งปี {selectedYear} (รวมยกเลิก)
                 </div>
                 <div className="flex items-baseline gap-3">
-                  <div className="text-2xl font-black text-indigo-700">{fmtM(metrics.saleTotal)}</div>
+                  <div className="text-2xl font-black text-indigo-700">{fmtM(report.annualGross.salePrice)}</div>
                   <div className="text-xs font-medium text-indigo-600/80 hidden xl:block">
-                    {metrics.sumTransCnt + metrics.sumWaitCnt} หลัง
+                    {report.annualGross.rows.length} รายการจอง
                   </div>
                 </div>
               </div>
               <div className="border-t sm:border-t-0 sm:border-l border-indigo-200/60 pt-3 sm:pt-0 sm:pl-6">
                 <div className="text-rose-600 text-xs font-bold uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                  <div className="w-1.5 h-1.5 rounded-full bg-rose-500"></div> ยอด ท.ด. ตามสัญญา
+                  <div className="w-1.5 h-1.5 rounded-full bg-rose-500"></div> ยอด ท.ด. ปี {selectedYear} (รวมยกเลิก)
                 </div>
-                <div className="text-2xl font-black text-rose-600">ยังไม่เชื่อม</div>
+                <div className="text-2xl font-black text-rose-600">{fmtM(report.annualGross.tdPrice)}</div>
               </div>
             </div>
             
@@ -620,7 +619,10 @@ export default function CentralLegacyDashboard({ data, projectName, onProjectCha
           <div className="mt-3 space-y-1">
             <p>เหตุการณ์นับถึง {selectedDateStr} · บ้านและสถานะเป็นข้อมูลปัจจุบัน ไม่ใช่ภาพย้อนหลัง</p>
             <p>ข้อมูลเก่าใช้วันที่เข้าชม/บันทึก Lead จากคอลัมน์ A และวันที่คาดโอนจากคอลัมน์ Q; ไม่ใช้วันนำเข้าแทนวันที่จริง</p>
-            <p>ยอดจองหักรายการยกเลิก · ข้อมูลเงินหรือวันที่ที่ไม่มีหลักฐานแสดงว่าไม่ทราบ</p>
+            <p>ยอดขายทั้งปีและยอด ท.ด. ด้านบนใช้วันที่จองในปีที่เลือกถึงวันที่รายงาน รวมรายการยกเลิกทุกครั้ง · ราคาขายใช้ราคาที่ตกลงตอนจอง และ ท.ด. ใช้คอลัมน์ N</p>
+            <p>ยอดจองในการ์ดและกราฟยังหักรายการยกเลิกตามเกณฑ์เดิม ไม่เปลี่ยน KPI · ข้อมูลเงินหรือวันที่ที่ไม่มีหลักฐานแสดงว่าไม่ทราบ</p>
+            <p>รายการจองในปีนี้ไม่ทราบราคาขาย {report.annualGross.unknownSalePrices} รายการ · ไม่ทราบ ท.ด. {report.annualGross.unknownTdPrices} รายการ</p>
+            <p>ประวัติการจองที่ไม่ทราบวันจอง รวมยกเลิก {report.annualGross.unknownBookingDates} รายการ ยังจัดเข้าปีเพื่อรวมยอดไม่ได้</p>
             <p>ข้อมูลเดิม {report.legacyVisits} ครั้ง · Visit ใหม่ที่ส่ง Customer Voices แล้ว {report.completedVisits} ครั้ง · ไม่ใช้จำนวน Lead แทนยอดเข้าชม</p>
             <p>ประวัติเข้าชมไม่ระบุโครงการ {report.unassignedLegacyVisits} ครั้ง รวมเฉพาะยอดทุกโครงการ · ข้อมูลเดิมไม่ได้ยืนยันว่าแบบสอบถามใหม่เสร็จแล้ว</p>
             <p>ข้อมูลเดิมรอ Admin ตรวจ {report.pendingLegacyRows} รายการ ยังไม่รวมเป็นผลงานที่ยืนยันแล้ว · วันที่เข้าชมไม่ทราบ {report.unknownLegacyDates} รายการ</p>

@@ -1,8 +1,9 @@
 import { buildProjectMap, type ProjectMapStatus } from './projectMapContracts';
 import type { ProjectSaleRow } from './projectSalesContracts';
 import type { ExcelReportData } from './excelReportContracts';
+import type { ExcelHouseDetails } from './excelHouseDetails';
 
-export interface ExcelSaleRow { sale: ProjectSaleRow; bookedDate: string | null; cancelledDate: string | null; transferredDate: string | null; expectedTransferDate: string | null; leadDate: string | null }
+export interface ExcelSaleRow { sale: ProjectSaleRow; bookedDate: string | null; cancelledDate: string | null; transferredDate: string | null; expectedTransferDate: string | null; leadDate: string | null; houseDetails?: ExcelHouseDetails; tdPrice?: number | null }
 export interface ExcelStockRow {
   projectName: string; plotId: string; plotName: string; status: ProjectMapStatus; sale: ProjectSaleRow | null;
   basePrice: number | null; appraisalPrice: number | null; transferredDate: string | null; expectedTransferDate: string | null;
@@ -39,7 +40,9 @@ export function buildExcelReport(data: ExcelReportData, projectName: string | nu
     const prior = leadDates.get(visit.customerId);
     if (visit.leadDate && (!prior || visit.leadDate < prior)) leadDates.set(visit.customerId, visit.leadDate);
   }
-  const rows = projects.flatMap(project => project.map.salePages.flatMap(page => page.rows).map(sale => ({ ...eventDates(sale),
+  const rows: ExcelSaleRow[] = projects.flatMap(project => project.map.salePages.flatMap(page => page.rows).map(sale => ({ ...eventDates(sale),
+    houseDetails: project.catalog.find(row => row.plotId === sale.plotId)?.houseDetails,
+    tdPrice: project.evidence.bookingAmounts?.find(row => row.saleId === sale.saleId)?.tdPrice ?? null,
     expectedTransferDate: project.evidence.forecasts.find(row => row.saleId === sale.saleId)?.expectedTransferDate ?? null,
     leadDate: leadDates.get(sale.customerId) ?? null })));
   const visitMap = new Map<string, { key: string; visitDate: string; legacy: boolean }>();
@@ -94,7 +97,16 @@ export function buildExcelReport(data: ExcelReportData, projectName: string | nu
       cumulativeTransferred: eligible.transferred.filter(row => row.transferredDate?.startsWith(cumulativeYear) && row.transferredDate <= upper).length };
   });
   const awaiting = rows.filter(row => !['cancelled', 'transferred', 'handover'].includes(row.sale.stage));
-  return { rows, stocks, groups, monthly: filter(cutoff.slice(0, 7)), yearly: filter(cutoff.slice(0, 4)), charts,
+  // Gross annual sales count booking rounds, including cancelled rounds, independently of net KPI/chart cohorts.
+  const annualGrossRows = rows.filter(row => row.bookedDate?.startsWith(cutoff.slice(0, 4)) && row.bookedDate <= cutoff);
+  const annualGross = { rows: annualGrossRows,
+    salePrice: sumReportMoney(annualGrossRows.map(row => row.sale.salePrice)),
+    tdPrice: sumReportMoney(annualGrossRows.map(row => row.tdPrice ?? null)),
+    unknownSalePrices: annualGrossRows.filter(row => row.sale.salePrice === null).length,
+    unknownTdPrices: annualGrossRows.filter(row => row.tdPrice == null).length,
+    // These rounds cannot be assigned to any year; do not hide cancelled rounds with missing dates.
+    unknownBookingDates: rows.filter(row => !row.bookedDate).length };
+  return { rows, stocks, groups, annualGross, monthly: filter(cutoff.slice(0, 7)), yearly: filter(cutoff.slice(0, 4)), charts,
     forecast: awaiting.filter(row => row.expectedTransferDate?.startsWith(cutoff.slice(0, 7))),
     carriedOver: awaiting.filter(row => row.expectedTransferDate && row.expectedTransferDate < `${cutoff.slice(0, 7)}-01`),
     unknownForecast: awaiting.filter(row => !row.expectedTransferDate).length,

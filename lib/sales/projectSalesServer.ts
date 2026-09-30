@@ -4,7 +4,8 @@ import { bookingRecord, bookingUuid } from './bookingContracts';
 import { PROJECT_SALES_CONTRACT_VERSION, ProjectSalesInputError, parseProjectSalesQuery, parseProjectSalesSnapshot } from './projectSalesContracts';
 import { projectSalesEnabled } from './projectSalesFlags';
 import { PROJECT_MAP_MAX_PAGES, PROJECT_MAP_MAX_PLOTS, parseProjectMapName, parseProjectMapSnapshot, parseStoredProjectMapLayout } from './projectMapContracts';
-import { parseExcelReportProject } from './excelReportContracts';
+import { parseExcelBookingAmounts, parseExcelReportProject } from './excelReportContracts';
+import { readExcelHouseDetails } from './excelHouseDetailsServer';
 export { projectSalesEnabled } from './projectSalesFlags';
 
 const messages: Record<string, string> = {
@@ -104,6 +105,7 @@ async function handleProjectRead(request: Request, map: boolean, excel = false):
       if (catalogReply.error) rpcFailure(catalogReply.error);
       if (!Array.isArray(catalogReply.data) || catalogReply.count !== catalogReply.data.length
         || catalogReply.count !== plots.length || request.signal.aborted) return fail(503, 'READ_UNAVAILABLE');
+      const houseDetails = await readExcelHouseDetails(client, scope.projectName!, plots.map(plot => plot.id), request.signal);
       const catalog = catalogReply.data.map(plot => {
         if (plot.project_name !== scope.projectName) return fail(503, 'READ_UNAVAILABLE');
         // A missing joined type is unknown, not an assertion that the plot is saleable.
@@ -113,11 +115,15 @@ async function handleProjectRead(request: Request, map: boolean, excel = false):
         // is unknown, not a verified free house/appraisal. Actual sale money is separate.
         return { plotId: plot.id, basePrice: plot.selling_price === 0 ? null : plot.selling_price,
           appraisalPrice: plot.land_appraisal_price === 0 ? null : plot.land_appraisal_price,
-          isInfrastructure: type?.is_infrastructure ?? null };
+          isInfrastructure: type?.is_infrastructure ?? null, houseDetails: houseDetails.get(plot.id) };
       });
       const evidenceReply = await client.rpc('crm_v2_excel_evidence', { p_project_name: scope.projectName });
       if (evidenceReply.error) rpcFailure(evidenceReply.error);
-      return json({ data: parseExcelReportProject({ map: mapSnapshot, catalog, evidence: evidenceReply.data }, scope.projectName!) }, 200);
+      const amountsReply = await client.rpc('crm_v2_excel_booking_amounts', { p_project_name: scope.projectName });
+      if (amountsReply.error) rpcFailure(amountsReply.error);
+      const amounts = parseExcelBookingAmounts(amountsReply.data, mapSnapshot);
+      return json({ data: parseExcelReportProject({ map: mapSnapshot, catalog,
+        evidence: { ...bookingRecord(evidenceReply.data), bookingAmounts: amounts } }, scope.projectName!) }, 200);
     }
     return json({ data: mapSnapshot }, 200);
   } catch (failure) {

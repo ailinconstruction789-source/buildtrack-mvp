@@ -1,9 +1,11 @@
 import { bookingRecord, bookingUuid } from './bookingContracts';
 import { parseProjectMapSnapshot, type ProjectMapSnapshot } from './projectMapContracts';
+import { parseExcelHouseDetails, type ExcelHouseDetails } from './excelHouseDetails';
 
 export interface ExcelPlotCatalog {
   plotId: string; basePrice: number | null; appraisalPrice: number | null;
   isInfrastructure: boolean | null;
+  houseDetails?: ExcelHouseDetails;
 }
 export interface ExcelVisitEvidence { key: string; customerId: string; visitDate: string; leadDate?: string }
 export interface ExcelReportEvidence {
@@ -11,6 +13,7 @@ export interface ExcelReportEvidence {
   legacyVisits: ExcelVisitEvidence[]; completedVisits: ExcelVisitEvidence[];
   unassignedLegacyVisits: ExcelVisitEvidence[]; unknownUnassignedLegacyDates: number;
   forecasts: { saleId: string; expectedTransferDate: string | null }[]; pendingLegacyRows: number; pendingLegacyKeys: string[]; unknownLegacyDates: number;
+  bookingAmounts?: { saleId: string; tdPrice: number | null }[];
 }
 export interface ExcelReportProject { map: ProjectMapSnapshot; catalog: ExcelPlotCatalog[]; evidence: ExcelReportEvidence }
 export interface ExcelReportData { projects: ExcelReportProject[]; loadedAt: string }
@@ -22,6 +25,24 @@ function day(value: unknown): string {
   if (typeof value !== 'string' || !/^(?!0000)\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(Date.parse(value))
     || new Date(value).toISOString().slice(0, 10) !== value) return bad();
   return value;
+}
+function bookingAmounts(value: unknown, map: ProjectMapSnapshot): { saleId: string; tdPrice: number | null }[] {
+  const sales = new Set(map.salePages.flatMap(page => page.rows).map(sale => sale.saleId));
+  if (!Array.isArray(value) || value.length !== sales.size || value.length > 10000) return bad();
+  const seen = new Set<string>();
+  return value.map(value => {
+    const row = bookingRecord(value), saleId = bookingUuid(row.saleId);
+    if (!sales.has(saleId) || seen.has(saleId)) return bad();
+    seen.add(saleId);
+    return { saleId, tdPrice: money(row.tdPrice) };
+  });
+}
+/** Separate, project/actor-bound projection: raw sheet cells never leave the database. */
+export function parseExcelBookingAmounts(value: unknown, map: ProjectMapSnapshot) {
+  const raw = bookingRecord(value), actor = bookingRecord(raw.actor);
+  if (raw.contractVersion !== 'excel_booking_amounts_v1' || raw.projectName !== map.projectName
+    || actor.userId !== map.actor.userId || actor.role !== map.actor.role) return bad();
+  return bookingAmounts(raw.rows, map);
 }
 export function parseExcelEvidence(value: unknown, map: ProjectMapSnapshot): ExcelReportEvidence {
   const raw = bookingRecord(value), actor = bookingRecord(raw.actor);
@@ -54,6 +75,7 @@ export function parseExcelEvidence(value: unknown, map: ProjectMapSnapshot): Exc
   return { contractVersion: 'excel_evidence_v1', projectName: map.projectName, actor: map.actor,
     legacyVisits: visits(raw.legacyVisits, true), completedVisits: visits(raw.completedVisits, false), forecasts,
     unassignedLegacyVisits: visits(raw.unassignedLegacyVisits, true), unknownUnassignedLegacyDates: raw.unknownUnassignedLegacyDates as number,
+    ...(raw.bookingAmounts === undefined ? {} : { bookingAmounts: bookingAmounts(raw.bookingAmounts, map) }),
     pendingLegacyRows: raw.pendingLegacyRows as number, pendingLegacyKeys: raw.pendingLegacyKeys as string[], unknownLegacyDates: raw.unknownLegacyDates as number };
 }
 export function parseExcelReportProject(value: unknown, projectName: string): ExcelReportProject {
@@ -66,7 +88,8 @@ export function parseExcelReportProject(value: unknown, projectName: string): Ex
       || (row.isInfrastructure !== null && typeof row.isInfrastructure !== 'boolean')) return bad();
     seen.add(row.plotId);
     return { plotId: row.plotId, basePrice: money(row.basePrice), appraisalPrice: money(row.appraisalPrice),
-      isInfrastructure: row.isInfrastructure as boolean | null };
+      isInfrastructure: row.isInfrastructure as boolean | null,
+      ...(row.houseDetails === undefined ? {} : { houseDetails: parseExcelHouseDetails(row.houseDetails) }) };
   });
   return { map, catalog, evidence: parseExcelEvidence(raw.evidence, map) };
 }

@@ -135,12 +135,30 @@ describe('central Excel report presentation', () => {
   });
   it('does not substitute catalog base price or appraisal for unknown contract amounts', () => {
     render(<CentralExcelReportView data={fixture()} surface="dashboard" projectName={null} onProjectChange={vi.fn()} onRefresh={vi.fn()}/>);
-    const total = screen.getByText('ยอดขายรวม (โอน + จอง)').parentElement!;
+    const total = screen.getByText('ยอดขายทั้งปี 2026 (รวมยกเลิก)').parentElement!;
     expect(total).toHaveTextContent('ไม่ทราบ');
     expect(total).not.toHaveTextContent('2,000,000');
+    expect(screen.getByText('ยอด ท.ด. ปี 2026 (รวมยกเลิก)').parentElement!).toHaveTextContent('ไม่ทราบ');
+    expect(screen.getByText(/ประวัติการจองที่ไม่ทราบวันจอง รวมยกเลิก 1 รายการ/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /บ้านทั้งหมด.*ดูรายละเอียด/ }));
     const dialog = within(screen.getByRole('dialog', { name: 'รายละเอียดรวมบ้านทั้งหมด' }));
     expect(dialog.getAllByRole('columnheader').map(cell => cell.textContent)).toEqual(['แปลง', 'สถานะ', 'ราคาตั้งต้น']);
     expect(dialog.getAllByText(/2,000,000/)).toHaveLength(2);
+  });
+  it('connects annual gross sale and column N amounts while retaining net chart counts', () => {
+    const data = fixture(), project = data.projects[0], [cancelled, active] = project.map.salePages[0].rows;
+    cancelled.bookedAt = '2026-09-01T01:00:00Z'; cancelled.salePrice = 1500000; active.salePrice = 1900000;
+    project.evidence.bookingAmounts = [{ saleId: cancelled.saleId, tdPrice: 800000 }, { saleId: active.saleId, tdPrice: 900000 }];
+    render(<CentralExcelReportView data={data} surface="dashboard" projectName={null} onProjectChange={vi.fn()} onRefresh={vi.fn()}/>);
+    const gross = screen.getByText('ยอดขายทั้งปี 2026 (รวมยกเลิก)').parentElement!;
+    expect(gross).toHaveTextContent('3,400,000'); expect(gross).toHaveTextContent('2 รายการจอง');
+    expect(screen.getByText('ยอด ท.ด. ปี 2026 (รวมยกเลิก)').parentElement!).toHaveTextContent('1,700,000');
+    expect(screen.getByText(/ยอดจองในการ์ดและกราฟยังหักรายการยกเลิก/)).toBeInTheDocument();
+    expect(JSON.parse(screen.getAllByTestId('chart')[2].dataset.chartData!)[8].y2026).toBe(1);
+    fireEvent.change(screen.getByLabelText('ข้อมูลเหตุการณ์ถึงวันที่'), { target: { value: '2026-09-15' } });
+    expect(gross).toHaveTextContent('1,500,000'); expect(gross).toHaveTextContent('1 รายการจอง');
+    expect(screen.getByText('ยอด ท.ด. ปี 2026 (รวมยกเลิก)').parentElement!).toHaveTextContent('800,000');
+    fireEvent.change(screen.getByLabelText('ข้อมูลเหตุการณ์ถึงวันที่'), { target: { value: '2025-12-31' } });
+    expect(screen.getByText('ยอดขายทั้งปี 2025 (รวมยกเลิก)').parentElement!).toHaveTextContent('0 รายการจอง');
   });
 });

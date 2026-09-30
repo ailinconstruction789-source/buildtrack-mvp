@@ -1,7 +1,8 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-const mock = vi.hoisted(() => ({ rpc: vi.fn(), from: vi.fn(), getUser: vi.fn(), create: vi.fn(), range: vi.fn() }));
+const mock = vi.hoisted(() => ({ rpc: vi.fn(), from: vi.fn(), getUser: vi.fn(), create: vi.fn(), range: vi.fn(), houses: vi.fn() }));
 vi.mock('@supabase/supabase-js', () => ({ createClient: mock.create }));
+vi.mock('../excelHouseDetailsServer', () => ({ readExcelHouseDetails: mock.houses }));
 import * as route from '@/app/api/sales-crm/excel-report/route';
 import { projectMapSnapshot } from './projectMapFixtures';
 const snapshot = projectMapSnapshot();
@@ -13,8 +14,11 @@ beforeEach(() => {
   vi.stubEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'fake-anon');
   mock.create.mockReturnValue({ auth: { getUser: mock.getUser }, rpc: mock.rpc, from: mock.from });
   mock.getUser.mockResolvedValue({ data: { user: { id: snapshot.actor.userId } }, error: null });
+  mock.houses.mockResolvedValue(new Map());
   mock.rpc.mockImplementation(async name => ({ error: null, data: name === 'crm_v2_role' ? 'sales'
     : name === 'crm_v2_project_sales_capabilities' ? { enabled: true, contract_version: 'project_sales_v1' }
+    : name === 'crm_v2_excel_booking_amounts' ? { contractVersion: 'excel_booking_amounts_v1', projectName: snapshot.projectName,
+      actor: snapshot.actor, rows: snapshot.salePages.flatMap(page => page.rows).map(sale => ({ saleId: sale.saleId, tdPrice: null })) }
     : name === 'crm_v2_excel_evidence' ? { contractVersion: 'excel_evidence_v1', projectName: snapshot.projectName, actor: snapshot.actor,
       legacyVisits: [], completedVisits: [], forecasts: [], pendingLegacyRows: 0, pendingLegacyKeys: [], unknownLegacyDates: 0,
       unassignedLegacyVisits: [], unknownUnassignedLegacyDates: 0 }
@@ -39,6 +43,8 @@ describe('bounded read-only Excel endpoint', () => {
     expect(mock.create.mock.calls[0][2].global.headers.Authorization).toBe('Bearer fake-token');
     expect(Object.keys(route).sort()).toEqual(['GET', 'dynamic', 'runtime']);
     expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(mock.houses).toHaveBeenCalledWith(expect.anything(), snapshot.projectName, snapshot.plots.map(plot => plot.id), expect.any(AbortSignal));
+    expect(data.evidence.bookingAmounts).toHaveLength(snapshot.salePages.flatMap(page => page.rows).length);
   });
   it('requires login and a trusted sales role', async () => {
     expect((await route.GET(req(false))).status).toBe(401);
@@ -54,5 +60,19 @@ describe('bounded read-only Excel endpoint', () => {
     mock.range.mockResolvedValue({ data: snapshot.plots.map(p => ({ id: p.id, project_name: snapshot.projectName,
       selling_price: null, land_appraisal_price: null, house_types: null })), count: 2, error: null });
     expect((await (await route.GET(req())).json()).data.catalog[0].isInfrastructure).toBeNull();
+  });
+  it('rejects a failed house read without exposing database error details', async () => {
+    mock.houses.mockRejectedValue(new Error('sensitive underlying error'));
+    const response = await route.GET(req());
+    expect(response.status).toBe(503);
+    expect(await response.text()).not.toContain('sensitive');
+  });
+  it('fails closed if the amount RPC is not installed', async () => {
+    const implementation = mock.rpc.getMockImplementation()!;
+    mock.rpc.mockImplementation(name => name === 'crm_v2_excel_booking_amounts'
+      ? Promise.resolve({ data: null, error: { code: 'PGRST202' } }) : implementation(name));
+    const response = await route.GET(req());
+    expect(response.status).toBe(503);
+    expect((await response.json()).error.code).toBe('SETUP_REQUIRED');
   });
 });
