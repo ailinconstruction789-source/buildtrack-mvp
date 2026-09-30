@@ -86,46 +86,51 @@ export default function CentralLeadsView({ api = centralApi, visitsEnabled = fal
               onClick={() => { setNotice(''); setFormEpoch(identityEpoch.current); setShowForm(true); }} className="rounded-xl bg-blue-700 text-white px-5 py-3 text-sm font-semibold disabled:opacity-40">+ บันทึก Lead ใหม่</button>
           </div>
         } />
-        {notice && <p role="status" className="rounded-xl bg-emerald-50 border border-emerald-200 p-4 text-sm text-emerald-800">{notice}</p>}
-        {!current && <p role="status" className="rounded-2xl border border-slate-200 bg-white p-8 text-slate-500">กำลังตรวจสิทธิ์และโหลดข้อมูล…</p>}
-        {error && <section className="rounded-2xl border border-amber-200 bg-amber-50 p-6 space-y-3">
-          <h2 className="font-bold text-lg text-amber-950">{needsLogin ? 'เข้าสู่ระบบก่อนใช้งาน' : needsSetup ? 'ยังไม่เปิดการบันทึก Lead ส่วนกลาง' : forbidden ? 'บัญชีนี้ยังไม่มีสิทธิ์ใช้งาน' : 'โหลดรายการ Lead ไม่สำเร็จ'}</h2>
-          <p role="alert" className="text-sm text-amber-900">{error.message}</p>
-          {needsSetup && <p className="text-sm text-amber-900">หน้านี้ไม่สร้างข้อมูลลงระบบเก่าแทนเมื่อระบบใหม่ยังไม่พร้อม ต้องตรวจข้อมูลเดิม ติดตั้งฐานข้อมูล และยืนยันสิทธิ์ก่อนเปิดใช้</p>}
-          <div className="flex gap-4 text-sm"><button type="button" onClick={() => setRevision(n => n + 1)} className="font-semibold underline">ตรวจสอบอีกครั้ง</button>
-            <Link href="/" className="underline">กลับหน้าหลัก{needsLogin ? 'เพื่อเข้าสู่ระบบ' : ''}</Link></div>
-        </section>}
-        {snapshot && <>
-          {projectSalesEnabled && !showForm && <Link href="/sales-crm/projects/map" prefetch={false} className="inline-block rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm font-semibold text-indigo-800">ผังแปลงทุกโครงการ →</Link>}
-          {projectSalesEnabled && !showForm && <Link href="/sales-crm/projects" prefetch={false} className="inline-block rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-semibold text-blue-800">ลูกค้าจองและประวัติแยกโครงการ →</Link>}
-          {reportsEnabled && !showForm && <Link href="/sales-crm/reports" prefetch={false} className="inline-block rounded-xl border border-blue-200 bg-white px-4 py-2.5 text-sm font-semibold text-blue-800">รายงานจองจากส่วนกลาง →</Link>}
-          {bookingEnabled && snapshot.actor.role !== 'owner' && !showForm && <Link href="/sales-crm/bookings" prefetch={false} className="inline-block rounded-xl border border-orange-200 bg-orange-50 px-4 py-2.5 text-sm font-semibold text-orange-800">ลูกค้ามาจองเลย: ค้นหา / สร้าง Lead พร้อมจอง →</Link>}
-          {queueMonitorEnabled && snapshot.actor.role === 'admin' && !showForm && <Link href="/sales-crm/queue-monitor" prefetch={false} className="inline-block rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-blue-700">ตรวจคิวแจ้งเตือน (Admin) →</Link>}
-          {slaPreviewEnabled && snapshot.actor.role === 'admin' && !showForm && <Link href="/sales-crm/sla-processing" prefetch={false} className="inline-block rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-blue-700">ประมวลผลและตรวจใบรับ (Admin) →</Link>}
-          {slaPreviewEnabled && snapshot.actor.role === 'admin' && !showForm && <Link href="/sales-crm/sla-preview" prefetch={false} className="inline-block rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-blue-700">ตรวจแผนแจ้งเตือน (Admin) →</Link>}
-          {notificationsEnabled && !showForm && <Link href="/sales-crm/notifications" prefetch={false} className="inline-block rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-blue-700">การแจ้งเตือนของฉัน →</Link>}
-          {workScheduleEnabled && snapshot.actor.role === 'admin' && !showForm && <Link href="/sales-crm/work-schedule" prefetch={false} className="inline-block rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-blue-700">จัดเวรฝ่ายขาย (Admin) →</Link>}
-          {snapshot.actor.role === 'owner' && <p className="text-sm text-slate-600">สิทธิ์ Owner: อ่านข้อมูลทุกโครงการ ไม่มีสิทธิ์สร้างหรือแก้ Lead</p>}
-          {showForm && <CentralLeadForm snapshot={snapshot} save={api.create} onClose={() => setShowForm(false)} onSaved={() => {
-            if (formEpoch !== identityEpoch.current) return;
-            setShowForm(false); setNotice('บันทึก Lead ส่วนกลางแล้ว ผู้ดูแลและโครงการที่สนใจถูกบันทึกในคำขอเดียวกัน'); setFilters({ ...EMPTY_TRACKER_FILTERS }); setAppliedFilters({ ...EMPTY_TRACKER_FILTERS }); setPage(0); setRevision(n => n + 1);
-          }} />}
-          {viewMode === 'kanban' ? (
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm overflow-hidden min-h-[600px]">
-              <SalesKanban />
-            </div>
-          ) : (
-            <section>
-              {filterError && <p role="alert" className="mb-3 text-sm text-red-700">{filterError}</p>}
-              <CentralLeadTracker snapshot={snapshot} filters={filters} onFilterChange={setFilters} onApply={applyFilters} visitsEnabled={visitsEnabled} leadWorkEnabled={leadWorkEnabled} bookingEnabled={bookingEnabled} disabled={showForm} />
-              <div className="border-t border-slate-200 p-4 flex items-center justify-between text-sm">
-                <button type="button" disabled={page === 0 || showForm} onClick={() => setPage(n => n - 1)} className="disabled:opacity-30">← ก่อนหน้า</button>
-                <span className="text-slate-500">หน้า {page + 1} · หน้าละ 50 รายการ</span>
-                <button type="button" disabled={!snapshot.hasMore || showForm} onClick={() => setPage(n => n + 1)} className="disabled:opacity-30">ถัดไป →</button>
+        {viewMode === 'kanban' ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm overflow-hidden min-h-[600px]">
+            <SalesKanban />
+          </div>
+        ) : (
+          <>
+            {notice && <p role="status" className="rounded-xl bg-emerald-50 border border-emerald-200 p-4 text-sm text-emerald-800">{notice}</p>}
+            {!current && <p role="status" className="rounded-2xl border border-slate-200 bg-white p-8 text-slate-500">กำลังตรวจสิทธิ์และโหลดข้อมูล…</p>}
+            {error && <section className="rounded-2xl border border-amber-200 bg-amber-50 p-6 space-y-3">
+              <h2 className="font-bold text-lg text-amber-950">{needsLogin ? 'เข้าสู่ระบบก่อนใช้งาน' : needsSetup ? 'ยังไม่เปิดการบันทึก Lead ส่วนกลาง' : forbidden ? 'บัญชีนี้ยังไม่มีสิทธิ์ใช้งาน' : 'โหลดรายการ Lead ไม่สำเร็จ'}</h2>
+              <p role="alert" className="text-sm text-amber-900">{error.message}</p>
+              {needsSetup && <p className="text-sm text-amber-900">หน้านี้ไม่สร้างข้อมูลลงระบบเก่าแทนเมื่อระบบใหม่ยังไม่พร้อม ต้องตรวจข้อมูลเดิม ติดตั้งฐานข้อมูล และยืนยันสิทธิ์ก่อนเปิดใช้</p>}
+              <div className="flex flex-wrap gap-4 text-sm items-center">
+                <button type="button" onClick={() => setRevision(n => n + 1)} className="font-semibold underline">ตรวจสอบอีกครั้ง</button>
+                <button type="button" onClick={() => setViewMode('kanban')} className="font-bold text-blue-700 bg-white px-3 py-1.5 rounded-lg border border-blue-200 shadow-sm">📊 เปิดกระดาน Pipeline (Sales Kanban) แทน →</button>
+                <Link href="/" className="underline">กลับหน้าหลัก{needsLogin ? 'เพื่อเข้าสู่ระบบ' : ''}</Link>
               </div>
-            </section>
-          )}
-        </>}
+            </section>}
+            {snapshot && <>
+              {projectSalesEnabled && !showForm && <Link href="/sales-crm/projects/map" prefetch={false} className="inline-block rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm font-semibold text-indigo-800">ผังแปลงทุกโครงการ →</Link>}
+              {projectSalesEnabled && !showForm && <Link href="/sales-crm/projects" prefetch={false} className="inline-block rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-semibold text-blue-800">ลูกค้าจองและประวัติแยกโครงการ →</Link>}
+              {reportsEnabled && !showForm && <Link href="/sales-crm/reports" prefetch={false} className="inline-block rounded-xl border border-blue-200 bg-white px-4 py-2.5 text-sm font-semibold text-blue-800">รายงานจองจากส่วนกลาง →</Link>}
+              {bookingEnabled && snapshot.actor.role !== 'owner' && !showForm && <Link href="/sales-crm/bookings" prefetch={false} className="inline-block rounded-xl border border-orange-200 bg-orange-50 px-4 py-2.5 text-sm font-semibold text-orange-800">ลูกค้ามาจองเลย: ค้นหา / สร้าง Lead พร้อมจอง →</Link>}
+              {queueMonitorEnabled && snapshot.actor.role === 'admin' && !showForm && <Link href="/sales-crm/queue-monitor" prefetch={false} className="inline-block rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-blue-700">ตรวจคิวแจ้งเตือน (Admin) →</Link>}
+              {slaPreviewEnabled && snapshot.actor.role === 'admin' && !showForm && <Link href="/sales-crm/sla-processing" prefetch={false} className="inline-block rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-blue-700">ประมวลผลและตรวจใบรับ (Admin) →</Link>}
+              {slaPreviewEnabled && snapshot.actor.role === 'admin' && !showForm && <Link href="/sales-crm/sla-preview" prefetch={false} className="inline-block rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-blue-700">ตรวจแผนแจ้งเตือน (Admin) →</Link>}
+              {notificationsEnabled && !showForm && <Link href="/sales-crm/notifications" prefetch={false} className="inline-block rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-blue-700">การแจ้งเตือนของฉัน →</Link>}
+              {workScheduleEnabled && snapshot.actor.role === 'admin' && !showForm && <Link href="/sales-crm/work-schedule" prefetch={false} className="inline-block rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-blue-700">จัดเวรฝ่ายขาย (Admin) →</Link>}
+              {snapshot.actor.role === 'owner' && <p className="text-sm text-slate-600">สิทธิ์ Owner: อ่านข้อมูลทุกโครงการ ไม่มีสิทธิ์สร้างหรือแก้ Lead</p>}
+              {showForm && <CentralLeadForm snapshot={snapshot} save={api.create} onClose={() => setShowForm(false)} onSaved={() => {
+                if (formEpoch !== identityEpoch.current) return;
+                setShowForm(false); setNotice('บันทึก Lead ส่วนกลางแล้ว ผู้ดูแลและโครงการที่สนใจถูกบันทึกในคำขอเดียวกัน'); setFilters({ ...EMPTY_TRACKER_FILTERS }); setAppliedFilters({ ...EMPTY_TRACKER_FILTERS }); setPage(0); setRevision(n => n + 1);
+              }} />}
+              <section>
+                {filterError && <p role="alert" className="mb-3 text-sm text-red-700">{filterError}</p>}
+                <CentralLeadTracker snapshot={snapshot} filters={filters} onFilterChange={setFilters} onApply={applyFilters} visitsEnabled={visitsEnabled} leadWorkEnabled={leadWorkEnabled} bookingEnabled={bookingEnabled} disabled={showForm} />
+                <div className="border-t border-slate-200 p-4 flex items-center justify-between text-sm">
+                  <button type="button" disabled={page === 0 || showForm} onClick={() => setPage(n => n - 1)} className="disabled:opacity-30">← ก่อนหน้า</button>
+                  <span className="text-slate-500">หน้า {page + 1} · หน้าละ 50 รายการ</span>
+                  <button type="button" disabled={!snapshot.hasMore || showForm} onClick={() => setPage(n => n + 1)} className="disabled:opacity-30">ถัดไป →</button>
+                </div>
+              </section>
+            </>}
+          </>
+        )}
       </div>
     </main>
   );
