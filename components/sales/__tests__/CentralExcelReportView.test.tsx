@@ -7,8 +7,11 @@ import { projectSalesSnapshot } from './projectSalesFixtures';
 vi.mock('recharts', () => {
   const Container = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>;
   const Empty = () => null;
-  return { ResponsiveContainer: Container, ComposedChart: Container, CartesianGrid: Empty, XAxis: Empty, YAxis: Empty,
-    Tooltip: Empty, Legend: Empty, Area: Empty, Bar: Empty };
+  const Chart = ({ children, data }: { children?: React.ReactNode; data: unknown }) => <div data-testid="chart" data-chart-data={JSON.stringify(data)}>{children}</div>;
+  const Series = ({ children, dataKey, stroke, strokeWidth, dot }: { children?: React.ReactNode; dataKey: string; stroke?: string; strokeWidth?: number; dot?: unknown }) => <div data-testid="series" data-key={dataKey} data-stroke={stroke} data-width={strokeWidth} data-dot={JSON.stringify(dot)}>{children}</div>;
+  return { ResponsiveContainer: Container, ComposedChart: Chart, CartesianGrid: Empty, XAxis: Empty, YAxis: Empty,
+    Tooltip: Empty, Legend: Empty, Area: Series, Line: Series, Bar: Empty,
+    LabelList: ({ dataKey }: { dataKey: string }) => <span data-testid="chart-value-label" data-key={dataKey}/> };
 });
 import CentralExcelReportView from '../CentralExcelReportView';
 
@@ -42,8 +45,8 @@ describe('central Excel report presentation', () => {
     expect(screen.getByText(/ไม่ใช้จำนวน Lead แทนยอดเข้าชม/)).toBeInTheDocument();
     expect(screen.getByText(/ข้อมูลเดิม 1 ครั้ง.*Customer Voices แล้ว 1 ครั้ง/)).toBeInTheDocument();
     expect(screen.getByText(/ข้อมูลเดิมรอ Admin ตรวจ 2 รายการ/)).toBeInTheDocument();
-    expect(screen.getByText('คาดการณ์รอโอนในเดือน: 1 หลัง')).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'วันที่ที่ไม่ทราบ' })).toHaveTextContent('ไม่ทราบวันจอง 0 รายการ');
+    expect(screen.getByText('รอโอน (1)')).toBeInTheDocument();
+    expect(screen.getByText(/ไม่ทราบวันจอง 0/)).toBeInTheDocument();
   });
   it('preserves nine-column summary and unknown values, not zero amounts', () => {
     render(<CentralExcelReportView data={fixture()} surface="summary" projectName="โครงการ A" onProjectChange={vi.fn()} onRefresh={vi.fn()}/>);
@@ -77,7 +80,67 @@ describe('central Excel report presentation', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
   it('never imports legacy readers or the nested construction writer', () => {
-    const source = readFileSync('components/sales/CentralExcelReportView.tsx', 'utf8');
-    for (const unsafe of ['WaitingForTransferDetails', '@/lib/supabase', '.from(', '.update(', '.insert(', 'fetch(']) expect(source).not.toContain(unsafe);
+    for (const file of ['CentralExcelReportView', 'CentralLegacyDashboard', 'CentralLegacyWaitingDetails']) {
+      const source = readFileSync(`components/sales/${file}.tsx`, 'utf8');
+      for (const unsafe of ["from './WaitingForTransferDetails'", '@/lib/supabase', '.from(', '.update(', '.insert(', 'fetch(']) expect(source).not.toContain(unsafe);
+    }
+  });
+  it('restores original chart order, four comparison years, full-width visits and cumulative labels', () => {
+    render(<CentralExcelReportView data={fixture()} surface="dashboard" projectName={null} onProjectChange={vi.fn()} onRefresh={vi.fn()}/>);
+    const comparison = screen.getByRole('heading', { name: 'สรุปยอดจองและยอดโอน บจก. สมสมัย' });
+    const cumulative = screen.getByRole('heading', { name: 'สรุปยอดสะสม (Cumulative) ประจำปี' });
+    expect(comparison.compareDocumentPosition(cumulative) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const titles = screen.getAllByRole('heading', { level: 3 }).map(element => element.textContent);
+    expect(titles.filter(title => /ปี 2023 - 2026/.test(title ?? ''))).toEqual([
+      'ยอดโอน ปี 2023 - 2026 (หลัง)', 'ยอดจอง ปี 2023 - 2026 (หลัง)', 'ยอดเข้าชม ปี 2023 - 2026 (ครั้ง)',
+    ]);
+    const charts = screen.getAllByTestId('chart');
+    expect(charts).toHaveLength(7);
+    for (const chart of charts.slice(1, 4)) {
+      expect(within(chart).getAllByTestId('series').map(series => series.dataset.key)).toEqual(['y2023', 'y2024', 'y2025', 'y2026']);
+      const latest = within(chart).getAllByTestId('series')[3];
+      expect(latest).toHaveAttribute('data-stroke', '#6366f1');
+      expect(latest).toHaveAttribute('data-width', '4');
+      expect(JSON.parse(latest.dataset.dot!)).toMatchObject({ r: 5, fill: '#ffffff' });
+    }
+    expect(screen.getAllByTestId('chart-value-label')).toHaveLength(3);
+    expect(screen.queryByRole('spinbutton', { name: 'ปีกราฟสะสม' })).not.toBeInTheDocument();
+    const select = screen.getByRole('combobox', { name: 'ปีกราฟสะสม' });
+    expect(within(select).getAllByRole('option').map(option => option.textContent)).toEqual(['2023', '2024', '2025', '2026']);
+    for (const name of ['ยอดเข้าชม ปี 2023 - 2026 (ครั้ง)', 'ยอดเข้าชมสะสม ปี 2026 (ครั้ง)']) {
+      const card = screen.getByRole('heading', { name }).parentElement!;
+      expect(card).toHaveClass('h-80');
+      expect(card.parentElement).not.toHaveClass('md:grid-cols-2');
+    }
+  });
+  it('keeps A/Voices evidence and cutoff in comparative charts when changing cumulative year', () => {
+    const data = fixture();
+    data.projects[0].evidence.legacyVisits.push(
+      { key: 'old-year', customerId: 'old', visitDate: '2025-09-10', leadDate: '2025-09-10' },
+      { key: 'future-visit', customerId: 'future', visitDate: '2026-10-01', leadDate: '2026-10-01' },
+    );
+    render(<CentralExcelReportView data={data} surface="dashboard" projectName={null} onProjectChange={vi.fn()} onRefresh={vi.fn()}/>);
+    const chartData = (index: number) => JSON.parse(screen.getAllByTestId('chart')[index].dataset.chartData!);
+    expect(chartData(3)[8]).toMatchObject({ month: 'กันยายน', y2025: 1, y2026: 2 });
+    expect(chartData(3)[9].y2026).toBeNull();
+    expect(chartData(2)[8].y2026).toBe(1);
+    expect(chartData(6)[8].cumulative).toBe(2);
+    fireEvent.change(screen.getByRole('combobox', { name: 'ปีกราฟสะสม' }), { target: { value: '2025' } });
+    expect(screen.getByRole('heading', { name: 'ยอดโอนสะสม ปี 2025 (หลัง)' })).toBeInTheDocument();
+    expect(chartData(6)[8].cumulative).toBe(1);
+    expect(chartData(3)[8].y2026).toBe(2);
+    fireEvent.change(screen.getByLabelText('ข้อมูลเหตุการณ์ถึงวันที่'), { target: { value: '2026-09-15' } });
+    expect(chartData(3)[8].y2026).toBe(1);
+    expect(chartData(2)[8].y2026).toBe(0);
+  });
+  it('does not substitute catalog base price or appraisal for unknown contract amounts', () => {
+    render(<CentralExcelReportView data={fixture()} surface="dashboard" projectName={null} onProjectChange={vi.fn()} onRefresh={vi.fn()}/>);
+    const total = screen.getByText('ยอดขายรวม (โอน + จอง)').parentElement!;
+    expect(total).toHaveTextContent('ไม่ทราบ');
+    expect(total).not.toHaveTextContent('2,000,000');
+    fireEvent.click(screen.getByRole('button', { name: /บ้านทั้งหมด.*ดูรายละเอียด/ }));
+    const dialog = within(screen.getByRole('dialog', { name: 'รายละเอียดรวมบ้านทั้งหมด' }));
+    expect(dialog.getAllByRole('columnheader').map(cell => cell.textContent)).toEqual(['แปลง', 'สถานะ', 'ราคาตั้งต้น']);
+    expect(dialog.getAllByText(/2,000,000/)).toHaveLength(2);
   });
 });
