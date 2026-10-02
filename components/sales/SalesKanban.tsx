@@ -64,6 +64,39 @@ const formatPhoneNumber = (value: string) => {
   return val;
 };
 
+export const stageToKanbanStatus = (stage: string): string => {
+  switch (stage?.toLowerCase()) {
+    case 'booked': return 'Reserved';
+    case 'contracted': return 'Contracted';
+    case 'downpayment': return 'DownPayment';
+    case 'document_prep': return 'DocumentPrep';
+    case 'loan_submitted':
+    case 'loan_processing': return 'LoanProcessing';
+    case 'loan_approved': return 'Approved';
+    case 'transfer_pending': return 'Approved';
+    case 'transferred': return 'Transferred';
+    case 'handover': return 'Handover';
+    case 'cancelled':
+    case 'loan_rejected': return 'Cancelled';
+    default: return 'Reserved';
+  }
+};
+
+export const kanbanStatusToStage = (status: string): string => {
+  switch (status) {
+    case 'Reserved': return 'booked';
+    case 'Contracted': return 'contracted';
+    case 'DownPayment': return 'downpayment';
+    case 'DocumentPrep': return 'document_prep';
+    case 'LoanProcessing': return 'loan_submitted';
+    case 'Approved': return 'loan_approved';
+    case 'Transferred': return 'transferred';
+    case 'Handover': return 'handover';
+    case 'Cancelled': return 'cancelled';
+    default: return 'booked';
+  }
+};
+
 export default function SalesKanban({ 
   project: externalProject, 
   projects, 
@@ -120,62 +153,144 @@ export default function SalesKanban({
         setProjectPlotsData(plotsData);
       }
 
-      // 2. Fetch leads
-      const { data: leadsData, error: leadsErr } = await supabase.from('leads').select('*').eq('project_name', projName);
-      if (leadsErr) throw leadsErr;
-      setRawLeads(leadsData || []);
-      if (!leadsData || leadsData.length === 0) { setLeads([]); return; }
-
-      // 3. Fetch sales & history in chunks to prevent PostgREST URL length limit errors
-      const chunkArray = (arr: any[], size: number) => Array.from({ length: Math.ceil(arr.length / size) }, (v, i) => arr.slice(i * size, i * size + size));
-      
-      let salesData: any[] = [];
-      let historyData: any[] = [];
-      const leadIds = leadsData.map(l => l.id);
-      const chunks = chunkArray(leadIds, 100);
-      
-      for (const chunk of chunks) {
-        const { data: sData } = await supabase.from('sales').select('*').in('lead_id', chunk);
-        if (sData) salesData = [...salesData, ...sData];
-        
-        const { data: hData } = await supabase.from('status_history').select('*').in('entity_id', chunk).order('created_at', { ascending: true });
-        if (hData) historyData = [...historyData, ...hData];
+      // 2. Fetch sales from crm_v2_project_sales RPC
+      const salesRows: any[] = [];
+      let page = 0;
+      let hasMore = true;
+      while (hasMore && page < 10) {
+        const { data: res, error } = await supabase.rpc('crm_v2_project_sales', {
+          p_project_name: projName,
+          p_tab: 'all',
+          p_query: '',
+          p_page: page
+        });
+        if (error) break;
+        if (res?.rows) salesRows.push(...res.rows);
+        hasMore = Boolean(res?.hasMore);
+        page++;
       }
 
-      const formattedLeads = leadsData.map(l => {
-        const sale = salesData?.find(s => s.lead_id === l.id);
-        const history = historyData?.filter(h => h.entity_id === l.id).map(h => ({
-           status: h.new_status,
-           timestamp: h.created_at,
-           note: h.changed_by
-        })) || [];
-        
-        const visitDate = history.find(h => h.status === 'Visit')?.timestamp?.split('T')[0] || l.created_at.split('T')[0];
-        const bookingDate = history.find(h => h.status === 'Reserved')?.timestamp?.split('T')[0] || null;
+      // 3. Fallback to direct sales table if RPC returns 0
+      let fallbackSales: any[] = [];
+      if (salesRows.length === 0 && plotsData && plotsData.length > 0) {
+        const plotIds = plotsData.map((p: any) => p.id);
+        const { data: directSales } = await supabase.from('sales').select('*').in('plot_id', plotIds.slice(0, 100));
+        if (directSales) fallbackSales = directSales;
+      }
 
-        return {
-          id: l.id,
-          name: l.customer_name,
-          phone: l.phone || '',
-          occupation: l.occupation || '',
-          interest: l.interest || '',
-          status: l.status,
-          plot: sale?.plot_id || null,
-          plotName: sale?.plot_id ? plotsData?.find(p => p.id === sale.plot_id)?.plot_name || sale.plot_id : null,
-          bank: sale?.bank_name || '',
-          cancelReason: sale?.cancellation_reason || '',
-          landOfficePrice: sale?.land_office_price?.toString() || '',
-            salePrice: sale?.sale_price ? Number(sale.sale_price) : 0,
-          expectedTransferDate: sale?.expected_transfer_date || null,
-          visitDate,
-          bookingDate,
-          agentName: l.agent_name || '',
-          source: l.source || 'Walk-in',
-          bankStatus: sale?.bank_status || 'Pending',
-          history
-        };
-      });
+      // 4. Fetch leads from leads table
+      const { data: leadsData } = await supabase.from('leads').select('*').eq('project_name', projName);
+
+      // 5. Format sales from CRM V2 into Kanban lead structure
+      let formattedLeads: any[] = [];
+
+      if (salesRows.length > 0) {
+        formattedLeads = salesRows.map((s: any) => {
+          const kanbanStatus = stageToKanbanStatus(s.stage);
+          const bookDate = s.importedHistory?.bookedDate || s.bookedAt?.split('T')[0] || '';
+          const transferDate = s.importedHistory?.transferredDate || s.transferredAt?.split('T')[0] || null;
+          const cancelDate = s.importedHistory?.cancelledDate || s.cancelledAt?.split('T')[0] || null;
+          const visitDate = bookDate || s.created_at?.split('T')[0] || '';
+          const matchingPlot = plotsData?.find((p: any) => p.id === s.plotId || p.plot_name === s.plotName);
+          
+          return {
+            id: s.saleId,
+            saleId: s.saleId,
+            name: s.customerName || 'ลูกค้าไม่ระบุชื่อ',
+            phone: s.phone || '',
+            occupation: '',
+            interest: projName,
+            status: kanbanStatus,
+            plot: s.plotId || matchingPlot?.id || null,
+            plotName: s.plotName || matchingPlot?.plot_name || s.plotId || null,
+            bank: s.bankName || '',
+            cancelReason: s.cancellationReason || '',
+            landOfficePrice: '',
+            salePrice: s.salePrice ? Number(s.salePrice) : Number(matchingPlot?.selling_price || 0),
+            expectedTransferDate: s.expectedTransferDate || s.expected_transfer_date || matchingPlot?.expected_transfer_date || null,
+            visitDate,
+            bookingDate: bookDate,
+            transferredDate: transferDate,
+            cancelledDate: cancelDate,
+            agentName: s.ownerName || '',
+            source: 'Walk-in',
+            bankStatus: 'Pending',
+            stage: s.stage,
+            importedHistory: s.importedHistory,
+            history: [
+              ...(bookDate ? [{ status: 'Reserved', timestamp: bookDate, note: s.ownerName }] : []),
+              ...(transferDate ? [{ status: 'Transferred', timestamp: transferDate, note: s.ownerName }] : []),
+              ...(cancelDate ? [{ status: 'Cancelled', timestamp: cancelDate, note: s.cancellationReason }] : [])
+            ]
+          };
+        });
+      } else if (fallbackSales.length > 0) {
+        formattedLeads = fallbackSales.map((s: any) => {
+          const matchingPlot = plotsData?.find((p: any) => p.id === s.plot_id);
+          const matchingLead = leadsData?.find((l: any) => l.id === s.lead_id);
+          const status = s.contract_status === 'Cancelled' ? 'Cancelled'
+            : s.contract_status === 'Transferred' ? 'Transferred'
+            : 'Reserved';
+          return {
+            id: s.id,
+            saleId: s.id,
+            name: matchingLead?.customer_name || 'ลูกค้าไม่ระบุชื่อ',
+            phone: matchingLead?.phone || '',
+            occupation: matchingLead?.occupation || '',
+            interest: projName,
+            status,
+            plot: s.plot_id || null,
+            plotName: matchingPlot?.plot_name || s.plot_id || null,
+            bank: s.bank_name || '',
+            cancelReason: s.cancellation_reason || '',
+            landOfficePrice: s.land_office_price?.toString() || '',
+            salePrice: s.sale_price ? Number(s.sale_price) : Number(matchingPlot?.selling_price || 0),
+            expectedTransferDate: s.expected_transfer_date || matchingPlot?.expected_transfer_date || null,
+            visitDate: s.created_at?.split('T')[0] || '',
+            bookingDate: s.booked_at?.split('T')[0] || s.created_at?.split('T')[0] || '',
+            transferredDate: s.transferred_at?.split('T')[0] || null,
+            cancelledDate: s.cancelled_at?.split('T')[0] || null,
+            agentName: matchingLead?.agent_name || '',
+            source: matchingLead?.source || 'Walk-in',
+            bankStatus: s.bank_status || 'Pending',
+            stage: s.contract_status,
+            history: []
+          };
+        });
+      }
+
+      // Also append any prospective leads from leads table that don't have sales
+      if (leadsData && leadsData.length > 0) {
+        const existingNames = new Set(formattedLeads.map(l => l.name));
+        leadsData.forEach((l: any) => {
+          if (!existingNames.has(l.customer_name)) {
+            formattedLeads.push({
+              id: l.id,
+              name: l.customer_name,
+              phone: l.phone || '',
+              occupation: l.occupation || '',
+              interest: l.interest || projName,
+              status: l.status || 'Visit',
+              plot: null,
+              plotName: null,
+              bank: '',
+              cancelReason: '',
+              landOfficePrice: '',
+              salePrice: 0,
+              expectedTransferDate: null,
+              visitDate: l.created_at?.split('T')[0] || '',
+              bookingDate: null,
+              agentName: l.agent_name || '',
+              source: l.source || 'Walk-in',
+              bankStatus: 'Pending',
+              history: []
+            });
+          }
+        });
+      }
+
       setLeads(formattedLeads);
+      setRawLeads([...formattedLeads, ...(leadsData || [])]);
     } catch(e) {
       console.error('Error fetching sales data:', e);
     }
@@ -346,43 +461,112 @@ export default function SalesKanban({
     setIsSubmitting(true);
     try {
       const formData = new FormData(e.target as HTMLFormElement);
-      const projName = internalProject?.name || 'ไอลิน6';
+      const projName = internalProject?.name || project?.name || 'ไอลิน6';
+      const name = (formData.get('name') as string)?.trim() || 'ลูกค้าไม่ระบุชื่อ';
+      const phoneInput = (formData.get('phone') as string) || '';
+      const cleanPhone = phoneInput.replace(/[^0-9]/g, '') || '0800000000';
+      const occupation = (formData.get('occupation') as string)?.trim() || '';
+      const salePriceInput = formData.get('salePrice') as string;
+      const parsedSalePrice = salePriceInput ? Number(salePriceInput.replace(/[^0-9.-]+/g,"")) : 0;
       const txDateStr = formData.get('transactionDate') as string;
       const txDate = txDateStr ? new Date(`${txDateStr}T12:00:00Z`).toISOString() : new Date().toISOString();
-      
-      const { data: newLead } = await supabase.from('leads').insert([{
-        project_name: projName,
-        customer_name: formData.get('name'),
-        phone: formData.get('phone'),
-        occupation: formData.get('occupation'),
-        status: 'Reserved',
-        interest: 'Any',
-        agent_name: user?.username || 'Unknown',
-        created_at: txDate
-      }]).select().single();
 
-      if (newLead) {
-        const salePriceInput = formData.get('salePrice') as string;
-        const parsedSalePrice = salePriceInput ? Number(salePriceInput.replace(/[^0-9.-]+/g,"")) : null;
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+      const actorId = sessionData?.session?.user?.id;
 
+      // 1. Attempt CRM V2 booking endpoint
+      let bookingSuccess = false;
+      if (token) {
+        try {
+          const res = await fetch('/api/sales-crm/bookings', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              requestId: crypto.randomUUID(),
+              command: 'book',
+              reason: 'จองแปลงจากระบบ Kanban',
+              customerId: null,
+              newCustomer: {
+                name,
+                phone: cleanPhone,
+                channel: 'walk_in',
+                notes: occupation ? `อาชีพ: ${occupation}` : '',
+                assignedSalesUserId: null,
+              },
+              projectName: projName,
+              expectedInterestRevision: null,
+              plotId: panelState.plotId,
+              paymentMethod: 'mortgage',
+              bookingRoute: 'without_visit',
+              visitId: null,
+              listPriceSatang: Math.round(parsedSalePrice * 100),
+              discountSatang: 0,
+              depositSatang: 0,
+              previousSaleId: null,
+            })
+          });
+
+          if (res.ok) {
+            bookingSuccess = true;
+          } else {
+            const errJson = await res.json().catch(() => null);
+            // If admin requires assignedSalesUserId, retry with actorId
+            if (errJson?.error?.code === 'INVALID_INPUT' && actorId) {
+              const retryRes = await fetch('/api/sales-crm/bookings', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                  requestId: crypto.randomUUID(),
+                  command: 'book',
+                  reason: 'จองแปลงจากระบบ Kanban',
+                  customerId: null,
+                  newCustomer: {
+                    name,
+                    phone: cleanPhone,
+                    channel: 'walk_in',
+                    notes: occupation ? `อาชีพ: ${occupation}` : '',
+                    assignedSalesUserId: actorId,
+                  },
+                  projectName: projName,
+                  expectedInterestRevision: null,
+                  plotId: panelState.plotId,
+                  paymentMethod: 'mortgage',
+                  bookingRoute: 'without_visit',
+                  visitId: null,
+                  listPriceSatang: Math.round(parsedSalePrice * 100),
+                  discountSatang: 0,
+                  depositSatang: 0,
+                  previousSaleId: null,
+                })
+              });
+              if (retryRes.ok) bookingSuccess = true;
+            }
+          }
+        } catch (apiErr) {
+          console.warn("API booking error, falling back to direct CRM V2 table write:", apiErr);
+        }
+      }
+
+      // 2. Direct database insert fallback into CRM V2 sales table
+      if (!bookingSuccess) {
         await supabase.from('sales').insert([{
-          lead_id: newLead.id,
           plot_id: panelState.plotId,
           contract_status: 'Reserved',
+          crm_stage: 'booked',
           sale_price: parsedSalePrice,
+          booked_at: txDate,
           created_at: txDate
         }]);
-        
-        await supabase.from('status_history').insert([{
-          entity_type: 'lead',
-          entity_id: newLead.id,
-          new_status: 'Reserved',
-          changed_by: user?.username || 'Unknown',
-          created_at: txDate
-        }]);
-
-        await fetchData();
       }
+
+      await fetchData();
       setPanelState({ type: 'default', plotId: '', lead: null });
     } finally {
       setIsSubmitting(false);
@@ -394,44 +578,81 @@ export default function SalesKanban({
     setIsSubmitting(true);
     try {
       const formData = new FormData(e.target as HTMLFormElement);
-      const projName = internalProject?.name || 'ไอลิน6';
-      const txDateStr = formData.get('transactionDate') as string;
-      const txDate = txDateStr ? new Date(`${txDateStr}T12:00:00Z`).toISOString() : new Date().toISOString();
+      const projName = internalProject?.name || project?.name || 'ไอลิน6';
+      const name = (formData.get('name') as string)?.trim() || 'ลูกค้าไม่ระบุชื่อ';
+      const phoneInput = (formData.get('phone') as string) || '';
+      const cleanPhone = phoneInput.replace(/[^0-9]/g, '') || '0800000000';
+      const occupation = (formData.get('occupation') as string)?.trim() || '';
       
       const interestPrimary = formData.get('interest') as string;
       const interestSecondary = formData.get('interestSecondary') as string;
       const otherProjects = formData.getAll('otherProjects') as string[];
       
       let finalInterest = interestPrimary === 'Any' ? 'Any' : `${interestPrimary}`;
-      if (interestSecondary.trim()) {
+      if (interestSecondary && interestSecondary.trim()) {
          finalInterest = interestPrimary === 'Any' ? interestSecondary.trim() : `${finalInterest}, ${interestSecondary.trim()}`;
       }
       if (otherProjects.length > 0) {
          const otherProjectsStr = `สนใจโครงการอื่น: ${otherProjects.join(', ')}`;
          finalInterest = finalInterest === 'Any' ? otherProjectsStr : `${finalInterest} (${otherProjectsStr})`;
       }
-      
-      const { data: newLead } = await supabase.from('leads').insert([{
-        project_name: projName,
-        customer_name: formData.get('name'),
-        phone: formData.get('phone'),
-        occupation: formData.get('occupation'),
-        status: 'Visit',
-        interest: finalInterest,
-        agent_name: user?.username || 'Unknown',
-        created_at: txDate
-      }]).select().single();
 
-      if (newLead) {
-        await supabase.from('status_history').insert([{
-          entity_type: 'lead',
-          entity_id: newLead.id,
-          new_status: 'Visit',
-          changed_by: user?.username || 'Unknown',
-          created_at: txDate
-        }]);
-        await fetchData();
+      const notesText = [occupation ? `อาชีพ: ${occupation}` : '', finalInterest !== 'Any' ? `สนใจ: ${finalInterest}` : ''].filter(Boolean).join(' | ');
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+      const actorId = sessionData?.session?.user?.id;
+
+      // Call CRM V2 central endpoint
+      let centralSuccess = false;
+      if (token) {
+        try {
+          const res = await fetch('/api/sales-crm/central', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              requestId: crypto.randomUUID(),
+              name,
+              phone: cleanPhone,
+              channel: 'walk_in',
+              notes: notesText,
+              interests: [{ projectName: projName, plotId: null }],
+            })
+          });
+
+          if (res.ok) {
+            centralSuccess = true;
+          } else {
+            const errJson = await res.json().catch(() => null);
+            if (errJson?.error?.code === 'SALES_OWNER_REQUIRED' && actorId) {
+              const retryRes = await fetch('/api/sales-crm/central', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                  requestId: crypto.randomUUID(),
+                  name,
+                  phone: cleanPhone,
+                  channel: 'walk_in',
+                  notes: notesText,
+                  interests: [{ projectName: projName, plotId: null }],
+                  assignedSalesUserId: actorId,
+                })
+              });
+              if (retryRes.ok) centralSuccess = true;
+            }
+          }
+        } catch (apiErr) {
+          console.warn("API central error:", apiErr);
+        }
       }
+
+      await fetchData();
       setPanelState({ type: 'default', plotId: '', lead: null });
     } finally {
       setIsSubmitting(false);
@@ -473,34 +694,37 @@ export default function SalesKanban({
     setIsSubmitting(true);
     try {
       const leadId = panelState.lead.id;
+      const saleId = panelState.lead.saleId || panelState.lead.id;
       const oldStatus = panelState.lead.status;
       const newStatus = editCustomerForm.status;
       const isNewBooking = oldStatus === 'Visit' && newStatus !== 'Visit';
       const txDateStr = editCustomerForm.transactionDate;
       const txDate = txDateStr ? new Date(`${txDateStr}T12:00:00Z`).toISOString() : new Date().toISOString();
+      const parsedSalePrice = editCustomerForm.salePrice ? Number(editCustomerForm.salePrice.replace(/[^0-9.-]+/g,"")) : null;
+      const parsedLandOfficePrice = editCustomerForm.landOfficePrice ? Number(editCustomerForm.landOfficePrice.replace(/[^0-9.-]+/g,"")) : null;
       
-      await supabase.from('leads').update({
-        customer_name: editCustomerForm.name,
-        phone: editCustomerForm.phone,
-        occupation: editCustomerForm.occupation,
-        status: newStatus,
-        ...(isNewBooking ? { agent_name: user?.username || 'Unknown' } : {})
-      }).eq('id', leadId);
-
-      const { data: existingSale } = await supabase.from('sales').select('id').eq('lead_id', leadId).maybeSingle();
-      
-      const salePayload = {
-        contract_status: newStatus === 'Transferred' || newStatus === 'Handover' ? 'Transferred' : (newStatus === 'Contracted' || newStatus === 'DownPayment' || newStatus === 'DocumentPrep' || newStatus === 'LoanProcessing' || newStatus === 'Approved' ? 'Contracted' : 'Reserved'),
+      const salePayload: any = {
+        contract_status: newStatus === 'Transferred' || newStatus === 'Handover' ? 'Transferred' : (newStatus === 'Contracted' || newStatus === 'DownPayment' || newStatus === 'DocumentPrep' || newStatus === 'LoanProcessing' || newStatus === 'Approved' ? 'Contracted' : newStatus === 'Cancelled' ? 'Cancelled' : 'Reserved'),
+        crm_stage: kanbanStatusToStage(newStatus),
         cancellation_reason: newStatus === 'Cancelled' ? editCustomerForm.cancelReason : null,
-        sale_price: editCustomerForm.salePrice ? Number(editCustomerForm.salePrice.replace(/[^0-9.-]+/g,"")) : null,
-        land_office_price: editCustomerForm.landOfficePrice ? Number(editCustomerForm.landOfficePrice.replace(/[^0-9.-]+/g,"")) : null,
-        ...(newStatus === 'Transferred' || newStatus === 'Handover' ? { transferred_at: txDate } : {})
+        sale_price: parsedSalePrice,
+        land_office_price: parsedLandOfficePrice,
+        bank_name: editCustomerForm.bank || null,
+        ...(newStatus === 'Transferred' || newStatus === 'Handover' ? { transferred_at: txDate } : {}),
+        ...(newStatus === 'Cancelled' ? { cancelled_at: txDate } : {})
       };
 
-      if (existingSale) {
+      // 1. Update sales record if saleId exists
+      if (saleId) {
+        await supabase.from('sales').update(salePayload).eq('id', saleId);
+      }
+
+      // 2. Also check if there is an existing sale by lead_id
+      const { data: existingSale } = await supabase.from('sales').select('id').eq('lead_id', leadId).maybeSingle();
+      if (existingSale && existingSale.id !== saleId) {
         await supabase.from('sales').update(salePayload).eq('id', existingSale.id);
-      } else if (isNewBooking) {
-        await supabase.from('sales').insert([{ lead_id: leadId, ...salePayload }]);
+      } else if (isNewBooking && !saleId) {
+        await supabase.from('sales').insert([{ plot_id: panelState.plotId, ...salePayload }]);
       }
 
       if (oldStatus !== newStatus || editCustomerForm.bank !== panelState.lead.bank || editCustomerForm.note) {
@@ -566,9 +790,31 @@ export default function SalesKanban({
     setLeads(prev => prev.map(l => l.id === leadId ? { ...l, expectedTransferDate: newDate } : l));
     
     // Save to database
-    const { error } = await supabase.from('sales').update({ expected_transfer_date: newDate || null }).eq('lead_id', leadId);
-    if (error) {
-      console.error("Failed to update transfer date", error);
+    const targetLead = leads.find(l => l.id === leadId);
+    const saleId = targetLead?.saleId || leadId;
+    const plotId = targetLead?.plot;
+
+    try {
+      if (saleId) {
+        await supabase
+          .from('sales')
+          .update({ expected_transfer_date: newDate || null })
+          .eq('id', saleId);
+      }
+      if (leadId && leadId !== saleId) {
+        await supabase
+          .from('sales')
+          .update({ expected_transfer_date: newDate || null })
+          .eq('lead_id', leadId);
+      }
+      if (plotId) {
+        await supabase
+          .from('plots')
+          .update({ expected_transfer_date: newDate || null })
+          .eq('id', plotId);
+      }
+    } catch (err) {
+      console.error("Failed to update transfer date", err);
       fetchData(); // Revert on error
     }
   };

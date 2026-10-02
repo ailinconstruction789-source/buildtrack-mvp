@@ -5,14 +5,15 @@ import { CheckCircle2, Circle, Clock, FileText, Home, Save, Calendar, CheckSquar
 interface WaitingForTransferDetailsProps {
   plots: any[];
   carriedOverPlots?: any[];
+  unscheduledPlots?: any[];
   validRecords: any[];
   onViewDefects?: (plot: any) => void;
 }
 
-export default function WaitingForTransferDetails({ plots, carriedOverPlots = [], validRecords, onViewDefects }: WaitingForTransferDetailsProps) {
+export default function WaitingForTransferDetails({ plots, carriedOverPlots = [], unscheduledPlots = [], validRecords, onViewDefects }: WaitingForTransferDetailsProps) {
   // We need to display plots that are currently in "Waiting" status.
   const waitingPlots = plots; // The parent component should pass ONLY the waiting plots.
-  const allTargetPlots = [...plots, ...carriedOverPlots];
+  const allTargetPlots = [...plots, ...carriedOverPlots, ...unscheduledPlots];
 
   const [savingId, setSavingId] = useState<string | null>(null);
   const [tasksProgress, setTasksProgress] = useState<Record<string, Record<string, number>>>({});
@@ -40,7 +41,7 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = []
 
   useEffect(() => {
     const fetchProgress = async () => {
-      if (!waitingPlots || waitingPlots.length === 0) return;
+      if (!allTargetPlots || allTargetPlots.length === 0) return;
       
       try {
         // fetch all task templates
@@ -165,7 +166,7 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = []
     };
     
     fetchProgress();
-  }, [waitingPlots, carriedOverPlots]);
+  }, [plots, carriedOverPlots]);
 
   const openModalForPlot = (plot: any) => {
     const freshPlotData = plotsDataMap[plot.id] || plot;
@@ -213,7 +214,7 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = []
     }
   };
 
-  if (!waitingPlots || waitingPlots.length === 0) {
+  if (!allTargetPlots || allTargetPlots.length === 0) {
     return null;
   }
 
@@ -237,18 +238,34 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = []
     return (
       <div className="grid grid-cols-1 gap-6">
         {[...plotList].sort((a, b) => {
-          const recordsA = validRecords.filter(r => r.plot?.id === a.id || r.plot_id === a.id).sort((x: any, y: any) => (y.createdDate || '').localeCompare(x.createdDate || ''));
-          const recordsB = validRecords.filter(r => r.plot?.id === b.id || r.plot_id === b.id).sort((x: any, y: any) => (y.createdDate || '').localeCompare(x.createdDate || ''));
-          const expA = recordsA[0]?.expectedTransfer || '9999-99-99';
-          const expB = recordsB[0]?.expectedTransfer || '9999-99-99';
+          const recordsA = validRecords.filter(r => r.plot?.id === a.id || r.plot_id === a.id || (r.plot_name === a.plot_name && r.project_name === a.project_name)).sort((x: any, y: any) => (y.createdDate || '').localeCompare(x.createdDate || ''));
+          const recordsB = validRecords.filter(r => r.plot?.id === b.id || r.plot_id === b.id || (r.plot_name === b.plot_name && r.project_name === b.project_name)).sort((x: any, y: any) => (y.createdDate || '').localeCompare(x.createdDate || ''));
+          const expA = recordsA[0]?.expectedTransfer || a.activeSale?.expectedTransfer || a.activeSale?.expectedTransferDate || a.activeSale?.expected_transfer_date || a.expected_transfer_date || '9999-99-99';
+          const expB = recordsB[0]?.expectedTransfer || b.activeSale?.expectedTransfer || b.activeSale?.expectedTransferDate || b.activeSale?.expected_transfer_date || b.expected_transfer_date || '9999-99-99';
           return expA.localeCompare(expB);
         }).map((plot) => {
           // Find records for this plot
-          const records = validRecords.filter(r => r.plot?.id === plot.id || r.plot_id === plot.id).sort((a: any, b: any) => (b.createdDate || '').localeCompare(a.createdDate || ''));
-          const currentRecord = records[0];
+          const records = validRecords.filter(r => r.plot?.id === plot.id || r.plot_id === plot.id || (r.plot_name === plot.plot_name && r.project_name === plot.project_name)).sort((a: any, b: any) => (b.createdDate || '').localeCompare(a.createdDate || ''));
+          const currentRecord = records[0] || plot.activeSale;
           
-          const expectedTransfer = currentRecord?.expectedTransfer || 'ยังไม่ระบุ';
-          const actualTransfer = currentRecord?.transferDate || 'ยังไม่โอน';
+          const rawExpected = currentRecord?.expectedTransfer || currentRecord?.expectedTransferDate || currentRecord?.expected_transfer_date || plot.activeSale?.expectedTransfer || plot.activeSale?.expectedTransferDate || plot.activeSale?.expected_transfer_date || plot.expected_transfer_date;
+          
+          const formatThaiDate = (dateStr: string | null | undefined) => {
+            if (!dateStr || dateStr === 'ยังไม่ระบุ') return 'ยังไม่ระบุ';
+            try {
+              const d = new Date(dateStr);
+              if (isNaN(d.getTime())) return dateStr;
+              const monthsTh = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+              return `${d.getDate()} ${monthsTh[d.getMonth()]} ${d.getFullYear() + 543}`;
+            } catch {
+              return dateStr;
+            }
+          };
+
+          const expectedTransfer = rawExpected ? formatThaiDate(rawExpected) : 'ยังไม่ระบุ';
+          const rawActual = currentRecord?.transferDate || currentRecord?.transferredAt || (plot.sale_status === 'Transferred' ? 'โอนแล้ว' : 'ยังไม่โอน');
+          const actualTransfer = rawActual && rawActual !== 'ยังไม่โอน' && rawActual !== 'โอนแล้ว' ? formatThaiDate(rawActual) : rawActual;
+          const customerName = currentRecord?.customer_name || currentRecord?.customerName || plot.activeSale?.customerName;
           const progress = actualProgress[plot.id] ?? (plot.progress || 0);
 
           // Plot Fresh Inspection & Promotions Data
@@ -264,7 +281,7 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = []
           const defectFixPercent = totalDefectsCount > 0 ? Math.round((completedDefectsCount / totalDefectsCount) * 100) : 0;
 
           // Freebie / Promotion Stats for this plot
-          const plotPromotions = promotionsMap[plot.id] || [];
+          const plotPromotions = promotionsMap[plot.id] || promotionsMap[plot.plot_name] || [];
           const totalPromos = plotPromotions.length;
           const installedPromos = plotPromotions.filter(p => p.status === 'installed').length;
           const deliveredPromos = plotPromotions.filter(p => p.status === 'delivered').length;
@@ -289,10 +306,15 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = []
                     <div className="text-sm font-bold bg-amber-500/90 px-2 py-1 rounded inline-block mb-2 text-white">รอโอน (สร้างเสร็จ)</div>
                   )}
                   <h3 className="font-black text-xl">{plot.house_types?.type_name || plot.type || 'ไม่ระบุแบบบ้าน'}</h3>
-                  <div className="flex items-center gap-1.5 text-slate-200 text-sm mt-1 mb-3">
+                  <div className="flex items-center gap-1.5 text-slate-200 text-sm mt-1 mb-1">
                     <Home size={14} />
                     <span>โครงการ {plot.project_name} - แปลง {plot.plot_name || plot.id}</span>
                   </div>
+                  {customerName && (
+                    <div className="text-xs font-bold text-amber-300 mb-2 truncate">
+                      👤 ลูกค้า: {customerName}
+                    </div>
+                  )}
                   <div className="flex justify-between items-center mt-2 text-sm">
                     <span>ความคืบหน้าก่อสร้าง:</span>
                     <span className="font-bold">{progress}%</span>
@@ -558,33 +580,52 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = []
     );
   };
 
+  const totalWaitingCount = waitingPlots.length + carriedOverPlots.length + unscheduledPlots.length;
+
   return (
     <div className="mt-8 mb-6">
       <div className="flex items-center gap-3 mb-8 border-b border-gray-100 pb-4">
         <Home className="text-amber-600 w-8 h-8 p-1.5 bg-amber-100 rounded-lg" />
         <div>
           <h2 className="text-2xl font-bold text-gray-800">รายละเอียดบ้านที่รอโอน (Waiting for Transfer)</h2>
-          <p className="text-sm text-gray-500">เป้าหมายทั้งหมด {waitingPlots.length + carriedOverPlots.length} แปลง</p>
+          <p className="text-sm text-gray-500">เป้าหมายทั้งหมด {totalWaitingCount} แปลง</p>
         </div>
       </div>
 
-      {waitingPlots && waitingPlots.length > 0 && (
-        <div className="mb-10">
-          <h3 className="text-lg font-bold text-blue-600 mb-4 flex items-center gap-2">
-            <span className="bg-blue-100 text-blue-600 p-1.5 rounded-lg"><Calendar size={16} /></span>
-            คาดโอนตามเป้าหมายเดือนนี้ ({waitingPlots.length} แปลง)
-          </h3>
-          {renderPlotList(waitingPlots)}
-        </div>
-      )}
+      {/* 1. คาดโอนตามเป้าหมายเดือนนี้ */}
+      <div className="mb-10">
+        <h3 className="text-lg font-bold text-blue-600 mb-4 flex items-center gap-2">
+          <span className="bg-blue-100 text-blue-600 p-1.5 rounded-lg"><Calendar size={16} /></span>
+          คาดโอนตามเป้าหมายเดือนนี้ ({waitingPlots.length} แปลง)
+        </h3>
+        {waitingPlots && waitingPlots.length > 0 ? (
+          renderPlotList(waitingPlots)
+        ) : (
+          <div className="bg-blue-50/50 border border-dashed border-blue-200 rounded-2xl p-6 text-center text-slate-500 text-sm">
+            ไม่มีบ้านที่กำหนดวันคาดว่าจะโอนในเดือนนี้ (สามารถระบุ &quot;วันที่คาดว่าจะโอน&quot; ได้ที่หน้าสถานะการขาย CRM)
+          </div>
+        )}
+      </div>
 
+      {/* 2. คาดโอนตกค้างจากเดือนก่อน */}
       {carriedOverPlots && carriedOverPlots.length > 0 && (
-        <div>
+        <div className="mb-10">
           <h3 className="text-lg font-bold text-rose-600 mb-4 flex items-center gap-2">
             <span className="bg-rose-100 text-rose-600 p-1.5 rounded-lg"><Clock size={16} /></span>
             คาดโอนตกค้างจากเดือนก่อน ({carriedOverPlots.length} แปลง)
           </h3>
           {renderPlotList(carriedOverPlots)}
+        </div>
+      )}
+
+      {/* 3. รอโอน - นัดโอนเดือนอื่น หรือยังไม่ระบุวันโอน */}
+      {unscheduledPlots && unscheduledPlots.length > 0 && (
+        <div className="mb-10">
+          <h3 className="text-lg font-bold text-amber-700 mb-4 flex items-center gap-2">
+            <span className="bg-amber-100 text-amber-700 p-1.5 rounded-lg"><Clock size={16} /></span>
+            รอโอน - ยังไม่ระบุวันโอน / นัดหมายเดือนอื่น ({unscheduledPlots.length} แปลง)
+          </h3>
+          {renderPlotList(unscheduledPlots)}
         </div>
       )}
 
