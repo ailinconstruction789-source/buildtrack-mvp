@@ -62,8 +62,8 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
     isWorkerPresent = true, setIsWorkerPresent
   } = props;
 
-  // 📸 ขยายขีดจำกัดให้อัปโหลดได้สูงสุด 20 รูปสำหรับ QC
-  const maxImages = (isQC || currentUserRole?.toLowerCase() === 'qc') ? 20 : 10;
+  // 📸 ขยายขีดจำกัดให้อัปโหลดได้สูงสุด 20 รูปสำหรับทุกตำแหน่งเท่ากัน
+  const maxImages = 20;
 
   useEffect(() => {
     if (view === 'task-progress' && selectedTask && selectedPlot) {
@@ -206,13 +206,25 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                          </div>
                                        </div>
                                        <p className={`text-[#1d1d1f] ${isMobileLayout ? 'text-xs mb-2' : 'text-sm sm:text-base mb-4'} font-medium leading-relaxed`}>{update.text_content}</p>
-                                       {update.image_url && (
-                                            <div className={`grid gap-2 ${update.image_url.split(',').filter((u: string) => u.trim() !== '').length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                                               {update.image_url.split(',').filter((u: string) => u.trim() !== '').map((url: any, i: any) => (
+                                       {update.image_url && (() => {
+                                          const imgList = update.image_url.split(',').filter((u: string) => u.trim() !== '');
+                                          if (imgList.length === 0) return null;
+                                          return (
+                                            <div className="mt-2">
+                                              {imgList.length > 1 && (
+                                                <div className="text-[10px] sm:text-xs font-bold text-slate-500 mb-1.5 flex items-center gap-1">
+                                                  <Camera size={13} className="text-slate-400" />
+                                                  <span>รูปภาพผลงาน ({imgList.length} รูป)</span>
+                                                </div>
+                                              )}
+                                              <div className={`grid gap-2 ${imgList.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                                                {imgList.map((url: any, i: any) => (
                                                   <img key={i} src={url.trim()} onClick={() => setFullImageUrl(url.trim())} className={`w-full aspect-video ${isMobileLayout ? 'h-24' : 'h-32 sm:h-48'} object-cover rounded-xl sm:rounded-2xl cursor-zoom-in border border-slate-100 shadow-sm hover:opacity-90 transition-opacity`} alt="Task Update" /> 
-                                               ))}
-                                           </div>
-                                       )}
+                                                ))}
+                                              </div>
+                                            </div>
+                                          );
+                                        })()}
                                     </div>
                                 </div>
                                 );

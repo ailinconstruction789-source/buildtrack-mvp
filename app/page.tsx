@@ -5343,13 +5343,25 @@ export default function ConstructionApp() {
                     </div>
 
                     {/* รูปภาพ Defect ถ้ามี */}
-                    {defect.image_url && (
-                      <div className={`grid gap-2 mb-3 ${defect.image_url.split(',').filter((u: string) => u.trim() !== '').length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                        {defect.image_url.split(',').filter((u: string) => u.trim() !== '').map((url: any, i: any) => (
-                          <img key={i} src={url.trim()} onClick={() => setFullImageUrl(url.trim())} className="w-full aspect-video object-cover rounded-xl cursor-zoom-in border border-slate-100 shadow-sm hover:opacity-90" alt="Defect" />
-                        ))}
-                      </div>
-                    )}
+                    {defect.image_url && (() => {
+                      const dImages = defect.image_url.split(',').filter((u: string) => u.trim() !== '');
+                      if (dImages.length === 0) return null;
+                      return (
+                        <div className="mb-3">
+                          {dImages.length > 1 && (
+                            <div className="text-[10px] sm:text-xs font-bold text-slate-500 mb-1.5 flex items-center gap-1">
+                              <Camera size={13} className="text-slate-400" />
+                              <span>รูปภาพประกอบ ({dImages.length} รูป)</span>
+                            </div>
+                          )}
+                          <div className={`grid gap-2 ${dImages.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                            {dImages.map((url: any, i: any) => (
+                              <img key={i} src={url.trim()} onClick={() => setFullImageUrl(url.trim())} className="w-full aspect-video object-cover rounded-xl cursor-zoom-in border border-slate-100 shadow-sm hover:opacity-90" alt="Defect" />
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     <div className="flex justify-between items-center text-[10px] sm:text-xs text-slate-500 mt-2 border-t border-slate-100 pt-2.5">
                       <span className="flex items-center gap-1 font-bold text-slate-400"><HardHat size={12} /> ผู้แจ้ง: {defect.reported_by}</span>
@@ -5374,9 +5386,9 @@ export default function ConstructionApp() {
                 {defectFiles.length > 0 && (
                   <div className="flex flex-col mb-2">
                     <div className="flex items-center justify-between text-[10px] sm:text-xs text-slate-500 font-bold mb-1 px-1">
-                      <span>รูปที่แนบ ({defectFiles.length}/{(isQC || currentUserRole === 'QC' || currentUserRole?.toLowerCase() === 'qc') ? 20 : 10} รูป)</span>
-                      {defectFiles.length >= ((isQC || currentUserRole === 'QC' || currentUserRole?.toLowerCase() === 'qc') ? 20 : 10) && (
-                        <span className="text-amber-600 font-semibold">แนบครบสูงสุด {(isQC || currentUserRole === 'QC' || currentUserRole?.toLowerCase() === 'qc') ? 20 : 10} รูปแล้ว</span>
+                      <span>รูปที่แนบ ({defectFiles.length}/20 รูป)</span>
+                      {defectFiles.length >= 20 && (
+                        <span className="text-amber-600 font-semibold">แนบครบสูงสุด 20 รูปแล้ว</span>
                       )}
                     </div>
                     <div className="flex gap-2 sm:gap-3 overflow-x-auto pb-1">
@@ -5392,7 +5404,7 @@ export default function ConstructionApp() {
                 <div className="flex items-center gap-2">
                   <label className="text-slate-400 hover:text-rose-600 p-2.5 sm:p-3 rounded-xl bg-slate-100 cursor-pointer shadow-sm active:scale-90 transition-transform">
                     <Camera size={isMobileLayout ? 20 : 22} />
-                    <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { const files = Array.from(e.target.files || []).map(f => ({ file: f, previewUrl: URL.createObjectURL(f) })); setDefectFiles([...defectFiles, ...files].slice(0, (isQC || currentUserRole === 'QC' || currentUserRole?.toLowerCase() === 'qc') ? 20 : 10)); }} />
+                    <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { const files = Array.from(e.target.files || []).map(f => ({ file: f, previewUrl: URL.createObjectURL(f) })); setDefectFiles([...defectFiles, ...files].slice(0, 20)); }} />
                   </label>
                   <input
                     type="text" value={newDefectText} onChange={(e) => setNewDefectText(e.target.value)}

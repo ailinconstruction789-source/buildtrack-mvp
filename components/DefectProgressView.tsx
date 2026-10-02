@@ -58,8 +58,8 @@ const DefectProgressView = function DefectProgressView(props: DefectProgressView
     isPendingQC, isProcurement, isOwner, handleSendPost, handleAdminUndoLatest, handleAdminResetToZero
   } = props;
 
-  // 📸 ขยายขีดจำกัดให้อัปโหลดได้สูงสุด 20 รูปสำหรับ QC
-  const maxImages = (isQC || currentUserRole?.toLowerCase() === 'qc') ? 20 : 10;
+  // 📸 ขยายขีดจำกัดให้อัปโหลดได้สูงสุด 20 รูปสำหรับทุกตำแหน่งเท่ากัน
+  const maxImages = 20;
 
   useEffect(() => {
     if (view === 'defect-progress' && selectedDefect && selectedPlot) {
@@ -188,13 +188,25 @@ const DefectProgressView = function DefectProgressView(props: DefectProgressView
                                            )}
                                         </div>
                                         <p className={`text-[#1d1d1f] ${isMobileLayout ? 'text-xs mb-2' : 'text-sm sm:text-base mb-4'} font-medium leading-relaxed`}>{update.note}</p>
-                                        {update.image_urls && (
-                                             <div className={`grid gap-2 ${update.image_urls.split(',').filter((u: string) => u.trim() !== '').length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                                                {update.image_urls.split(',').filter((u: string) => u.trim() !== '').map((url: any, i: any) => (
-                                                   <img key={i} src={url.trim()} onClick={() => setFullImageUrl(url.trim())} className={`w-full aspect-video ${isMobileLayout ? 'h-24' : 'h-32 sm:h-48'} object-cover rounded-xl sm:rounded-2xl cursor-zoom-in border border-slate-100 shadow-sm hover:opacity-90 transition-opacity`} alt="Task Update" /> 
+                                        {update.image_urls && (() => {
+                                          const imgList = update.image_urls.split(',').filter((u: string) => u.trim() !== '');
+                                          if (imgList.length === 0) return null;
+                                          return (
+                                            <div className="mt-2">
+                                              {imgList.length > 1 && (
+                                                <div className="text-[10px] sm:text-xs font-bold text-slate-500 mb-1.5 flex items-center gap-1">
+                                                  <Camera size={13} className="text-slate-400" />
+                                                  <span>รูปภาพการซ่อม ({imgList.length} รูป)</span>
+                                                </div>
+                                              )}
+                                              <div className={`grid gap-2 ${imgList.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                                                {imgList.map((url: any, i: any) => (
+                                                  <img key={i} src={url.trim()} onClick={() => setFullImageUrl(url.trim())} className={`w-full aspect-video ${isMobileLayout ? 'h-24' : 'h-32 sm:h-48'} object-cover rounded-xl sm:rounded-2xl cursor-zoom-in border border-slate-100 shadow-sm hover:opacity-90 transition-opacity`} alt="Defect Update" /> 
                                                 ))}
-                                             </div>
-                                        )}
+                                              </div>
+                                            </div>
+                                          );
+                                        })()}
                                     </div>
                                 </div>
                                 );

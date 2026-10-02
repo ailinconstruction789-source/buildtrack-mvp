@@ -1,27 +1,19 @@
 import { describe, it, expect } from 'vitest';
 
-describe('QC Image Upload Limit', () => {
-  it('should allow up to 20 images for QC role in task and defect progress views', () => {
-    const getTaskMaxImages = (isQC: boolean, currentUserRole?: string) => {
-      return (isQC || currentUserRole?.toLowerCase() === 'qc') ? 20 : 10;
-    };
+describe('Image Upload Limit and Display (20 Images for All Roles)', () => {
+  it('should allow up to 20 images for all roles in task and defect progress views', () => {
+    const maxImages = 20;
 
-    expect(getTaskMaxImages(true)).toBe(20);
-    expect(getTaskMaxImages(false, 'qc')).toBe(20);
-    expect(getTaskMaxImages(false, 'QC')).toBe(20);
-    expect(getTaskMaxImages(false, 'site_engineer')).toBe(10);
-    expect(getTaskMaxImages(false, 'foreman')).toBe(10);
-    expect(getTaskMaxImages(false, undefined)).toBe(10);
+    expect(maxImages).toBe(20);
   });
 
-  it('should slice selected files up to maxImages (20 for QC)', () => {
+  it('should slice selected files up to 20 images for all roles (Foreman, SE, QC, Admin)', () => {
     const mockFiles = Array.from({ length: 25 }, (_, i) => ({
       file: new File([], `photo_${i + 1}.jpg`),
       previewUrl: `blob:http://localhost/photo_${i + 1}`,
     }));
 
-    const isQC = true;
-    const maxImages = isQC ? 20 : 10;
+    const maxImages = 20;
     const selectedFiles: any[] = [];
     const updatedFiles = [...selectedFiles, ...mockFiles].slice(0, maxImages);
 
@@ -29,17 +21,12 @@ describe('QC Image Upload Limit', () => {
     expect(updatedFiles[19].previewUrl).toBe('blob:http://localhost/photo_20');
   });
 
-  it('should slice selected files up to 10 for non-QC roles', () => {
-    const mockFiles = Array.from({ length: 25 }, (_, i) => ({
-      file: new File([], `photo_${i + 1}.jpg`),
-      previewUrl: `blob:http://localhost/photo_${i + 1}`,
-    }));
+  it('should render all 20 images from image_url comma-separated string without truncation', () => {
+    const mockUrls = Array.from({ length: 20 }, (_, i) => `https://example.com/img_${i + 1}.jpg`).join(',');
+    const parsedImages = mockUrls.split(',').filter((u: string) => u.trim() !== '');
 
-    const isQC = false;
-    const maxImages = isQC ? 20 : 10;
-    const selectedFiles: any[] = [];
-    const updatedFiles = [...selectedFiles, ...mockFiles].slice(0, maxImages);
-
-    expect(updatedFiles.length).toBe(10);
+    expect(parsedImages.length).toBe(20);
+    expect(parsedImages[0]).toBe('https://example.com/img_1.jpg');
+    expect(parsedImages[19]).toBe('https://example.com/img_20.jpg');
   });
 });
