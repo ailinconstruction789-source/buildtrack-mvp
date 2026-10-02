@@ -43,8 +43,9 @@ import {
 // 🌟 ฟังก์ชันบีบอัดรูปภาพ Native — อยู่นอก component เพื่อไม่ให้ถูกสร้างใหม่ทุก render 🌟
 const compressImageNative = (file: File): Promise<File> => {
   return new Promise((resolve) => {
-    // ถ้าไม่ใช่รูปภาพที่เบราว์เซอร์รองรับ (เช่น HEIC) ให้ข้ามการบีบอัด ป้องกันแอปค้าง
-    if (!file.type.match(/^image\/(jpeg|png|webp|gif)$/i)) {
+    // เช็คว่าเป็นไฟล์รูปภาพ หรือรูปจาก iPhone (.heic, .heif)
+    const isImage = file.type.startsWith('image/') || /\.(jpe?g|png|webp|gif|heic|heif)$/i.test(file.name);
+    if (!isImage) {
       return resolve(file);
     }
     
@@ -54,7 +55,7 @@ const compressImageNative = (file: File): Promise<File> => {
     
     img.onerror = () => {
       URL.revokeObjectURL(objectUrl);
-      resolve(file); // ถ้ารูปโหลดไม่ขึ้น ให้ใช้ไฟล์ต้นฉบับเลย
+      resolve(file); // ถ้ารูปโหลดไม่ขึ้น (เช่น เบราว์เซอร์ไม่รองรับ HEIC) ให้ใช้ไฟล์ต้นฉบับเลย
     };
     
     img.onload = () => {
@@ -77,15 +78,21 @@ const compressImageNative = (file: File): Promise<File> => {
       canvas.height = height;
       ctx.drawImage(img, 0, 0, width, height);
 
+      // แปลงชื่อไฟล์ให้เป็นนามสกุล .jpg เพื่อให้เปิดดูได้ทุกอุปกรณ์และระบบ
+      const outputName = file.name.replace(/\.(heic|heif|png|webp)$/i, '.jpg');
+
       canvas.toBlob((blob) => {
+        // เคลียร์หน่วยความจำ canvas ทันที
+        canvas.width = 0;
+        canvas.height = 0;
         if (blob) {
           try {
-            resolve(new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() }));
+            resolve(new File([blob], outputName, { type: 'image/jpeg', lastModified: Date.now() }));
           } catch(e) {
             // สำรองสำหรับเบราว์เซอร์เก่าหรือมือถือบางรุ่น
             const b: any = blob;
             b.lastModifiedDate = new Date();
-            b.name = file.name;
+            b.name = outputName;
             resolve(b as File);
           }
         } else {
@@ -94,6 +101,50 @@ const compressImageNative = (file: File): Promise<File> => {
       }, 'image/jpeg', 0.7);
     };
   });
+};
+
+// 🌟 คิวการอัปโหลดรูปภาพทีละรูป (Sequential Upload Queue) ป้องกัน RAM ล้นและเน็ตมือถือหลุด 🌟
+const uploadImagesInQueue = async (
+  files: any[],
+  plotId: any,
+  prefix: string,
+  onProgress?: (current: number, total: number) => void
+): Promise<string[]> => {
+  const urls: string[] = [];
+  const total = files.length;
+  for (let i = 0; i < total; i++) {
+    const f = files[i];
+    if (onProgress) {
+      onProgress(i + 1, total);
+    }
+    const rawFile = f.file || f;
+    const comp = await compressImageNative(rawFile);
+    const safeId = String(plotId || 'plot_images').replace(/[^a-zA-Z0-9-]/g, '') || 'plot_images';
+    const ext = comp.name.toLowerCase().endsWith('.png') ? 'png' : 'jpg';
+    const path = `${safeId}/${prefix}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}.${ext}`;
+    
+    let uploadSuccess = false;
+    let lastErr: any = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const { error } = await supabase.storage.from('task_images').upload(path, comp);
+        if (!error) {
+          uploadSuccess = true;
+          break;
+        }
+        lastErr = error;
+      } catch (err) {
+        lastErr = err;
+      }
+      if (attempt === 0) await new Promise(r => setTimeout(r, 600));
+    }
+    if (!uploadSuccess) {
+      throw new Error(`อัปโหลดรูปที่ ${i + 1}/${total} ไม่สำเร็จ: ${lastErr?.message || 'สัญญาณเน็ตไม่เสถียร'}`);
+    }
+    const publicUrl = supabase.storage.from('task_images').getPublicUrl(path).data.publicUrl;
+    urls.push(publicUrl);
+  }
+  return urls;
 };
 
 export default function ConstructionApp() {
@@ -767,17 +818,23 @@ export default function ConstructionApp() {
     checkMobile(); window.addEventListener('resize', checkMobile); return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // 🌟 ระบบจำการล็อกอิน และตรวจจับเวลาหมดอายุ (ตั้งไว้ 60 นาที)
+  // 🌟 ระบบจำการล็อกอิน และตรวจจับเวลาหมดอายุ พร้อม Token Auto-Refresh ป้องกันการหลุดการเชื่อมต่อ 🌟
   useEffect(() => {
-    const TIMEOUT_MS = 60 * 60 * 1000;
+    // กำหนดเวลา Timeout สำหรับกรณีไม่ได้ใช้งานเลยเป็นเวลา 24 ชั่วโมง (เพื่อความสะดวกของช่างหน้างาน)
+    const TIMEOUT_MS = 24 * 60 * 60 * 1000;
     
     // 🛡️ เช็ค Session จาก Supabase Auth โดยตรง
     const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      const lastActive = localStorage.getItem('buildtrack_last_active');
-      
-      if (session && lastActive) {
-        if (Date.now() - parseInt(lastActive) < TIMEOUT_MS) {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error || !session) {
+          setLoggedInUser(null);
+          localStorage.removeItem('buildtrack_last_active');
+          return;
+        }
+
+        const lastActive = localStorage.getItem('buildtrack_last_active');
+        if (!lastActive || (Date.now() - parseInt(lastActive) < TIMEOUT_MS)) {
           setLoggedInUser(session.user.user_metadata);
           localStorage.setItem('buildtrack_last_active', Date.now().toString());
         } else {
@@ -785,24 +842,36 @@ export default function ConstructionApp() {
           setLoggedInUser(null);
           localStorage.removeItem('buildtrack_last_active');
         }
+      } catch (err) {
+        console.warn('Session check warning:', err);
       }
     };
     checkSession();
 
-    const updateActivity = () => {
-      if (localStorage.getItem('buildtrack_last_active')) {
-        // 🌟 Throttle: อัปเดตทุก 30 วินาทีเท่านั้น ป้องกัน write ถี่เกินไปบน touchscreen / keyboard
-        const last = parseInt(localStorage.getItem('buildtrack_last_active') || '0');
-        if (Date.now() - last > 30000) {
+    // 📡 ดักฟังการต่ออายุ Token อัตโนมัติ (TOKEN_REFRESHED) และการล็อกเอาต์ ป้องกัน 401 Unauthorized
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_OUT') {
+        setLoggedInUser(null);
+        localStorage.removeItem('buildtrack_last_active');
+      } else if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
+        if (session?.user?.user_metadata) {
+          setLoggedInUser(session.user.user_metadata);
           localStorage.setItem('buildtrack_last_active', Date.now().toString());
         }
       }
+    });
+
+    const updateActivity = () => {
+      const last = parseInt(localStorage.getItem('buildtrack_last_active') || '0');
+      if (Date.now() - last > 30000) {
+        localStorage.setItem('buildtrack_last_active', Date.now().toString());
+      }
     };
 
-    window.addEventListener('mousemove', updateActivity);
-    window.addEventListener('keydown', updateActivity);
-    window.addEventListener('click', updateActivity);
-    window.addEventListener('touchstart', updateActivity);
+    window.addEventListener('mousemove', updateActivity, { passive: true });
+    window.addEventListener('keydown', updateActivity, { passive: true });
+    window.addEventListener('click', updateActivity, { passive: true });
+    window.addEventListener('touchstart', updateActivity, { passive: true });
 
     const interval = setInterval(async () => {
       const lastAct = localStorage.getItem('buildtrack_last_active');
@@ -810,11 +879,12 @@ export default function ConstructionApp() {
         await supabase.auth.signOut();
         setLoggedInUser(null);
         localStorage.removeItem('buildtrack_last_active');
-        showAlert('เซสชันหมดอายุ', 'เนื่องจากไม่ได้ใช้งานเกิน 60 นาที กรุณาล็อกอินใหม่ครับ 🔒');
+        showAlert('เซสชันหมดอายุ', 'เนื่องจากไม่ได้ใช้งานเกิน 24 ชั่วโมง กรุณาล็อกอินใหม่ครับ 🔒');
       }
     }, 60000);
 
     return () => {
+      authListener?.subscription?.unsubscribe();
       window.removeEventListener('mousemove', updateActivity);
       window.removeEventListener('keydown', updateActivity);
       window.removeEventListener('click', updateActivity);
@@ -1993,22 +2063,13 @@ export default function ConstructionApp() {
     try {
       let imageUrls: any[] = [];
       if (defectFiles.length > 0) {
-        imageUrls = await Promise.all(defectFiles.map(async (f) => {
-          // 🌟 ปรับตรงนี้: เช็คก่อนว่ามีฟังก์ชันไหม ถ้าไม่มีให้ใช้ไฟล์ต้นฉบับเลย
-          let comp;
-          if (typeof compressImageNative === 'function') {
-            comp = await compressImageNative(f.file);
-          } else {
-            console.warn("ไม่พบฟังก์ชันบีบอัดรูป ใช้ไฟล์ต้นฉบับ");
-            comp = f.file;
-          }
-
-          const safeId = String(defectModal.plotId).replace(/[^a-zA-Z0-9-]/g, '') || 'plot_images';
-          const path = `${safeId}/defect-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-          const { error } = await supabase.storage.from('task_images').upload(path, comp);
-          if (error) throw new Error('อัปโหลดรูปไม่สำเร็จ กรุณาลองใหม่');
-          return supabase.storage.from('task_images').getPublicUrl(path).data.publicUrl;
-        }));
+        setGlobalUploadState({ isUploading: true, isSuccess: false, message: `กำลังบีบอัดและอัปโหลดรูปภาพ Defect (1/${defectFiles.length})... ห้ามปิดหน้าต่าง` });
+        imageUrls = await uploadImagesInQueue(
+          defectFiles,
+          defectModal.plotId || 'defect',
+          'defect',
+          (cur, total) => setGlobalUploadState({ isUploading: true, isSuccess: false, message: `กำลังบีบอัดและอัปโหลดรูปภาพ Defect (${cur}/${total})... ห้ามปิดหน้าต่าง` })
+        );
       }
       const { error } = await supabase.from('defects').insert([{ plot_id: defectModal.plotId, task_id: defectModal.task?.id, description: newDefectText.trim(), reported_by: loggedInUser?.username || currentUserRole, status: 'pending', image_url: imageUrls.join(',') }]);
       if (error) throw error;
@@ -2025,9 +2086,17 @@ export default function ConstructionApp() {
         }]);
       }
 
+      defectFiles.forEach(f => { if (f?.previewUrl) URL.revokeObjectURL(f.previewUrl); });
       setNewDefectText(''); setDefectFiles([]);
-      const { data } = await supabase.from('defects').select('*'); setDefects(data || []);
-    } catch (e: any) { showAlert('Error', (e as Error).message); } setIsSubmittingDefect(false);
+      const { data } = await supabase.from('defects').select('*').order('created_at', { ascending: false }).limit(500); setDefects(data || []);
+      if (imageUrls.length > 0) {
+        setGlobalUploadState({ isUploading: false, isSuccess: true, message: 'แจ้งซ่อมพร้อมรูปภาพเรียบร้อย!' });
+        setTimeout(() => setGlobalUploadState({ isUploading: false, isSuccess: false, message: '' }), 1500);
+      }
+    } catch (e: any) { 
+      if (defectFiles.length > 0) setGlobalUploadState({ isUploading: false, isSuccess: false, message: '' });
+      showAlert('Error', (e as Error).message); 
+    } setIsSubmittingDefect(false);
   };
   const handleUploadOverviewImage = async (file: File) => {
     if (!selectedPlot) return;
@@ -2054,20 +2123,16 @@ export default function ConstructionApp() {
     const postContent = inputText.trim() || (isAbsent ? 'ไม่มีช่างเข้างาน' : '');
     if ((!postContent && selectedFiles.length === 0) || isSending) return;
     setIsSending(true);
-    if (selectedFiles.length > 0) {
-      setGlobalUploadState({ isUploading: true, isSuccess: false, message: 'กำลังบีบอัดและอัปโหลดรูปภาพงาน... ห้ามปิดหน้าต่าง' });
-    }
     try {
       let imageUrls: any[] = [];
       if (selectedFiles.length > 0) {
-        imageUrls = await Promise.all(selectedFiles.map(async (f) => {
-          const comp = await compressImageNative(f.file); // 🌟 ใช้ Native Compression ลบ Error 🌟
-          const safeId = String(selectedPlot.id).replace(/[^a-zA-Z0-9-]/g, '') || 'plot_images';
-          const path = `${safeId}/${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-          const { error } = await supabase.storage.from('task_images').upload(path, comp);
-          if (error) throw new Error('อัปโหลดรูปไม่สำเร็จ กรุณาลองใหม่');
-          return supabase.storage.from('task_images').getPublicUrl(path).data.publicUrl;
-        }));
+        setGlobalUploadState({ isUploading: true, isSuccess: false, message: `กำลังบีบอัดและอัปโหลดรูปภาพงาน (1/${selectedFiles.length})... ห้ามปิดหน้าต่าง` });
+        imageUrls = await uploadImagesInQueue(
+          selectedFiles,
+          selectedPlot.id,
+          'task',
+          (cur, total) => setGlobalUploadState({ isUploading: true, isSuccess: false, message: `กำลังบีบอัดและอัปโหลดรูปภาพงาน (${cur}/${total})... ห้ามปิดหน้าต่าง` })
+        );
       }
       const finalProgress = isAbsent ? (updates.length > 0 ? updates[updates.length - 1].progress : 0) : progressValue;
       const actionLabel = isAbsent ? 'ไม่มีช่างเข้างาน' : (finalProgress === 100 ? 'ส่งงาน 100%' : 'อัปเดตงาน');
@@ -2098,6 +2163,7 @@ export default function ConstructionApp() {
 
       // 🌟 ดึงประวัติงานสดๆ ทันที เพื่ออัปเดต chat view ให้ผู้ใช้เห็นว่าส่งแล้ว (Instant UI Feedback)
       const { data } = await supabase.from('task_updates').select('*').eq('task_template_id', selectedTask.id).eq('plot_id', selectedPlot.id).order('created_at', { ascending: true });
+      selectedFiles.forEach(f => { if (f?.previewUrl) URL.revokeObjectURL(f.previewUrl); });
       setUpdates(data || []); 
       setInputText(''); 
       setSelectedFiles([]);
@@ -2121,20 +2187,16 @@ export default function ConstructionApp() {
   const handleSendDefectPost = async () => {
     if (isSending || !selectedDefect) return;
     setIsSending(true);
-    if (selectedFiles.length > 0) {
-      setGlobalUploadState({ isUploading: true, isSuccess: false, message: 'กำลังบีบอัดและอัปโหลดรูปภาพงาน... ห้ามปิดหน้าต่าง' });
-    }
     try {
       let imageUrls: any[] = [];
       if (selectedFiles.length > 0) {
-        imageUrls = await Promise.all(selectedFiles.map(async (f) => {
-          const comp = await compressImageNative(f.file);
-          const safeId = String(selectedPlot?.id || 'defect').replace(/[^a-zA-Z0-9-]/g, '');
-          const path = `${safeId}/${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-          const { error } = await supabase.storage.from('task_images').upload(path, comp);
-          if (error) throw new Error('อัปโหลดรูปไม่สำเร็จ กรุณาลองใหม่');
-          return supabase.storage.from('task_images').getPublicUrl(path).data.publicUrl;
-        }));
+        setGlobalUploadState({ isUploading: true, isSuccess: false, message: `กำลังบีบอัดและอัปโหลดรูปภาพการซ่อม (1/${selectedFiles.length})... ห้ามปิดหน้าต่าง` });
+        imageUrls = await uploadImagesInQueue(
+          selectedFiles,
+          selectedPlot?.id || 'defect',
+          'defect-upd',
+          (cur, total) => setGlobalUploadState({ isUploading: true, isSuccess: false, message: `กำลังบีบอัดและอัปโหลดรูปภาพการซ่อม (${cur}/${total})... ห้ามปิดหน้าต่าง` })
+        );
       }
       
       const username = loggedInUser?.username || loggedInUser?.name || currentUserRole || 'Admin';
@@ -2158,6 +2220,7 @@ export default function ConstructionApp() {
       if (defectErr) throw defectErr;
 
       const { data } = await supabase.from('defect_updates').select('*').eq('defect_id', selectedDefect.id).order('created_at', { ascending: true });
+      selectedFiles.forEach(f => { if (f?.previewUrl) URL.revokeObjectURL(f.previewUrl); });
       setUpdates(data || []); 
       setInputText(''); 
       setSelectedFiles([]);
@@ -2252,20 +2315,16 @@ export default function ConstructionApp() {
   };
   const handleReviewAction = async (isApproved: any) => {
     setIsSending(true); const finalP = isApproved ? 100 : 95; const roleLabel = currentUserRole === 'Site Engineer' ? 'Site Engineer' : 'QC'; const actionLabel = isApproved ? `${roleLabel} อนุมัติ` : `${roleLabel} แจ้งแก้ไข`;
-    if (selectedFiles.length > 0) {
-      setGlobalUploadState({ isUploading: true, isSuccess: false, message: 'กำลังบีบอัดและอัปโหลดรูปภาพ... ห้ามปิดหน้าต่าง' });
-    }
     try {
       let imageUrls: any[] = [];
       if (selectedFiles.length > 0) {
-        imageUrls = await Promise.all(selectedFiles.map(async (f) => {
-          const comp = await compressImageNative(f.file); // 🌟 ใช้ Native Compression ลบ Error 🌟
-          const safeId = String(selectedPlot.id).replace(/[^a-zA-Z0-9-]/g, '') || 'plot_images';
-          const path = `${safeId}/review-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-          const { error } = await supabase.storage.from('task_images').upload(path, comp);
-          if (error) throw new Error('อัปโหลดรูปไม่สำเร็จ กรุณาลองใหม่');
-          return supabase.storage.from('task_images').getPublicUrl(path).data.publicUrl;
-        }));
+        setGlobalUploadState({ isUploading: true, isSuccess: false, message: `กำลังบีบอัดและอัปโหลดรูปภาพตรวจงาน (1/${selectedFiles.length})... ห้ามปิดหน้าต่าง` });
+        imageUrls = await uploadImagesInQueue(
+          selectedFiles,
+          selectedPlot.id,
+          'review',
+          (cur, total) => setGlobalUploadState({ isUploading: true, isSuccess: false, message: `กำลังบีบอัดและอัปโหลดรูปภาพตรวจงาน (${cur}/${total})... ห้ามปิดหน้าต่าง` })
+        );
       }
       const { error } = await supabase.from('task_updates').insert([{ plot_id: selectedPlot.id, task_template_id: selectedTask.id, user_name: loggedInUser.username, role: currentUserRole, action: actionLabel, text_content: inputText || (isApproved ? 'งานเรียบร้อยดี ตรวจผ่าน' : 'พบข้อบกพร่อง กรุณาแก้ไข'), progress: finalP, is_completed: finalP === 100, image_url: imageUrls.join(','), weather_info: weatherInfo ? `${weatherInfo.currentDetails.icon} ${weatherInfo.currentDetails.text} (${weatherInfo.currentTemp}°C)` : null }]);
       if (error) throw error;
@@ -2292,6 +2351,7 @@ export default function ConstructionApp() {
 
       // 🌟 ดึงประวัติงานสดๆ เพื่ออัปเดต chat view ทันที
       const { data } = await supabase.from('task_updates').select('*').eq('task_template_id', selectedTask.id).eq('plot_id', selectedPlot.id).order('created_at', { ascending: true });
+      selectedFiles.forEach(f => { if (f?.previewUrl) URL.revokeObjectURL(f.previewUrl); });
       setUpdates(data || []); setProgressValue(finalP); setInputText(''); setSelectedFiles([]);
       
       if (imageUrls.length > 0) {
@@ -2299,7 +2359,7 @@ export default function ConstructionApp() {
         setTimeout(() => setGlobalUploadState({ isUploading: false, isSuccess: false, message: '' }), 1500);
       }
     } catch (e: any) { 
-      setGlobalUploadState({ isUploading: false, isSuccess: false, message: '' });
+      if (selectedFiles.length > 0) setGlobalUploadState({ isUploading: false, isSuccess: false, message: '' });
       showAlert('Error', (e as Error).message); 
     } setIsSending(false);
   };
@@ -5322,7 +5382,7 @@ export default function ConstructionApp() {
                 <h3 className="font-black text-lg sm:text-xl flex items-center gap-2 tracking-tight"><ShieldAlert size={22} /> รายการ Defect / แจ้งซ่อม</h3>
                 <p className="text-rose-100 text-xs sm:text-sm font-bold mt-1 tracking-widest">แปลง: {defectModal.plotId} | งาน: {defectModal.task?.task_name}</p>
               </div>
-              <button onClick={() => { setDefectModal({ isOpen: false, task: null, plotId: '' }); setDefectFiles([]); setNewDefectText(''); }} className="p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors text-white"><X size={20} /></button>
+              <button onClick={() => { defectFiles.forEach(f => { if (f?.previewUrl) URL.revokeObjectURL(f.previewUrl); }); setDefectModal({ isOpen: false, task: null, plotId: '' }); setDefectFiles([]); setNewDefectText(''); }} className="p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors text-white"><X size={20} /></button>
             </div>
 
             {/* รายการ Defect */}
@@ -5356,7 +5416,7 @@ export default function ConstructionApp() {
                           )}
                           <div className={`grid gap-2 ${dImages.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
                             {dImages.map((url: any, i: any) => (
-                              <img key={i} src={url.trim()} onClick={() => setFullImageUrl(url.trim())} className="w-full aspect-video object-cover rounded-xl cursor-zoom-in border border-slate-100 shadow-sm hover:opacity-90" alt="Defect" />
+                              <img key={i} src={url.trim()} loading="lazy" onClick={() => setFullImageUrl(url.trim())} className="w-full aspect-video object-cover rounded-xl cursor-zoom-in border border-slate-100 shadow-sm hover:opacity-90" alt="Defect" />
                             ))}
                           </div>
                         </div>
@@ -5395,7 +5455,7 @@ export default function ConstructionApp() {
                     {defectFiles.map((file, idx) => (
                       <div key={idx} className="relative shrink-0 animate-in fade-in zoom-in duration-300">
                         <img src={file.previewUrl} className="w-12 h-12 sm:w-14 sm:h-14 object-cover rounded-xl border-2 border-rose-500 shadow-sm" />
-                        <button onClick={() => { const n = [...defectFiles]; n.splice(idx, 1); setDefectFiles(n); }} className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full p-0.5 sm:p-1 border-2 border-white hover:bg-red-600"><X size={10} /></button>
+                        <button onClick={() => { const removed = defectFiles[idx]; if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl); const n = [...defectFiles]; n.splice(idx, 1); setDefectFiles(n); }} className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full p-0.5 sm:p-1 border-2 border-white hover:bg-red-600"><X size={10} /></button>
                       </div>
                     ))}
                     </div>
