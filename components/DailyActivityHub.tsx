@@ -3,9 +3,11 @@ import {
   Activity, Clock, Calendar, Search, Filter, HardHat, 
   CheckCircle, AlertTriangle, ShieldAlert, Eye, UserCheck, 
   Building2, MapPin, ChevronRight, Layers, FileText, ArrowRight,
-  Sparkles, Check, AlertCircle, X, ExternalLink
+  Sparkles, Check, AlertCircle, X, ExternalLink,
+  Droplets, Zap, Camera
 } from 'lucide-react';
 import DailyAccountabilityModal from './DailyAccountabilityModal';
+import MeterPhotoConfirmationModal from './MeterPhotoConfirmationModal';
 
 interface DailyActivityHubProps {
   allUpdatesRecord: any[];
@@ -48,6 +50,15 @@ export default function DailyActivityHub({
   const [showBlindSpotsOnly, setShowBlindSpotsOnly] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedPlotDetail, setSelectedPlotDetail] = useState<string | null>(null);
+  const [selectedMeterModal, setSelectedMeterModal] = useState<{
+    isOpen: boolean;
+    plot: any;
+    meterType: 'water_meter' | 'electric_meter';
+  }>({
+    isOpen: false,
+    plot: null,
+    meterType: 'water_meter'
+  });
 
   // 🌟 Key สำหรับจำโครงการที่เลือกใน Daily Activity Hub
   const STORAGE_KEY = 'buildtrack_daily_activity_hub_project';
@@ -506,6 +517,14 @@ export default function DailyActivityHub({
     return walkthroughPlots.find(wp => wp.id === selectedPlotDetail) || null;
   }, [selectedPlotDetail, walkthroughPlots]);
 
+  // 💧⚡️ แปลงที่ชำระค่ามิเตอร์แล้ว กำลังรอช่างมาติดตั้งหน้างาน (สำหรับโฟร์แมน/วิศวกร)
+  const pendingMeterPlots = useMemo(() => {
+    return (plots || []).filter((p: any) => {
+      if (effectiveProjectName && effectiveProjectName !== 'all' && p.project_name !== effectiveProjectName) return false;
+      return p.water_meter_status === 'Paid' || p.electric_meter_status === 'Paid';
+    });
+  }, [plots, effectiveProjectName]);
+
   return (
     <div className="w-full bg-white rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden mb-8 mt-6">
       
@@ -603,6 +622,58 @@ export default function DailyActivityHub({
           </button>
         </div>
       </div>
+
+      {/* 💧⚡️ แจ้งเตือนมิเตอร์ที่ชำระเงินแล้ว รอโฟร์แมนตรวจรับ/ถ่ายรูปยืนยัน */}
+      {pendingMeterPlots.length > 0 && (
+        <div className="mx-4 sm:mx-6 mt-4 p-4 rounded-2xl bg-amber-50 border border-amber-300 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-xs animate-in fade-in">
+          <div className="flex items-start sm:items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-amber-500 text-white shadow-xs shrink-0 mt-0.5 sm:mt-0">
+              <Clock size={18} />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-black text-xs sm:text-sm text-amber-950">
+                  มี {pendingMeterPlots.length} แปลงที่ชำระค่ามิเตอร์แล้ว กำลังรอช่างติดตั้งหน้างาน
+                </span>
+                <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-200 text-amber-900 animate-pulse">
+                  รอยืนยัน 📸
+                </span>
+              </div>
+              <p className="text-[11px] text-amber-800 mt-0.5 font-medium">
+                โปรดตรวจสอบหน้างานเมื่อการประปา/การไฟฟ้ามาติดตั้ง แล้วกดถ่ายรูปยืนยัน
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 self-end md:self-auto">
+            {pendingMeterPlots.slice(0, 4).map((p: any) => (
+              <div key={p.id} className="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-xl border border-amber-200 text-xs font-bold text-slate-800 shadow-xs">
+                <span>แปลง {p.plot_name || p.id}</span>
+                {p.water_meter_status === 'Paid' && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedMeterModal({ isOpen: true, plot: p, meterType: 'water_meter' })}
+                    className="p-1 bg-cyan-100 hover:bg-cyan-200 text-cyan-800 rounded-lg text-[10px] font-black flex items-center gap-0.5 transition-colors cursor-pointer"
+                    title="ถ่ายรูปมิเตอร์น้ำ"
+                  >
+                    <Droplets size={10} /> น้ำ
+                  </button>
+                )}
+                {p.electric_meter_status === 'Paid' && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedMeterModal({ isOpen: true, plot: p, meterType: 'electric_meter' })}
+                    className="p-1 bg-amber-100 hover:bg-amber-200 text-amber-800 rounded-lg text-[10px] font-black flex items-center gap-0.5 transition-colors cursor-pointer"
+                    title="ถ่ายรูปมิเตอร์ไฟฟ้า"
+                  >
+                    <Zap size={10} /> ไฟ
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 🌟 2. แบบที่ 2: 3 Role Duty Metric Cards (3 เสาหลัก) 🌟 */}
       <div className="p-5 sm:p-6 bg-slate-50/40 border-b border-slate-100">
@@ -1241,6 +1312,19 @@ export default function DailyActivityHub({
         taskTemplates={taskTemplates}
         projects={projects}
       />
+
+      {/* 📸 Meter Photo Confirmation Modal */}
+      {selectedMeterModal.isOpen && selectedMeterModal.plot && (
+        <MeterPhotoConfirmationModal
+          isOpen={selectedMeterModal.isOpen}
+          onClose={() => setSelectedMeterModal({ isOpen: false, plot: null, meterType: 'water_meter' })}
+          plot={selectedMeterModal.plot}
+          meterType={selectedMeterModal.meterType}
+          onSuccess={() => {
+            // refresh
+          }}
+        />
+      )}
 
     </div>
   );

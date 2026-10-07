@@ -2,10 +2,12 @@
 import React from 'react';
 import { supabase } from '@/lib/supabase';
 import { 
-  Activity, Calendar, Camera, HardHat, Loader2, Monitor, Pickaxe, PlusCircle, UserCog, Users, ImageIcon, Truck, XCircle, Send, Clock, CheckCircle, ShieldAlert, Search, Package
+  Activity, Calendar, Camera, HardHat, Loader2, Monitor, Pickaxe, PlusCircle, UserCog, Users, ImageIcon, Truck, XCircle, Send, Clock, CheckCircle, ShieldAlert, Search, Package,
+  Droplets, Zap, Eye, X, CheckCircle2, AlertCircle
 } from 'lucide-react';
 import HouseHandoverView from './HouseHandoverView';
 import ReceiptUploadModal from './ReceiptUploadModal';
+import MeterPhotoConfirmationModal from './MeterPhotoConfirmationModal';
 
 interface HouseDetailViewProps {
   view: string;
@@ -115,6 +117,25 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
   // New States for Receipt Upload and History Modal
   const [receiptUploadTask, setReceiptUploadTask] = React.useState<any>(null);
   const [viewHistoryTask, setViewHistoryTask] = React.useState<any>(null);
+
+  // States for Water/Electric Meter Photo Confirmation
+  const [selectedMeterModal, setSelectedMeterModal] = React.useState<{
+    isOpen: boolean;
+    plot: any;
+    meterType: 'water_meter' | 'electric_meter';
+  }>({
+    isOpen: false,
+    plot: null,
+    meterType: 'water_meter'
+  });
+
+  const [meterLightbox, setMeterLightbox] = React.useState<{
+    isOpen: boolean;
+    url: string;
+    title: string;
+    meterNo?: string;
+    date?: string;
+  } | null>(null);
 
   const [internalActiveHouseTab, setInternalActiveHouseTab] = React.useState('construction');
   const activeHouseTab = props.activeHouseTab !== undefined ? props.activeHouseTab : internalActiveHouseTab;
@@ -476,6 +497,157 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                     </div>
                   </div>
                 </div>
+
+                {/* 💧⚡️ โซนสถานะมิเตอร์น้ำ & ไฟฟ้า (สาธารณูปโภค) สำหรับโฟร์แมนตรวจรับงาน 💧⚡️ */}
+                <div className="bg-white border-b border-slate-200 px-4 py-3 sm:px-6 sm:py-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">สาธารณูปโภค:</span>
+                    <span className="text-xs font-bold text-slate-800">สถานะการติดตั้งมิเตอร์หน้างาน</span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    {/* 💧 มิเตอร์น้ำ */}
+                    {(() => {
+                      const status = selectedPlot.water_meter_status || 'NotStarted';
+                      const img = selectedPlot.water_meter_image_url;
+                      const meterNo = selectedPlot.water_meter_meter_no;
+                      const isPaid = status === 'Paid';
+                      const isInstalled = status === 'Installed' || !!img;
+                      const isReceived = status === 'Received';
+
+                      return (
+                        <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-bold transition-all ${
+                          isPaid 
+                            ? 'bg-amber-50 border-amber-300 text-amber-900 ring-2 ring-amber-400/30 animate-pulse' 
+                            : isInstalled 
+                            ? 'bg-blue-50 border-blue-200 text-blue-900' 
+                            : isReceived 
+                            ? 'bg-emerald-50 border-emerald-200 text-emerald-900' 
+                            : 'bg-slate-50 border-slate-200 text-slate-600'
+                        }`}>
+                          <Droplets size={15} className="text-cyan-600 shrink-0" />
+                          <span>มิเตอร์น้ำ:</span>
+                          {isPaid && (
+                            <span className="text-amber-800 font-black">💳 จ่ายเงินแล้ว (รอติด)</span>
+                          )}
+                          {isInstalled && !isReceived && (
+                            <span className="text-blue-700 font-black">📸 ติดตั้งแล้ว {meterNo ? `(${meterNo})` : ''}</span>
+                          )}
+                          {isReceived && (
+                            <span className="text-emerald-700 font-black">✅ สมบูรณ์</span>
+                          )}
+                          {!isPaid && !isInstalled && !isReceived && (
+                            <span className="text-slate-500">{status === 'Submitting' ? 'กำลังยื่น' : status === 'Waiting' ? 'รอผล' : 'ยังไม่ดำเนินการ'}</span>
+                          )}
+
+                          {img && (
+                            <button
+                              type="button"
+                              onClick={() => setMeterLightbox({
+                                isOpen: true,
+                                url: img,
+                                title: `มิเตอร์น้ำ · แปลง ${selectedPlot.plot_name || selectedPlot.id}`,
+                                meterNo: meterNo,
+                                date: selectedPlot.water_meter_installed_date || selectedPlot.water_meter_date
+                              })}
+                              className="p-1 hover:bg-black/10 rounded-lg text-blue-600 transition-colors cursor-pointer"
+                              title="ดูรูปถ่ายมิเตอร์น้ำ"
+                            >
+                              <Eye size={14} />
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => setSelectedMeterModal({
+                              isOpen: true,
+                              plot: selectedPlot,
+                              meterType: 'water_meter'
+                            })}
+                            className={`px-2 py-0.5 rounded-lg text-[10px] font-black transition-all flex items-center gap-1 cursor-pointer ${
+                              isPaid 
+                                ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-xs' 
+                                : 'bg-slate-200/80 hover:bg-slate-300 text-slate-800'
+                            }`}
+                          >
+                            <Camera size={11} /> {isInstalled ? 'แก้รูป' : 'ถ่ายรูป'}
+                          </button>
+                        </div>
+                      );
+                    })()}
+
+                    {/* ⚡️ มิเตอร์ไฟฟ้า */}
+                    {(() => {
+                      const status = selectedPlot.electric_meter_status || 'NotStarted';
+                      const img = selectedPlot.electric_meter_image_url;
+                      const meterNo = selectedPlot.electric_meter_meter_no;
+                      const isPaid = status === 'Paid';
+                      const isInstalled = status === 'Installed' || !!img;
+                      const isReceived = status === 'Received';
+
+                      return (
+                        <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-bold transition-all ${
+                          isPaid 
+                            ? 'bg-amber-50 border-amber-300 text-amber-900 ring-2 ring-amber-400/30 animate-pulse' 
+                            : isInstalled 
+                            ? 'bg-blue-50 border-blue-200 text-blue-900' 
+                            : isReceived 
+                            ? 'bg-emerald-50 border-emerald-200 text-emerald-900' 
+                            : 'bg-slate-50 border-slate-200 text-slate-600'
+                        }`}>
+                          <Zap size={15} className="text-amber-600 shrink-0" />
+                          <span>มิเตอร์ไฟฟ้า:</span>
+                          {isPaid && (
+                            <span className="text-amber-800 font-black">💳 จ่ายเงินแล้ว (รอติด)</span>
+                          )}
+                          {isInstalled && !isReceived && (
+                            <span className="text-blue-700 font-black">📸 ติดตั้งแล้ว {meterNo ? `(${meterNo})` : ''}</span>
+                          )}
+                          {isReceived && (
+                            <span className="text-emerald-700 font-black">✅ สมบูรณ์</span>
+                          )}
+                          {!isPaid && !isInstalled && !isReceived && (
+                            <span className="text-slate-500">{status === 'Submitting' ? 'กำลังยื่น' : status === 'Waiting' ? 'รอผล' : 'ยังไม่ดำเนินการ'}</span>
+                          )}
+
+                          {img && (
+                            <button
+                              type="button"
+                              onClick={() => setMeterLightbox({
+                                isOpen: true,
+                                url: img,
+                                title: `มิเตอร์ไฟฟ้า · แปลง ${selectedPlot.plot_name || selectedPlot.id}`,
+                                meterNo: meterNo,
+                                date: selectedPlot.electric_meter_installed_date || selectedPlot.electric_meter_date
+                              })}
+                              className="p-1 hover:bg-black/10 rounded-lg text-amber-600 transition-colors cursor-pointer"
+                              title="ดูรูปถ่ายมิเตอร์ไฟฟ้า"
+                            >
+                              <Eye size={14} />
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => setSelectedMeterModal({
+                              isOpen: true,
+                              plot: selectedPlot,
+                              meterType: 'electric_meter'
+                            })}
+                            className={`px-2 py-0.5 rounded-lg text-[10px] font-black transition-all flex items-center gap-1 cursor-pointer ${
+                              isPaid 
+                                ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-xs' 
+                                : 'bg-slate-200/80 hover:bg-slate-300 text-slate-800'
+                            }`}
+                          >
+                            <Camera size={11} /> {isInstalled ? 'แก้รูป' : 'ถ่ายรูป'}
+                          </button>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+
                      {/* 🌟 โซน 2.5D Task-Linked Visual Progress (แสดงผลตามสถานะงานจริง) 🌟 */}
                      {houseTypes.find(t => t.id === selectedPlot?.house_type_id)?.visual_config && (
                          <div className="bg-slate-900 border-b-8 border-slate-950 p-6 sm:p-10 flex flex-col lg:flex-row items-center gap-8 relative overflow-hidden">
@@ -1315,6 +1487,61 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
         <div onClick={() => setViewImageModalUrl(null)} className="fixed inset-0 bg-black/80 z-[999999] flex flex-col items-center justify-center p-4 cursor-pointer">
           <button onClick={(e) => { e.stopPropagation(); setViewImageModalUrl(null); }} className="absolute top-4 right-4 bg-white/10 hover:bg-white/20 p-2 rounded-full text-white backdrop-blur-sm transition-all cursor-pointer"><XCircle size={28}/></button>
           <img src={viewImageModalUrl} onClick={(e) => e.stopPropagation()} alt="Material View" className="max-w-full max-h-[80vh] object-contain rounded-xl shadow-2xl border border-white/20 cursor-default"/>
+        </div>
+      )}
+
+      {/* 📸 Meter Photo Confirmation Modal */}
+      {selectedMeterModal.isOpen && selectedMeterModal.plot && (
+        <MeterPhotoConfirmationModal
+          isOpen={selectedMeterModal.isOpen}
+          onClose={() => setSelectedMeterModal({ isOpen: false, plot: null, meterType: 'water_meter' })}
+          plot={selectedMeterModal.plot}
+          meterType={selectedMeterModal.meterType}
+          onSuccess={() => {
+            if (fetchAllData) fetchAllData();
+            if (showToast) showToast('บันทึกรูปและยืนยันการติดตั้งมิเตอร์สำเร็จ', 'success');
+          }}
+          currentUserRole={currentUserRole}
+        />
+      )}
+
+      {/* 🖼️ Meter Lightbox Image Modal */}
+      {meterLightbox?.isOpen && (
+        <div 
+          onClick={() => setMeterLightbox(null)}
+          className="fixed inset-0 z-[999999] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-3xl max-w-xl w-full overflow-hidden shadow-2xl flex flex-col"
+          >
+            <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
+              <div>
+                <h4 className="font-black text-sm">{meterLightbox.title}</h4>
+                {meterLightbox.meterNo && (
+                  <p className="text-xs text-slate-300">หมายเลขมิเตอร์: {meterLightbox.meterNo}</p>
+                )}
+              </div>
+              <button 
+                onClick={() => setMeterLightbox(null)}
+                className="p-1.5 hover:bg-slate-800 rounded-xl text-slate-400 hover:text-white transition-colors cursor-pointer"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="bg-slate-950 p-2 flex items-center justify-center max-h-[70vh] overflow-hidden">
+              <img 
+                src={meterLightbox.url} 
+                alt={meterLightbox.title} 
+                className="max-h-[68vh] w-auto object-contain rounded-xl"
+              />
+            </div>
+            {meterLightbox.date && (
+              <div className="p-3 bg-slate-50 border-t border-slate-100 text-center text-xs text-slate-500 font-bold">
+                วันที่ติดตั้งเสร็จจริง: {new Date(meterLightbox.date).toLocaleDateString('th-TH')}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

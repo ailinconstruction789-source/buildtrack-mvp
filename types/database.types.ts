@@ -49,6 +49,12 @@ export interface Plot {
   registration_status?: string;
   water_meter_status?: string;
   electric_meter_status?: string;
+  water_meter_image_url?: string;
+  water_meter_installed_date?: string;
+  water_meter_meter_no?: string;
+  electric_meter_image_url?: string;
+  electric_meter_installed_date?: string;
+  electric_meter_meter_no?: string;
 }
 
 export interface Contractor {
