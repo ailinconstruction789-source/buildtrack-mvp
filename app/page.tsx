@@ -19,6 +19,12 @@ const HousePromotionsView = dynamic(() => import('@/components/HousePromotionsVi
 const QCPerformanceDashboard = dynamic(() => import('@/components/QCPerformanceDashboard'));
 const ExecutiveAnalytics = dynamic(() => import('@/components/ExecutiveAnalytics'));
 const MasterGanttChart = dynamic(() => import('@/components/MasterGanttChart'));
+const SalesKanban = dynamic(() => import('@/components/sales/SalesKanban'));
+const SalesDashboardExcelStyle = dynamic(() => import('@/components/sales/SalesDashboardExcelStyle'));
+const DailyVisitsScheduleView = dynamic(() => import('@/components/sales/DailyVisitsScheduleView'));
+const SalesReportsView = dynamic(() => import('@/components/sales/SalesReportsView'));
+const SalesIntelligenceView = dynamic(() => import('@/components/sales/SalesIntelligenceView'));
+const SalesSummaryTable = dynamic(() => import('@/components/sales/SalesSummaryTable'));
 const SalesWorkspaceEntry = dynamic(() => import('@/components/sales/SalesWorkspaceEntry'));
 const SalesReportingEntry = dynamic(() => import('@/components/sales/SalesReportingEntry'));
 const CentralLeadsView = dynamic(() => import('@/components/sales/CentralLeadsView'));
@@ -4883,7 +4889,7 @@ export default function ConstructionApp() {
 
               {/* 📊 View: Sales Dashboard Excel (Keep-Alive Cache - Instant 0s Transitions) */}
               <div className={view === 'sales-dashboard-excel' ? 'block h-full' : 'hidden'}>
-                <SalesReportingEntry surface="dashboard" active={view === 'sales-dashboard-excel'}
+                <SalesDashboardExcelStyle
                   project={selectedProject} 
                   onViewDefects={(plot: any) => {
                     const foundProj = projects.find((p: any) => p.name === plot.project_name || p.project_name === plot.project_name);
@@ -4896,28 +4902,44 @@ export default function ConstructionApp() {
                 />
               </div>
 
-              {/* 📊 View: Sales Dashboard & Daily Visits */}
-              {(view === 'sales-dashboard' || view === 'sales-daily-visits') && (
-                <SalesWorkspaceEntry
+              {/* 📊 View: Sales Kanban / Workspace */}
+              {view === 'sales-dashboard' && (
+                <SalesKanban
                   project={selectedProject}
                   projects={projects}
+                  plots={plots}
                   user={loggedInUser}
-                  initialTab="daily_visits"
+                  onBack={() => { setView('dashboard'); setSelectedProject(null); }}
+                  onSelectPlot={(plot: any) => {
+                    const foundProj = projects.find((p: any) => p.name === plot.project_name || p.project_name === plot.project_name);
+                    if (foundProj) setSelectedProject(foundProj);
+                    setSelectedPlot(plot);
+                    setHouseReturnView('sales-dashboard');
+                    setView('house-detail');
+                  }}
+                />
+              )}
+
+              {/* 🗓️ View: Daily Visits Schedule */}
+              {view === 'sales-daily-visits' && (
+                <DailyVisitsScheduleView
+                  selectedProjectName={selectedProject?.name || 'all'}
+                  projects={projects}
+                  plots={plots}
                   onBack={() => { setView('dashboard'); setSelectedProject(null); }}
                 />
               )}
 
               {/* 📊 View: Sales Reports */}
               {view === 'sales-reports' && (
-                <SalesReportingEntry surface="reports" project={null} viewType="reports" />
+                <SalesReportsView project={null} viewType="reports" />
               )}
               {view === 'agent-performance' && (
-                <SalesReportingEntry surface="reports" project={null} viewType="agent" />
+                <SalesReportsView project={null} viewType="agent" />
               )}
               {/* 💡 View: Sales Strategic Report */}
               {view === 'sales-intelligence' && (
-                <SalesReportingEntry 
-                  surface="intelligence"
+                <SalesIntelligenceView 
                   project={selectedProject} 
                   projects={projects}
                   onBack={() => { setView('dashboard'); setSelectedProject(null); }}
@@ -4926,7 +4948,7 @@ export default function ConstructionApp() {
 
               {/* 🏢 View: Sales Summary Table */}
               {view === 'sales-summary-table' && (
-                <SalesReportingEntry surface="summary" />
+                <SalesSummaryTable />
               )}
 
               {/* 👤 View: ลูกค้าของฉัน (My Sales Hub) */}

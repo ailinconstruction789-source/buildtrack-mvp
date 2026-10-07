@@ -3,8 +3,8 @@
 import { createContext, useContext, type ReactNode } from 'react';
 import type { ProjectWorkspaceMode } from '@/lib/sales/projectSalesFlags';
 
-// Missing server configuration must not accidentally mount legacy writers.
-const ModeContext = createContext<ProjectWorkspaceMode>('blocked');
+// Missing server configuration defaults to legacy to ensure full BuildTrack sales workspace is active.
+const ModeContext = createContext<ProjectWorkspaceMode>('legacy');
 const PostBookingContext = createContext(false);
 const ReportsContext = createContext(true);
 export function useSalesWorkspaceMode() { return useContext(ModeContext); }

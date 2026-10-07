@@ -104,15 +104,19 @@ export const kanbanStatusToStage = (status: string): string => {
 export default function SalesKanban({ 
   project: externalProject, 
   projects, 
+  plots: externalPlots,
   user, 
   initialTab = 'daily_visits',
-  onBack 
+  onBack,
+  onSelectPlot
 }: { 
   project?: any, 
   projects?: any[], 
+  plots?: any[],
   user?: any, 
   initialTab?: string,
-  onBack?: () => void 
+  onBack?: () => void,
+  onSelectPlot?: (plot: any) => void
 }) {
   const [internalProject, setInternalProject] = useState<any>(externalProject || null);
 

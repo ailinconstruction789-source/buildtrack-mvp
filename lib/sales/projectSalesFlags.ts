@@ -11,8 +11,5 @@ export function salesReportsEnabled(): boolean {
 }
 /** Default to legacy mode so the rich BuildTrack sales workspace is always active without blocking */
 export function projectWorkspaceMode(): ProjectWorkspaceMode {
-  if (process.env.SALES_CRM_PROJECT_WORKSPACE_ENABLED === 'true' && projectSalesEnabled()) {
-    return 'central';
-  }
   return 'legacy';
 }

@@ -15,13 +15,14 @@ import DailyHouseInspectionModal from './DailyHouseInspectionModal';
 import { isSampleHouse, fetchTodayInspectionStatus, fetchTodayInspectionMap, SampleHouseInspectionStatus } from '@/lib/sales/sampleHouseHelper';
 
 interface DailyVisitsScheduleViewProps {
-  leads: Lead[];
+  leads?: Lead[];
   plots?: any[];
   projects?: any[];
   selectedProjectName?: string;
   user?: any;
-  onRefresh: () => void;
+  onRefresh?: () => void;
   onSelectPlotForBooking?: (plotId: string, lead: Lead) => void;
+  onBack?: () => void;
 }
 
 export default function DailyVisitsScheduleView({
@@ -31,12 +32,31 @@ export default function DailyVisitsScheduleView({
   selectedProjectName = 'all',
   user,
   onRefresh,
-  onSelectPlotForBooking
+  onSelectPlotForBooking,
+  onBack
 }: DailyVisitsScheduleViewProps) {
+  const [fetchedLeads, setFetchedLeads] = useState<Lead[]>([]);
+  const [fetchedProjects, setFetchedProjects] = useState<any[]>([]);
   const [search, setSearch] = useState('');
   const [filterProject, setFilterProject] = useState<string>(selectedProjectName || 'all');
   const [filterAgent, setFilterAgent] = useState<string>('all');
   const [activeTabSection, setActiveTabSection] = useState<'all' | 'today' | 'upcoming' | 'overdue' | 'completed'>('all');
+
+  useEffect(() => {
+    if (leads.length === 0) {
+      supabase.from('leads').select('*').order('created_at', { ascending: false }).then(({ data }) => {
+        if (data) setFetchedLeads(data as Lead[]);
+      });
+    }
+    if (projects.length === 0) {
+      supabase.from('projects').select('*').then(({ data }) => {
+        if (data) setFetchedProjects(data);
+      });
+    }
+  }, [leads.length, projects.length]);
+
+  const effectiveLeads = leads.length > 0 ? leads : fetchedLeads;
+  const effectiveProjects = projects.length > 0 ? projects : fetchedProjects;
 
   // Modals state
   const [showChecklistModal, setShowChecklistModal] = useState<{ isOpen: boolean; lead: Lead | null }>({ isOpen: false, lead: null });
@@ -62,6 +82,14 @@ export default function DailyVisitsScheduleView({
   const refreshInspections = () => {
     fetchTodayInspectionStatus(activeProjectName).then(setSampleHouseInspection);
     fetchTodayInspectionMap(activeProjectName).then(setInspectionMap);
+  };
+
+  const handleTriggerRefresh = () => {
+    refreshInspections();
+    supabase.from('leads').select('*').order('created_at', { ascending: false }).then(({ data }) => {
+      if (data) setFetchedLeads(data as Lead[]);
+    });
+    if (onRefresh) onRefresh();
   };
 
   useEffect(() => {
@@ -94,16 +122,16 @@ export default function DailyVisitsScheduleView({
   // Filter Unique Agents
   const agentList = useMemo(() => {
     const set = new Set<string>();
-    leads.forEach(l => {
+    effectiveLeads.forEach(l => {
       const ag = l.agent_name || l.created_by_agent;
       if (ag) set.add(ag);
     });
     return Array.from(set);
-  }, [leads]);
+  }, [effectiveLeads]);
 
   // Filtered Leads
   const filteredLeads = useMemo(() => {
-    return leads.filter(l => {
+    return effectiveLeads.filter(l => {
       // Must have appointment date or actual visit date
       if (!l.appointment_date && !l.actual_visit_date) return false;
 
@@ -126,7 +154,7 @@ export default function DailyVisitsScheduleView({
 
       return true;
     });
-  }, [leads, filterProject, filterAgent, search]);
+  }, [effectiveLeads, filterProject, filterAgent, search]);
 
   // Categorize Leads into 4 Groups
   const { todayLeads, upcomingLeads, overdueLeads, completedLeads } = useMemo(() => {
@@ -182,7 +210,7 @@ export default function DailyVisitsScheduleView({
 
       setShowRescheduleModal({ isOpen: false, lead: null });
       setNewDateInput('');
-      onRefresh();
+      handleTriggerRefresh();
     } catch (err) {
       console.error('Error rescheduling:', err);
       alert('เลื่อนนัดหมายไม่สำเร็จ');
@@ -203,7 +231,7 @@ export default function DailyVisitsScheduleView({
         crm_status: 'Considering — กำลังพิจารณา / เปรียบเทียบ'
       }).eq('id', lead.id);
 
-      onRefresh();
+      handleTriggerRefresh();
     } catch (err) {
       console.error('Error instant check-in:', err);
       alert('เช็คอินไม่สำเร็จ');
@@ -235,7 +263,7 @@ export default function DailyVisitsScheduleView({
 
         <div className="flex items-center gap-2 w-full md:w-auto justify-end">
           <button
-            onClick={onRefresh}
+            onClick={handleTriggerRefresh}
             className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold p-2.5 rounded-xl text-xs transition-colors cursor-pointer"
             title="รีเฟรชข้อมูล"
           >
@@ -432,7 +460,7 @@ export default function DailyVisitsScheduleView({
             className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="all">🏢 ทุกโครงการ</option>
-            {projects.map((p: any) => (
+            {effectiveProjects.map((p: any) => (
               <option key={p.id || p.name} value={p.name}>{p.name}</option>
             ))}
           </select>
@@ -904,7 +932,7 @@ export default function DailyVisitsScheduleView({
             setShowChecklistModal({ isOpen: false, lead: null });
             setShowSurveyModal({ isOpen: true, lead });
           }}
-          onSaved={onRefresh}
+          onSaved={handleTriggerRefresh}
         />
       )}
 
@@ -917,8 +945,7 @@ export default function DailyVisitsScheduleView({
           user={user}
           sampleHouses={sampleHousePlots.map(p => p.plot_name || p.id)}
           onSaved={() => {
-            refreshInspections();
-            onRefresh();
+            handleTriggerRefresh();
           }}
         />
       )}
