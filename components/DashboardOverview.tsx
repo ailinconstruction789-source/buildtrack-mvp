@@ -1,6 +1,7 @@
 import React from 'react';
 import { Wrench, Users, PlusCircle, Building, ClipboardList, Monitor, Settings, Map as MapIcon, AlertTriangle, Grid, Clock, SortAsc, CheckCircle, XCircle, HardHat, FolderOpen, Activity, AlertCircle, Home } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import MeterStatusBadges from './MeterStatusBadges';
 
 interface DashboardOverviewProps {
   view: string;
@@ -215,42 +216,48 @@ const DashboardOverview = function DashboardOverview({
                 
                 return (
                   <div className="flex flex-col gap-6 w-full">
-                    {Object.entries(grouped).map(([plotId, items]: any) => (
-                      <div key={plotId} className="bg-white/80 backdrop-blur-xl rounded-[1.5rem] border border-white shadow-[0_4px_20px_rgb(0,0,0,0.03)] overflow-hidden w-full">
-                        <div className="bg-black/[0.02] border-b border-black/5 px-5 py-4 flex items-center justify-between">
-                          <h3 className="font-semibold text-[#1d1d1f] flex items-center gap-2 text-lg"><Home size={18} className="text-blue-500"/> แปลง {plotId}</h3>
-                          <span className="text-[11px] font-medium bg-black/5 text-[#86868b] px-2.5 py-1 rounded-lg">{items.length} งาน</span>
-                        </div>
-                        <div className="flex flex-col">
-                          {items.map((q: any, idx: number) => {
-                            const isUrgent = (Date.now() - q.time) > 172800000;
-                            const relatedProject = projects.find(p => p.name === q.project_name); const relatedPlot = plots.find(p => p.id === q.plot_id); const relatedTask = taskTemplates.find(t => t.id === q.task_template_id);
-                            const clickAction = () => { setSelectedProject(relatedProject); setSelectedPlot(relatedPlot); setSelectedTask(relatedTask); setTaskReturnView('dashboard'); setView('task-progress'); };
-                            
-                            return (
-                              <button key={`${q.plot_id}-${q.task_template_id}`} onClick={clickAction} className={`p-4 sm:p-5 text-left flex flex-col sm:flex-row sm:items-center justify-between gap-4 group transition-all duration-300 ${idx !== items.length - 1 ? 'border-b border-black/5' : ''} hover:bg-black/[0.02] ${isUrgent ? 'border-l-4 border-l-rose-500 bg-rose-50/30' : 'border-l-4 border-l-transparent'}`}>
-                                <div className="flex items-center gap-4 flex-1 overflow-hidden">
-                                    <div className={`w-12 h-12 rounded-2xl flex flex-col items-center justify-center shrink-0 shadow-sm ${q.statusFor === 'Rework' ? 'bg-orange-100 text-orange-600' : (q.statusFor === 'QC' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600')}`}>
-                                      <span className="text-[10px] font-bold uppercase tracking-wider">{q.statusFor === 'Rework' ? 'แก้ไข' : `รอ ${q.statusFor}`}</span>
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                      <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                          <p className="text-sm sm:text-base font-semibold text-[#1d1d1f] truncate group-hover:text-blue-600 transition-colors">{q.task_name}</p>
-                                          {isUrgent && <span className="bg-rose-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1 shadow-sm whitespace-nowrap shrink-0"><AlertTriangle size={12}/> ด่วนมาก</span>}
-                                          {q.isRejected && <span className="bg-orange-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1 shadow-sm whitespace-nowrap shrink-0">⚠️ ถูกตีกลับ</span>}
+                    {Object.entries(grouped).map(([plotId, items]: any) => {
+                      const relatedPlot = plots.find(p => p.id === plotId);
+                      return (
+                        <div key={plotId} className="bg-white/80 backdrop-blur-xl rounded-[1.5rem] border border-white shadow-[0_4px_20px_rgb(0,0,0,0.03)] overflow-hidden w-full">
+                          <div className="bg-black/[0.02] border-b border-black/5 px-5 py-4 flex items-center justify-between">
+                            <h3 className="font-semibold text-[#1d1d1f] flex items-center gap-2 text-lg">
+                              <Home size={18} className="text-blue-500"/> แปลง {plotId}
+                              {relatedPlot && <MeterStatusBadges plot={relatedPlot} size="sm" interactive={false} />}
+                            </h3>
+                            <span className="text-[11px] font-medium bg-black/5 text-[#86868b] px-2.5 py-1 rounded-lg">{items.length} งาน</span>
+                          </div>
+                          <div className="flex flex-col">
+                            {items.map((q: any, idx: number) => {
+                              const isUrgent = (Date.now() - q.time) > 172800000;
+                              const relatedProject = projects.find(p => p.name === q.project_name); const relatedPlot = plots.find(p => p.id === q.plot_id); const relatedTask = taskTemplates.find(t => t.id === q.task_template_id);
+                              const clickAction = () => { setSelectedProject(relatedProject); setSelectedPlot(relatedPlot); setSelectedTask(relatedTask); setTaskReturnView('dashboard'); setView('task-progress'); };
+                              
+                              return (
+                                <button key={`${q.plot_id}-${q.task_template_id}`} onClick={clickAction} className={`p-4 sm:p-5 text-left flex flex-col sm:flex-row sm:items-center justify-between gap-4 group transition-all duration-300 ${idx !== items.length - 1 ? 'border-b border-black/5' : ''} hover:bg-black/[0.02] ${isUrgent ? 'border-l-4 border-l-rose-500 bg-rose-50/30' : 'border-l-4 border-l-transparent'}`}>
+                                  <div className="flex items-center gap-4 flex-1 overflow-hidden">
+                                      <div className={`w-12 h-12 rounded-2xl flex flex-col items-center justify-center shrink-0 shadow-sm ${q.statusFor === 'Rework' ? 'bg-orange-100 text-orange-600' : (q.statusFor === 'QC' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600')}`}>
+                                        <span className="text-[10px] font-bold uppercase tracking-wider">{q.statusFor === 'Rework' ? 'แก้ไข' : `รอ ${q.statusFor}`}</span>
                                       </div>
-                                      <p className="text-[11px] sm:text-xs text-[#86868b] font-medium flex items-center gap-1.5"><HardHat size={14}/> {q.foreman}</p>
-                                    </div>
-                                </div>
-                                <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-center gap-1 shrink-0 pt-2 sm:pt-0 sm:pl-4">
-                                    <span className={`text-[11px] sm:text-xs font-medium ${isUrgent ? 'text-rose-500' : 'text-[#86868b]'}`}><Clock size={12} className="inline mr-1"/> {new Date(q.time).toLocaleDateString('th-TH', {month:'short', day:'numeric'})} {new Date(q.time).toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'})}</span>
-                                </div>
-                              </button>
-                            );
-                          })}
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                            <p className="text-sm sm:text-base font-semibold text-[#1d1d1f] truncate group-hover:text-blue-600 transition-colors">{q.task_name}</p>
+                                            {isUrgent && <span className="bg-rose-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1 shadow-sm whitespace-nowrap shrink-0"><AlertTriangle size={12}/> ด่วนมาก</span>}
+                                            {q.isRejected && <span className="bg-orange-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1 shadow-sm whitespace-nowrap shrink-0">⚠️ ถูกตีกลับ</span>}
+                                        </div>
+                                        <p className="text-[11px] sm:text-xs text-[#86868b] font-medium flex items-center gap-1.5"><HardHat size={14}/> {q.foreman}</p>
+                                      </div>
+                                  </div>
+                                  <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-center gap-1 shrink-0 pt-2 sm:pt-0 sm:pl-4">
+                                      <span className={`text-[11px] sm:text-xs font-medium ${isUrgent ? 'text-rose-500' : 'text-[#86868b]'}`}><Clock size={12} className="inline mr-1"/> {new Date(q.time).toLocaleDateString('th-TH', {month:'short', day:'numeric'})} {new Date(q.time).toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'})}</span>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 );
               }
@@ -270,6 +277,7 @@ const DashboardOverview = function DashboardOverview({
                       </div>
                       <div className="flex items-center gap-2 mb-2 flex-wrap">
                         <h4 className="font-semibold text-[#1d1d1f] text-2xl">{q.plot_id}</h4>
+                        {relatedPlot && <MeterStatusBadges plot={relatedPlot} size="sm" interactive={false} />}
                         {isUrgent && <AlertTriangle size={18} className="text-rose-500"/>}
                         {q.isRejected && <span className="bg-orange-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1 shadow-sm whitespace-nowrap shrink-0">⚠️ ถูกตีกลับ</span>}
                       </div>

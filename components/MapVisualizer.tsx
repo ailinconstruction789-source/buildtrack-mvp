@@ -4,6 +4,7 @@ import {
   Eraser, Pickaxe, HardHat, Activity, Trash2, Settings, PlusCircle, Grid, Filter, X, TreePine, Check, Flag, FileSpreadsheet
 } from 'lucide-react';
 import WeeklyProgressReportModal from './WeeklyProgressReportModal';
+import MeterStatusBadges from './MeterStatusBadges';
 
 interface MapVisualizerProps {
   view: string;
@@ -756,7 +757,7 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                                     )}
 
                                    {/* แสดงชื่อแปลงเป็นหลัก */}
-                                   <div className="flex items-center gap-0.5 sm:gap-1 relative z-10">
+                                   <div className="flex items-center gap-0.5 sm:gap-1 relative z-10 flex-wrap justify-center">
                                       <span className={`font-black text-xs sm:text-base tracking-tight ${isGrassPlanted ? 'bg-white/80 px-1.5 py-0.5 rounded shadow-sm' : ''}`}>{plotInfo.plot_name || plotInfo.id}</span>
                                       {plotInfo.is_completed && <span className={`text-[10px] sm:text-xs ${isGrassPlanted ? 'bg-white/80 rounded-full shadow-sm px-0.5' : ''}`} title="สร้างเสร็จพร้อมโอน">🔑</span>}
                                       {plotInfo.has_customer && (
@@ -771,6 +772,7 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                                             👤
                                          </span>
                                       )}
+                                      <MeterStatusBadges plot={plotInfo} size="xs" interactive={false} />
                                    </div>
 
                                    {/* 🌟 บรรทัดที่ 2: ป้ายความต่าง แผน vs จริง (แบบที่ 1 - ขยายขนาดตัวเลขให้ชัดเจน) 🌟 */}
@@ -1031,9 +1033,10 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                               )}
                               <div className={`flex flex-col gap-1 ${plot.highlight_color ? 'mt-4 sm:mt-5' : ''}`}>
                                 <h3 className={`${isMobileLayout ? 'text-2xl' : 'text-4xl sm:text-5xl'} font-bold text-[#1d1d1f] truncate`}>{plot.plot_name || plot.id}</h3>
-                                <div className="flex gap-1.5">
+                                <div className="flex gap-1.5 items-center flex-wrap">
                                   {plot.is_completed && <span className="bg-emerald-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow-sm" title="สร้างเสร็จพร้อมโอน">🔑 เสร็จแล้ว</span>}
                                   {plot.has_customer && <span className="bg-blue-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow-sm" title="มีลูกค้าจองแล้ว">👤 จองแล้ว</span>}
+                                  <MeterStatusBadges plot={plot} size="sm" interactive={false} />
                                 </div>
                               </div>
                               <span className={`text-[8px] sm:text-[10px] font-bold px-2 py-1 rounded-full ${statusInfo.status === 'delayed' ? 'bg-rose-100 text-rose-600' : statusInfo.status === 'completed' ? 'bg-emerald-100 text-emerald-600' : statusInfo.status === 'ahead' ? 'bg-indigo-100 text-indigo-600' : statusInfo.status === 'on-track' ? 'bg-blue-100 text-blue-600' : 'bg-[#f5f5f7] text-[#86868b]'}`}>

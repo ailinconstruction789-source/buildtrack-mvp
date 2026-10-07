@@ -8,6 +8,7 @@ import {
 import HouseHandoverView from './HouseHandoverView';
 import ReceiptUploadModal from './ReceiptUploadModal';
 import MeterPhotoConfirmationModal from './MeterPhotoConfirmationModal';
+import MeterStatusBadges from './MeterStatusBadges';
 
 interface HouseDetailViewProps {
   view: string;
@@ -419,6 +420,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                            {selectedPlot.is_completed && currentPlotStatus?.actual === 100 && <span className="bg-emerald-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow-sm" title="สร้างเสร็จพร้อมโอน">🔑</span>}
                            {selectedPlot.is_completed && currentPlotStatus?.actual < 100 && <span className="bg-purple-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow-sm" title="โอนแล้วแต่ยังเก็บงานไม่เสร็จ">🔑 โอนแล้ว-รอเก็บงาน</span>}
                            {selectedPlot.has_customer && <span className="bg-blue-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow-sm" title="มีลูกค้าจองแล้ว">👤</span>}
+                           <MeterStatusBadges plot={selectedPlot} size="sm" onRefresh={fetchAllData} />
                         </div>
                         <p className="text-slate-400 font-bold uppercase text-[9px] italic">{selectedPlot.foreman || 'ไม่ระบุ'}</p>
                     </div>
