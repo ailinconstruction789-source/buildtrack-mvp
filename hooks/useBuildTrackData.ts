@@ -50,7 +50,7 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
     while (hasMore) {
       let query;
       // Use PostgREST embedded filtering if we need to filter by project_name
-      if (projectName && projectName !== 'all' && (table === 'plot_task_assignments' || table === 'plot_task_schedules' || table === 'vw_active_plot_task_assignments')) {
+      if (projectName && projectName !== 'all' && (table === 'plot_task_assignments' || table === 'plot_task_schedules')) {
         query = supabase.from(table)
           .select(`${selectQuery}, plots!inner(project_name)`)
           .eq('plots.project_name', projectName)
@@ -90,7 +90,7 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
              if (fallbackResult.data.length < 1000) hasMore = false;
            } else { hasMore = false; }
         } else {
-           console.error(`Error in fetchWithoutLimit for table ${table}:`, error);
+           console.warn(`Warning in fetchWithoutLimit for table ${table}:`, error);
            break;
         }
       } else if (data && data.length > 0) {
@@ -137,7 +137,7 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
         supabase.from('notifications').select('*').or(`target_user.eq.${loggedInUser.username},target_role.eq.${loggedInUser.role}`).order('created_at', { ascending: false }),
         fetchWithoutLimit('vw_plot_progress', null, 'plot_id', true, '*', null),
         supabase.from('vw_project_progress').select('*'),
-        fetchWithoutLimit('vw_active_plot_task_assignments', selectedProjectName),
+        fetchWithoutLimit('plot_task_assignments', selectedProjectName),
         fetchWithoutLimit('plot_task_schedules', selectedProjectName),
         supabase.from('task_updates').select('*').order('created_at', { ascending: false }).limit(1000).then(res => res.data || []),
         supabase.from('defects').select('*').order('created_at', { ascending: false }).limit(500).then(res => res.data || []),
@@ -514,7 +514,12 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
   }, [loggedInUser]);
 
   useEffect(() => {
-    if (loggedInUser) fetchAllData();
+    if (loggedInUser) {
+      // Delay to avoid synchronous setState inside effect which causes cascading renders
+      setTimeout(() => {
+        fetchAllData();
+      }, 0);
+    }
   }, [loggedInUser, fetchAllData]);
 
   useEffect(() => {
