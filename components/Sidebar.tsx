@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, ClipboardList, Home, PieChart, BarChartHorizontal, TrendingUp, Building2, Users, Lightbulb, Grid, Calendar, Activity, ShieldAlert, PlusCircle, MapIcon, Building, DollarSign, Monitor, FileSpreadsheet, Wrench, FolderOpen, Smartphone, ChevronRight, Gift, CalendarDays, FileText, ShieldCheck, Key, User } from 'lucide-react';
+import { LayoutDashboard, ClipboardList, Home, PieChart, BarChartHorizontal, TrendingUp, Building2, Users, Lightbulb, Grid, Calendar, Activity, ShieldAlert, PlusCircle, MapIcon, Building, DollarSign, Monitor, FileSpreadsheet, Wrench, FolderOpen, Smartphone, ChevronRight, Gift, CalendarDays, FileText, ShieldCheck, Key, User, Award } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
 
@@ -131,73 +131,196 @@ const Sidebar = React.memo(({
 
                   {/* SALES & CRM */}
                   {(isAdmin || isOwner || isSales) && (
-                    <div>
-                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3 px-2">Sales & CRM</p>
-                      <nav className="space-y-1">
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2 px-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#d4af37]" />
+                        <p className="text-[10px] font-black uppercase tracking-widest text-[#d4af37]">Sales & CRM</p>
+                      </div>
+
+                      {/* 1. 👥 ลูกค้า & การนัดหมาย (Lead & CRM) */}
+                      <div className="space-y-1">
+                        {!isSidebarCollapsed && (
+                          <div className="text-[9px] font-bold text-slate-400 px-3 uppercase tracking-wider flex items-center gap-1.5">
+                            <span className="w-1 h-1 rounded-full bg-slate-500" />
+                            ลูกค้า & การนัดหมาย
+                          </div>
+                        )}
+                        <nav className="space-y-1">
                           <button
                             onClick={() => { setView('my-sales-workspace'); setSelectedProject(null); }}
                             onMouseEnter={() => { import('@/components/sales/MySalesWorkspace').catch(() => {}); }}
                             title="ลูกค้าของฉัน (My Leads)"
                             aria-label="ลูกค้าของฉัน (My Leads)"
-                            className={`w-full flex items-center gap-3 py-3 rounded-xl font-bold transition-all ${activeView === 'my-sales-workspace' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-4'}`}
+                            className={`w-full flex items-center gap-3 py-2.5 rounded-xl font-bold text-xs transition-all ${activeView === 'my-sales-workspace' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5'}`}
                           >
-                            <User size={18} />{!isSidebarCollapsed && <span>ลูกค้าของฉัน (My Leads)</span>}
+                            <User size={17} />{!isSidebarCollapsed && <span>ลูกค้าของฉัน (My Leads)</span>}
                           </button>
                           <button
                             onClick={() => { setView('central-leads'); setSelectedProject(null); }}
                             onMouseEnter={() => { import('@/components/sales/CentralLeadsView').catch(() => {}); }}
                             title="Lead ส่วนกลาง (CRM)"
                             aria-label="Lead ส่วนกลาง (CRM)"
-                            className={`w-full flex items-center gap-3 py-3 rounded-xl font-bold transition-all ${activeView === 'central-leads' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-4'}`}
+                            className={`w-full flex items-center gap-3 py-2.5 rounded-xl font-bold text-xs transition-all ${activeView === 'central-leads' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5'}`}
                           >
-                            <Users size={18} />{!isSidebarCollapsed && <span>Lead ส่วนกลาง (CRM)</span>}
+                            <Users size={17} />{!isSidebarCollapsed && <span>Lead ส่วนกลาง (CRM)</span>}
                           </button>
                           <button 
-                            onClick={() => setView('sales-daily-visits')} 
-                            className={`w-full flex items-center justify-between px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-daily-visits' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}
+                            onClick={() => setView('sales-daily-visits')}
+                            title="ตารางนัดเข้าชม (Visits)"
+                            aria-label="ตารางนัดเข้าชม (Visits)"
+                            className={`w-full flex items-center justify-between py-2.5 rounded-xl font-bold text-xs transition-all ${activeView === 'sales-daily-visits' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5'}`}
                           >
                             <div className="flex items-center gap-3">
-                              <CalendarDays size={18} /> 
-                              <span>ตารางนัดเข้าชม (Visits)</span>
+                              <CalendarDays size={17} /> 
+                              {!isSidebarCollapsed && <span>ตารางนัดเข้าชม (Visits)</span>}
                             </div>
-                            {todayVisitsCount > 0 && (
+                            {todayVisitsCount > 0 && !isSidebarCollapsed && (
                               <span className="bg-rose-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full animate-pulse shadow-sm">
                                 {todayVisitsCount}
                               </span>
                             )}
                           </button>
-                          <button onClick={() => setView('sales-dashboard-excel')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-dashboard-excel' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><BarChartHorizontal size={18} /> Dashboard (Excel)</button>
-                          <button onClick={() => setView('sales-dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-dashboard' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><LayoutDashboard size={18} /> ระบบฝ่ายขาย (Kanban)</button>
-                          <button onClick={() => { setView('sales-funnel-analytics'); setSelectedProject(null); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-funnel-analytics' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><TrendingUp size={18} /> Funnel & KPI Analytics</button>
-                          <button onClick={() => setView('sales-reports')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-reports' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><TrendingUp size={18} /> รายงานสรุปยอด (Sales)</button>
-                          <button onClick={() => setView('sales-summary-table')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-summary-table' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><Building2 size={18} /> ตารางสรุปฝั่งขาย</button>
-                          {/* 🎁 ของแถมโครงการ (Promotions) - เฉพาะ Admin & Sales */}
+                        </nav>
+                      </div>
+
+                      {/* 2. 🏷️ การขาย & แปลงบ้าน (Sales Pipeline) */}
+                      <div className="space-y-1">
+                        {!isSidebarCollapsed && (
+                          <div className="text-[9px] font-bold text-slate-400 px-3 uppercase tracking-wider flex items-center gap-1.5 pt-1">
+                            <span className="w-1 h-1 rounded-full bg-slate-500" />
+                            การขาย & แปลงบ้าน
+                          </div>
+                        )}
+                        <nav className="space-y-1">
+                          <button 
+                            onClick={() => setView('sales-dashboard')} 
+                            title="ระบบฝ่ายขาย (Kanban)"
+                            aria-label="ระบบฝ่ายขาย (Kanban)"
+                            className={`w-full flex items-center gap-3 py-2.5 rounded-xl font-bold text-xs transition-all ${activeView === 'sales-dashboard' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5'}`}
+                          >
+                            <LayoutDashboard size={17} />{!isSidebarCollapsed && <span>ระบบฝ่ายขาย (Kanban)</span>}
+                          </button>
+                          <button 
+                            onClick={() => setView('sales-summary-table')} 
+                            title="ตารางสรุปฝั่งขาย"
+                            aria-label="ตารางสรุปฝั่งขาย"
+                            className={`w-full flex items-center gap-3 py-2.5 rounded-xl font-bold text-xs transition-all ${activeView === 'sales-summary-table' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5'}`}
+                          >
+                            <Building2 size={17} />{!isSidebarCollapsed && <span>ตารางสรุปฝั่งขาย</span>}
+                          </button>
                           {(isAdmin || isSales) && (
-                            <button onClick={() => setView('sales-promotions')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-promotions' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><Gift size={18} /> ของแถมโครงการ (Promotions)</button>
+                            <button 
+                              onClick={() => setView('sales-promotions')} 
+                              title="ของแถมโครงการ (Promotions)"
+                              aria-label="ของแถมโครงการ (Promotions)"
+                              className={`w-full flex items-center gap-3 py-2.5 rounded-xl font-bold text-xs transition-all ${activeView === 'sales-promotions' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5'}`}
+                            >
+                              <Gift size={17} />{!isSidebarCollapsed && <span>ของแถมโครงการ (Promotions)</span>}
+                            </button>
                           )}
-                          <button onClick={() => setView('agent-performance')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'agent-performance' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><Users size={18} /> สรุปผลงานเซลล์</button>
-                          <button onClick={() => setView('sales-intelligence')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-intelligence' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><Lightbulb size={18} /> Strategic Report</button>
-                          <button onClick={() => { setView('sales-admin-docs'); setSelectedProject(null); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-admin-docs' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><FileText size={18} /> อัพเดทเอกสาร & สาธารณูปโภค (ธุรการ)</button>
-                          <button onClick={() => { setView('sales-sample-house-logs'); setSelectedProject(null); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-sample-house-logs' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><ShieldCheck size={18} /> บันทึกตรวจบ้านตัวอย่าง</button>
-                      </nav>
+                        </nav>
+                      </div>
+
+                      {/* 3. 📊 สรุปยอด & วิเคราะห์ (Analytics & KPI) */}
+                      <div className="space-y-1">
+                        {!isSidebarCollapsed && (
+                          <div className="text-[9px] font-bold text-slate-400 px-3 uppercase tracking-wider flex items-center gap-1.5 pt-1">
+                            <span className="w-1 h-1 rounded-full bg-slate-500" />
+                            สรุปยอด & วิเคราะห์ (KPI)
+                          </div>
+                        )}
+                        <nav className="space-y-1">
+                          <button 
+                            onClick={() => setView('sales-dashboard-excel')} 
+                            title="Dashboard (Excel)"
+                            aria-label="Dashboard (Excel)"
+                            className={`w-full flex items-center gap-3 py-2.5 rounded-xl font-bold text-xs transition-all ${activeView === 'sales-dashboard-excel' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5'}`}
+                          >
+                            <BarChartHorizontal size={17} />{!isSidebarCollapsed && <span>Dashboard (Excel)</span>}
+                          </button>
+                          <button 
+                            onClick={() => { setView('sales-funnel-analytics'); setSelectedProject(null); }} 
+                            title="Funnel & KPI Analytics"
+                            aria-label="Funnel & KPI Analytics"
+                            className={`w-full flex items-center gap-3 py-2.5 rounded-xl font-bold text-xs transition-all ${activeView === 'sales-funnel-analytics' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5'}`}
+                          >
+                            <TrendingUp size={17} />{!isSidebarCollapsed && <span>Funnel & KPI Analytics</span>}
+                          </button>
+                          <button 
+                            onClick={() => setView('sales-reports')} 
+                            title="รายงานสรุปยอด (Sales)"
+                            aria-label="รายงานสรุปยอด (Sales)"
+                            className={`w-full flex items-center gap-3 py-2.5 rounded-xl font-bold text-xs transition-all ${activeView === 'sales-reports' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5'}`}
+                          >
+                            <PieChart size={17} />{!isSidebarCollapsed && <span>รายงานสรุปยอด (Sales)</span>}
+                          </button>
+                          <button 
+                            onClick={() => setView('agent-performance')} 
+                            title="สรุปผลงานเซลล์"
+                            aria-label="สรุปผลงานเซลล์"
+                            className={`w-full flex items-center gap-3 py-2.5 rounded-xl font-bold text-xs transition-all ${activeView === 'agent-performance' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5'}`}
+                          >
+                            <Award size={17} />{!isSidebarCollapsed && <span>สรุปผลงานเซลล์</span>}
+                          </button>
+                          <button 
+                            onClick={() => setView('sales-intelligence')} 
+                            title="Strategic Report"
+                            aria-label="Strategic Report"
+                            className={`w-full flex items-center gap-3 py-2.5 rounded-xl font-bold text-xs transition-all ${activeView === 'sales-intelligence' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5'}`}
+                          >
+                            <Lightbulb size={17} />{!isSidebarCollapsed && <span>Strategic Report</span>}
+                          </button>
+                        </nav>
+                      </div>
+
+                      {/* 4. 📑 ธุรการ & ตรวจสอบไซต์ (Operations) */}
+                      <div className="space-y-1">
+                        {!isSidebarCollapsed && (
+                          <div className="text-[9px] font-bold text-slate-400 px-3 uppercase tracking-wider flex items-center gap-1.5 pt-1">
+                            <span className="w-1 h-1 rounded-full bg-slate-500" />
+                            ธุรการ & ตรวจสอบไซต์
+                          </div>
+                        )}
+                        <nav className="space-y-1">
+                          <button 
+                            onClick={() => { setView('sales-admin-docs'); setSelectedProject(null); }} 
+                            title="อัพเดทเอกสาร & สาธารณูปโภค (ธุรการ)"
+                            aria-label="อัพเดทเอกสาร & สาธารณูปโภค (ธุรการ)"
+                            className={`w-full flex items-center gap-3 py-2.5 rounded-xl font-bold text-xs transition-all ${activeView === 'sales-admin-docs' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5'}`}
+                          >
+                            <FileText size={17} />{!isSidebarCollapsed && <span>อัพเดทเอกสาร & สาธารณูปโภค</span>}
+                          </button>
+                          <button 
+                            onClick={() => { setView('sales-sample-house-logs'); setSelectedProject(null); }} 
+                            title="บันทึกตรวจบ้านตัวอย่าง"
+                            aria-label="บันทึกตรวจบ้านตัวอย่าง"
+                            className={`w-full flex items-center gap-3 py-2.5 rounded-xl font-bold text-xs transition-all ${activeView === 'sales-sample-house-logs' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5'}`}
+                          >
+                            <ShieldCheck size={17} />{!isSidebarCollapsed && <span>บันทึกตรวจบ้านตัวอย่าง</span>}
+                          </button>
+                        </nav>
+                      </div>
                     </div>
                   )}
 
                   {/* 🔑 AILIN RENTAL (งานเช่า & ผ่อนตรง) */}
                   {(isAdmin || isOwner || isSales) && (
-                    <div>
-                      <p className="text-[10px] font-black uppercase tracking-widest text-amber-500 mb-3 px-2">Ailin Rental (งานเช่า)</p>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 px-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                        <p className="text-[10px] font-black uppercase tracking-widest text-amber-500">Ailin Rental (งานเช่า)</p>
+                      </div>
                       <nav className="space-y-1">
                         <button
                           onClick={() => { setView('rental-contracts'); setSelectedProject(null); }}
                           onMouseEnter={() => { import('@/components/sales/RentalManagementWorkspace').catch(() => {}); }}
                           title="สัญญาเช่า & ตารางค่างวด"
                           aria-label="สัญญาเช่า & ตารางค่างวด"
-                          className={`w-full flex items-center gap-3 py-3 rounded-xl font-bold transition-all ${
+                          className={`w-full flex items-center gap-3 py-2.5 rounded-xl font-bold text-xs transition-all ${
                             activeView === 'rental-contracts' ? 'bg-amber-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-amber-400'
-                          } ${isSidebarCollapsed ? 'justify-center px-0' : 'px-4'}`}
+                          } ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5'}`}
                         >
-                          <Key size={18} />{!isSidebarCollapsed && <span>สัญญาเช่า & ตารางค่างวด</span>}
+                          <Key size={17} />{!isSidebarCollapsed && <span>สัญญาเช่า & ตารางค่างวด</span>}
                         </button>
 
                         <button
@@ -205,11 +328,11 @@ const Sidebar = React.memo(({
                           onMouseEnter={() => { import('@/components/sales/RentalPortfolioAnalytics').catch(() => {}); }}
                           title="วิเคราะห์พอร์ตบ้านเช่า & Yield"
                           aria-label="วิเคราะห์พอร์ตบ้านเช่า & Yield"
-                          className={`w-full flex items-center gap-3 py-3 rounded-xl font-bold transition-all ${
+                          className={`w-full flex items-center gap-3 py-2.5 rounded-xl font-bold text-xs transition-all ${
                             activeView === 'rental-analytics' ? 'bg-amber-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-amber-400'
-                          } ${isSidebarCollapsed ? 'justify-center px-0' : 'px-4'}`}
+                          } ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5'}`}
                         >
-                          <TrendingUp size={18} />{!isSidebarCollapsed && <span>วิเคราะห์พอร์ต & Yield</span>}
+                          <TrendingUp size={17} />{!isSidebarCollapsed && <span>วิเคราะห์พอร์ต & Yield</span>}
                         </button>
 
                         <button
@@ -217,12 +340,12 @@ const Sidebar = React.memo(({
                           onMouseEnter={() => { import('@/components/sales/RentalAlertsWidget').catch(() => {}); }}
                           title="แจ้งเตือนสัญญา & ค้างชำระ"
                           aria-label="แจ้งเตือนสัญญา & ค้างชำระ"
-                          className={`w-full flex items-center justify-between py-3 rounded-xl font-bold transition-all ${
+                          className={`w-full flex items-center justify-between py-2.5 rounded-xl font-bold text-xs transition-all ${
                             activeView === 'rental-alerts' ? 'bg-amber-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-amber-400'
-                          } ${isSidebarCollapsed ? 'justify-center px-0' : 'px-4'}`}
+                          } ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5'}`}
                         >
                           <div className="flex items-center gap-3">
-                            <ShieldAlert size={18} />
+                            <ShieldAlert size={17} />
                             {!isSidebarCollapsed && <span>แจ้งเตือนสัญญา & ค้างชำระ</span>}
                           </div>
                           {!isSidebarCollapsed && rentalAlertsCount > 0 && (
