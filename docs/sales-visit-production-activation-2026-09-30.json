@@ -1,0 +1,116 @@
+{
+  "projectId": "kbthmdedilswdmmczfay",
+  "date": "2026-09-30",
+  "authorization": "Explicit user confirmation for bounded production Visit/SOP/public 24h QR release",
+  "deployment": {
+    "commit": "89b63b48087fe2bcdd1afd8280d10c6d4c333902",
+    "id": "27wPATrr1nR7XwaF5dfX3p2ph7Y7",
+    "url": "https://buildtrack-mvp-79c5.vercel.app",
+    "status": "Ready",
+    "productionScope": "central_visits",
+    "productionFlags": [
+      "SALES_CRM_VISITS_ENABLED",
+      "SALES_CRM_VISIT_SOP_ENABLED",
+      "SALES_CRM_CUSTOMER_VOICES_ENABLED",
+      "SALES_CRM_VISIT_FOLLOW_UP_ENABLED"
+    ],
+    "selectedFiles": 83
+  },
+  "activation": {
+    "migrationVersion": "20260930063239",
+    "migrationName": "central_visits_reviewed_activation",
+    "artifactSha256": "E56F58B4F03A066E0BCE060D67B3EE316890AF3B8A2B5496C987F8491CA53ABE",
+    "review": {
+      "operationKind": "activate",
+      "operationId": "50c2c3b7-8c0b-42ea-a4b1-5bc6c736dfcb",
+      "reviewReference": "2026-09-30 user explicitly confirmed production Visit, SOP and public no-login Customer Voices QR 24h on 79c5; bounded release only.",
+      "expectedDatabase": "postgres",
+      "expectedSessionActor": "postgres",
+      "batchId": "5d3f05d2-2a5d-44ed-a0e3-9385b8ace3a5",
+      "planDigest": "d831341f3441ad7f29dd6f61ed9913801fc362dc002ce82001dfc6b9b877588b",
+      "releaseDigest": "22010a5c929e087232de32b28230fbbfe9ae7fb5e2558583b734079740fc1827",
+      "expectedSettingsDigest": "d77f0ee5425ca1834c081d83a5966769",
+      "backupReference": "Chrome verified 7 physical backups; latest 2026-09-29T20:24:29Z on kbthmdedilswdmmczfay. Refreshed before sealed install 2026-09-30; docs/sales-visit-sealed-install-execution-2026-09-30.json. Restore not tested.",
+      "clientReleaseReference": "79c5 production Ready deployment 27wPATrr1nR7XwaF5dfX3p2ph7Y7, commit 89b63b48087fe2bcdd1afd8280d10c6d4c333902; central_visits and four Visit flags saved Production-only. HTTPS security headers verified on preceding same-code deployment.",
+      "tokenLogReviewReference": "Reviewed fragment-only 256-bit QR, memory/strip, hash storage, TTL24h, no token/body logging or APM in selected source. Vercel Hobby no integrations/analytics. PG ddl logging; anon3s/auth8s below auto_explain10s. Gateway docs no body field. No custom aggregate rate limiter; bounded acceptance."
+    },
+    "postcheck": {
+      "visitsEnabled": true,
+      "visitSopEnabled": true,
+      "customerVoicesEnabled": true,
+      "voiceTokenTtlHours": 24,
+      "bookingReady": true,
+      "releaseCount": 1,
+      "activationReceiptCount": 1,
+      "remainingPermits": 0,
+      "authenticatedEndpoints": 15,
+      "anonVisitWrite": false,
+      "anonVoiceOpen": true,
+      "anonVoiceSubmit": true
+    }
+  },
+  "http": {
+    "home": 200,
+    "centralPage": 200,
+    "voicePage": 200,
+    "noAuthCentral": 401,
+    "noAuthBooking": 401,
+    "noAuthVisits": 401,
+    "unissuedRandomVoiceOpen": 410,
+    "unissuedVoiceCode": "TOKEN_UNAVAILABLE",
+    "voiceNoStore": true,
+    "voiceNoReferrer": true,
+    "voiceFrameDenied": true
+  },
+  "advisors": [
+    {
+      "name": "rls_enabled_no_policy",
+      "count": 40,
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0008_rls_enabled_no_policy"
+    },
+    {
+      "name": "security_definer_view",
+      "count": 10,
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0010_security_definer_view"
+    },
+    {
+      "name": "function_search_path_mutable",
+      "count": 8,
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable"
+    },
+    {
+      "name": "rls_references_user_metadata",
+      "count": 5,
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0015_rls_references_user_metadata"
+    },
+    {
+      "name": "anon_security_definer_function_executable",
+      "count": 4,
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0028_anon_security_definer_function_executable"
+    },
+    {
+      "name": "authenticated_security_definer_function_executable",
+      "count": 27,
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0029_authenticated_security_definer_function_executable"
+    },
+    {
+      "name": "auth_leaked_password_protection",
+      "count": 1,
+      "remediation": "https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection"
+    }
+  ],
+  "advisorInterpretation": "New counts are exactly the reviewed API grants: anonymous security-definer 1 to 4 (+3), authenticated 12 to 27 (+15). Other categories unchanged. These endpoints retain internal role/session/ownership or bearer-capability guards; private tables remain client sealed. Pre-existing warnings remain out of scope.",
+  "limitations": [
+    "No production customer or survey answers changed for testing",
+    "Real end-to-end production survey submission not performed",
+    "No custom aggregate QR rate limiter; operational follow-up",
+    "Backup listing is not a restore test",
+    "General lead lifecycle, notifications, KPI, schedules and post-booking not enabled"
+  ],
+  "browserAcceptance": {
+    "adminMainLoaded": true,
+    "centralListAndVisitLinksLoaded": true,
+    "visitDetail": "Loaded successfully as Admin: appointment and Walk-in controls enabled; empty history displayed without errors; no write action performed",
+    "screenshot": "C:/Users/HUAWEI/AppData/Local/Temp/buildtrack-visit-live-2026-09-30.png"
+  }
+}

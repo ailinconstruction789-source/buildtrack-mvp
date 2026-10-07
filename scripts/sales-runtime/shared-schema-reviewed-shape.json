@@ -1,0 +1,1116 @@
+{
+  "columns": [
+    {
+      "name": "id",
+      "type": "uuid",
+      "table": "customer_voices",
+      "default": "gen_random_uuid()",
+      "notnull": true,
+      "generated": ""
+    },
+    {
+      "name": "lead_id",
+      "type": "uuid",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "survey_date",
+      "type": "timestamp with time zone",
+      "table": "customer_voices",
+      "default": "now()",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "customer_name",
+      "type": "character varying",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": true,
+      "generated": ""
+    },
+    {
+      "name": "nickname",
+      "type": "character varying",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "age",
+      "type": "character varying",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "gender",
+      "type": "character varying",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "phone",
+      "type": "character varying",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "line_id",
+      "type": "character varying",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "project_name",
+      "type": "character varying",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "agent_name",
+      "type": "character varying",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "marital_status",
+      "type": "character varying",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "education_level",
+      "type": "character varying",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "occupation",
+      "type": "character varying",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "monthly_income",
+      "type": "character varying",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "family_members",
+      "type": "character varying",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "previous_residence",
+      "type": "character varying",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "monthly_rent",
+      "type": "numeric(15,2)",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "purpose_relocate",
+      "type": "boolean",
+      "table": "customer_voices",
+      "default": "false",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "purpose_family_expansion",
+      "type": "boolean",
+      "table": "customer_voices",
+      "default": "false",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "purpose_independence",
+      "type": "boolean",
+      "table": "customer_voices",
+      "default": "false",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "purpose_rent_to_own",
+      "type": "boolean",
+      "table": "customer_voices",
+      "default": "false",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "purpose_debt_consolidation",
+      "type": "boolean",
+      "table": "customer_voices",
+      "default": "false",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "reason_price",
+      "type": "boolean",
+      "table": "customer_voices",
+      "default": "false",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "reason_location",
+      "type": "boolean",
+      "table": "customer_voices",
+      "default": "false",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "reason_promotion",
+      "type": "boolean",
+      "table": "customer_voices",
+      "default": "false",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "reason_design",
+      "type": "boolean",
+      "table": "customer_voices",
+      "default": "false",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "reason_house_type",
+      "type": "boolean",
+      "table": "customer_voices",
+      "default": "false",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "reason_other",
+      "type": "text",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "source_facebook",
+      "type": "boolean",
+      "table": "customer_voices",
+      "default": "false",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "source_tiktok",
+      "type": "boolean",
+      "table": "customer_voices",
+      "default": "false",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "source_youtube",
+      "type": "boolean",
+      "table": "customer_voices",
+      "default": "false",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "source_billboard",
+      "type": "boolean",
+      "table": "customer_voices",
+      "default": "false",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "source_other",
+      "type": "text",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "score_knowledge",
+      "type": "integer",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "score_problem_solving",
+      "type": "integer",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "score_service_mind",
+      "type": "integer",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "score_appearance",
+      "type": "integer",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "score_cleanliness",
+      "type": "integer",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "score_house_design",
+      "type": "integer",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "score_price",
+      "type": "integer",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "score_location",
+      "type": "integer",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "score_average",
+      "type": "numeric(4,2)",
+      "table": "customer_voices",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "created_at",
+      "type": "timestamp with time zone",
+      "table": "customer_voices",
+      "default": "now()",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "updated_at",
+      "type": "timestamp with time zone",
+      "table": "customer_voices",
+      "default": "now()",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "id",
+      "type": "uuid",
+      "table": "leads",
+      "default": "gen_random_uuid()",
+      "notnull": true,
+      "generated": ""
+    },
+    {
+      "name": "project_name",
+      "type": "character varying",
+      "table": "leads",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "customer_name",
+      "type": "character varying",
+      "table": "leads",
+      "default": null,
+      "notnull": true,
+      "generated": ""
+    },
+    {
+      "name": "phone",
+      "type": "character varying",
+      "table": "leads",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "occupation",
+      "type": "character varying",
+      "table": "leads",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "interest",
+      "type": "character varying",
+      "table": "leads",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "source",
+      "type": "character varying",
+      "table": "leads",
+      "default": "'Walk-in'::character varying",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "status",
+      "type": "character varying",
+      "table": "leads",
+      "default": "'New'::character varying",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "agent_name",
+      "type": "character varying",
+      "table": "leads",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "created_at",
+      "type": "timestamp with time zone",
+      "table": "leads",
+      "default": "now()",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "updated_at",
+      "type": "timestamp with time zone",
+      "table": "leads",
+      "default": "now()",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "channel",
+      "type": "character varying",
+      "table": "leads",
+      "default": "'Walk in'::character varying",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "lead_date",
+      "type": "timestamp with time zone",
+      "table": "leads",
+      "default": "now()",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "contacted_date",
+      "type": "timestamp with time zone",
+      "table": "leads",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "appointment_date",
+      "type": "timestamp with time zone",
+      "table": "leads",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "actual_visit_date",
+      "type": "timestamp with time zone",
+      "table": "leads",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "follow_up_count",
+      "type": "integer",
+      "table": "leads",
+      "default": "0",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "last_follow_up_date",
+      "type": "timestamp with time zone",
+      "table": "leads",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "interested_plot_id",
+      "type": "character varying",
+      "table": "leads",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "interested_plot_name",
+      "type": "character varying",
+      "table": "leads",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "booking_date",
+      "type": "timestamp with time zone",
+      "table": "leads",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "booking_amount",
+      "type": "numeric(15,2)",
+      "table": "leads",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "loan_submission_date",
+      "type": "timestamp with time zone",
+      "table": "leads",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "loan_approved_date",
+      "type": "timestamp with time zone",
+      "table": "leads",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "transferred_date",
+      "type": "timestamp with time zone",
+      "table": "leads",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "lost_reason",
+      "type": "character varying",
+      "table": "leads",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "lost_reason_detail",
+      "type": "text",
+      "table": "leads",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "crm_status",
+      "type": "character varying",
+      "table": "leads",
+      "default": "'Follow-up — อยู่ระหว่างติดตาม'::character varying",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "auto_status",
+      "type": "character varying",
+      "table": "leads",
+      "default": "'Lead เข้า'::character varying",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "notes",
+      "type": "text",
+      "table": "leads",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "created_by_agent",
+      "type": "character varying",
+      "table": "leads",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "closing_agent",
+      "type": "character varying",
+      "table": "leads",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "id",
+      "type": "text",
+      "table": "plots",
+      "default": null,
+      "notnull": true,
+      "generated": ""
+    },
+    {
+      "name": "house_type_id",
+      "type": "uuid",
+      "table": "plots",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "foreman_name",
+      "type": "text",
+      "table": "plots",
+      "default": null,
+      "notnull": true,
+      "generated": ""
+    },
+    {
+      "name": "project_name",
+      "type": "text",
+      "table": "plots",
+      "default": "'โครงการที่ 1'::text",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "created_at",
+      "type": "timestamp with time zone",
+      "table": "plots",
+      "default": "timezone('utc'::text, now())",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "has_customer",
+      "type": "boolean",
+      "table": "plots",
+      "default": "false",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "is_completed",
+      "type": "boolean",
+      "table": "plots",
+      "default": "false",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "overview_image_url",
+      "type": "text",
+      "table": "plots",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "sale_status",
+      "type": "character varying",
+      "table": "plots",
+      "default": "'active'::character varying",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "paused_for_sale_at",
+      "type": "timestamp with time zone",
+      "table": "plots",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "selling_price",
+      "type": "numeric",
+      "table": "plots",
+      "default": "0",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "handover_cycle",
+      "type": "integer",
+      "table": "plots",
+      "default": "1",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "inspection_round",
+      "type": "integer",
+      "table": "plots",
+      "default": "0",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "plot_name",
+      "type": "text",
+      "table": "plots",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "land_size",
+      "type": "numeric",
+      "table": "plots",
+      "default": "0",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "house_model",
+      "type": "text",
+      "table": "plots",
+      "default": "''::text",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "land_appraisal_price",
+      "type": "numeric",
+      "table": "plots",
+      "default": "0",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "highlight_color",
+      "type": "text",
+      "table": "plots",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "highlight_note",
+      "type": "text",
+      "table": "plots",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "permit_status",
+      "type": "character varying",
+      "table": "plots",
+      "default": "'NotStarted'::character varying",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "registration_status",
+      "type": "character varying",
+      "table": "plots",
+      "default": "'NotStarted'::character varying",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "water_meter_status",
+      "type": "character varying",
+      "table": "plots",
+      "default": "'NotStarted'::character varying",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "electric_meter_status",
+      "type": "character varying",
+      "table": "plots",
+      "default": "'NotStarted'::character varying",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "permit_date",
+      "type": "date",
+      "table": "plots",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "registration_date",
+      "type": "date",
+      "table": "plots",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "water_meter_date",
+      "type": "date",
+      "table": "plots",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "electric_meter_date",
+      "type": "date",
+      "table": "plots",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "handover_status",
+      "type": "text",
+      "table": "plots",
+      "default": "'pending'::text",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "handover_completed_at",
+      "type": "timestamp with time zone",
+      "table": "plots",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "handover_completed_by",
+      "type": "text",
+      "table": "plots",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "inspection_round1_date",
+      "type": "timestamp with time zone",
+      "table": "plots",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "inspection_round1_status",
+      "type": "text",
+      "table": "plots",
+      "default": "'pending'::text",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "inspection_round2_date",
+      "type": "timestamp with time zone",
+      "table": "plots",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "inspection_round2_status",
+      "type": "text",
+      "table": "plots",
+      "default": "'pending'::text",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "handover_notes",
+      "type": "text",
+      "table": "plots",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "name",
+      "type": "text",
+      "table": "projects",
+      "default": null,
+      "notnull": true,
+      "generated": ""
+    },
+    {
+      "name": "created_at",
+      "type": "timestamp with time zone",
+      "table": "projects",
+      "default": "timezone('utc'::text, now())",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "layout_data",
+      "type": "jsonb",
+      "table": "projects",
+      "default": "'[]'::jsonb",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "is_closed",
+      "type": "boolean",
+      "table": "projects",
+      "default": "false",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "id",
+      "type": "uuid",
+      "table": "sales",
+      "default": "gen_random_uuid()",
+      "notnull": true,
+      "generated": ""
+    },
+    {
+      "name": "lead_id",
+      "type": "uuid",
+      "table": "sales",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "plot_id",
+      "type": "text",
+      "table": "sales",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "sale_price",
+      "type": "numeric(15,2)",
+      "table": "sales",
+      "default": "0",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "booking_amount",
+      "type": "numeric(15,2)",
+      "table": "sales",
+      "default": "0",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "land_office_price",
+      "type": "numeric(15,2)",
+      "table": "sales",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "bank_name",
+      "type": "character varying",
+      "table": "sales",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "contract_status",
+      "type": "character varying",
+      "table": "sales",
+      "default": "'Reserved'::character varying",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "bank_status",
+      "type": "character varying",
+      "table": "sales",
+      "default": "'Pending'::character varying",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "cancellation_reason",
+      "type": "character varying",
+      "table": "sales",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "transferred_at",
+      "type": "timestamp with time zone",
+      "table": "sales",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "created_at",
+      "type": "timestamp with time zone",
+      "table": "sales",
+      "default": "now()",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "updated_at",
+      "type": "timestamp with time zone",
+      "table": "sales",
+      "default": "now()",
+      "notnull": false,
+      "generated": ""
+    },
+    {
+      "name": "expected_transfer_date",
+      "type": "date",
+      "table": "sales",
+      "default": null,
+      "notnull": false,
+      "generated": ""
+    }
+  ],
+  "constraints": [
+    {
+      "def": "FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE",
+      "ref": "leads",
+      "kind": "f",
+      "name": "customer_voices_lead_id_fkey",
+      "table": "customer_voices"
+    },
+    {
+      "def": "PRIMARY KEY (id)",
+      "ref": null,
+      "kind": "p",
+      "name": "customer_voices_pkey",
+      "table": "customer_voices"
+    },
+    {
+      "def": "PRIMARY KEY (id)",
+      "ref": null,
+      "kind": "p",
+      "name": "leads_pkey",
+      "table": "leads"
+    },
+    {
+      "def": "FOREIGN KEY (project_name) REFERENCES projects(name) ON DELETE CASCADE",
+      "ref": "projects",
+      "kind": "f",
+      "name": "leads_project_name_fkey",
+      "table": "leads"
+    },
+    {
+      "def": "FOREIGN KEY (house_type_id) REFERENCES house_types(id) ON DELETE CASCADE",
+      "ref": "house_types",
+      "kind": "f",
+      "name": "plots_house_type_id_fkey",
+      "table": "plots"
+    },
+    {
+      "def": "PRIMARY KEY (id)",
+      "ref": null,
+      "kind": "p",
+      "name": "plots_pkey",
+      "table": "plots"
+    },
+    {
+      "def": "PRIMARY KEY (name)",
+      "ref": null,
+      "kind": "p",
+      "name": "projects_pkey",
+      "table": "projects"
+    },
+    {
+      "def": "FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE",
+      "ref": "leads",
+      "kind": "f",
+      "name": "sales_lead_id_fkey",
+      "table": "sales"
+    },
+    {
+      "def": "PRIMARY KEY (id)",
+      "ref": null,
+      "kind": "p",
+      "name": "sales_pkey",
+      "table": "sales"
+    },
+    {
+      "def": "FOREIGN KEY (plot_id) REFERENCES plots(id) ON DELETE SET NULL",
+      "ref": "plots",
+      "kind": "f",
+      "name": "sales_plot_id_fkey",
+      "table": "sales"
+    }
+  ]
+}

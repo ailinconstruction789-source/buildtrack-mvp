@@ -1,6 +1,6 @@
 
 'use client';
-import React, { useState, useEffect, useMemo, useCallback, useTransition } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useTransition, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { supabase } from '@/lib/supabase';
 import { useBuildTrackData } from '@/hooks/useBuildTrackData';
@@ -21,6 +21,14 @@ const ExecutiveAnalytics = dynamic(() => import('@/components/ExecutiveAnalytics
 const MasterGanttChart = dynamic(() => import('@/components/MasterGanttChart'));
 const SalesWorkspaceEntry = dynamic(() => import('@/components/sales/SalesWorkspaceEntry'));
 const SalesReportingEntry = dynamic(() => import('@/components/sales/SalesReportingEntry'));
+const CentralLeadsView = dynamic(() => import('@/components/sales/CentralLeadsView'));
+const MySalesWorkspace = dynamic(() => import('@/components/sales/MySalesWorkspace'));
+const SalesFunnelAnalytics = dynamic(() => import('@/components/sales/SalesFunnelAnalytics'));
+const AdminDocsManager = dynamic(() => import('@/components/sales/AdminDocsManager'));
+const SampleHouseLogsView = dynamic(() => import('@/components/sales/SampleHouseLogsView'));
+const RentalManagementWorkspace = dynamic(() => import('@/components/sales/RentalManagementWorkspace'));
+const RentalPortfolioAnalytics = dynamic(() => import('@/components/sales/RentalPortfolioAnalytics'));
+const RentalAlertsWidget = dynamic(() => import('@/components/sales/RentalAlertsWidget'));
 const MaterialStoreDashboard = dynamic(() => import('@/components/MaterialStoreDashboard'));
 const AdminPlotPricing = dynamic(() => import('@/components/AdminPlotPricing'));
 const AdminUsersView = dynamic(() => import('@/components/admin/AdminUsersView'));
@@ -37,7 +45,7 @@ import {
   LayoutDashboard, Map as MapIcon, Truck, ChevronRight, ClipboardList, Loader2,
   Send, Camera, CheckCircle, XCircle, UserCog, X, Maximize2, HardHat, PlusCircle, Settings, Building, FolderOpen, Users, Trash2, Search, Filter, LogOut, AlertTriangle, Eraser, Grid, Paintbrush, Clock, SortAsc,
   UserPlus, Phone, CalendarDays, Wrench, FileSpreadsheet, Bell, CalendarClock, TrendingUp, AlertCircle, BarChartHorizontal, Save, Calendar, Smartphone, Monitor, ZoomIn, ZoomOut,
-  PieChart, Home, Activity, Download, Copy, Pickaxe, ShieldAlert, Printer, CheckSquare, Square, ImageIcon, Tag, Hammer, UserCheck, DollarSign, ArrowLeft, Key, Ban, Edit2, Check, Plus, Upload, Calculator, ChevronDown, ChevronUp, Lightbulb, Building2, Gift, Award, MessageSquare, RefreshCw
+  PieChart, Home, Activity, Download, Copy, Pickaxe, ShieldAlert, Printer, CheckSquare, Square, ImageIcon, Tag, Hammer, UserCheck, DollarSign, ArrowLeft, Key, Ban, Edit2, Check, Plus, Upload, Calculator, ChevronDown, ChevronUp, Lightbulb, Building2, Gift, Award, MessageSquare, RefreshCw, User
 } from 'lucide-react';
 
 // 🌟 ฟังก์ชันบีบอัดรูปภาพ Native — อยู่นอก component เพื่อไม่ให้ถูกสร้างใหม่ทุก render 🌟
@@ -153,6 +161,7 @@ export default function ConstructionApp() {
   // ==========================================
   // Extracted: [allUsers,
   const [loggedInUser, setLoggedInUser] = useState<any>(null);
+  const hasInitialRedirectedRef = useRef(false);
   const [loginData, setLoginData] = useState({ username: '', pin: '' });
 
   const [selectedProject, setSelectedProject] = useState<any>(null);
@@ -894,7 +903,29 @@ export default function ConstructionApp() {
   }, []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   // loggedInUser fetchAllData extracted
-  useEffect(() => { if (loggedInUser?.role === 'Owner') setView('global-feed'); }, [loggedInUser]);
+  useEffect(() => { 
+    if (!loggedInUser) {
+      hasInitialRedirectedRef.current = false;
+      if (typeof window !== 'undefined') {
+        sessionStorage.removeItem('buildtrack_initial_landed');
+      }
+      return;
+    }
+
+    // 🎯 Only redirect to role-specific landing page once upon initial login / session launch
+    const hasLanded = (typeof window !== 'undefined' && sessionStorage.getItem('buildtrack_initial_landed')) || hasInitialRedirectedRef.current;
+    if (!hasLanded) {
+      hasInitialRedirectedRef.current = true;
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('buildtrack_initial_landed', 'true');
+      }
+      if (loggedInUser?.role === 'Owner') {
+        setView('global-feed'); 
+      } else if (loggedInUser?.role?.toLowerCase() === 'sales') {
+        setView('my-sales-workspace');
+      }
+    }
+  }, [loggedInUser]);
   useEffect(() => { setScheduleInputs({}); }, [selectedPlot?.id]);
 
   // Lazy load specific plot details when opening plot view
@@ -989,6 +1020,19 @@ export default function ConstructionApp() {
       const userMeta = data.user.user_metadata;
       setLoggedInUser(userMeta);
       localStorage.setItem('buildtrack_last_active', Date.now().toString());
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('buildtrack_initial_landed', 'true');
+      }
+      hasInitialRedirectedRef.current = true;
+
+      // 🎯 เข้าสู่หน้าเริ่มต้นเฉพาะตอน Login ครั้งแรกเท่านั้น
+      if (userMeta?.role === 'Owner') {
+        setView('global-feed');
+      } else if (userMeta?.role?.toLowerCase() === 'sales') {
+        setView('my-sales-workspace');
+      } else {
+        setView('dashboard');
+      }
     } catch (e: any) {
       showAlert('Error', e.message);
     } finally {
@@ -1289,6 +1333,10 @@ export default function ConstructionApp() {
       
       // 🌟 ล้างความจำในเบราว์เซอร์ทิ้ง
       localStorage.removeItem('buildtrack_last_active');
+      if (typeof window !== 'undefined') {
+        sessionStorage.removeItem('buildtrack_initial_landed');
+      }
+      hasInitialRedirectedRef.current = false;
 
       setLoggedInUser(null);
       setLoginData({ username: '', pin: '' });
@@ -4835,9 +4883,7 @@ export default function ConstructionApp() {
 
               {/* 📊 View: Sales Dashboard Excel (Keep-Alive Cache - Instant 0s Transitions) */}
               <div className={view === 'sales-dashboard-excel' ? 'block h-full' : 'hidden'}>
-                <SalesReportingEntry 
-                  surface="dashboard"
-                  active={view === 'sales-dashboard-excel'}
+                <SalesReportingEntry surface="dashboard" active={view === 'sales-dashboard-excel'}
                   project={selectedProject} 
                   onViewDefects={(plot: any) => {
                     const foundProj = projects.find((p: any) => p.name === plot.project_name || p.project_name === plot.project_name);
@@ -4856,7 +4902,7 @@ export default function ConstructionApp() {
                   project={selectedProject}
                   projects={projects}
                   user={loggedInUser}
-                  initialTab={view === 'sales-daily-visits' ? 'daily_visits' : 'lead_tracker'}
+                  initialTab="daily_visits"
                   onBack={() => { setView('dashboard'); setSelectedProject(null); }}
                 />
               )}
@@ -4883,6 +4929,37 @@ export default function ConstructionApp() {
                 <SalesReportingEntry surface="summary" />
               )}
 
+              {/* 👤 View: ลูกค้าของฉัน (My Sales Hub) */}
+              {view === 'my-sales-workspace' && (
+                <div className="w-full h-full">
+                  <MySalesWorkspace
+                    currentUser={loggedInUser}
+                    projects={projects}
+                    plots={plots}
+                    onBack={() => { setView('dashboard'); setSelectedProject(null); }}
+                  />
+                </div>
+              )}
+
+              {/* 👥 View: Lead ส่วนกลาง (CRM) */}
+              {view === 'central-leads' && (
+                <div className="w-full h-full">
+                  <CentralLeadsView
+                    embedded={true}
+                    onBack={() => { setView('dashboard'); setSelectedProject(null); }}
+                    visitsEnabled={true}
+                    leadWorkEnabled={true}
+                    workScheduleEnabled={true}
+                    notificationsEnabled={true}
+                    slaPreviewEnabled={true}
+                    queueMonitorEnabled={true}
+                    bookingEnabled={true}
+                    projectSalesEnabled={true}
+                    reportsEnabled={true}
+                  />
+                </div>
+              )}
+
               {/* 🎁 View: Sales Promotions Management (Admin & Sales) */}
               {view === 'sales-promotions' && (isAdmin || isSales) && (
                 <HousePromotionsView
@@ -4891,6 +4968,141 @@ export default function ConstructionApp() {
                   selectedPlot={selectedPlot}
                   currentUserRole={currentUserRole}
                 />
+              )}
+
+              {/* 📊 View: Sales Funnel & KPI Analytics */}
+              {view === 'sales-funnel-analytics' && (isAdmin || isOwner || isSales) && (
+                <div className="w-full h-full bg-slate-50 p-4 md:p-6 overflow-y-auto">
+                  <SalesFunnelAnalytics
+                    projects={projects}
+                    selectedProjectName={selectedProject?.name || 'all'}
+                  />
+                </div>
+              )}
+
+              {/* 📑 View: Admin Docs & Utilities (ธุรการ & สาธารณูปโภค) */}
+              {view === 'sales-admin-docs' && (isAdmin || isOwner || isSales) && (
+                <div className="w-full h-full bg-slate-50 p-4 md:p-6 overflow-y-auto">
+                  <AdminDocsManager
+                    plots={plots}
+                    onUpdate={fetchAllData}
+                    selectedProjectName={selectedProject?.name}
+                  />
+                </div>
+              )}
+
+              {/* 🏡 View: Sample House Daily Inspection Logs */}
+              {view === 'sales-sample-house-logs' && (isAdmin || isOwner || isSales) && (
+                <div className="w-full h-full bg-slate-50 p-4 md:p-6 overflow-y-auto">
+                  <SampleHouseLogsView
+                    projects={projects}
+                    plots={plots}
+                    user={loggedInUser}
+                    selectedProjectName={selectedProject?.name || 'all'}
+                  />
+                </div>
+              )}
+
+              {/* 🔑 View: Ailin Rental Contracts & Management Workspace */}
+              {view === 'rental-contracts' && (isAdmin || isOwner || isSales) && (
+                <RentalManagementWorkspace
+                  projects={projects}
+                  plots={plots}
+                  user={loggedInUser}
+                  selectedProjectName={selectedProject?.name}
+                  onNavigateToAnalytics={() => setView('rental-analytics')}
+                  onNavigateToAlerts={() => setView('rental-alerts')}
+                />
+              )}
+
+              {/* 📊 View: Ailin Rental Portfolio Analytics & Yield */}
+              {view === 'rental-analytics' && (isAdmin || isOwner || isSales) && (
+                <div className="w-full h-full bg-slate-50 p-4 md:p-6 overflow-y-auto space-y-6">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white p-5 rounded-3xl border border-slate-200/80 shadow-xs">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2.5 bg-gradient-to-br from-blue-600 to-indigo-700 text-white rounded-2xl shadow-md">
+                        <TrendingUp size={22} className="stroke-[2.5]" />
+                      </div>
+                      <div>
+                        <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+                          Rental Portfolio Analytics & Yield
+                          <span className="text-xs px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 font-bold">
+                            ภาพรวมผลตอบแทน
+                          </span>
+                        </h1>
+                        <p className="text-xs text-slate-500">
+                          วิเคราะห์อัตราการเช่า (Occupancy Rate) • กระแสเงินสดรายเดือน • กองทุนสะสมเงินดาวน์ Rent to Own
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setView('rental-contracts')}
+                        className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        <Key size={15} /> สัญญาเช่าทั้งหมด
+                      </button>
+                      <button
+                        onClick={() => setView('rental-alerts')}
+                        className="px-4 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        <ShieldAlert size={15} /> แจ้งเตือนด่วน
+                      </button>
+                    </div>
+                  </div>
+
+                  <RentalPortfolioAnalytics projectName={selectedProject?.name || 'all'} />
+                </div>
+              )}
+
+              {/* 🚨 View: Ailin Rental Alerts & Expiry */}
+              {view === 'rental-alerts' && (isAdmin || isOwner || isSales) && (
+                <div className="w-full h-full bg-slate-50 p-4 md:p-6 overflow-y-auto space-y-6">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white p-5 rounded-3xl border border-slate-200/80 shadow-xs">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2.5 bg-gradient-to-br from-rose-500 to-rose-700 text-white rounded-2xl shadow-md">
+                        <ShieldAlert size={22} className="stroke-[2.5]" />
+                      </div>
+                      <div>
+                        <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+                          Rental Alerts & Expiry Monitoring
+                          <span className="text-xs px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200 font-bold">
+                            ศูนย์แจ้งเตือน
+                          </span>
+                        </h1>
+                        <p className="text-xs text-slate-500">
+                          ระบบตรวจจับสัญญาจะหมดอายุ 30/60 วัน และค้างชำระค่าเช่ารายงวด
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setView('rental-contracts')}
+                        className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        <Key size={15} /> สัญญาเช่าทั้งหมด
+                      </button>
+                      <button
+                        onClick={() => setView('rental-analytics')}
+                        className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        <TrendingUp size={15} className="text-blue-600" /> วิเคราะห์พอร์ต
+                      </button>
+                    </div>
+                  </div>
+
+                  <RentalAlertsWidget 
+                    projectName={selectedProject?.name || 'all'} 
+                    onOpenContractAction={(contractId, plotId, leadId) => {
+                      setView('rental-contracts');
+                    }}
+                    onOpenPaymentLedger={(contractId, plotId, leadId) => {
+                      setView('rental-contracts');
+                    }}
+                  />
+                </div>
               )}
 
               {/* 🗺️ View: Project Detail & Map Builder */}
@@ -5297,6 +5509,14 @@ export default function ConstructionApp() {
               </button>
             </div>
             <div className="grid grid-cols-2 gap-4">
+              <button onClick={() => { setView('my-sales-workspace'); setShowMobileSalesMenu(false); }} className={`flex flex-col items-center justify-center p-5 rounded-2xl border-2 transition-all ${activeView === 'my-sales-workspace' ? 'border-[#d4af37] bg-[#d4af37]/10' : 'border-slate-100 bg-slate-50 hover:border-slate-200'}`}>
+                <User size={28} className="text-[#d4af37] mb-3" />
+                <span className="text-xs font-bold text-slate-700 text-center">ลูกค้าของฉัน<br/>(My Leads)</span>
+              </button>
+              <button onClick={() => { setView('central-leads'); setShowMobileSalesMenu(false); }} className={`flex flex-col items-center justify-center p-5 rounded-2xl border-2 transition-all ${activeView === 'central-leads' ? 'border-[#d4af37] bg-[#d4af37]/10' : 'border-slate-100 bg-slate-50 hover:border-slate-200'}`}>
+                <Users size={28} className="text-[#d4af37] mb-3" />
+                <span className="text-xs font-bold text-slate-700 text-center">Lead ส่วนกลาง<br/>(CRM)</span>
+              </button>
               <button onClick={() => { setView('sales-daily-visits'); setShowMobileSalesMenu(false); }} className={`flex flex-col items-center justify-center p-5 rounded-2xl border-2 transition-all ${activeView === 'sales-daily-visits' ? 'border-[#d4af37] bg-[#d4af37]/10' : 'border-slate-100 bg-slate-50 hover:border-slate-200'}`}>
                 <CalendarDays size={28} className="text-[#d4af37] mb-3" />
                 <span className="text-xs font-bold text-slate-700 text-center">ตารางนัด<br/>เข้าชม (Visits)</span>

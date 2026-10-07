@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Map as MapIcon, ZoomIn, ZoomOut, Pickaxe, Home, Loader2, User } from 'lucide-react';
+import { Map as MapIcon, ZoomIn, ZoomOut, Pickaxe, Home, Loader2, User, Sun, Moon, AlertTriangle } from 'lucide-react';
+import { isSampleHouse, fetchTodayInspectionStatus, fetchTodayInspectionMap, SampleHouseInspectionStatus } from '@/lib/sales/sampleHouseHelper';
 
 interface SalesMapProps {
   projectName?: string;
@@ -18,6 +19,8 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
   const [mapZoom, setMapZoom] = useState(1);
   const [plots, setPlots] = useState<any[]>([]);
   const [showLegend, setShowLegend] = useState(false);
+  const [inspectionStatus, setInspectionStatus] = useState<SampleHouseInspectionStatus | null>(null);
+  const [inspectionMap, setInspectionMap] = useState<Record<string, SampleHouseInspectionStatus>>({});
 
   useEffect(() => {
     const fetchMapData = async () => {
@@ -44,7 +47,7 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
         }
 
         // Fetch plots, progress, grass task assignments, and recent photos for this project
-        const [plotsRes, progressRes, grassTasksRes, photosRes] = await Promise.all([
+        const [plotsRes, progressRes, grassTasksRes, photosRes, inspectRes, inspectMapRes] = await Promise.all([
           supabase.from('plots').select('*').eq('project_name', projectName),
           supabase.from('vw_plot_progress').select('plot_id, overall_progress'),
           supabase.from('task_updates')
@@ -54,8 +57,17 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
           supabase.from('task_updates')
             .select('plot_id, photo_url, updated_at')
             .not('photo_url', 'is', null)
-            .order('updated_at', { ascending: false })
+            .order('updated_at', { ascending: false }),
+          fetchTodayInspectionStatus(projectName),
+          fetchTodayInspectionMap(projectName)
         ]);
+        
+        if (inspectRes) {
+          setInspectionStatus(inspectRes);
+        }
+        if (inspectMapRes) {
+          setInspectionMap(inspectMapRes);
+        }
           
         if (plotsRes.data) {
           const latestPhotos: Record<string, string> = {};
@@ -226,7 +238,6 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
               return false;
             });
             const status = activeLead ? activeLead.status : 'Available';
-            const cardBorderClass = getSalesColor(status);
             
             // Check if Construction is finished or grass is planted
             const plotInfo = plots.find((p: any) => {
@@ -239,6 +250,10 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
               return false;
             });
             const isGrassPlanted = plotInfo?.isGrassPlanted || plotInfo?.is_completed || false;
+            const isSample = isSampleHouse(plotInfo);
+            const cardBorderClass = isSample && status === 'Available' 
+              ? 'bg-amber-50/95 border-amber-500 text-amber-950 shadow-[0_0_15px_rgba(245,158,11,0.5)] border-[3px] ring-2 ring-amber-300' 
+              : getSalesColor(status);
 
             return (
               <div 
@@ -272,22 +287,61 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
                       </div>
                     )}
                   </div>
-                  {/* Status Badges */}
-                  {(plotInfo?.is_completed || plotInfo?.sale_status === 'ready_for_sale') ? (
-                    <div className="absolute top-0 left-0 bg-blue-500 text-white rounded-br-md px-1 py-0.5 text-[6px] sm:text-[8px] font-bold shadow-sm z-30 flex items-center justify-center" title="สร้างเสร็จพร้อมขาย">
-                      <span className="text-[7px]">✅</span>
-                    </div>
-                  ) : (plotInfo?.progress > 0 && (
-                    <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[7px] font-bold flex flex-col items-center z-30 backdrop-blur-sm" title="กำลังก่อสร้าง">
-                      <div className="flex items-center gap-1 py-0.5">
-                        <Pickaxe size={8} className="text-amber-400" />
-                        <span>กำลังสร้าง {Math.round(plotInfo.progress)}%</span>
+
+                  {/* Sample House Badge */}
+                  {isSample ? (
+                    <>
+                      <div className="absolute top-0 left-0 bg-amber-500 text-slate-950 rounded-br-md px-1 py-0.5 text-[6px] sm:text-[7px] font-black shadow-sm z-30 flex items-center gap-0.5" title="บ้านตัวอย่าง (Sample House)">
+                        <span>🏡</span>
+                        <span className="hidden sm:inline">ตัวอย่าง</span>
                       </div>
-                      <div className="w-full h-[2px] bg-white/20">
-                        <div className="h-full bg-amber-400" style={{ width: `${plotInfo.progress}%` }}></div>
+                      {(() => {
+                        const pName = plotInfo?.plot_name || plotId;
+                        const plotInspect = inspectionMap[pName] || inspectionMap[plotId] || inspectionMap['general'] || inspectionStatus;
+                        return (
+                          <div 
+                            className={`absolute top-0 right-0 rounded-bl-md px-1 py-0.5 text-[6px] sm:text-[7px] font-black shadow-sm z-30 flex items-center gap-0.5 ${
+                              plotInspect?.status === 'morning_checked'
+                                ? 'bg-emerald-600 text-white'
+                                : plotInspect?.status === 'evening_checked'
+                                ? 'bg-indigo-600 text-white'
+                                : 'bg-rose-500 text-white animate-pulse'
+                            }`} 
+                            title={
+                              plotInspect?.status === 'morning_checked'
+                                ? `☀️ ตรวจเปิดบ้านแล้ว (${plotInspect.inspectionTime || ''}) โดย ${plotInspect.inspectorName || 'จนท.'}`
+                                : plotInspect?.status === 'evening_checked'
+                                ? `🌙 ตรวจปิดบ้านแล้ว (${plotInspect.inspectionTime || ''}) โดย ${plotInspect.inspectorName || 'จนท.'}`
+                                : '⚠️ ยังไม่ตรวจเปิดบ้านประจำวัน'
+                            }
+                          >
+                            <span>{plotInspect?.status === 'morning_checked' ? '☀️' : plotInspect?.status === 'evening_checked' ? '🌙' : '⚠️'}</span>
+                            <span className="hidden sm:inline">
+                              {plotInspect?.status === 'morning_checked' ? 'เปิดแล้ว' : plotInspect?.status === 'evening_checked' ? 'ปิดแล้ว' : 'รอตรวจ'}
+                            </span>
+                          </div>
+                        );
+                      })()}
+                    </>
+                  ) : (
+                    /* Normal Status Badges */
+                    (plotInfo?.is_completed || plotInfo?.sale_status === 'ready_for_sale') ? (
+                      <div className="absolute top-0 left-0 bg-blue-500 text-white rounded-br-md px-1 py-0.5 text-[6px] sm:text-[8px] font-bold shadow-sm z-30 flex items-center justify-center" title="สร้างเสร็จพร้อมขาย">
+                        <span className="text-[7px]">✅</span>
                       </div>
-                    </div>
-                  ))}
+                    ) : (plotInfo?.progress > 0 && (
+                      <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[7px] font-bold flex flex-col items-center z-30 backdrop-blur-sm" title="กำลังก่อสร้าง">
+                        <div className="flex items-center gap-1 py-0.5">
+                          <Pickaxe size={8} className="text-amber-400" />
+                          <span>กำลังสร้าง {Math.round(plotInfo.progress)}%</span>
+                        </div>
+                        <div className="w-full h-[2px] bg-white/20">
+                          <div className="h-full bg-amber-400" style={{ width: `${plotInfo.progress}%` }}></div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+
                   {/* Hover Photo Popover */}
                   {plotInfo?.latestPhoto && (
                     <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-[105%] hidden group-hover:flex flex-col items-center z-50 pointer-events-none w-24">
@@ -314,7 +368,7 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
         </button>
 
         {showLegend && (
-          <div className="bg-white/95 backdrop-blur-md border border-slate-200 rounded-xl p-4 shadow-lg w-52 animate-in fade-in slide-in-from-top-2">
+          <div className="bg-white/95 backdrop-blur-md border border-slate-200 rounded-xl p-4 shadow-lg w-56 animate-in fade-in slide-in-from-top-2">
             <h4 className="text-xs font-bold text-slate-800 mb-3 pb-2 border-b border-slate-100 flex items-center justify-between">
               สถานะการขาย <span className="text-[10px] text-slate-400 font-normal">Legend</span>
             </h4>
@@ -327,6 +381,35 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
               <div className="flex items-center gap-3"><div className="w-3.5 h-3.5 rounded-full bg-indigo-50 border-[2px] border-indigo-500 shadow-sm"></div> รอผลสินเชื่อ (Loan Process)</div>
               <div className="flex items-center gap-3"><div className="w-3.5 h-3.5 rounded-full bg-blue-50 border-[2px] border-blue-500 shadow-sm"></div> อนุมัติแล้ว (Approved)</div>
               <div className="flex items-center gap-3"><div className="w-3.5 h-3.5 rounded-full bg-violet-50 border-[2px] border-violet-500 shadow-sm"></div> โอนกรรมสิทธิ์ (Transferred)</div>
+            </div>
+
+            {/* Sample House & SOP Legend */}
+            <div className="pt-3 mt-3 border-t border-slate-200">
+              <div className="text-[10px] font-bold text-slate-400 mb-2 uppercase tracking-wider">บ้านตัวอย่าง & SOP ตรวจบ้าน</div>
+              <div className="flex flex-col gap-2 text-[11px] font-semibold text-slate-600">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-4 h-4 rounded bg-amber-100 border-2 border-amber-500 shadow-sm flex items-center justify-center text-[9px]">🏡</div>
+                  <span>บ้านตัวอย่าง (Sample House)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300 text-[9px] font-bold flex items-center gap-1">
+                    <span>☀️</span> เปิดบ้านแล้ว
+                  </span>
+                  <span className="text-[10px] text-slate-400">ตรวจเช้าแล้ว</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 border border-indigo-300 text-[9px] font-bold flex items-center gap-1">
+                    <span>🌙</span> ปิดบ้านแล้ว
+                  </span>
+                  <span className="text-[10px] text-slate-400">ตรวจเย็นแล้ว</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 border border-rose-300 text-[9px] font-bold flex items-center gap-1">
+                    <span>⚠️</span> รอตรวจ
+                  </span>
+                  <span className="text-[10px] text-slate-400">ยังไม่ตรวจวันนี้</span>
+                </div>
+              </div>
             </div>
           </div>
         )}

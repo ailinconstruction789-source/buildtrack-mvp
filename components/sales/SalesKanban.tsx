@@ -1,17 +1,21 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { Search, Plus, Map as MapIcon, Users, ListFilter, Download, ChevronRight, Home, Phone, Calendar, ArrowRight, ArrowLeft, LogOut, UserCheck, User, Key, X, FileText, Clock, CheckCircle, XCircle, Banknote, Building2, FileSignature, Pickaxe, Loader2, TrendingUp, Upload, Trash2, PieChart, Lightbulb } from 'lucide-react';
+import { Search, Plus, Map as MapIcon, Users, ListFilter, Download, ChevronRight, Home, Phone, Calendar, ArrowRight, ArrowLeft, LogOut, UserCheck, User, Key, X, FileText, Clock, CheckCircle, XCircle, Banknote, Building2, FileSignature, Pickaxe, Loader2, TrendingUp, Upload, Trash2, PieChart, Lightbulb, Sun, Moon, AlertTriangle, Sparkles, CreditCard } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import SalesMap from './SalesMap';
 import SalesPricing from './SalesPricing';
-import SalesReports from './SalesReports';
-import SalesIntelligence from './SalesIntelligence';
-import AdminDocsManager from './AdminDocsManager';
-import LeadTrackerView from './LeadTrackerView';
-import SalesFunnelAnalytics from './SalesFunnelAnalytics';
 import DailyVisitsScheduleView from './DailyVisitsScheduleView';
+import DailyHouseInspectionModal from './DailyHouseInspectionModal';
+import RentalContractModal from './RentalContractModal';
+import RentalActionModal from './RentalActionModal';
+import RentalPaymentLedgerModal from './RentalPaymentLedgerModal';
+import CentralLeadBookingModal from './CentralLeadBookingModal';
+import LeadPicker from './LeadPicker';
+import { RENTAL_PROGRAM_DETAILS } from '@/types/sales';
+import { deleteCustomerWithCascade } from '@/lib/customerDeletionHelper';
 import { parseExcelRowToLead, downloadLeadTrackerTemplate, ParsedLeadRow } from '@/lib/salesImportHelper';
+import { isSampleHouse, isPlotEligibleForSampleHouse, toggleSampleHouse, fetchTodayInspectionStatus, SampleHouseInspectionStatus } from '@/lib/sales/sampleHouseHelper';
 
 const initialLeads: any[] = [];
 
@@ -120,7 +124,7 @@ export default function SalesKanban({
 
   const [leads, setLeads] = useState(initialLeads);
   const [rawLeads, setRawLeads] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState<'map' | 'list' | 'pricing' | 'booked' | 'transferred' | 'reports' | 'intelligence' | 'admin_docs' | 'lead_tracker' | 'funnel_analytics' | 'daily_visits'>((initialTab as any) || 'daily_visits');
+  const [activeTab, setActiveTab] = useState<'daily_visits' | 'map' | 'booked' | 'transferred' | 'list' | 'pricing'>((initialTab as any) || 'daily_visits');
   const [search, setSearch] = useState('');
   
   const [panelState, setPanelState] = useState<{type: 'default' | 'booking' | 'customer' | 'new-customer', plotId: string, lead: any}>({ type: 'default', plotId: '', lead: null });
@@ -136,10 +140,71 @@ export default function SalesKanban({
   const [loadingPlotInfo, setLoadingPlotInfo] = useState(false);
   const [fullImageUrl, setFullImageUrl] = useState<string | null>(null);
 
+  // Sample House State & Daily Inspection
+  const [showDailyInspectionModal, setShowDailyInspectionModal] = useState(false);
+  const [sampleHouseInspection, setSampleHouseInspection] = useState<SampleHouseInspectionStatus | null>(null);
+  const [isTogglingSampleHouse, setIsTogglingSampleHouse] = useState(false);
+
+  // Rental & Booking Modals State
+  const [showRentalModal, setShowRentalModal] = useState<{ isOpen: boolean; lead: any | null; plotId?: string | null }>({ isOpen: false, lead: null });
+  const [showRentalActionModal, setShowRentalActionModal] = useState<{ isOpen: boolean; lead: any | null; plot?: any | null }>({ isOpen: false, lead: null });
+  const [showRentalPaymentModal, setShowRentalPaymentModal] = useState<{ isOpen: boolean; plot: any | null; lead: any | null; contractId?: string | null }>({ isOpen: false, plot: null, lead: null });
+  const [showBookingModal, setShowBookingModal] = useState<{ isOpen: boolean; lead: any | null; plotId?: string | null }>({ isOpen: false, lead: null });
+  const [selectedPlotLead, setSelectedPlotLead] = useState<any | null>(null);
+
   // Excel Import State
   const [showImportModal, setShowImportModal] = useState(false);
   const [importData, setImportData] = useState<ParsedLeadRow[]>([]);
   const [isImporting, setIsImporting] = useState(false);
+
+  // Project Availability State for Selector (Filter only projects with available houses)
+  const [projectAvailability, setProjectAvailability] = useState<Record<string, { total: number; vacant: number }>>({});
+  const [loadingAvailability, setLoadingAvailability] = useState(false);
+  const [showOnlyAvailable, setShowOnlyAvailable] = useState(true);
+
+  useEffect(() => {
+    if (internalProject) return;
+    let isCancelled = false;
+    const fetchAvailability = async () => {
+      setLoadingAvailability(true);
+      try {
+        const { data: plotsData } = await supabase
+          .from('plots')
+          .select('id, project_name, has_customer, sale_status');
+        const { data: salesData } = await supabase
+          .from('sales')
+          .select('plot_id, contract_status');
+
+        if (isCancelled) return;
+
+        const occupied = new Set((salesData || [])
+          .filter((s: any) => (s.contract_status || '').toLowerCase() !== 'cancelled')
+          .map((s: any) => s.plot_id));
+
+        const counts: Record<string, { total: number; vacant: number }> = {};
+        for (const p of plotsData || []) {
+          if (!p.project_name) continue;
+          if (!counts[p.project_name]) {
+            counts[p.project_name] = { total: 0, vacant: 0 };
+          }
+          counts[p.project_name].total++;
+          const isVacant = p.has_customer === false &&
+            (!p.sale_status || ['active', 'normal', 'ready_for_sale', 'available', 'vacant', ''].includes(p.sale_status.toLowerCase())) &&
+            !occupied.has(p.id);
+          if (isVacant) {
+            counts[p.project_name].vacant++;
+          }
+        }
+        setProjectAvailability(counts);
+      } catch (err) {
+        console.error('Error fetching project availability:', err);
+      } finally {
+        if (!isCancelled) setLoadingAvailability(false);
+      }
+    };
+    fetchAvailability();
+    return () => { isCancelled = true; };
+  }, [internalProject]);
 
   // Fetch Leads and Sales Data from Supabase
   const fetchData = async () => {
@@ -384,8 +449,16 @@ export default function SalesKanban({
              statusInfo,
              activeTask
           });
+
+          if (isSampleHouse(plotData)) {
+            const insp = await fetchTodayInspectionStatus(project?.name || 'ไอลิน6', plotData.plot_name || plotData.id);
+            setSampleHouseInspection(insp);
+          } else {
+            setSampleHouseInspection(null);
+          }
         } else {
           setPlotInfo(null);
+          setSampleHouseInspection(null);
         }
       } catch (err) {
         console.error("Error fetching plot info:", err);
@@ -396,6 +469,53 @@ export default function SalesKanban({
 
     fetchPlotInfo();
   }, [panelState.plotId]);
+
+  const handleToggleSampleHouse = async () => {
+    if (!plotInfo && !panelState.plotId) return;
+    const targetId = plotInfo?.id || panelState.plotId;
+    const activePlot = plotInfo || projectPlotsData.find(p => p.id === targetId);
+    const currentIsSample = isSampleHouse(activePlot);
+    const newIsSample = !currentIsSample;
+
+    if (newIsSample) {
+      const eligibility = isPlotEligibleForSampleHouse(activePlot, panelState.lead, panelState.lead?.status);
+      if (!eligibility.eligible) {
+        alert(eligibility.reason || 'แปลงนี้มีลูกค้าจองหรือโอนแล้ว ไม่สามารถตั้งเป็นบ้านตัวอย่างได้');
+        return;
+      }
+    }
+
+    setIsTogglingSampleHouse(true);
+    try {
+      const res = await toggleSampleHouse(targetId, newIsSample, activePlot, panelState.lead);
+      if (!res.success) {
+        alert(res.error || 'ไม่สามารถบันทึกสถานะบ้านตัวอย่างได้');
+        return;
+      }
+
+      await fetchData();
+      // Re-fetch plot details
+      const { data: updatedPlot } = await supabase
+        .from('plots')
+        .select('*, house_types(type_name)')
+        .eq('id', targetId)
+        .maybeSingle();
+
+      if (updatedPlot) {
+        setPlotInfo((prev: any) => ({ ...prev, ...updatedPlot }));
+        if (newIsSample) {
+          const insp = await fetchTodayInspectionStatus(project?.name || 'ไอลิน6', updatedPlot.plot_name || targetId);
+          setSampleHouseInspection(insp);
+        } else {
+          setSampleHouseInspection(null);
+        }
+      }
+    } catch (err) {
+      console.error('Error toggling sample house:', err);
+    } finally {
+      setIsTogglingSampleHouse(false);
+    }
+  };
 
   useEffect(() => {
     const fetchPlots = async () => {
@@ -660,32 +780,25 @@ export default function SalesKanban({
   };
 
   const handleDeleteCustomer = async (leadId: string) => {
-    if (!window.confirm("คุณต้องการลบข้อมูลลูกค้านี้ใช่หรือไม่?\nการลบจะทำให้ประวัติ ยอดจอง และรายงานวิเคราะห์ที่เกี่ยวข้องกับลูกค้าคนนี้ถูกลบออกไปทั้งหมด และไม่สามารถกู้คืนได้")) return;
+    if (!window.confirm("คุณต้องการลบข้อมูลลูกค้านี้ใช่หรือไม่?\nการลบจะทำการปลดแปลงกลับเป็นแปลงว่าง (Available) และลบสัญญาเช่า ประวัติค่างวด ยอดจอง และประวัติที่เกี่ยวข้องทั้งหมดออกถาวร")) return;
     
     try {
-      // 1. Check if there's a sale attached to free the plot
-      const { data: saleData } = await supabase.from('sales').select('id, plot_id').eq('lead_id', leadId).maybeSingle();
+      setIsSubmitting(true);
+      const result = await deleteCustomerWithCascade(leadId, panelState.plotId || panelState.lead?.plot);
       
-      if (saleData?.plot_id) {
-        // Free up the plot
-        await supabase.from('plots').update({ sale_status: 'ready_for_sale', paused_for_sale_at: null }).eq('id', saleData.plot_id);
+      if (!result.success) {
+        throw new Error(result.error || 'ลบข้อมูลลูกค้าไม่สำเร็จ');
       }
-
-      // 2. Clean up status history
-      if (saleData) {
-        await supabase.from('status_history').delete().eq('entity_id', saleData.id);
-      }
-      await supabase.from('status_history').delete().eq('entity_id', leadId);
-
-      // 3. Delete the lead (sales table deletes on cascade)
-      await supabase.from('leads').delete().eq('id', leadId);
 
       // Refresh
       await fetchData();
       setPanelState({ type: 'default', plotId: '', lead: null });
-    } catch (err) {
+      alert(`🗑️ ลบข้อมูลลูกค้า "${result.customerName || 'ลูกค้า'}" สำเร็จ! ${result.releasedPlotIds.length > 0 ? `ปลดแปลง ${result.releasedPlotIds.join(', ')} เรียบร้อยแล้ว` : ''}`);
+    } catch (err: any) {
       console.error("Error deleting customer", err);
-      alert("เกิดข้อผิดพลาดในการลบข้อมูลลูกค้า");
+      alert(err.message || "เกิดข้อผิดพลาดในการลบข้อมูลลูกค้า");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -1120,52 +1233,167 @@ export default function SalesKanban({
   };
 
   if (!internalProject) {
+    const validProjects = (projects || []).filter(p => p.name && p.name !== 'ลูกค้าทั่วไป');
+    const availableProjectsCount = validProjects.filter(p => {
+      const avail = projectAvailability[p.name];
+      if (avail !== undefined) return avail.vacant > 0 && !p.is_closed;
+      return !p.is_closed;
+    }).length;
+
+    const displayedProjects = validProjects.filter(p => {
+      if (showOnlyAvailable) {
+        if (p.is_closed) return false;
+        const avail = projectAvailability[p.name];
+        if (avail !== undefined) return avail.vacant > 0;
+        return true;
+      }
+      return true;
+    });
+
     return (
       <div className="h-screen overflow-y-auto bg-[#f5f5f7] p-4 sm:p-8 w-full custom-scrollbar">
-        <div className="flex items-center gap-4 mb-8">
-          {onBack && (
-            <button onClick={onBack} className="p-2 hover:bg-slate-200 rounded-full transition-colors bg-white shadow-sm">
-              <ArrowLeft size={24} className="text-slate-600" />
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+          <div className="flex items-center gap-4">
+            {onBack && (
+              <button onClick={onBack} className="p-2.5 hover:bg-slate-200 rounded-2xl transition-colors bg-white shadow-sm border border-slate-200/60">
+                <ArrowLeft size={22} className="text-slate-700" />
+              </button>
+            )}
+            <div className="flex items-center gap-3">
+              <div className="bg-[#d4af37] p-3 rounded-2xl shadow-lg shadow-[#d4af37]/30">
+                <Building2 className="text-white" size={26} />
+              </div>
+              <div>
+                <h2 className="text-2xl sm:text-3xl font-black italic text-slate-800 uppercase tracking-tight">Sales Kanban</h2>
+                <p className="text-xs sm:text-sm font-bold text-slate-500">กรุณาเลือกโครงการที่ต้องการเข้าสู่ระบบฝ่ายขาย</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Toggle filter: เฉพาะที่มีบ้านว่าง vs ทั้งหมด */}
+          <div className="flex items-center gap-1.5 bg-white p-1.5 rounded-2xl border border-slate-200 shadow-sm self-start sm:self-auto">
+            <button
+              type="button"
+              onClick={() => setShowOnlyAvailable(true)}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 ${
+                showOnlyAvailable
+                  ? 'bg-[#0f172a] text-white shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+              }`}
+            >
+              <span>🏡 เฉพาะที่มีบ้านว่าง</span>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                showOnlyAvailable ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-100 text-slate-600'
+              }`}>
+                {availableProjectsCount}
+              </span>
             </button>
-          )}
-          <div className="flex items-center gap-3">
-            <div className="bg-[#d4af37] p-3 rounded-2xl shadow-lg shadow-[#d4af37]/30">
-              <Building2 className="text-white" size={28} />
-            </div>
-            <div>
-              <h2 className="text-2xl sm:text-3xl font-black italic text-slate-800 uppercase tracking-tight">Sales Kanban</h2>
-              <p className="text-sm font-bold text-slate-500">กรุณาเลือกโครงการที่ต้องการเข้าสู่ระบบฝ่ายขาย</p>
-            </div>
+            <button
+              type="button"
+              onClick={() => setShowOnlyAvailable(false)}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 ${
+                !showOnlyAvailable
+                  ? 'bg-[#0f172a] text-white shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+              }`}
+            >
+              <span>ทั้งหมด</span>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                !showOnlyAvailable ? 'bg-slate-700 text-slate-200' : 'bg-slate-100 text-slate-600'
+              }`}>
+                {validProjects.length}
+              </span>
+            </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-          {projects?.map((p, index) => (
-            <div 
-              key={p.id || p.name || index}
-              onClick={() => setInternalProject(p)}
-              className="bg-white rounded-[2rem] shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-slate-100 overflow-hidden cursor-pointer hover:shadow-[0_20px_50px_rgb(0,0,0,0.1)] hover:-translate-y-1.5 transition-all duration-300 group flex flex-col"
-            >
-              <div className="h-44 bg-slate-100 relative overflow-hidden shrink-0">
-                {p.logo_url ? (
-                  <img src={p.logo_url} alt={p.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
-                ) : (
-                  <div className="flex items-center justify-center h-full text-slate-300">
-                    <Building2 size={64} className="opacity-30 group-hover:scale-110 transition-transform duration-700" />
-                  </div>
-                )}
-                <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-slate-900/20 to-transparent" />
-                <h3 className="absolute bottom-4 left-5 text-white font-black text-2xl italic tracking-wide">{p.name}</h3>
-              </div>
-              <div className="p-5 flex-1 flex flex-col justify-between">
-                <p className="text-sm font-bold text-slate-500 line-clamp-2 mb-6">{p.description || 'ไม่ได้ระบุคำอธิบายโครงการ'}</p>
-                <button className="w-full py-3.5 bg-[#d4af37]/10 text-[#d4af37] rounded-xl font-black text-sm flex items-center justify-center gap-2 group-hover:bg-[#d4af37] group-hover:text-white transition-all">
-                  เข้าสู่ระบบฝ่ายขาย <ArrowRight size={18} />
-                </button>
-              </div>
+        {displayedProjects.length === 0 ? (
+          <div className="bg-white rounded-3xl p-12 text-center border border-slate-200/80 shadow-sm max-w-lg mx-auto mt-12">
+            <div className="w-16 h-16 bg-amber-50 text-amber-500 rounded-full flex items-center justify-center mx-auto mb-4 border border-amber-200">
+              <Home size={32} />
             </div>
-          ))}
-        </div>
+            <h3 className="text-lg font-black text-slate-800 mb-2">ไม่พบโครงการที่มีบ้านว่างในขณะนี้</h3>
+            <p className="text-xs text-slate-500 mb-6">โครงการทั้งหมดอาจถูกจองหรือปิดการขายแล้ว คุณสามารถกดดูโครงการทั้งหมดได้</p>
+            <button
+              type="button"
+              onClick={() => setShowOnlyAvailable(false)}
+              className="px-5 py-2.5 bg-[#0f172a] text-white text-xs font-bold rounded-xl shadow hover:bg-slate-800 transition-colors"
+            >
+              ดูโครงการทั้งหมด
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+            {displayedProjects.map((p, index) => {
+              const avail = projectAvailability[p.name];
+              const isClosed = p.is_closed || (avail !== undefined && avail.vacant <= 0);
+
+              return (
+                <div 
+                  key={p.id || p.name || index}
+                  onClick={() => {
+                    setInternalProject(p);
+                    setActiveTab('daily_visits');
+                  }}
+                  className="bg-white rounded-[2rem] shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-slate-100 overflow-hidden cursor-pointer hover:shadow-[0_20px_50px_rgb(0,0,0,0.1)] hover:-translate-y-1.5 transition-all duration-300 group flex flex-col relative"
+                >
+                  <div className="h-44 bg-slate-100 relative overflow-hidden shrink-0">
+                    {p.logo_url ? (
+                      <img src={p.logo_url} alt={p.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
+                    ) : (
+                      <div className="flex items-center justify-center h-full text-slate-300">
+                        <Building2 size={64} className="opacity-30 group-hover:scale-110 transition-transform duration-700" />
+                      </div>
+                    )}
+                    <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-slate-900/20 to-transparent" />
+                    
+                    {/* Badge: จำนวนบ้านว่าง */}
+                    <div className="absolute top-3.5 right-3.5">
+                      {avail ? (
+                        avail.vacant > 0 ? (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-emerald-500/90 text-white backdrop-blur-md shadow-md border border-emerald-300/30">
+                            <Home size={12} />
+                            ว่าง {avail.vacant} หลัง
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-800/80 text-slate-300 backdrop-blur-md border border-slate-700/50">
+                            ขายหมดแล้ว
+                          </span>
+                        )
+                      ) : p.is_closed ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-900/80 text-rose-200 backdrop-blur-md border border-rose-700/50">
+                          ปิดโครงการ
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-800/60 text-slate-300 backdrop-blur-md">
+                          กำลังเปิดขาย
+                        </span>
+                      )}
+                    </div>
+
+                    <h3 className="absolute bottom-4 left-5 text-white font-black text-2xl italic tracking-wide">{p.name}</h3>
+                  </div>
+                  <div className="p-5 flex-1 flex flex-col justify-between">
+                    <div>
+                      <p className="text-xs font-medium text-slate-500 line-clamp-2 mb-3">{p.description || 'โครงการคุณภาพพร้อมสิ่งอำนวยความสะดวกครบครัน'}</p>
+                      {avail && (
+                        <div className="flex items-center justify-between text-[11px] font-bold text-slate-600 bg-slate-50 px-3 py-2 rounded-xl border border-slate-100 mb-4">
+                          <span>ทั้งหมด {avail.total} แปลง</span>
+                          <span className={avail.vacant > 0 ? "text-emerald-600 font-black" : "text-slate-400"}>
+                            {avail.vacant > 0 ? `เหลือขาย ${avail.vacant} หลัง` : 'ขายหมดแล้ว'}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    <button className="w-full py-3 bg-[#d4af37]/10 text-[#d4af37] rounded-xl font-black text-sm flex items-center justify-center gap-2 group-hover:bg-[#d4af37] group-hover:text-white transition-all">
+                      เข้าสู่ระบบฝ่ายขาย <ArrowRight size={18} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     );
   }
@@ -1204,12 +1432,6 @@ export default function SalesKanban({
             <Download size={18} />
             Export
           </button>
-          <button 
-            onClick={() => { setActiveTab('map'); setPanelState({ type: 'new-customer', plotId: '', lead: null }); }}
-            className="bg-[#0f172a] hover:bg-[#1e293b] text-white px-5 py-2 rounded-xl flex items-center gap-2 text-sm font-semibold shadow-md transition-colors">
-            <Plus size={18} />
-            New Customer
-          </button>
         </div>
       </header>
 
@@ -1229,32 +1451,11 @@ export default function SalesKanban({
             )}
           </button>
           <button 
-            onClick={() => setActiveTab('lead_tracker')}
-            className={`pb-4 px-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'lead_tracker' ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
-          >
-            <FileText size={18} className={activeTab === 'lead_tracker' ? 'text-blue-600' : ''} />
-            📋 Lead Tracker
-          </button>
-          <button 
-            onClick={() => setActiveTab('funnel_analytics')}
-            className={`pb-4 px-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'funnel_analytics' ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
-          >
-            <TrendingUp size={18} className={activeTab === 'funnel_analytics' ? 'text-blue-600' : ''} />
-            📊 Funnel & KPI Analytics
-          </button>
-          <button 
             onClick={() => setActiveTab('map')}
             className={`pb-4 px-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'map' ? 'border-[#d4af37] text-[#0f172a]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
           >
             <MapIcon size={18} className={activeTab === 'map' ? 'text-[#d4af37]' : ''} />
             Project Map
-          </button>
-          <button 
-            onClick={() => setActiveTab('list')}
-            className={`pb-4 px-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'list' ? 'border-[#d4af37] text-[#0f172a]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
-          >
-            <Users size={18} className={activeTab === 'list' ? 'text-[#d4af37]' : ''} />
-            Customer Pipeline
           </button>
           <button 
             onClick={() => setActiveTab('booked')}
@@ -1271,32 +1472,18 @@ export default function SalesKanban({
             ลูกค้าที่โอนแล้ว
           </button>
           <button 
+            onClick={() => setActiveTab('list')}
+            className={`pb-4 px-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'list' ? 'border-[#d4af37] text-[#0f172a]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+          >
+            <Users size={18} className={activeTab === 'list' ? 'text-[#d4af37]' : ''} />
+            Customer Pipeline
+          </button>
+          <button 
             onClick={() => setActiveTab('pricing')}
             className={`pb-4 px-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'pricing' ? 'border-[#d4af37] text-[#0f172a]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
           >
             <Building2 size={18} className={activeTab === 'pricing' ? 'text-[#d4af37]' : ''} />
             ราคาบ้านและที่ดิน
-          </button>
-          <button 
-            onClick={() => setActiveTab('reports')}
-            className={`pb-4 px-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'reports' ? 'border-[#d4af37] text-[#0f172a]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
-          >
-            <PieChart size={18} className={activeTab === 'reports' ? 'text-[#d4af37]' : ''} />
-            รายงานสรุปผล
-          </button>
-          <button 
-            onClick={() => setActiveTab('intelligence')}
-            className={`pb-4 px-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'intelligence' ? 'border-[#d4af37] text-[#0f172a]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
-          >
-            <Lightbulb size={18} className={activeTab === 'intelligence' ? 'text-[#d4af37]' : ''} />
-            Business Insights
-          </button>
-          <button 
-            onClick={() => setActiveTab('admin_docs')}
-            className={`pb-4 px-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'admin_docs' ? 'border-[#d4af37] text-[#0f172a]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
-          >
-            <FileText size={18} className={activeTab === 'admin_docs' ? 'text-[#d4af37]' : ''} />
-            อัพเดทเอกสาร & สาธารณูปโภค (ธุรการ)
           </button>
         </div>
         
@@ -1332,45 +1519,15 @@ export default function SalesKanban({
                   selectedProjectName={project?.name}
                   user={user}
                   onRefresh={fetchData}
-                  onSelectPlotForBooking={(plotId, lead) => {
+                  onSelectPlotForBooking={(plotId: string, lead: any) => {
                     setActiveTab('map');
                     handlePlotClick(plotId, 'Available', lead);
                   }}
-                  onOpenAddLeadModal={() => {
-                    setActiveTab('lead_tracker');
-                  }}
                 />
               </div>
             )}
 
-            {/* LEAD TRACKER TAB (Ailin Funnel System) */}
-            {activeTab === 'lead_tracker' && (
-              <div className="h-full overflow-y-auto bg-slate-50">
-                <LeadTrackerView
-                  leads={rawLeads}
-                  plots={projectPlotsData}
-                  projects={projects}
-                  selectedProjectName={project?.name}
-                  user={user}
-                  onRefresh={fetchData}
-                  onSelectPlotForBooking={(plotId, lead) => {
-                    setActiveTab('map');
-                    setPanelState({ type: 'booking', plotId, lead });
-                  }}
-                />
-              </div>
-            )}
 
-            {/* FUNNEL ANALYTICS TAB */}
-            {activeTab === 'funnel_analytics' && (
-              <div className="h-full overflow-y-auto bg-slate-50">
-                <SalesFunnelAnalytics
-                  leads={rawLeads}
-                  projects={projects}
-                  selectedProjectName={project?.name}
-                />
-              </div>
-            )}
 
             {/* MAP VIEW TAB */}
             {activeTab === 'map' && (
@@ -1646,26 +1803,6 @@ export default function SalesKanban({
 
 
 
-            {/* REPORTS TAB */}
-            {activeTab === 'reports' && (
-              <div className="h-full p-4 md:p-6 overflow-hidden">
-                <SalesReports leads={leads} projectName={project?.name || 'ไอลิน6'} />
-              </div>
-            )}
-
-            {/* INTELLIGENCE TAB */}
-            {activeTab === 'intelligence' && (
-              <div className="h-full p-0 overflow-y-auto bg-slate-50">
-                <SalesIntelligence leads={leads} projectName={project?.name || 'ไอลิน6'} />
-              </div>
-            )}
-            
-            {/* ADMIN DOCS TAB */}
-            {activeTab === 'admin_docs' && (
-              <div className="h-full p-4 md:p-6 overflow-hidden">
-                <AdminDocsManager plots={projectPlotsData} onUpdate={fetchData} />
-              </div>
-            )}
             
           </div> {/* End Tab Content */}
 
@@ -1685,6 +1822,110 @@ export default function SalesKanban({
                   <X size={18} />
                 </button>
             
+              {/* 🏡 Sample House Status & Setting Card */}
+              {panelState.plotId && (() => {
+                const currentTargetPlot = plotInfo || projectPlotsData.find(d => d.id === panelState.plotId);
+                const isCurrentSample = isSampleHouse(currentTargetPlot);
+                const eligibility = isPlotEligibleForSampleHouse(currentTargetPlot, panelState.lead, panelState.lead?.status);
+
+                if (!isCurrentSample && !eligibility.eligible) {
+                  return (
+                    <div className="mb-4 rounded-2xl p-3.5 bg-slate-50 border border-slate-200/90 flex items-center justify-between gap-3 text-slate-500 text-xs shadow-sm">
+                      <div className="flex items-center gap-2.5">
+                        <span className="text-base opacity-70">🏡</span>
+                        <div>
+                          <div className="font-bold text-slate-700">แปลงนี้มีลูกค้าจอง / โอนแล้ว</div>
+                          <div className="text-[11px] text-slate-500 mt-0.5">{eligibility.reason}</div>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-bold px-2 py-1 rounded bg-slate-200 text-slate-600 shrink-0">
+                        ไม่สามารถตั้งได้
+                      </span>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className={`mb-4 rounded-2xl p-4 border transition-all ${
+                    isCurrentSample
+                      ? 'bg-gradient-to-br from-amber-50 to-amber-100/60 border-amber-300 shadow-sm'
+                      : 'bg-slate-50 border-slate-200'
+                  }`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <span className="text-xl">🏡</span>
+                        <div>
+                          <div className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                            {isCurrentSample ? (
+                              <span className="text-amber-900 flex items-center gap-1">
+                                <span>บ้านตัวอย่างประจำโครงการ</span>
+                                <span className="px-1.5 py-0.2 bg-amber-500 text-white rounded text-[9px] font-black">ACTIVE</span>
+                              </span>
+                            ) : (
+                              <span className="text-slate-600">สถานะบ้านตัวอย่าง</span>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-slate-500">
+                            {isCurrentSample ? 'เปิดรับลูกค้าเข้าชม · มี SOP ตรวจเช็คประจำวัน' : 'กำหนดแปลงว่างนี้เป็นบ้านตัวอย่างสำหรับต้อนรับลูกค้า'}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Toggle switch button */}
+                      <button
+                        type="button"
+                        onClick={handleToggleSampleHouse}
+                        disabled={isTogglingSampleHouse}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer shadow-sm ${
+                          isCurrentSample
+                            ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-600/20'
+                            : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-300'
+                        }`}
+                      >
+                        {isTogglingSampleHouse ? (
+                          <Loader2 size={12} className="animate-spin" />
+                        ) : isCurrentSample ? (
+                          '✓ เป็นบ้านตัวอย่าง'
+                        ) : (
+                          '+ ตั้งเป็นบ้านตัวอย่าง'
+                        )}
+                      </button>
+                    </div>
+
+                    {/* If Sample House: Show Inspection Status & Inspection Trigger Button */}
+                    {isCurrentSample && (
+                      <div className="mt-3 pt-3 border-t border-amber-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <div className={`px-2.5 py-1 rounded-lg text-xs font-black flex items-center gap-1.5 ${
+                            sampleHouseInspection?.status === 'morning_checked'
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                              : sampleHouseInspection?.status === 'evening_checked'
+                              ? 'bg-indigo-100 text-indigo-800 border border-indigo-300'
+                              : 'bg-rose-100 text-rose-800 border border-rose-300 animate-pulse'
+                          }`}>
+                            <span>{sampleHouseInspection?.status === 'morning_checked' ? '☀️' : sampleHouseInspection?.status === 'evening_checked' ? '🌙' : '⚠️'}</span>
+                            <span>{sampleHouseInspection?.badgeLabel || '⚠️ รอตรวจเปิดบ้าน'}</span>
+                          </div>
+                          {sampleHouseInspection?.inspectorName && (
+                            <span className="text-[10px] text-amber-900 font-medium">
+                              โดย {sampleHouseInspection.inspectorName}
+                            </span>
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setShowDailyInspectionModal(true)}
+                          className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-black px-3 py-1.5 rounded-lg text-xs flex items-center justify-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+                        >
+                          <span>📝</span> บันทึกตรวจเปิด/ปิดบ้าน
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
               {/* Construction Info Widget (Global for any plot) */}
               {panelState.plotId && (
                 <div className="mb-6 bg-gradient-to-br from-indigo-50/80 to-blue-50/50 border border-indigo-100 rounded-xl p-4 shadow-sm relative overflow-hidden animate-in fade-in duration-300">
@@ -1738,6 +1979,59 @@ export default function SalesKanban({
                             {plotInfo.selling_price ? `฿${Number(plotInfo.selling_price).toLocaleString()}` : 'ยังไม่ระบุราคา'}
                         </div>
                       </div>
+
+                      {/* 🔑 Rental Information Card */}
+                      {(plotInfo.sale_status === 'Rented' || plotInfo.rental_program || plotInfo.current_tenant_name) && (
+                        <div className="col-span-2 p-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5 font-bold text-xs text-blue-900">
+                              <Key size={14} className="text-blue-600" /> ข้อมูลการเช่า (Active Lease)
+                            </div>
+                            {plotInfo.rental_program && RENTAL_PROGRAM_DETAILS[plotInfo.rental_program as keyof typeof RENTAL_PROGRAM_DETAILS] && (
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${RENTAL_PROGRAM_DETAILS[plotInfo.rental_program as keyof typeof RENTAL_PROGRAM_DETAILS].badgeColor}`}>
+                                {RENTAL_PROGRAM_DETAILS[plotInfo.rental_program as keyof typeof RENTAL_PROGRAM_DETAILS].name}
+                              </span>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-700">
+                            <div>ผู้เช่า: <b className="text-slate-900">{plotInfo.current_tenant_name || '-'}</b></div>
+                            <div>ค่าเช่า: <b className="text-blue-700">{plotInfo.monthly_rent ? `${Number(plotInfo.monthly_rent).toLocaleString()} บ./ด.` : '-'}</b></div>
+                            {plotInfo.lease_end_date && (
+                              <div className="col-span-2 text-slate-500">
+                                ระยะเวลา: {plotInfo.lease_start_date || '-'} ถึง <b className="text-slate-800">{plotInfo.lease_end_date}</b>
+                              </div>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowRentalPaymentModal({
+                                  isOpen: true,
+                                  plot: plotInfo,
+                                  lead: null
+                                });
+                              }}
+                              className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-bold py-1.5 px-2 rounded-lg text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer transition-colors"
+                            >
+                              <CreditCard size={13} /> 💳 ติดตามการจ่ายค่าเช่า
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowRentalActionModal({
+                                  isOpen: true,
+                                  lead: null,
+                                  plot: plotInfo
+                                });
+                              }}
+                              className="w-full bg-gradient-to-r from-blue-700 to-indigo-700 hover:from-blue-800 hover:to-indigo-800 text-white font-bold py-1.5 px-2 rounded-lg text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer transition-colors"
+                            >
+                              <Key size={13} /> 🔑 จัดการสัญญา
+                            </button>
+                          </div>
+                        </div>
+                      )}
                       {(plotInfo.estimatedCompletion || plotInfo.handover_cycle > 0 || plotInfo.is_completed || plotInfo.statusInfo) && (
                         <div className="col-span-2 pt-3 mt-1 border-t border-indigo-100/60">
                           {plotInfo.estimatedCompletion && !plotInfo.is_completed && (
@@ -1824,14 +2118,59 @@ export default function SalesKanban({
                   </div>
 
                   {/* Status Banner */}
-                  <div className="bg-emerald-50 border border-emerald-200/80 rounded-2xl p-4 text-emerald-900">
-                    <div className="flex items-center gap-2 font-black text-sm text-emerald-800">
+                  <div className="bg-emerald-50 border border-emerald-200/80 rounded-2xl p-3.5 text-emerald-900">
+                    <div className="flex items-center gap-2 font-black text-xs text-emerald-800">
                       <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                      🟢 สถานะ: แปลงว่าง (พร้อมขาย)
+                      🟢 สถานะ: แปลงว่าง (พร้อมขาย / ให้เช่า)
                     </div>
-                    <p className="text-xs text-emerald-700/80 mt-1">
-                      แปลงนี้ยังไม่มีการวางเงินจอง สามารถเปิดขายและระบุลูกค้าจองได้
+                    <p className="text-[11px] text-emerald-700/80 mt-1">
+                      แปลงนี้ยังไม่มีการวางเงินจอง สามารถเลือกลูกค้าจาก Lead CRM หรือสร้าง Walk-in เพื่อทำรายการจองหรือเช่าได้ทันที
                     </p>
+                  </div>
+
+                  {/* 🔍 Searchable Lead Dropdown & Action Buttons */}
+                  <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+                    <LeadPicker
+                      selectedLead={selectedPlotLead}
+                      onSelectLead={(lead) => setSelectedPlotLead(lead)}
+                      projectName={project?.name}
+                      currentPlotName={projectPlotsData.find(d => d.id === panelState.plotId)?.plot_name || panelState.plotId}
+                      label="เลือกลูกค้าสำหรับแปลงนี้ (Lead CRM)"
+                      placeholder="🔍 คลิกเพื่อค้นหา หรือ เลือกลูกค้า..."
+                    />
+
+                    {/* Action Buttons: จอง vs เช่า */}
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowBookingModal({
+                            isOpen: true,
+                            lead: selectedPlotLead,
+                            plotId: panelState.plotId
+                          });
+                        }}
+                        className="w-full bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 text-white font-bold py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-sm shadow-orange-500/20 cursor-pointer transition-all"
+                      >
+                        <span>⚡ บันทึกการจอง</span>
+                        {selectedPlotLead && <span className="truncate max-w-[70px]">({selectedPlotLead.customer_name})</span>}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowRentalModal({
+                            isOpen: true,
+                            lead: selectedPlotLead,
+                            plotId: panelState.plotId
+                          });
+                        }}
+                        className="w-full bg-gradient-to-r from-blue-700 to-indigo-700 hover:from-blue-800 hover:to-indigo-800 text-white font-bold py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-sm shadow-blue-700/20 cursor-pointer transition-all"
+                      >
+                        <Key size={13} />
+                        <span>🔑 ทำสัญญาเช่า</span>
+                        {selectedPlotLead && <span className="truncate max-w-[70px]">({selectedPlotLead.customer_name})</span>}
+                      </button>
+                    </div>
                   </div>
 
                   {/* Interested Leads in this plot */}
@@ -1846,7 +2185,7 @@ export default function SalesKanban({
                       <div className="space-y-3">
                         <div className="flex items-center justify-between">
                           <h4 className="font-bold text-xs text-slate-700 flex items-center gap-1.5">
-                            <Users size={14} className="text-blue-600" /> Lead ที่กำลังสนใจแปลงนี้
+                            <Users size={14} className="text-blue-600" /> Lead ที่ระบุว่าสนใจแปลงนี้ ({plotName})
                           </h4>
                           <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100">
                             {interestedLeads.length} ราย
@@ -1864,21 +2203,40 @@ export default function SalesKanban({
                                     <span className="bg-slate-200 px-1.5 py-0.2 rounded text-[10px]">{lead.channel || lead.source || 'Walk in'}</span>
                                   </div>
                                 </div>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setActiveTab('lead_tracker');
-                                  }}
-                                  className="bg-orange-600 hover:bg-orange-700 text-white font-bold text-[11px] px-2.5 py-1.5 rounded-lg shrink-0 shadow-sm flex items-center gap-1 cursor-pointer transition-colors"
-                                >
-                                  ⚡ จองให้รายนี้
-                                </button>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setShowBookingModal({
+                                        isOpen: true,
+                                        lead: lead,
+                                        plotId: panelState.plotId
+                                      });
+                                    }}
+                                    className="bg-orange-600 hover:bg-orange-700 text-white font-bold text-[11px] px-2.5 py-1.5 rounded-lg shadow-sm flex items-center gap-1 cursor-pointer transition-colors"
+                                  >
+                                    ⚡ จอง
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setShowRentalModal({
+                                        isOpen: true,
+                                        lead: lead,
+                                        plotId: panelState.plotId
+                                      });
+                                    }}
+                                    className="bg-gradient-to-r from-blue-700 to-indigo-700 hover:from-blue-800 hover:to-indigo-800 text-white font-bold text-[11px] px-2.5 py-1.5 rounded-lg shadow-sm flex items-center gap-1 cursor-pointer transition-colors"
+                                  >
+                                    <Key size={11} /> 🔑 เช่า
+                                  </button>
+                                </div>
                               </div>
                             ))}
                           </div>
                         ) : (
-                          <div className="text-center py-4 bg-slate-50 rounded-xl border border-slate-100 text-xs text-slate-400">
-                            ยังไม่มี Lead ที่ระบุว่าสนใจแปลงนี้
+                          <div className="text-center py-3 bg-slate-50 rounded-xl border border-slate-100 text-xs text-slate-400">
+                            ยังไม่มี Lead ที่ระบุว่าสนใจแปลงนี้โดยเฉพาะ
                           </div>
                         )}
                       </div>
@@ -1890,11 +2248,11 @@ export default function SalesKanban({
                     <button
                       type="button"
                       onClick={() => {
-                        setActiveTab('lead_tracker');
+                        setActiveTab('list');
                       }}
                       className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl text-xs flex items-center justify-center gap-2 shadow-md shadow-blue-600/10 cursor-pointer transition-colors"
                     >
-                      <FileText size={16} /> ไปที่หน้า Lead Tracker เพื่อเลือก/เพิ่มลูกค้าจอง
+                      <Users size={16} /> ไปที่ Customer Pipeline เพื่อดูลูกค้าทั้งหมด
                     </button>
                     <button
                       type="button"
@@ -2388,6 +2746,97 @@ export default function SalesKanban({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Daily House Inspection SOP Modal */}
+      {showDailyInspectionModal && (
+        <DailyHouseInspectionModal
+          isOpen={showDailyInspectionModal}
+          onClose={() => setShowDailyInspectionModal(false)}
+          projectName={project?.name || 'ไอลิน6'}
+          user={user}
+          sampleHouses={projectPlotsData.filter(p => isSampleHouse(p)).map(p => p.plot_name || p.id)}
+          initialLocation={plotInfo?.plot_name ? `บ้านตัวอย่าง แปลง ${plotInfo.plot_name}` : undefined}
+          onSaved={async () => {
+            await fetchData();
+            if (panelState.plotId) {
+              const insp = await fetchTodayInspectionStatus(project?.name || 'ไอลิน6', plotInfo?.plot_name || panelState.plotId);
+              setSampleHouseInspection(insp);
+            }
+          }}
+        />
+      )}
+
+      {/* 🏷️ Central Lead Booking Modal */}
+      {showBookingModal.isOpen && (
+        <CentralLeadBookingModal
+          isOpen={showBookingModal.isOpen}
+          onClose={() => setShowBookingModal({ isOpen: false, lead: null })}
+          customer={showBookingModal.lead ? {
+            id: showBookingModal.lead.id,
+            name: showBookingModal.lead.customer_name || showBookingModal.lead.name,
+            phone: showBookingModal.lead.phone,
+            channel: showBookingModal.lead.channel,
+            salesOwner: showBookingModal.lead.sales_owner || showBookingModal.lead.agent_name,
+            notes: showBookingModal.lead.notes
+          } : null}
+          initialInterest={{
+            projectName: project?.name,
+            plotId: showBookingModal.plotId || panelState.plotId
+          }}
+          projects={projects?.map(p => p.name) || [project?.name || 'ไอลิน6']}
+          salesOwners={[]}
+          onSaved={async () => {
+            await fetchData();
+            setPanelState({ type: 'default', plotId: '', lead: null });
+          }}
+          onSwitchToRental={() => {
+            setShowRentalModal({
+              isOpen: true,
+              lead: showBookingModal.lead,
+              plotId: showBookingModal.plotId || panelState.plotId
+            });
+          }}
+        />
+      )}
+
+      {/* 🔑 Rental Contract Modal (Programs A, B, C) */}
+      {showRentalModal.isOpen && (
+        <RentalContractModal
+          isOpen={showRentalModal.isOpen}
+          onClose={() => setShowRentalModal({ isOpen: false, lead: null })}
+          lead={showRentalModal.lead}
+          plotId={showRentalModal.plotId}
+          projectName={project?.name || 'ไอลิน สันทราย 2'}
+          user={user}
+          onSaved={fetchData}
+        />
+      )}
+
+      {/* 🔑 Rental Action Modal (Convert to Buy / Renew / Move Out) */}
+      {showRentalActionModal.isOpen && (
+        <RentalActionModal
+          isOpen={showRentalActionModal.isOpen}
+          onClose={() => setShowRentalActionModal({ isOpen: false, lead: null, plot: null })}
+          lead={showRentalActionModal.lead}
+          plot={showRentalActionModal.plot}
+          user={user}
+          onSaved={fetchData}
+        />
+      )}
+
+      {/* 💳 Rental Payment Ledger Modal */}
+      {showRentalPaymentModal.isOpen && (
+        <RentalPaymentLedgerModal
+          isOpen={showRentalPaymentModal.isOpen}
+          onClose={() => setShowRentalPaymentModal({ isOpen: false, plot: null, lead: null })}
+          plot={showRentalPaymentModal.plot}
+          plotId={showRentalPaymentModal.plot?.id}
+          lead={showRentalPaymentModal.lead}
+          projectName={project?.name || 'ไอลิน สันทราย 2'}
+          user={user}
+          onSaved={fetchData}
+        />
       )}
 
     </div>

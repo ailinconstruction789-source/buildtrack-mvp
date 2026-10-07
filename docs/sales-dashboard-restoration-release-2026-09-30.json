@@ -1,0 +1,52 @@
+{
+  "scope": "Restore the original Dashboard presentation while retaining central report data",
+  "baselineCommit": "e91e22f373ce635778ebab33ef9f4cc03c40ed90",
+  "productionCommit": "ebde3bdf459ec2a1015925fd56ecc67577e2b819",
+  "deploymentId": "3HU1ynboqQkupGryCucVApJa6CCD",
+  "deploymentStatusObserved": "Ready",
+  "productionUrl": "https://buildtrack-mvp-79c5.vercel.app/",
+  "changedFiles": [
+    "components/sales/CentralExcelReportView.tsx",
+    "components/sales/CentralLegacyDashboard.tsx",
+    "components/sales/CentralLegacyWaitingDetails.tsx",
+    "components/sales/__tests__/CentralExcelReportView.test.tsx",
+    "components/sales/__tests__/CentralLegacyWaitingDetails.test.tsx"
+  ],
+  "checks": {
+    "boundedReport": ".next/release-check/app-HCyXHk/release-report.json",
+    "testsPassed": 935,
+    "selectionTestsPassed": 6,
+    "typecheck": "passed",
+    "offlineWebpackBuild": "passed",
+    "sourceFilesUnchanged": true,
+    "candidateUsedRealCredentials": false
+  },
+  "liveAcceptance": {
+    "originalComparisonHeadings2023Through2026": true,
+    "separateCumulativeSection": true,
+    "cumulativeSelectChangedTo2025AndReturnedTo2026": true,
+    "yearlyVisits": 290,
+    "monthlyVisits": 31,
+    "yearlyNetBookings": 40,
+    "monthlyNetBookings": 13,
+    "yearlyCancellations": 18,
+    "monthlyCancellations": 3,
+    "monthlyTransfers": 0,
+    "monthlyForecastCards": 1,
+    "customerHistoryHeadingPresent": true,
+    "screenshotVerified": false,
+    "screenshotLimitation": "Chrome capture failed with timeout/debugger unattached after documented recovery. Headings, values and year selection were verified through browser accessibility/DOM."
+  },
+  "databaseChanged": false,
+  "sqlRun": false,
+  "customerDataWritten": false,
+  "apiOrFlagChanges": false,
+  "intentionalDifferences": [
+    "Central project filter, refresh control and compact source-evidence disclosure retained",
+    "Unknown monetary amounts and dates are not substituted with defaults",
+    "Stock labels describe current state, not historical snapshots",
+    "Contract appraisal is not substituted with plot-catalog appraisal",
+    "Lead and booking dates remain separately identified",
+    "House images, house type, construction progress, inspection, documents and promotions remain unconnected in this report; related write controls are disabled"
+  ]
+}

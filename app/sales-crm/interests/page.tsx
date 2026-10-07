@@ -1,0 +1,16 @@
+import Link from 'next/link';
+import ProjectInterestsWorkspace from '@/components/sales/ProjectInterestsWorkspace';
+import { parseProjectInterestsPageQuery } from '@/lib/sales/projectInterestsContracts';
+import { projectInterestsEnabled } from '@/lib/sales/projectInterestsServer';
+import { visitsEnabled } from '@/lib/sales/visitsServer';
+
+export const dynamic = 'force-dynamic';
+export const metadata = { title: 'โครงการที่สนใจของ Lead | BuildTrack' };
+export default async function ProjectInterestsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  if (!projectInterestsEnabled()) return <main className="mx-auto max-w-3xl space-y-4 p-8"><h1 className="text-2xl font-bold">ยังไม่เปิดเพิ่มโครงการให้ Lead ส่วนกลาง</h1>
+    <p>ต้องตรวจรับฐานข้อมูลและสิทธิ์ก่อน หน้านี้ยังไม่อ่านหรือบันทึกข้อมูล</p><Link href="/sales-crm" prefetch={false}>กลับ Lead ส่วนกลาง</Link></main>;
+  let customerId: string;
+  try { customerId = parseProjectInterestsPageQuery(await searchParams); }
+  catch { return <main className="space-y-4 p-8"><h1>ลิงก์ลูกค้าไม่ถูกต้อง</h1><Link href="/sales-crm" prefetch={false}>เลือก Lead จากส่วนกลางอีกครั้ง</Link></main>; }
+  return <ProjectInterestsWorkspace customerId={customerId} visitsEnabled={visitsEnabled()} />;
+}

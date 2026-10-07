@@ -5,14 +5,20 @@ import {
   Search, Plus, Filter, Download, Upload, Phone, Calendar, 
   MapPin, Home, CheckCircle, XCircle, Clock, AlertTriangle, 
   MessageSquare, User, Building, FileText, ArrowRight, Save, 
-  Edit3, Trash2, Eye, MoreHorizontal, Check, RefreshCw, Loader2, Sparkles
+  Edit3, Trash2, Eye, MoreHorizontal, Check, RefreshCw, Loader2, Sparkles, Key, CreditCard
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/supabase';
-import { Lead, CRMStatus, LostReason, MarketingChannel } from '@/types/sales';
+import { Lead, CRMStatus, LostReason, MarketingChannel, RENTAL_PROGRAM_DETAILS } from '@/types/sales';
 import { parseExcelRowToLead, downloadLeadTrackerTemplate, ParsedLeadRow, CRM_STATUS_OPTIONS, LOST_REASON_OPTIONS, MARKETING_CHANNEL_OPTIONS } from '@/lib/salesImportHelper';
 import CustomerVoicesModal from './CustomerVoicesModal';
 import HouseVisitChecklistModal from './HouseVisitChecklistModal';
+import RentalContractModal from './RentalContractModal';
+import RentalActionModal from './RentalActionModal';
+import RentalPaymentLedgerModal from './RentalPaymentLedgerModal';
+import AdminDeleteCustomerModal from './AdminDeleteCustomerModal';
+import RentalAlertsWidget from './RentalAlertsWidget';
+import RentalPortfolioAnalytics from './RentalPortfolioAnalytics';
 import AvailablePlotSelect from './AvailablePlotSelect';
 import type { InterestedPlot } from '@/lib/sales/plotAvailability';
 import { recheckInterestedPlot } from '@/lib/sales/plotAvailabilityClient';
@@ -45,6 +51,7 @@ export default function LeadTrackerView({
   const [filterChannel, setFilterChannel] = useState<string>('all');
   const [filterCRMStatus, setFilterCRMStatus] = useState<string>('all');
   const [filterAgent, setFilterAgent] = useState<string>('all');
+  const [leadSubTab, setLeadSubTab] = useState<'table' | 'analytics' | 'alerts'>('table');
 
   // Modals state
   const [showAddLeadModal, setShowAddLeadModal] = useState(false);
@@ -55,8 +62,12 @@ export default function LeadTrackerView({
   const [showFollowUpModal, setShowFollowUpModal] = useState<{ isOpen: boolean; lead: Lead | null }>({ isOpen: false, lead: null });
   const [showVisitModal, setShowVisitModal] = useState<{ isOpen: boolean; lead: Lead | null }>({ isOpen: false, lead: null });
   const [showBookingModal, setShowBookingModal] = useState<{ isOpen: boolean; lead: Lead | null }>({ isOpen: false, lead: null });
+  const [showRentalModal, setShowRentalModal] = useState<{ isOpen: boolean; lead: Lead | null; plotId?: string | null }>({ isOpen: false, lead: null });
+  const [showRentalActionModal, setShowRentalActionModal] = useState<{ isOpen: boolean; lead: Lead | null; plot?: any | null }>({ isOpen: false, lead: null });
+  const [showRentalPaymentModal, setShowRentalPaymentModal] = useState<{ isOpen: boolean; lead: Lead | null; plotId?: string | null }>({ isOpen: false, lead: null });
   const [showLostModal, setShowLostModal] = useState<{ isOpen: boolean; lead: Lead | null }>({ isOpen: false, lead: null });
   const [showSurveyModal, setShowSurveyModal] = useState<{ isOpen: boolean; lead: Lead | null }>({ isOpen: false, lead: null });
+  const [showAdminDeleteModal, setShowAdminDeleteModal] = useState<{ isOpen: boolean; lead: Lead | null }>({ isOpen: false, lead: null });
   
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [newLeadPlot, setNewLeadPlot] = useState<InterestedPlot | null>(null);
@@ -560,52 +571,117 @@ export default function LeadTrackerView({
         </div>
       </div>
 
-      {/* 🔍 Search & Filters Bar */}
-      <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200/80 flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 min-w-[240px]">
-          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            placeholder="ค้นหาชื่อลูกค้า, เบอร์โทร, แปลงที่เล็ง, โน้ต..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
-
-        <select
-          value={filterProject}
-          onChange={e => setFilterProject(e.target.value)}
-          className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+      {/* 🌟 3-Mode Sub-Tab Switcher 🌟 */}
+      <div className="flex flex-wrap items-center gap-2 bg-white p-2.5 rounded-2xl border border-slate-200/90 shadow-2xs">
+        <button
+          type="button"
+          onClick={() => setLeadSubTab('table')}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            leadSubTab === 'table'
+              ? 'bg-blue-600 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
         >
-          <option value="all">🏢 ทุกโครงการ</option>
-          {projects.map((p: any) => (
-            <option key={p.id || p.name} value={p.name}>{p.name}</option>
-          ))}
-        </select>
+          <FileText size={14} /> 📋 ทะเบียน Lead ทั้งหมด ({filteredLeads.length})
+        </button>
 
-        <select
-          value={filterChannel}
-          onChange={e => setFilterChannel(e.target.value)}
-          className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        <button
+          type="button"
+          onClick={() => setLeadSubTab('analytics')}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            leadSubTab === 'analytics'
+              ? 'bg-gradient-to-r from-emerald-600 to-teal-700 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
         >
-          <option value="all">📱 ทุกช่องทาง</option>
-          {CHANNELS.map(c => (
-            <option key={c} value={c}>{c}</option>
-          ))}
-        </select>
+          <Sparkles size={14} className="text-amber-300" /> 📊 วิเคราะห์พอร์ตบ้านเช่า & กระแสเงินสด (Ailin Rental)
+        </button>
 
-        <select
-          value={filterCRMStatus}
-          onChange={e => setFilterCRMStatus(e.target.value)}
-          className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-[200px]"
+        <button
+          type="button"
+          onClick={() => setLeadSubTab('alerts')}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            leadSubTab === 'alerts'
+              ? 'bg-gradient-to-r from-amber-600 to-rose-600 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
         >
-          <option value="all">📊 ทุกสถานะ CRM</option>
-          {CRM_STATUS_LIST.map(s => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
+          <AlertTriangle size={14} /> 🚨 แจ้งเตือนสัญญา & ค้างชำระ
+        </button>
       </div>
+
+      {/* Conditionally render RentalPortfolioAnalytics */}
+      {leadSubTab === 'analytics' && (
+        <RentalPortfolioAnalytics
+          projectName={filterProject !== 'all' ? filterProject : undefined}
+          onRefresh={onRefresh}
+        />
+      )}
+
+      {/* Conditionally render RentalAlertsWidget */}
+      {leadSubTab === 'alerts' && (
+        <RentalAlertsWidget
+          projectName={filterProject !== 'all' ? filterProject : undefined}
+          onOpenContractAction={(cId, pId, lId) => {
+            const l = leads.find(lead => lead.id === lId || lead.interested_plot_id === pId);
+            if (l) setShowRentalActionModal({ isOpen: true, lead: l });
+          }}
+          onOpenPaymentLedger={(cId, pId, lId) => {
+            const l = leads.find(lead => lead.id === lId || lead.interested_plot_id === pId);
+            if (l) setShowRentalPaymentModal({ isOpen: true, lead: l, plotId: pId });
+          }}
+          onRefreshParent={onRefresh}
+        />
+      )}
+
+      {leadSubTab === 'table' && (
+        <>
+          {/* 🔍 Search & Filters Bar */}
+          <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200/80 flex flex-wrap items-center gap-3">
+            <div className="relative flex-1 min-w-[240px]">
+              <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="ค้นหาชื่อลูกค้า, เบอร์โทร, แปลงที่เล็ง, โน้ต..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <select
+              value={filterProject}
+              onChange={e => setFilterProject(e.target.value)}
+              className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="all">🏢 ทุกโครงการ</option>
+              {projects.map((p: any) => (
+                <option key={p.id || p.name} value={p.name}>{p.name}</option>
+              ))}
+            </select>
+
+            <select
+              value={filterChannel}
+              onChange={e => setFilterChannel(e.target.value)}
+              className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="all">📱 ทุกช่องทาง</option>
+              {CHANNELS.map(c => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+
+            <select
+              value={filterCRMStatus}
+              onChange={e => setFilterCRMStatus(e.target.value)}
+              className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-[200px]"
+            >
+              <option value="all">📊 ทุกสถานะ CRM</option>
+              {CRM_STATUS_LIST.map(s => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </div>
 
       {/* 📊 Interactive Lead Table */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden">
@@ -638,8 +714,15 @@ export default function LeadTrackerView({
               ) : (
                 filteredLeads.map((l, index) => {
                   const hasVisited = !!l.actual_visit_date;
-                  const isBooked = l.crm_status?.includes('Booked') || l.status === 'Reserved';
+                  const isBooked = l.crm_status?.includes('Booked') || l.crm_status?.includes('จอง') || l.status === 'Reserved';
                   const isLost = l.crm_status?.includes('Lost') || l.status === 'Cancelled';
+                  const isRented = Boolean(
+                    l.rental_status === 'Active' ||
+                    l.crm_status?.includes('เช่า') ||
+                    l.crm_status?.includes('Rented') ||
+                    l.crm_status?.includes('Rent-to-Own')
+                  );
+                  const rentalMeta = l.rental_program ? RENTAL_PROGRAM_DETAILS[l.rental_program] : null;
 
                   return (
                     <tr key={l.id} className="hover:bg-slate-50/80 transition-colors group">
@@ -648,7 +731,14 @@ export default function LeadTrackerView({
                         {l.lead_date ? new Date(l.lead_date).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }) : '-'}
                       </td>
                       <td className="p-3 font-bold text-slate-900 whitespace-nowrap">
-                        {l.customer_name}
+                        <div className="flex items-center gap-1.5">
+                          <span>{l.customer_name}</span>
+                          {rentalMeta && (
+                            <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded border ${rentalMeta.badgeColor}`}>
+                              {rentalMeta.code}: {rentalMeta.name}
+                            </span>
+                          )}
+                        </div>
                         {l.occupation && <span className="block text-[10px] text-slate-400 font-normal">{l.occupation}</span>}
                       </td>
                       <td className="p-3 text-slate-600 font-mono whitespace-nowrap">{l.phone || '-'}</td>
@@ -699,6 +789,7 @@ export default function LeadTrackerView({
                           value={l.crm_status || 'Follow-up — อยู่ระหว่างติดตาม'}
                           onChange={e => handleUpdateCRMStatus(l.id, e.target.value)}
                           className={`text-xs font-bold px-2 py-1 rounded-lg border focus:outline-none cursor-pointer ${
+                            isRented ? 'bg-cyan-50 text-cyan-900 border-cyan-300' :
                             isBooked ? 'bg-orange-50 text-orange-800 border-orange-200' :
                             isLost ? 'bg-rose-50 text-rose-800 border-rose-200' :
                             'bg-slate-50 text-slate-700 border-slate-200'
@@ -720,8 +811,8 @@ export default function LeadTrackerView({
                             <Sparkles size={12} className="text-indigo-600" /> SOP พาชม
                           </button>
 
-                          {/* Button 1: Convert to Booking */}
-                          {!isBooked && !isLost && (
+                          {/* Button 1: Convert to Booking (If not booked/lost/rented) */}
+                          {!isBooked && !isLost && !isRented && (
                             <button
                               onClick={() => setShowBookingModal({ isOpen: true, lead: l })}
                               className="bg-orange-600 hover:bg-orange-700 text-white font-bold px-2.5 py-1 rounded-lg text-xs flex items-center gap-1 shadow-sm transition-colors cursor-pointer"
@@ -729,6 +820,37 @@ export default function LeadTrackerView({
                             >
                               <Home size={12} /> จองแปลง
                             </button>
+                          )}
+
+                          {/* Button 1.5: Rental Contract Button (Right next to Booking button) */}
+                          {!isBooked && !isLost && !isRented && (
+                            <button
+                              onClick={() => setShowRentalModal({ isOpen: true, lead: l, plotId: l.interested_plot_id })}
+                              className="bg-gradient-to-r from-blue-700 to-indigo-700 hover:from-blue-800 hover:to-indigo-800 text-white font-bold px-2.5 py-1 rounded-lg text-xs flex items-center gap-1 shadow-sm transition-colors cursor-pointer"
+                              title="ทำสัญญาเช่า / เช่าออม (แบบ A, B, C)"
+                            >
+                              <Key size={12} /> เช่าแปลง
+                            </button>
+                          )}
+
+                          {/* Button 1.6: Manage Lease & Track Payments (When actively renting) */}
+                          {isRented && (
+                            <>
+                              <button
+                                onClick={() => setShowRentalPaymentModal({ isOpen: true, lead: l, plotId: l.interested_plot_id })}
+                                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-2 py-1 rounded-lg text-xs flex items-center gap-1 shadow-sm transition-colors cursor-pointer"
+                                title="ตารางติดตามการจ่ายค่าเช่ารายเดือน"
+                              >
+                                <CreditCard size={12} /> ค่าเช่า
+                              </button>
+                              <button
+                                onClick={() => setShowRentalActionModal({ isOpen: true, lead: l })}
+                                className="bg-gradient-to-r from-cyan-700 to-blue-800 hover:from-cyan-800 hover:to-blue-900 text-white font-bold px-2 py-1 rounded-lg text-xs flex items-center gap-1 shadow-sm transition-colors cursor-pointer"
+                                title="จัดการสัญญาเช่า: เปลี่ยนเป็นซื้อ / ต่อสัญญา / ย้ายออก"
+                              >
+                                <Key size={12} /> สัญญา
+                              </button>
+                            </>
                           )}
 
                           {/* Button 2: Survey */}
@@ -750,6 +872,17 @@ export default function LeadTrackerView({
                               <XCircle size={14} />
                             </button>
                           )}
+
+                          {/* Button 4: Admin Delete Customer */}
+                          {(!user?.role || user?.role?.toLowerCase() === 'admin' || user?.role?.toLowerCase() === 'owner' || user?.role?.toLowerCase() === 'superadmin') && (
+                            <button
+                              onClick={() => setShowAdminDeleteModal({ isOpen: true, lead: l })}
+                              className="bg-rose-50 hover:bg-rose-600 hover:text-white text-rose-600 font-bold p-1.5 rounded-lg text-xs transition-all cursor-pointer border border-rose-200"
+                              title="🗑️ ลบข้อมูลลูกค้า (Admin Mode สำหรับทดสอบ/รีเซ็ตระบบ)"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -760,6 +893,8 @@ export default function LeadTrackerView({
           </table>
         </div>
       </div>
+      </>
+      )}
 
       {/* ➕ Modal 1: Add New Lead */}
       {showAddLeadModal && (
@@ -1315,6 +1450,58 @@ export default function LeadTrackerView({
             setShowSurveyModal({ isOpen: true, lead });
           }}
           onSaved={onRefresh}
+        />
+      )}
+
+      {/* 🔑 Rental Contract Modal (Programs A, B, C) */}
+      {showRentalModal.isOpen && (
+        <RentalContractModal
+          isOpen={showRentalModal.isOpen}
+          onClose={() => setShowRentalModal({ isOpen: false, lead: null })}
+          lead={showRentalModal.lead}
+          plotId={showRentalModal.plotId}
+          projectName={showRentalModal.lead?.project_name || (filterProject !== 'all' ? filterProject : 'ไอลิน สันทราย 2')}
+          user={user}
+          onSaved={onRefresh}
+        />
+      )}
+
+      {/* 🔑 Rental Action Modal (Convert to Buy / Renew / Move Out) */}
+      {showRentalActionModal.isOpen && (
+        <RentalActionModal
+          isOpen={showRentalActionModal.isOpen}
+          onClose={() => setShowRentalActionModal({ isOpen: false, lead: null, plot: null })}
+          lead={showRentalActionModal.lead}
+          plot={showRentalActionModal.plot}
+          user={user}
+          onSaved={onRefresh}
+        />
+      )}
+
+      {/* 💳 Rental Payment Ledger Modal */}
+      {showRentalPaymentModal.isOpen && (
+        <RentalPaymentLedgerModal
+          isOpen={showRentalPaymentModal.isOpen}
+          onClose={() => setShowRentalPaymentModal({ isOpen: false, lead: null, plotId: null })}
+          lead={showRentalPaymentModal.lead}
+          plotId={showRentalPaymentModal.plotId || showRentalPaymentModal.lead?.interested_plot_id}
+          projectName={showRentalPaymentModal.lead?.project_name || (filterProject !== 'all' ? filterProject : 'ไอลิน สันทราย 2')}
+          user={user}
+          onSaved={onRefresh}
+        />
+      )}
+
+      {/* 🗑️ Admin Delete Customer Modal */}
+      {showAdminDeleteModal.isOpen && (
+        <AdminDeleteCustomerModal
+          isOpen={showAdminDeleteModal.isOpen}
+          onClose={() => setShowAdminDeleteModal({ isOpen: false, lead: null })}
+          lead={showAdminDeleteModal.lead}
+          user={user}
+          onDeleted={(res) => {
+            onRefresh();
+            alert(`🗑️ ลบข้อมูลลูกค้า "${res.customerName || 'ลูกค้า'}" สำเร็จ! ${res.releasedPlotIds.length > 0 ? `ปลดแปลง ${res.releasedPlotIds.join(', ')} คืนเป็นแปลงว่างเรียบร้อยแล้ว` : ''}`);
+          }}
         />
       )}
 

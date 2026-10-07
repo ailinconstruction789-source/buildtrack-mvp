@@ -1,0 +1,18 @@
+// TEST COPY ONLY. Preserve real headers and application behavior; constrain compilation resources.
+import type { NextConfig } from 'next';
+import original from './next.original';
+const config: NextConfig = {
+  ...original,
+  experimental: { ...original.experimental, cpus: 1, webpackBuildWorker: false,
+    webpackMemoryOptimizations: true, parallelServerCompiles: false, parallelServerBuildTraces: false,
+    preloadEntriesOnStart: false },
+  typescript: { ...original.typescript, ignoreBuildErrors: false },
+  productionBrowserSourceMaps: false,
+  webpack(config, options) {
+    const result = original.webpack ? original.webpack(config, options) : config;
+    result.cache = false;
+    result.parallelism = 1;
+    return result;
+  },
+};
+export default config;

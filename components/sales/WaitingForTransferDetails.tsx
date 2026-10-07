@@ -631,7 +631,7 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = []
 
       {/* 🛠️ Modal for Booking Inspection Dates 1 & 2 */}
       {inspectionModal && inspectionModal.isOpen && (
-        <div className="fixed inset-0 bg-black/70 z-[99999] flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/70 z-[300] flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl w-full max-w-lg p-6 shadow-2xl border border-slate-100 animate-fade-in space-y-5 relative">
             <div className="flex justify-between items-start border-b border-slate-100 pb-3">
               <div>
@@ -753,7 +753,7 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = []
 
       {/* 🔍 MODAL: SALES READ-ONLY DEFECT PUNCHLIST TRACKER */}
       {salesDefectModalPlot && (
-        <div className="fixed inset-0 bg-black/75 z-[99999] flex items-center justify-center p-3 sm:p-6">
+        <div className="fixed inset-0 bg-black/75 z-[300] flex items-center justify-center p-3 sm:p-6">
           <div className="bg-white rounded-3xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden animate-fade-in">
             
             {/* Header */}
@@ -975,7 +975,7 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = []
 
       {/* 🖼️ Image Lightbox Preview Modal */}
       {previewImage && (
-        <div className="fixed inset-0 bg-black/90 z-[999999] flex items-center justify-center p-4" onClick={() => setPreviewImage(null)}>
+        <div className="fixed inset-0 bg-black/90 z-[400] flex items-center justify-center p-4" onClick={() => setPreviewImage(null)}>
           <div className="relative max-w-4xl max-h-[90vh]">
             <img src={previewImage} alt="Preview" className="max-w-full max-h-[85vh] rounded-2xl shadow-2xl object-contain" />
             <button

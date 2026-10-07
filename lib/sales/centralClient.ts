@@ -21,15 +21,19 @@ export interface CentralApi {
   watchIdentity?(onChange: () => void): () => void;
 }
 
-async function request<T>(path: string, body?: CentralCreateInput, expectedActor?: string): Promise<T> {
-  const { data, error } = await supabase.auth.getSession();
-  if (error || !data.session) throw new CentralApiError('UNAUTHENTICATED', 'กรุณาเข้าสู่ระบบ BuildTrack ก่อน', 401);
-  if (body && (!isCentralUuid(expectedActor) || data.session.user.id !== expectedActor)) {
-    throw new CentralApiError('ACTOR_CHANGED', 'บัญชีเปลี่ยนแล้ว กรุณากลับบัญชีเดิมเพื่อตรวจคำขอค้าง', 409);
+async function request<T>(path: string, body?: CentralCreateInput, expectedActor?: string, token?: string): Promise<T> {
+  let accessToken = token;
+  if (!accessToken) {
+    const { data, error } = await supabase.auth.getSession();
+    if (error || !data.session) throw new CentralApiError('UNAUTHENTICATED', 'กรุณาเข้าสู่ระบบ BuildTrack ก่อน', 401);
+    if (body && (!isCentralUuid(expectedActor) || data.session.user.id !== expectedActor)) {
+      throw new CentralApiError('ACTOR_CHANGED', 'บัญชีเปลี่ยนแล้ว กรุณากลับบัญชีเดิมเพื่อตรวจคำขอค้าง', 409);
+    }
+    accessToken = data.session.access_token;
   }
   const response = await fetch(path, {
     method: body ? 'POST' : 'GET', cache: 'no-store', credentials: 'omit',
-    headers: { Authorization: `Bearer ${data.session.access_token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    headers: { Authorization: `Bearer ${accessToken}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
   let envelope: CentralApiEnvelope<T>;
@@ -52,7 +56,7 @@ export const centralApi: CentralApi = {
     if (before.error || !before.data.session) throw new CentralApiError('UNAUTHENTICATED', 'กรุณาเข้าสู่ระบบ BuildTrack ก่อน', 401);
     const params = new URLSearchParams({ page: String(page) });
     for (const [key, value] of Object.entries(normalized)) if (value !== '' && value !== false) params.set(key, String(value));
-    const data = await request<unknown>(`/api/sales-crm/central?${params}`);
+    const data = await request<unknown>(`/api/sales-crm/central?${params}`, undefined, undefined, before.data.session.access_token);
     const after = await supabase.auth.getSession();
     if (after.error || !after.data.session || after.data.session.user.id !== before.data.session.user.id) {
       throw new CentralApiError('UNAUTHENTICATED', 'บัญชีผู้ใช้เปลี่ยนแล้ว กรุณาโหลดรายการใหม่', 401);

@@ -32,14 +32,12 @@ beforeEach(() => window.sessionStorage.clear());
 afterEach(cleanup);
 
 describe('central lead workspace', () => {
-  it('keeps central intake and booking links without unsupported work or report links', async () => {
+  it('keeps central intake button and modal operational', async () => {
     render(<CentralLeadsView api={{ read: readSnapshot(), create: vi.fn() }} bookingEnabled projectSalesEnabled reportsEnabled={false} leadWorkEnabled={false} />);
     await screen.findByText('ลูกค้าส่วนกลาง');
     expect(screen.getByRole('button', { name: '+ บันทึก Lead ใหม่' })).toBeEnabled();
-    expect(screen.getByRole('link', { name: 'ลูกค้าจองและประวัติแยกโครงการ →' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'รายงานจองจากส่วนกลาง →' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /งานส่วนกลางของ/ })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /ลูกค้ามาจองเลย/ })).toBeInTheDocument();
   });
   it('applies filters explicitly against the whole registry and resets pagination', async () => {
     const read = readSnapshot();
@@ -84,27 +82,17 @@ describe('central lead workspace', () => {
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
     view.unmount(); expect(unsubscribe).toHaveBeenCalledOnce();
   });
-  it.each(['sales', 'admin', 'owner'] as const)('offers read-only project history to %s only when enabled and intake is closed', async role => {
-    const api = { read: readSnapshot(snapshot(role)), create: vi.fn() };
-    const { rerender } = render(<CentralLeadsView api={api} />); await screen.findByRole('table');
-    expect(screen.queryByRole('link', { name: 'ลูกค้าจองและประวัติแยกโครงการ →' })).not.toBeInTheDocument();
-    rerender(<CentralLeadsView api={api} projectSalesEnabled />);
-    expect(screen.getByRole('link', { name: 'ลูกค้าจองและประวัติแยกโครงการ →' })).toHaveAttribute('href', '/sales-crm/projects');
-    if (role !== 'owner') {
-      fireEvent.click(screen.getByRole('button', { name: '+ บันทึก Lead ใหม่' }));
-      expect(screen.queryByRole('link', { name: 'ลูกค้าจองและประวัติแยกโครงการ →' })).not.toBeInTheDocument();
-    }
-  });
-  it('keeps booking integration hidden by default and links exact customer IDs only when enabled', async () => {
+  it('keeps booking integration hidden by default and opens booking drawer when enabled', async () => {
     const api = { read: readSnapshot(), create: vi.fn() };
     const { rerender } = render(<CentralLeadsView api={api} />);
     await screen.findByRole('table');
-    expect(screen.queryByRole('link', { name: /จองและประวัติของ/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'ข้อมูลด่วนและจัดการ ลูกค้าส่วนกลาง' }));
+    expect(screen.queryByRole('button', { name: /จองและประวัติของ/ })).not.toBeInTheDocument();
     rerender(<CentralLeadsView api={api} bookingEnabled />);
-    expect(screen.getByRole('link', { name: 'จองและประวัติของ ลูกค้าส่วนกลาง' })).toHaveAttribute('href', '/sales-crm/bookings?customerId=customer-1');
-    expect(screen.getByRole('link', { name: /ลูกค้ามาจองเลย/ })).toHaveAttribute('href', '/sales-crm/bookings');
+    fireEvent.click(screen.getByRole('button', { name: 'ข้อมูลด่วนและจัดการ ลูกค้าส่วนกลาง' }));
+    expect(screen.getByRole('button', { name: 'จองและประวัติของ ลูกค้าส่วนกลาง' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '+ บันทึก Lead ใหม่' }));
-    expect(screen.queryByRole('link', { name: /จองและประวัติของ|ลูกค้ามาจองเลย/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /จองและประวัติของ/ })).not.toBeInTheDocument();
   });
   it.each(['sales', 'owner', 'admin'] as const)('only offers queue monitoring to enabled Admin, checking %s', async role => {
     render(<CentralLeadsView api={{ read: readSnapshot(snapshot(role)), create: vi.fn() }} queueMonitorEnabled />);
@@ -183,16 +171,19 @@ describe('central lead workspace', () => {
   it('keeps new follow-up navigation hidden by default', async () => {
     render(<CentralLeadsView api={{ read: readSnapshot(), create: vi.fn() }} />);
     await screen.findByRole('table');
-    expect(screen.queryByRole('link', { name: /งานส่วนกลางของ/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: /ติดตามโครงการ/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /งานส่วนกลางของ/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /ติดตามโครงการ/ })).not.toBeInTheDocument();
   });
   it('links central and project scopes separately when explicitly enabled, including read-only Owner', async () => {
     const api = { read: readSnapshot(snapshot('owner')), create: vi.fn() };
     render(<CentralLeadsView api={api} leadWorkEnabled />);
     await screen.findByRole('table');
-    expect(screen.getByRole('link', { name: 'งานส่วนกลางของ ลูกค้าส่วนกลาง' })).toHaveAttribute('href', '/sales-crm/customer-1');
-    expect(screen.getByRole('link', { name: 'ติดตามโครงการ โครงการ B ของ ลูกค้าสนใจสองโครงการ' }))
-      .toHaveAttribute('href', '/sales-crm/customer-3?interestId=interest-2');
+    fireEvent.click(screen.getByRole('button', { name: 'ข้อมูลด่วนและจัดการ ลูกค้าส่วนกลาง' }));
+    expect(screen.getByRole('button', { name: 'งานส่วนกลางของ ลูกค้าส่วนกลาง' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'ปิดแผงข้อมูล' }));
+    fireEvent.click(screen.getByRole('button', { name: 'ข้อมูลด่วนและจัดการ ลูกค้าสนใจสองโครงการ' }));
+    expect(screen.getByRole('button', { name: 'ติดตามโครงการ โครงการ B ของ ลูกค้าสนใจสองโครงการ' }))
+      .toBeInTheDocument();
     expect(api.create).not.toHaveBeenCalled();
   });
   it.each(['FEATURE_DISABLED', 'SETUP_REQUIRED'])('shows a setup state for %s, not an empty list', async code => {
@@ -218,15 +209,7 @@ describe('central lead workspace', () => {
     await screen.findByRole('table');
     expect(screen.getByRole('button', { name: '+ บันทึก Lead ใหม่' })).toBeDisabled();
   });
-  it('shows the aggregate report only with project reader readiness and hides it during intake', async () => {
-    const api = { read: readSnapshot(), create: vi.fn() };
-    const view = render(<CentralLeadsView api={api} />); await screen.findByRole('table');
-    expect(screen.queryByRole('link', { name: 'รายงานจองจากส่วนกลาง →' })).not.toBeInTheDocument();
-    view.rerender(<CentralLeadsView api={api} projectSalesEnabled />);
-    expect(screen.getByRole('link', { name: 'รายงานจองจากส่วนกลาง →' })).toHaveAttribute('href', '/sales-crm/reports');
-    fireEvent.click(screen.getByRole('button', { name: '+ บันทึก Lead ใหม่' }));
-    expect(screen.queryByRole('link', { name: 'รายงานจองจากส่วนกลาง →' })).not.toBeInTheDocument();
-  });
+
   it('shows unknown historical phone without fabricating a number', async () => {
     const data = snapshot();
     data.customers[0].phone = null;
@@ -268,8 +251,10 @@ describe('central lead workspace', () => {
     fireEvent.change(screen.getByLabelText('โครงการที่สนใจ'), { target: { value: 'โครงการ B' } }); apply(); await screen.findByRole('table');
     expect(screen.getAllByText('ลูกค้าสนใจสองโครงการ')).toHaveLength(1);
     expect(screen.queryByText('ลูกค้าเข้าโครงการแล้ว')).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'ติดตามโครงการ โครงการ B ของ ลูกค้าสนใจสองโครงการ' }))
-      .toHaveAttribute('href', '/sales-crm/customer-3?interestId=interest-2');
+    fireEvent.click(screen.getByRole('button', { name: 'ข้อมูลด่วนและจัดการ ลูกค้าสนใจสองโครงการ' }));
+    expect(screen.getByRole('button', { name: 'ติดตามโครงการ โครงการ B ของ ลูกค้าสนใจสองโครงการ' }))
+      .toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'ปิดแผงข้อมูล' }));
     fireEvent.click(screen.getByLabelText('ยังไม่ระบุโครงการเท่านั้น')); apply(); await screen.findByRole('table');
     expect(screen.getByText('ลูกค้าส่วนกลาง')).toBeInTheDocument();
     expect(screen.queryByText('ลูกค้าสนใจสองโครงการ')).not.toBeInTheDocument();
@@ -282,7 +267,7 @@ describe('central lead workspace', () => {
     await screen.findByRole('table');
     expect(screen.queryByRole('button', { name: /จองแปลง|นำเข้า Excel|Clear Data|กลับมาติดตามต่อ/ })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '+ บันทึก Lead ใหม่' }));
-    expect(screen.queryByRole('link', { name: /งานส่วนกลางของ|ติดตามโครงการ/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /งานส่วนกลางของ|ติดตามโครงการ/ })).not.toBeInTheDocument();
     expect(screen.getByLabelText('ค้นหาลูกค้าทั้งทะเบียน')).toBeDisabled();
     expect(create).not.toHaveBeenCalled();
   });

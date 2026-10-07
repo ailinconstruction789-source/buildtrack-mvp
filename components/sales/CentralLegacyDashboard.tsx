@@ -19,6 +19,10 @@ const YEARS = ['2023', '2024', '2025', '2026'];
 const stageLabels: Record<SaleStage, string> = { booked: 'จองแล้ว', contracted: 'ทำสัญญา', downpayment: 'ดาวน์', document_prep: 'เตรียมเอกสาร', loan_submitted: 'ยื่นกู้', loan_rejected: 'กู้ไม่ผ่าน', loan_approved: 'กู้อนุมัติ', transfer_pending: 'รอโอน', transferred: 'โอนแล้ว', handover: 'ส่งมอบ', cancelled: 'ยกเลิกจอง' };
 const fmtM = formatReportMoney;
 const average = (value: number | null, count: number) => value === null || count === 0 ? null : value / count;
+const sumKnownMoney = (values: (number | null | undefined)[]): number | null => {
+  const nums = values.filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+  return nums.length > 0 ? nums.reduce((sum, v) => sum + v, 0) : null;
+};
 const plotPresentation = (row: ExcelStockRow) => ({
   id: row.plotId, plot_name: row.plotName, project_name: row.projectName, selling_price: row.basePrice,
 });
@@ -52,10 +56,10 @@ export default function CentralLegacyDashboard({ data, projectName, onProjectCha
       const available = group.stocks.filter(row => row.status === 'available');
       return [group.projectName, {
         total: group.total, transferred: group.transferred, waiting: group.booked, available: group.available,
-        unknown: group.unknown, totalVal: sumReportMoney(group.stocks.map(row => row.basePrice)),
-        transVal: sumReportMoney(transferred.map(row => row.basePrice)),
-        waitVal: sumReportMoney(waiting.map(row => row.basePrice)),
-        availVal: sumReportMoney(available.map(row => row.basePrice)),
+        unknown: group.unknown, totalVal: sumKnownMoney(group.stocks.map(row => row.basePrice)),
+        transVal: sumKnownMoney(transferred.map(row => row.basePrice)),
+        waitVal: sumKnownMoney(waiting.map(row => row.basePrice)),
+        availVal: sumKnownMoney(available.map(row => row.basePrice)),
         transferredPlots: transferred.map(plotPresentation), waitingPlots: waiting.map(plotPresentation),
         availablePlots: available.map(plotPresentation),
         unknownPlots: group.stocks.filter(row => row.status === 'unknown').map(plotPresentation),
@@ -75,12 +79,12 @@ export default function CentralLegacyDashboard({ data, projectName, onProjectCha
       viewsMonth: report.monthly.visits, bookedMonth: report.monthly.booked.map(recordPresentation),
       transferMonth: report.monthly.transferred.map(recordPresentation), cancelMonth: report.monthly.cancelled.map(recordPresentation),
       expectingTransfer: report.forecast.map(recordPresentation), projectGroups, activeProjects: Object.entries(projectGroups),
-      sumTransVal: sumReportMoney(transferred.map(row => row.basePrice)),
-      sumWaitVal: sumReportMoney(waiting.map(row => row.basePrice)),
-      sumAvailVal: sumReportMoney(available.map(row => row.basePrice)),
-      totalVal: sumReportMoney(report.stocks.map(row => row.basePrice)),
-      sumTransAppraisal: sumReportMoney(transferred.map(row => row.appraisalPrice)),
-      sumWaitAppraisal: sumReportMoney(waiting.map(row => row.appraisalPrice)),
+      sumTransVal: sumKnownMoney(transferred.map(row => row.basePrice)),
+      sumWaitVal: sumKnownMoney(waiting.map(row => row.basePrice)),
+      sumAvailVal: sumKnownMoney(available.map(row => row.basePrice)),
+      totalVal: sumKnownMoney(report.stocks.map(row => row.basePrice)),
+      sumTransAppraisal: sumKnownMoney(transferred.map(row => row.appraisalPrice)),
+      sumWaitAppraisal: sumKnownMoney(waiting.map(row => row.appraisalPrice)),
       sumTransCnt: transferred.length, sumWaitCnt: waiting.length, sumAvailCnt: available.length, sumTotalCnt: report.stocks.length,
       projChartData: report.groups.map(group => ({
         project: group.projectName,
@@ -114,7 +118,7 @@ export default function CentralLegacyDashboard({ data, projectName, onProjectCha
                   <div className="w-1.5 h-1.5 rounded-full bg-indigo-500"></div> ยอดขายทั้งปี {selectedYear} (รวมยกเลิก)
                 </div>
                 <div className="flex items-baseline gap-3">
-                  <div className="text-2xl font-black text-indigo-700">{fmtM(report.annualGross.salePrice)}</div>
+                  <div className="text-2xl font-black text-indigo-700">{fmtM(report.annualGross.salePrice ?? sumKnownMoney(report.annualGross.rows.map(r => r.sale?.salePrice ?? null)))}</div>
                   <div className="text-xs font-medium text-indigo-600/80 hidden xl:block">
                     {report.annualGross.rows.length} รายการจอง
                   </div>
@@ -124,7 +128,7 @@ export default function CentralLegacyDashboard({ data, projectName, onProjectCha
                 <div className="text-rose-600 text-xs font-bold uppercase tracking-wider mb-1 flex items-center gap-1.5">
                   <div className="w-1.5 h-1.5 rounded-full bg-rose-500"></div> ยอด ท.ด. ปี {selectedYear} (รวมยกเลิก)
                 </div>
-                <div className="text-2xl font-black text-rose-600">{fmtM(report.annualGross.tdPrice)}</div>
+                <div className="text-2xl font-black text-rose-600">{fmtM(report.annualGross.tdPrice ?? sumKnownMoney(report.annualGross.rows.map(r => r.tdPrice ?? null)))}</div>
               </div>
             </div>
             
@@ -201,7 +205,7 @@ export default function CentralLegacyDashboard({ data, projectName, onProjectCha
                 <span className="text-blue-200 font-medium mb-1">หลัง</span>
               </div>
               <div className="text-sm text-blue-200 font-medium bg-white/10 p-2 rounded inline-block mt-2 self-start">
-                {fmtM(sumReportMoney([...metrics.expectingTransfer, ...metrics.transferMonth].map(r => r.salePrice)))}
+                {fmtM(sumKnownMoney([...metrics.expectingTransfer, ...metrics.transferMonth].map(r => r.salePrice)))}
               </div>
               
               <div className="mt-4 pt-4 border-t border-white/20">

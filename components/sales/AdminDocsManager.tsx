@@ -1,20 +1,43 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
-import { FileText, Home, CheckCircle2, RefreshCw } from 'lucide-react';
+import { FileText, Home, CheckCircle2, RefreshCw, Search, Building2, Filter } from 'lucide-react';
 import { Plot } from '@/types/database.types';
 
 interface AdminDocsManagerProps {
   plots: Plot[];
   onUpdate: () => void;
+  selectedProjectName?: string;
 }
 
-export default function AdminDocsManager({ plots, onUpdate }: AdminDocsManagerProps) {
-  // เรียงลำดับแปลงตามชื่อ
-  const activePlots = [...plots].sort((a, b) => {
-    const aName = a.plot_name || a.id;
-    const bName = b.plot_name || b.id;
-    return aName.localeCompare(bName, 'th', { numeric: true });
-  });
+export default function AdminDocsManager({ plots, onUpdate, selectedProjectName }: AdminDocsManagerProps) {
+  const [projectFilter, setProjectFilter] = useState<string>(selectedProjectName || 'all');
+  const [searchTerm, setSearchTerm] = useState<string>('');
+
+  const projectNames = useMemo(() => {
+    const names = Array.from(new Set(plots.map(p => p.project_name).filter(Boolean))) as string[];
+    return names.sort((a, b) => a.localeCompare(b, 'th'));
+  }, [plots]);
+
+  // เรียงลำดับแปลงตามชื่อ และกรองตามโครงการ/คำค้นหา
+  const activePlots = useMemo(() => {
+    let filtered = [...plots];
+    if (projectFilter !== 'all') {
+      filtered = filtered.filter(p => p.project_name === projectFilter);
+    }
+    if (searchTerm.trim()) {
+      const q = searchTerm.trim().toLowerCase();
+      filtered = filtered.filter(p => 
+        (p.plot_name && p.plot_name.toLowerCase().includes(q)) ||
+        p.id.toLowerCase().includes(q) ||
+        (p.project_name && p.project_name.toLowerCase().includes(q))
+      );
+    }
+    return filtered.sort((a, b) => {
+      const aName = a.plot_name || a.id;
+      const bName = b.plot_name || b.id;
+      return aName.localeCompare(bName, 'th', { numeric: true });
+    });
+  }, [plots, projectFilter, searchTerm]);
   
   const [savingId, setSavingId] = useState<string | null>(null);
 
@@ -69,7 +92,7 @@ export default function AdminDocsManager({ plots, onUpdate }: AdminDocsManagerPr
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-full animate-in fade-in duration-300">
-      <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+      <div className="p-5 md:p-6 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-slate-50">
         <div>
           <h3 className="font-bold text-xl text-slate-800 flex items-center gap-2 mb-1">
             <FileText className="text-blue-600" />
@@ -77,9 +100,40 @@ export default function AdminDocsManager({ plots, onUpdate }: AdminDocsManagerPr
           </h3>
           <p className="text-sm text-slate-500">ติดตามสถานะและอัปเดตเอกสารสำคัญสำหรับการโอนกรรมสิทธิ์</p>
         </div>
-        <span className="bg-blue-100 text-blue-700 px-4 py-2 rounded-xl text-sm font-bold shadow-sm">
-          {activePlots.length} แปลงทั้งหมด
-        </span>
+        
+        {/* Controls: Project Filter & Search */}
+        <div className="flex flex-wrap items-center gap-3">
+          {projectNames.length > 1 && (
+            <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl px-3 py-2 shadow-sm">
+              <Building2 size={16} className="text-slate-400" />
+              <select
+                value={projectFilter}
+                onChange={(e) => setProjectFilter(e.target.value)}
+                className="text-xs font-bold text-slate-700 bg-transparent focus:outline-none cursor-pointer"
+              >
+                <option value="all">ทุกโครงการ (ทั้งหมด)</option>
+                {projectNames.map(pName => (
+                  <option key={pName} value={pName}>{pName}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div className="relative">
+            <Search size={16} className="absolute left-3 top-2.5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="ค้นหาแปลง..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-9 pr-4 py-2 border border-slate-200 rounded-xl text-xs font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 shadow-sm w-44 md:w-56"
+            />
+          </div>
+
+          <span className="bg-blue-100 text-blue-700 px-3.5 py-2 rounded-xl text-xs font-bold shadow-sm shrink-0">
+            {activePlots.length} แปลง
+          </span>
+        </div>
       </div>
       
       <div className="overflow-x-auto flex-1 p-2">

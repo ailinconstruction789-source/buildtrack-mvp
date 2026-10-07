@@ -1,0 +1,79 @@
+{
+  "scope": "Restore Dashboard (Excel) and sales summary from central CRM, read-only",
+  "authorization": "2026-09-30 explicit user approvals: dedicated read-only evidence SQL and exact 14-file dashboard/test deployment via GitHub main to 79c5",
+  "source": {
+    "sheetCutoffRow": 966,
+    "firstRow": 2,
+    "columnA": "Historical visit day and historical Lead day in report; no customer timestamp backfill",
+    "columnQ": "Expected transfer only, not actual transfer",
+    "mappedRows": 959,
+    "projectLinkedRows": 949,
+    "unassignedProjectRows": 10,
+    "heldForAdminRows": 6,
+    "freshSheetImport": false,
+    "googleSheetModified": false
+  },
+  "database": {
+    "projectId": "kbthmdedilswdmmczfay",
+    "migrationName": "central_excel_read_evidence",
+    "installedVersion": "20260930071636",
+    "localMigration": "supabase/migrations/20260930071521_central_excel_read_evidence.sql",
+    "objectsAdded": ["crm_excel_private", "crm_excel_private.evidence(text)", "public.crm_v2_excel_evidence(text)"],
+    "newTables": 0,
+    "customerWrites": false,
+    "existingGrantsChanged": false,
+    "publicWrapperSecurityInvoker": true,
+    "anonymousExecute": false,
+    "roles": ["sales", "admin", "owner"],
+    "beforeAndAfterCounts": {"customers": 958, "sales": 303, "plots": 306, "visits": 0},
+    "newSecurityAdvisorFindings": 0,
+    "existingAdvisorWarningsUnchanged": true
+  },
+  "verification": {
+    "nativeSql": "node_modules/.cache/buildtrack-sales-runtime/runs/excel-evidence-JHBMZX/report.json",
+    "nativeSyntheticTestsPassed": 7,
+    "nativeClusterStopped": true,
+    "candidateReport": ".next/release-check/app-h1nozw/release-report.json",
+    "candidateTestsPassed": 928,
+    "typecheck": "passed",
+    "offlineWebpackBuild": "passed",
+    "sourceFilesUnchanged": true,
+    "supersededCandidate": "app-MfBQrs rejected by source-drift guard after default-zero catalog correction; not deployed"
+  },
+  "deployment": {
+    "baseline": "89b63b48087fe2bcdd1afd8280d10c6d4c333902",
+    "commit": "e91e22f373ce635778ebab33ef9f4cc03c40ed90",
+    "selectedFiles": 14,
+    "pushed": true,
+    "url": "https://buildtrack-mvp-79c5.vercel.app",
+    "deploymentId": "6UbkeaCAFc5x71tNjWmeQQ5Ghk7u",
+    "status": "Ready",
+    "authenticatedUiVerified": true,
+    "verifiedActor": "Admin via existing user Chrome session; no impersonation",
+    "uiEvidence": {
+      "historicalVisits": 959,
+      "year2026Visits": 290,
+      "september2026Visits": 31,
+      "heldRows": 6,
+      "unassignedVisits": 10,
+      "summaryHouseRows": 304,
+      "summaryColumns": 9,
+      "ailin4FilteredHouseRows": 90,
+      "expectedTransferDatesDisplayed": ["2026-09-24"],
+      "projectFilterRestored": "all",
+      "sourceCountsCrossCheckedReadOnly": true,
+      "screenshot": "C:/Users/HUAWEI/AppData/Local/Temp/buildtrack-excel-live-2026-09-30.png"
+    },
+    "http": {"home": 200, "centralPage": 200, "unsignedExcelRead": 401, "excelCacheControl": "no-store"},
+    "featureFlagsChanged": false,
+    "kpiOrNotificationActivated": false
+  },
+  "limitations": [
+    "Current inventory and current cancellation-adjusted booking totals, not a reconstructed as-of historical stock ledger",
+    "Historical source days projected into report only; no original Lead record timestamps modified",
+    "Historical A visits do not assert Customer Voices completion; new visits require actual submitted linked Voices",
+    "Zero-default catalog base/appraisal values are unknown without positive entry evidence; actual sale prices retain their own reviewed evidence",
+    "Actual operational transfer timestamp is not in the existing project sales read contract; no date is inferred from import or booking",
+    "Live Admin dashboard and summary reads/filter verified; Sales/Owner browser sessions were not impersonated; native tests used synthetic role fixtures"
+  ]
+}

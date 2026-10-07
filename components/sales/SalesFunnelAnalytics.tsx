@@ -1,24 +1,67 @@
 "use client";
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   TrendingUp, Users, Target, CheckCircle2, XCircle, 
   Building2, Share2, Award, AlertTriangle, Filter, 
-  ArrowRight, BarChart3, PieChart, Layers
+  ArrowRight, BarChart3, PieChart, Layers, Loader2, RefreshCw
 } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
 import { Lead } from '@/types/sales';
 
 interface SalesFunnelAnalyticsProps {
-  leads: Lead[];
+  leads?: Lead[];
   projects?: any[];
   selectedProjectName?: string;
 }
 
 export default function SalesFunnelAnalytics({
-  leads,
-  projects = [],
+  leads: externalLeads,
+  projects: externalProjects = [],
   selectedProjectName = 'all'
 }: SalesFunnelAnalyticsProps) {
+  const [internalLeads, setInternalLeads] = useState<Lead[]>([]);
+  const [internalProjects, setInternalProjects] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!externalLeads || externalLeads.length === 0) {
+      const fetchLeads = async () => {
+        setLoading(true);
+        try {
+          const { data } = await supabase.from('leads').select('*');
+          if (data) {
+            setInternalLeads(data as any[]);
+          }
+        } catch (err) {
+          console.error('Error fetching leads for funnel analytics:', err);
+        } finally {
+          setLoading(false);
+        }
+      };
+      fetchLeads();
+    }
+  }, [externalLeads]);
+
+  useEffect(() => {
+    if (!externalProjects || externalProjects.length === 0) {
+      const fetchProjects = async () => {
+        try {
+          const { data } = await supabase.from('projects').select('*');
+          if (data) {
+            setInternalProjects(data);
+          }
+        } catch (err) {
+          console.error('Error fetching projects:', err);
+        }
+      };
+      fetchProjects();
+    }
+  }, [externalProjects]);
+
+  const leads = externalLeads && externalLeads.length > 0 ? externalLeads : internalLeads;
+  const projects = externalProjects && externalProjects.length > 0 ? externalProjects : internalProjects;
+
   const [filterProject, setFilterProject] = useState<string>(selectedProjectName || 'all');
   const [filterChannel, setFilterChannel] = useState<string>('all');
   const [filterAgent, setFilterAgent] = useState<string>('all');

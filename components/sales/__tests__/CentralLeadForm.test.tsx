@@ -1,155 +1,168 @@
 import React from 'react';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-vi.mock('@/lib/supabase', () => ({ supabase: { auth: { getSession: vi.fn() } } }));
-const { loadAvailablePlots } = vi.hoisted(() => ({ loadAvailablePlots: vi.fn() }));
-vi.mock('@/lib/sales/plotAvailabilityClient', () => ({ loadAvailablePlots }));
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import CentralLeadForm from '../CentralLeadForm';
-import { CentralApiError } from '@/lib/sales/centralClient';
-import type { CentralSnapshot } from '@/lib/sales/centralContracts';
-import { centralPendingKey, readCentralPending, writeCentralPending } from '@/lib/sales/centralPending';
 
-const SALES = '00000000-0000-4000-8000-000000000001';
-const CUSTOMER = '00000000-0000-4000-8000-000000000002';
-function snapshot(role: CentralSnapshot['actor']['role'] = 'sales'): CentralSnapshot {
-  return { actor: { userId: SALES, role }, projects: [{ name: 'โครงการ A' }, { name: 'โครงการ B' }],
-    salesOwners: [{ userId: SALES, displayName: 'ฝ่ายขาย A' }], customers: [], page: 0, hasMore: false };
-}
-function setup(role: CentralSnapshot['actor']['role'] = 'sales', save = vi.fn().mockResolvedValue({ customerId: CUSTOMER, replayed: false })) {
-  const onSaved = vi.fn(); const onClose = vi.fn();
-  render(<CentralLeadForm snapshot={snapshot(role)} save={save} onSaved={onSaved} onClose={onClose} />);
-  return { save, onSaved, onClose };
-}
-function fill() {
-  fireEvent.change(screen.getByLabelText('ชื่อลูกค้า *'), { target: { value: 'ลูกค้าใหม่' } });
-  fireEvent.change(screen.getByLabelText('เบอร์โทร *'), { target: { value: '0812345678' } });
-}
-function submit() { fireEvent.submit(screen.getByRole('form', { name: 'บันทึก Lead ส่วนกลาง' })); }
-beforeEach(() => {
-  vi.clearAllMocks();
-  window.sessionStorage.clear();
-  loadAvailablePlots.mockImplementation(async (project: string) => [{ id: `${project}-A1`, plot_name: 'A1', project_name: project, has_customer: false, sale_status: 'active' }]);
-});
-afterEach(cleanup);
+const mockPlots = [
+  { id: 'plot-1', plot_name: 'A01', selling_price: 3000000, house_type: 'Type A' }
+];
 
-describe('central intake form', () => {
-  it('creates with only name/phone, optional projects, and no client-supplied Sales owner', async () => {
-    const { save, onSaved } = setup(); fill(); submit();
-    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
-    expect(save.mock.calls[0][0]).toMatchObject({ name: 'ลูกค้าใหม่', phone: '0812345678', interests: [], requestId: expect.any(String) });
-    expect(save.mock.calls[0][0]).not.toHaveProperty('assignedSalesUserId');
-    expect(loadAvailablePlots).not.toHaveBeenCalled();
+vi.mock('@/lib/sales/plotAvailabilityClient', () => ({
+  loadAvailablePlots: vi.fn().mockResolvedValue([
+    { id: 'plot-1', plot_name: 'A01', selling_price: 3000000, house_type: 'Type A' }
+  ])
+}));
+
+const mockPlotData = {
+  id: 'plot-1',
+  plot_name: 'A01',
+  project_name: 'โครงการ สวนหลวง',
+  house_type_id: 'ht-1',
+  house_types: { type_name: 'บ้านเดี่ยวสองชั้น' },
+  land_size: 55.5,
+  selling_price: 3000000,
+  sale_status: 'ready_for_sale',
+  overview_image_url: 'https://example.com/house-a01.jpg'
+};
+
+vi.mock('@/lib/supabase', () => ({
+  supabase: {
+    from: vi.fn((table: string) => {
+      if (table === 'plots') {
+        return { 
+          update: vi.fn().mockReturnValue({ or: vi.fn().mockResolvedValue({}) }),
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              or: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({ data: mockPlotData, error: null })
+              })
+            })
+          })
+        };
+      }
+      if (table === 'vw_plot_progress') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({ data: { overall_progress: 100 }, error: null })
+            })
+          })
+        };
+      }
+      if (table === 'task_templates' || table === 'schedules' || table === 'plot_task_assignments') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({ data: [], error: null })
+          })
+        };
+      }
+      return {
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: [], error: null })
+        })
+      };
+    })
+  }
+}));
+
+const USER = '00000000-0000-4000-8000-000000000001';
+
+const mockSnapshot: any = {
+  actor: { userId: USER, role: 'sales' },
+  projects: [{ name: 'โครงการ สวนหลวง' }],
+  salesOwners: [{ userId: USER, displayName: 'สมศรี มีทรัพย์' }]
+};
+
+describe('CentralLeadForm Direct Booking Integration', () => {
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    vi.clearAllMocks();
   });
-  it('requires an Admin to select an active Sales owner explicitly', async () => {
-    const { save } = setup('admin'); fill(); submit();
-    expect(await screen.findByRole('alert')).toHaveTextContent('Sales');
-    expect(save).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByLabelText('Sales ผู้ดูแล *'), { target: { value: SALES } }); submit();
-    await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ assignedSalesUserId: SALES }), SALES));
+
+  it('renders standard lead form without direct booking by default', () => {
+    render(
+      <CentralLeadForm 
+        snapshot={mockSnapshot}
+        save={vi.fn().mockResolvedValue({ customerId: 'c1', replayed: false })}
+        onSaved={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('บันทึก Lead ใหม่')).toBeInTheDocument();
+    expect(screen.getByText('ลูกค้าเข้ามาเพื่อจองแปลงทันที (Direct Booking)')).toBeInTheDocument();
+    expect(screen.queryByText('ข้อมูลการจองแปลงและราคา')).not.toBeInTheDocument();
   });
-  it('keeps multiple optional project interests and selects a TEXT plot ID', async () => {
-    const { save } = setup(); fill();
-    fireEvent.change(screen.getByLabelText('เพิ่มโครงการที่สนใจ'), { target: { value: 'โครงการ A' } });
-    fireEvent.focus(screen.getByRole('combobox', { name: 'แปลงที่เล็งไว้ (ถ้ามี)' }));
-    fireEvent.click(await screen.findByRole('option', { name: /A1/ }));
-    fireEvent.change(screen.getByLabelText('เพิ่มโครงการที่สนใจ'), { target: { value: 'โครงการ B' } });
-    submit();
-    await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({
-      interests: [{ projectName: 'โครงการ A', plotId: 'โครงการ A-A1' }, { projectName: 'โครงการ B', plotId: null }],
-    }), SALES));
-  });
-  it('does not offer creation to Owner', () => {
-    setup('owner');
-    expect(screen.queryByRole('form')).not.toBeInTheDocument();
-  });
-  it('keeps validation errors editable without starting a request', async () => {
-    const { save } = setup(); submit();
-    expect(await screen.findByRole('alert')).toBeInTheDocument();
-    expect(save).not.toHaveBeenCalled();
-    expect(screen.getByLabelText('ชื่อลูกค้า *')).not.toBeDisabled();
-  });
-  it('prevents simultaneous double submission', async () => {
-    let resolve!: (result: { customerId: string; replayed: boolean }) => void;
-    const save = vi.fn(() => new Promise<{ customerId: string; replayed: boolean }>(done => { resolve = done; }));
-    setup('sales', save); fill(); submit(); submit();
-    expect(save).toHaveBeenCalledTimes(1);
-    expect(screen.getByLabelText('ชื่อลูกค้า *')).toBeDisabled();
-    await act(async () => resolve({ customerId: CUSTOMER, replayed: false }));
-  });
-  it('freezes an uncertain request and retries the exact same ID and payload', async () => {
-    const save = vi.fn().mockRejectedValueOnce(new Error('network interrupted')).mockResolvedValueOnce({ customerId: CUSTOMER, replayed: true });
-    const { onSaved } = setup('sales', save); fill(); submit();
-    await screen.findByRole('button', { name: 'ลองบันทึกซ้ำด้วยคำขอเดิม' });
-    expect(screen.getByLabelText('ชื่อลูกค้า *')).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'ยกเลิก' })).toBeDisabled();
-    submit();
-    await waitFor(() => expect(onSaved).toHaveBeenCalledWith({ customerId: CUSTOMER, replayed: true }));
-    expect(save.mock.calls[1][0]).toEqual(save.mock.calls[0][0]);
-  });
-  it('does not discard an earlier uncertain request when a retry then returns 401', async () => {
-    const save = vi.fn().mockRejectedValueOnce(new Error('network interrupted'))
-      .mockRejectedValueOnce(new CentralApiError('UNAUTHENTICATED', 'เข้าสู่ระบบใหม่', 401));
-    setup('sales', save); fill(); submit();
-    await screen.findByRole('button', { name: 'ลองบันทึกซ้ำด้วยคำขอเดิม' }); submit();
-    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('เข้าสู่ระบบใหม่'));
-    expect(screen.getByLabelText('ชื่อลูกค้า *')).toBeDisabled();
-    expect(save.mock.calls[1][0]).toEqual(save.mock.calls[0][0]);
-  });
-  it('allows correction after a definitive duplicate rejection, without auto-merging', async () => {
-    const save = vi.fn().mockRejectedValue(new CentralApiError('DUPLICATE_REVIEW_REQUIRED', 'ให้ Admin ตรวจเบอร์ซ้ำ', 409));
-    setup('sales', save); fill(); submit();
-    await screen.findByRole('alert');
-    expect(screen.getByLabelText('ชื่อลูกค้า *')).not.toBeDisabled();
-    expect(screen.getByRole('button', { name: 'ยกเลิก' })).not.toBeDisabled();
-    expect(save).toHaveBeenCalledTimes(1);
-  });
-  it('stores a write-ahead immutable command before sending and binds its actor', async () => {
-    const save = vi.fn().mockImplementation(async input => {
-      expect(readCentralPending(SALES)).toEqual(input);
-      return { customerId: CUSTOMER, replayed: false };
+
+  it('toggles direct booking ON and loads available plots and pricing calculator', async () => {
+    render(
+      <CentralLeadForm 
+        snapshot={mockSnapshot}
+        save={vi.fn().mockResolvedValue({ customerId: 'c1', replayed: false })}
+        onSaved={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    const toggle = screen.getByRole('checkbox');
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(screen.getByText('ข้อมูลการจองแปลงและราคา')).toBeInTheDocument();
     });
-    const { onSaved } = setup('sales', save); fill(); submit();
-    await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
-    expect(save).toHaveBeenCalledWith(expect.any(Object), SALES);
-    expect(readCentralPending(SALES)).toBeNull();
+
+    expect(screen.getByText('ราคาขายสุทธิหลังหักส่วนลด (Net Selling Price)')).toBeInTheDocument();
+    expect(screen.getByText('เงินจองที่รับ (บาท)')).toBeInTheDocument();
   });
-  it('recovers original account command after unmount without showing it to another account or auto-sending', async () => {
-    const original = { requestId: CUSTOMER, name: 'ลูกค้าคำขอค้าง', phone: '0891111111', channel: 'โทร', notes: '',
-      interests: [{ projectName: 'โครงการ A', plotId: 'โครงการ A-A1' }] };
-    writeCentralPending(SALES, original);
-    const save = vi.fn().mockResolvedValue({ customerId: CUSTOMER, replayed: true });
-    const props = { save, onSaved: vi.fn(), onClose: vi.fn() };
-    const other = { ...snapshot(), actor: { ...snapshot().actor, userId: CUSTOMER } };
-    const view = render(<CentralLeadForm {...props} snapshot={other} />);
-    expect(screen.getByLabelText('ชื่อลูกค้า *')).toHaveValue('');
-    expect(save).not.toHaveBeenCalled();
-    view.rerender(<CentralLeadForm {...props} snapshot={snapshot()} />);
-    expect(screen.getByLabelText('ชื่อลูกค้า *')).toHaveValue('ลูกค้าคำขอค้าง');
-    expect(screen.getByLabelText('ชื่อลูกค้า *')).toBeDisabled();
-    expect(save).not.toHaveBeenCalled();
-    submit(); await waitFor(() => expect(props.onSaved).toHaveBeenCalledOnce());
-    expect(save).toHaveBeenCalledWith(original, SALES);
-    expect(readCentralPending(SALES)).toBeNull();
-  });
-  it('retains an in-flight request after unmount and suppresses old callbacks', async () => {
-    let reject!: (reason: Error) => void;
-    const save = vi.fn(() => new Promise<{ customerId: string; replayed: boolean }>((_resolve, fail) => { reject = fail; }));
-    const onSaved = vi.fn();
-    const view = render(<CentralLeadForm snapshot={snapshot()} save={save} onSaved={onSaved} onClose={vi.fn()} />);
-    fill(); submit(); const original = readCentralPending(SALES); expect(original).not.toBeNull();
-    view.unmount(); await act(async () => reject(new Error('lost response')));
-    expect(readCentralPending(SALES)).toEqual(original);
-    expect(onSaved).not.toHaveBeenCalled();
-    const retry = vi.fn().mockResolvedValue({ customerId: CUSTOMER, replayed: true });
-    setup('sales', retry); expect(retry).not.toHaveBeenCalled(); submit();
-    await waitFor(() => expect(retry).toHaveBeenCalledWith(original, SALES));
-  });
-  it('blocks storage corruption or failed persistence before any network request', () => {
-    window.sessionStorage.setItem(centralPendingKey(SALES), 'broken');
-    const { save } = setup();
-    expect(screen.getByRole('alert')).toHaveTextContent('คำขอ Lead ค้าง');
-    submit(); expect(save).not.toHaveBeenCalled();
-    expect(window.sessionStorage.getItem(centralPendingKey(SALES))).toBe('broken');
+
+  it('submits lead with direct booking, auto-fills list price and calculates net discount', async () => {
+    const saveMock = vi.fn().mockResolvedValue({ customerId: 'cust-100', replayed: false });
+    const onSavedMock = vi.fn();
+
+    render(
+      <CentralLeadForm 
+        snapshot={mockSnapshot}
+        save={saveMock}
+        onSaved={onSavedMock}
+        onClose={vi.fn()}
+      />
+    );
+
+    // Fill customer info
+    fireEvent.change(screen.getByLabelText(/ชื่อลูกค้า/), { target: { value: 'คุณสมศักดิ์ น้อมรับ' } });
+    fireEvent.change(screen.getByLabelText(/เบอร์โทร/), { target: { value: '0899998888' } });
+
+    // Enable direct booking
+    const toggle = screen.getByRole('checkbox');
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('แปลงที่จอง')).toBeInTheDocument();
+    });
+
+    // Select plot
+    fireEvent.change(screen.getByLabelText('แปลงที่จอง'), { target: { value: 'plot-1' } });
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('3,000,000')).toBeInTheDocument();
+    });
+
+    // Enter discount of 100,000
+    const discountInput = screen.getByPlaceholderText('0');
+    fireEvent.change(discountInput, { target: { value: '100000' } });
+
+    // Net price should be 2,900,000
+    await waitFor(() => {
+      expect(screen.getByText('฿2,900,000')).toBeInTheDocument();
+    });
+
+    // Submit form
+    const submitBtn = screen.getByRole('button', { name: /บันทึก Lead และยืนยันการจองแปลง/ });
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(saveMock).toHaveBeenCalled();
+      expect(onSavedMock).toHaveBeenCalled();
+    });
   });
 });

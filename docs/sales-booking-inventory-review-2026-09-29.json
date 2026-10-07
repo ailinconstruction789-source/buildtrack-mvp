@@ -1,0 +1,597 @@
+{
+  "version": "booking-inventory-read-only-v1",
+  "sourceSha256": "37b4cfa1e3b444261b83fe4d0b9c12792fe47d0f244db7d456a04abf2d1be1bf",
+  "planDigest": "aefc50110f9d0a71f6749731cfa542a9d4383e7e4385f7250795d630cc8cb2e7",
+  "sourceSnapshotDate": "2026-09-28",
+  "inventoryGeneratedAt": "2026-09-29T04:54:07.456126+00:00",
+  "inventoryDigest": "0f5d04b3ba7a2bc116f54aafc0a9bd74ba5f94be7af81529f8ffa57ec3dd6bab",
+  "counts": {
+    "sourceBookings": 304,
+    "legacySales": 289,
+    "plots": 306,
+    "sourceStages": {
+      "booked": 18,
+      "cancelled": 84,
+      "transferred": 202
+    },
+    "legacyStatuses": {
+      "Cancelled": 77,
+      "Contracted": 2,
+      "Reserved": 17,
+      "Transferred": 193
+    },
+    "plotClassifications": {
+      "no_active_sale": 83,
+      "occupied_only_in_legacy": 3,
+      "occupied_only_in_source": 11,
+      "same_stage": 199,
+      "stage_changed": 10
+    },
+    "sourceUnknownPlot": 1,
+    "legacyUnknownPlot": 77,
+    "occupancyFlagMismatches": 0,
+    "transferredFlagsWithoutLegacyTransfer": 5,
+    "legacyKnownBookingDates": 0,
+    "sourceRowsWithoutSamePlot": 21,
+    "sourceRowsWithOneDateCandidate": 0,
+    "sourceRowsWithMultipleDateCandidates": 0
+  },
+  "limitations": [
+    "PLOT_AND_DATES_ARE_NOT_IDENTITY",
+    "NO_OLD_SALE_ID_REUSE_APPROVED",
+    "SOURCE_NOT_LIVE_REFRESH",
+    "NOT_A_CUTOVER_MANIFEST",
+    "NON_FK_DEPENDENCIES_NOT_PROVEN_ABSENT"
+  ],
+  "productionChanged": false,
+  "deletionAuthorized": false,
+  "activationReady": false,
+  "plotExceptions": [
+    {
+      "plotId": "10",
+      "projectName": "ไอลิน6",
+      "plotName": "10",
+      "before": [],
+      "after": [
+        "booked"
+      ],
+      "sourceRows": [
+        954
+      ],
+      "classification": "occupied_only_in_source",
+      "historySourceRows": [
+        905,
+        954
+      ],
+      "hasCustomer": false,
+      "saleStatus": "ready_for_sale",
+      "occupancyFlagMismatch": false,
+      "transferredFlagWithoutLegacyTransfer": false
+    },
+    {
+      "plotId": "12",
+      "projectName": "ไอลิน6",
+      "plotName": "12",
+      "before": [
+        "booked"
+      ],
+      "after": [],
+      "sourceRows": [],
+      "classification": "occupied_only_in_legacy",
+      "historySourceRows": [
+        895
+      ],
+      "hasCustomer": true,
+      "saleStatus": "ready_for_sale",
+      "occupancyFlagMismatch": false,
+      "transferredFlagWithoutLegacyTransfer": false
+    },
+    {
+      "plotId": "16",
+      "projectName": "ไอลิน6",
+      "plotName": "16",
+      "before": [
+        "booked"
+      ],
+      "after": [
+        "booked"
+      ],
+      "sourceRows": [
+        881
+      ],
+      "classification": "same_stage",
+      "historySourceRows": [
+        881
+      ],
+      "hasCustomer": true,
+      "saleStatus": "transferred",
+      "occupancyFlagMismatch": false,
+      "transferredFlagWithoutLegacyTransfer": true
+    },
+    {
+      "plotId": "18",
+      "projectName": "ไอลิน6",
+      "plotName": "18",
+      "before": [
+        "contracted"
+      ],
+      "after": [
+        "booked"
+      ],
+      "sourceRows": [
+        852
+      ],
+      "classification": "stage_changed",
+      "historySourceRows": [
+        852
+      ],
+      "hasCustomer": true,
+      "saleStatus": "transferred",
+      "occupancyFlagMismatch": false,
+      "transferredFlagWithoutLegacyTransfer": true
+    },
+    {
+      "plotId": "19",
+      "projectName": "ไอลิน6",
+      "plotName": "19",
+      "before": [
+        "contracted"
+      ],
+      "after": [
+        "booked"
+      ],
+      "sourceRows": [
+        826
+      ],
+      "classification": "stage_changed",
+      "historySourceRows": [
+        796,
+        826
+      ],
+      "hasCustomer": true,
+      "saleStatus": "transferred",
+      "occupancyFlagMismatch": false,
+      "transferredFlagWithoutLegacyTransfer": true
+    },
+    {
+      "plotId": "2",
+      "projectName": "ไอลิน6",
+      "plotName": "2",
+      "before": [],
+      "after": [
+        "booked"
+      ],
+      "sourceRows": [
+        958
+      ],
+      "classification": "occupied_only_in_source",
+      "historySourceRows": [
+        958
+      ],
+      "hasCustomer": false,
+      "saleStatus": "active",
+      "occupancyFlagMismatch": false,
+      "transferredFlagWithoutLegacyTransfer": false
+    },
+    {
+      "plotId": "20",
+      "projectName": "ไอลิน6",
+      "plotName": "20",
+      "before": [
+        "booked"
+      ],
+      "after": [
+        "transferred"
+      ],
+      "sourceRows": [
+        828
+      ],
+      "classification": "stage_changed",
+      "historySourceRows": [
+        828
+      ],
+      "hasCustomer": true,
+      "saleStatus": "transferred",
+      "occupancyFlagMismatch": false,
+      "transferredFlagWithoutLegacyTransfer": true
+    },
+    {
+      "plotId": "21",
+      "projectName": "ไอลิน6",
+      "plotName": "21",
+      "before": [],
+      "after": [
+        "booked"
+      ],
+      "sourceRows": [
+        953
+      ],
+      "classification": "occupied_only_in_source",
+      "historySourceRows": [
+        953
+      ],
+      "hasCustomer": false,
+      "saleStatus": "active",
+      "occupancyFlagMismatch": false,
+      "transferredFlagWithoutLegacyTransfer": false
+    },
+    {
+      "plotId": "4",
+      "projectName": "ไอลิน6",
+      "plotName": "4",
+      "before": [
+        "booked"
+      ],
+      "after": [
+        "transferred"
+      ],
+      "sourceRows": [
+        875
+      ],
+      "classification": "stage_changed",
+      "historySourceRows": [
+        875
+      ],
+      "hasCustomer": true,
+      "saleStatus": "active",
+      "occupancyFlagMismatch": false,
+      "transferredFlagWithoutLegacyTransfer": false
+    },
+    {
+      "plotId": "42",
+      "projectName": "ไอลิน6",
+      "plotName": "42",
+      "before": [],
+      "after": [
+        "booked"
+      ],
+      "sourceRows": [
+        933
+      ],
+      "classification": "occupied_only_in_source",
+      "historySourceRows": [
+        933
+      ],
+      "hasCustomer": false,
+      "saleStatus": "active",
+      "occupancyFlagMismatch": false,
+      "transferredFlagWithoutLegacyTransfer": false
+    },
+    {
+      "plotId": "44",
+      "projectName": "ไอลิน6",
+      "plotName": "44",
+      "before": [],
+      "after": [
+        "booked"
+      ],
+      "sourceRows": [
+        959
+      ],
+      "classification": "occupied_only_in_source",
+      "historySourceRows": [
+        959
+      ],
+      "hasCustomer": false,
+      "saleStatus": "active",
+      "occupancyFlagMismatch": false,
+      "transferredFlagWithoutLegacyTransfer": false
+    },
+    {
+      "plotId": "7",
+      "projectName": "ไอลิน6",
+      "plotName": "7",
+      "before": [
+        "booked"
+      ],
+      "after": [
+        "transferred"
+      ],
+      "sourceRows": [
+        827
+      ],
+      "classification": "stage_changed",
+      "historySourceRows": [
+        827
+      ],
+      "hasCustomer": true,
+      "saleStatus": "transferred",
+      "occupancyFlagMismatch": false,
+      "transferredFlagWithoutLegacyTransfer": true
+    },
+    {
+      "plotId": "โยริว-35",
+      "projectName": "โยริว",
+      "plotName": "35",
+      "before": [],
+      "after": [
+        "booked"
+      ],
+      "sourceRows": [
+        960
+      ],
+      "classification": "occupied_only_in_source",
+      "historySourceRows": [
+        960
+      ],
+      "hasCustomer": false,
+      "saleStatus": "ready_for_sale",
+      "occupancyFlagMismatch": false,
+      "transferredFlagWithoutLegacyTransfer": false
+    },
+    {
+      "plotId": "โยริว-39",
+      "projectName": "โยริว",
+      "plotName": "39",
+      "before": [],
+      "after": [
+        "booked"
+      ],
+      "sourceRows": [
+        952
+      ],
+      "classification": "occupied_only_in_source",
+      "historySourceRows": [
+        209,
+        952
+      ],
+      "hasCustomer": false,
+      "saleStatus": "ready_for_sale",
+      "occupancyFlagMismatch": false,
+      "transferredFlagWithoutLegacyTransfer": false
+    },
+    {
+      "plotId": "โยริว-42",
+      "projectName": "โยริว",
+      "plotName": "42",
+      "before": [],
+      "after": [
+        "booked"
+      ],
+      "sourceRows": [
+        951
+      ],
+      "classification": "occupied_only_in_source",
+      "historySourceRows": [
+        196,
+        217,
+        661,
+        951
+      ],
+      "hasCustomer": false,
+      "saleStatus": "ready_for_sale",
+      "occupancyFlagMismatch": false,
+      "transferredFlagWithoutLegacyTransfer": false
+    },
+    {
+      "plotId": "โยริว-47",
+      "projectName": "โยริว",
+      "plotName": "47",
+      "before": [
+        "booked"
+      ],
+      "after": [
+        "transferred"
+      ],
+      "sourceRows": [
+        795
+      ],
+      "classification": "stage_changed",
+      "historySourceRows": [
+        186,
+        206,
+        218,
+        732,
+        795
+      ],
+      "hasCustomer": true,
+      "saleStatus": "ready_for_sale",
+      "occupancyFlagMismatch": false,
+      "transferredFlagWithoutLegacyTransfer": false
+    },
+    {
+      "plotId": "ไอลิน 4-29",
+      "projectName": "ไอลิน 4",
+      "plotName": "29",
+      "before": [
+        "booked"
+      ],
+      "after": [],
+      "sourceRows": [],
+      "classification": "occupied_only_in_legacy",
+      "historySourceRows": [
+        235,
+        902
+      ],
+      "hasCustomer": true,
+      "saleStatus": "ready_for_sale",
+      "occupancyFlagMismatch": false,
+      "transferredFlagWithoutLegacyTransfer": false
+    },
+    {
+      "plotId": "ไอลิน 4-52",
+      "projectName": "ไอลิน 4",
+      "plotName": "52",
+      "before": [],
+      "after": [
+        "booked"
+      ],
+      "sourceRows": [
+        944
+      ],
+      "classification": "occupied_only_in_source",
+      "historySourceRows": [
+        944
+      ],
+      "hasCustomer": false,
+      "saleStatus": "ready_for_sale",
+      "occupancyFlagMismatch": false,
+      "transferredFlagWithoutLegacyTransfer": false
+    },
+    {
+      "plotId": "ไอลิน 4-57",
+      "projectName": "ไอลิน 4",
+      "plotName": "57",
+      "before": [
+        "booked"
+      ],
+      "after": [
+        "transferred"
+      ],
+      "sourceRows": [
+        675
+      ],
+      "classification": "stage_changed",
+      "historySourceRows": [
+        236,
+        675
+      ],
+      "hasCustomer": true,
+      "saleStatus": "ready_for_sale",
+      "occupancyFlagMismatch": false,
+      "transferredFlagWithoutLegacyTransfer": false
+    },
+    {
+      "plotId": "ไอลิน 4-66",
+      "projectName": "ไอลิน 4",
+      "plotName": "66",
+      "before": [
+        "booked"
+      ],
+      "after": [],
+      "sourceRows": [],
+      "classification": "occupied_only_in_legacy",
+      "historySourceRows": [
+        768
+      ],
+      "hasCustomer": true,
+      "saleStatus": "ready_for_sale",
+      "occupancyFlagMismatch": false,
+      "transferredFlagWithoutLegacyTransfer": false
+    },
+    {
+      "plotId": "ไอลิน 4-69",
+      "projectName": "ไอลิน 4",
+      "plotName": "69",
+      "before": [],
+      "after": [
+        "booked"
+      ],
+      "sourceRows": [
+        955
+      ],
+      "classification": "occupied_only_in_source",
+      "historySourceRows": [
+        955
+      ],
+      "hasCustomer": false,
+      "saleStatus": "ready_for_sale",
+      "occupancyFlagMismatch": false,
+      "transferredFlagWithoutLegacyTransfer": false
+    },
+    {
+      "plotId": "ไอลิน 4-72",
+      "projectName": "ไอลิน 4",
+      "plotName": "72",
+      "before": [
+        "booked"
+      ],
+      "after": [
+        "transferred"
+      ],
+      "sourceRows": [
+        870
+      ],
+      "classification": "stage_changed",
+      "historySourceRows": [
+        870
+      ],
+      "hasCustomer": true,
+      "saleStatus": "ready_for_sale",
+      "occupancyFlagMismatch": false,
+      "transferredFlagWithoutLegacyTransfer": false
+    },
+    {
+      "plotId": "ไอลิน 4-74",
+      "projectName": "ไอลิน 4",
+      "plotName": "74",
+      "before": [
+        "booked"
+      ],
+      "after": [
+        "transferred"
+      ],
+      "sourceRows": [
+        746
+      ],
+      "classification": "stage_changed",
+      "historySourceRows": [
+        746
+      ],
+      "hasCustomer": true,
+      "saleStatus": "ready_for_sale",
+      "occupancyFlagMismatch": false,
+      "transferredFlagWithoutLegacyTransfer": false
+    },
+    {
+      "plotId": "ไอลิน 4-78",
+      "projectName": "ไอลิน 4",
+      "plotName": "78",
+      "before": [
+        "booked"
+      ],
+      "after": [
+        "transferred"
+      ],
+      "sourceRows": [
+        752
+      ],
+      "classification": "stage_changed",
+      "historySourceRows": [
+        233,
+        752
+      ],
+      "hasCustomer": true,
+      "saleStatus": "ready_for_sale",
+      "occupancyFlagMismatch": false,
+      "transferredFlagWithoutLegacyTransfer": false
+    },
+    {
+      "plotId": "ไอลิน 4-80",
+      "projectName": "ไอลิน 4",
+      "plotName": "80",
+      "before": [],
+      "after": [
+        "transferred"
+      ],
+      "sourceRows": [
+        920
+      ],
+      "classification": "occupied_only_in_source",
+      "historySourceRows": [
+        920
+      ],
+      "hasCustomer": false,
+      "saleStatus": "ready_for_sale",
+      "occupancyFlagMismatch": false,
+      "transferredFlagWithoutLegacyTransfer": false
+    }
+  ],
+  "unknownPlotSourceRows": [
+    171
+  ],
+  "userDecision": {
+    "date": "2026-09-29",
+    "scope": "sales status for AL6 plots 16,18,19 only",
+    "sourceSha256": "37b4cfa1e3b444261b83fe4d0b9c12792fe47d0f244db7d456a04abf2d1be1bf",
+    "sourceRows": [
+      881,
+      852,
+      826
+    ],
+    "status": "booked",
+    "basis": "User instructed using the inspected Google Sheet; prior transfer flags may have been trial usage.",
+    "productionMutationApprovedByThisReport": false,
+    "constructionHistoryResetAuthorized": false
+  }
+}

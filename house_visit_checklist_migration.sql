@@ -34,11 +34,11 @@ CREATE TABLE IF NOT EXISTS public.house_visit_checklists (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Enable RLS
+-- Enable RLS & Set Policies for Web / Multi-User Realtime Sync
 ALTER TABLE public.house_visit_checklists ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Allow read access to house_visit_checklists" ON public.house_visit_checklists;
-CREATE POLICY "Allow read access to house_visit_checklists" ON public.house_visit_checklists FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Allow read access to house_visit_checklists" ON public.house_visit_checklists FOR SELECT USING (true);
 
 DROP POLICY IF EXISTS "Allow write access to house_visit_checklists" ON public.house_visit_checklists;
-CREATE POLICY "Allow write access to house_visit_checklists" ON public.house_visit_checklists FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Allow write access to house_visit_checklists" ON public.house_visit_checklists FOR ALL USING (true) WITH CHECK (true);

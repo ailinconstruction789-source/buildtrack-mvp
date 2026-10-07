@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Calendar, Clock, Phone, Home, Sparkles, User, MapPin, 
-  Search, Filter, ChevronRight, CheckCircle2, AlertCircle, 
+  Search, Filter, ChevronRight, CheckCircle, CheckCircle2, AlertCircle, 
   Plus, MessageSquare, ArrowRight, RefreshCw, XCircle, 
   CalendarDays, Check, AlertTriangle, Building, Tag, ExternalLink
 } from 'lucide-react';
@@ -11,6 +11,8 @@ import { supabase } from '@/lib/supabase';
 import { Lead, CRMStatus } from '@/types/sales';
 import HouseVisitChecklistModal from './HouseVisitChecklistModal';
 import CustomerVoicesModal from './CustomerVoicesModal';
+import DailyHouseInspectionModal from './DailyHouseInspectionModal';
+import { isSampleHouse, fetchTodayInspectionStatus, fetchTodayInspectionMap, SampleHouseInspectionStatus } from '@/lib/sales/sampleHouseHelper';
 
 interface DailyVisitsScheduleViewProps {
   leads: Lead[];
@@ -20,7 +22,6 @@ interface DailyVisitsScheduleViewProps {
   user?: any;
   onRefresh: () => void;
   onSelectPlotForBooking?: (plotId: string, lead: Lead) => void;
-  onOpenAddLeadModal?: () => void;
 }
 
 export default function DailyVisitsScheduleView({
@@ -30,8 +31,7 @@ export default function DailyVisitsScheduleView({
   selectedProjectName = 'all',
   user,
   onRefresh,
-  onSelectPlotForBooking,
-  onOpenAddLeadModal
+  onSelectPlotForBooking
 }: DailyVisitsScheduleViewProps) {
   const [search, setSearch] = useState('');
   const [filterProject, setFilterProject] = useState<string>(selectedProjectName || 'all');
@@ -40,10 +40,38 @@ export default function DailyVisitsScheduleView({
 
   // Modals state
   const [showChecklistModal, setShowChecklistModal] = useState<{ isOpen: boolean; lead: Lead | null }>({ isOpen: false, lead: null });
+  const [showDailyInspectionModal, setShowDailyInspectionModal] = useState(false);
   const [showSurveyModal, setShowSurveyModal] = useState<{ isOpen: boolean; lead: Lead | null }>({ isOpen: false, lead: null });
   const [showRescheduleModal, setShowRescheduleModal] = useState<{ isOpen: boolean; lead: Lead | null }>({ isOpen: false, lead: null });
   const [newDateInput, setNewDateInput] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Sample House Inspection State
+  const [sampleHouseInspection, setSampleHouseInspection] = useState<SampleHouseInspectionStatus>({
+    isSampleHouse: true,
+    status: 'pending',
+    badgeLabel: '⚠️ รอตรวจเปิดบ้าน',
+    badgeColor: 'text-amber-700',
+    badgeBg: 'bg-amber-100 border-amber-300',
+    icon: 'alert'
+  });
+  const [inspectionMap, setInspectionMap] = useState<Record<string, SampleHouseInspectionStatus>>({});
+
+  const activeProjectName = filterProject !== 'all' ? filterProject : selectedProjectName !== 'all' ? selectedProjectName : 'ไอลิน6';
+
+  const refreshInspections = () => {
+    fetchTodayInspectionStatus(activeProjectName).then(setSampleHouseInspection);
+    fetchTodayInspectionMap(activeProjectName).then(setInspectionMap);
+  };
+
+  useEffect(() => {
+    refreshInspections();
+  }, [activeProjectName]);
+
+  const sampleHousePlots = useMemo(() => {
+    return plots.filter(p => isSampleHouse(p));
+  }, [plots]);
+  const sampleHousePlotName = sampleHousePlots.map(p => p.plot_name || p.id).join(', ') || 'บ้านตัวอย่างประจำโครงการ';
 
   // Normalize date helper (YYYY-MM-DD in local time)
   const getNormalizedDateStr = (dateInput: string | Date | null | undefined): string | null => {
@@ -205,23 +233,7 @@ export default function DailyVisitsScheduleView({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-          <button
-            onClick={() => setShowChecklistModal({ isOpen: true, lead: null })}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-2 shadow-md shadow-indigo-600/20 transition-all cursor-pointer"
-          >
-            <Home size={15} /> 🏡 SOP ตรวจบ้าน (Stage A)
-          </button>
-
-          {onOpenAddLeadModal && (
-            <button
-              onClick={onOpenAddLeadModal}
-              className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-2 shadow-md shadow-blue-600/20 transition-all cursor-pointer"
-            >
-              <Plus size={15} /> + เพิ่มนัดหมายใหม่
-            </button>
-          )}
-
+        <div className="flex items-center gap-2 w-full md:w-auto justify-end">
           <button
             onClick={onRefresh}
             className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold p-2.5 rounded-xl text-xs transition-colors cursor-pointer"
@@ -230,6 +242,74 @@ export default function DailyVisitsScheduleView({
             <RefreshCw size={16} />
           </button>
         </div>
+      </div>
+
+      {/* 🏡 Sample House Inspection Status Banner (SOP Daily Status) */}
+      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 text-white rounded-2xl p-4 sm:p-5 shadow-lg border border-slate-700/50 flex flex-col gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <div className={`p-3 rounded-2xl shadow-inner ${
+              sampleHouseInspection.status === 'morning_checked'
+                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                : sampleHouseInspection.status === 'evening_checked'
+                ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+            }`}>
+              <Home size={22} />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                  สถานะบ้านตัวอย่างวันนี้ ({sampleHousePlots.length || 1} หลัง)
+                </span>
+                <span className={`text-[11px] font-black px-2.5 py-0.5 rounded-full border ${sampleHouseInspection.badgeBg} ${sampleHouseInspection.badgeColor}`}>
+                  {sampleHouseInspection.badgeLabel}
+                </span>
+              </div>
+              <div className="text-xs font-normal text-slate-300 mt-0.5">
+                {sampleHouseInspection.inspectorName ? (
+                  <span>ผู้ตรวจล่าสุด: <strong className="text-white font-bold">{sampleHouseInspection.inspectorName}</strong> ({sampleHouseInspection.inspectionTime})</span>
+                ) : (
+                  <span>ประจำโครงการ {activeProjectName}</span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowDailyInspectionModal(true)}
+              className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              <CheckCircle size={14} /> บันทึกตรวจเปิด/ปิดบ้าน
+            </button>
+          </div>
+        </div>
+
+        {/* Multi-sample house sub-badges */}
+        {sampleHousePlots.length > 0 && (
+          <div className="pt-3 border-t border-slate-800/80 flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-bold text-slate-400 mr-1">แปลงบ้านตัวอย่าง:</span>
+            {sampleHousePlots.map(shp => {
+              const shpName = shp.plot_name || shp.id;
+              const shpStatus = inspectionMap[shpName] || inspectionMap[shp.id] || inspectionMap['general'] || sampleHouseInspection;
+              return (
+                <div 
+                  key={shp.id}
+                  className="bg-slate-800/90 hover:bg-slate-700/90 border border-slate-700/80 rounded-xl px-3 py-1.5 flex items-center gap-2 transition-colors cursor-pointer"
+                  onClick={() => setShowDailyInspectionModal(true)}
+                  title={`คลิกเพื่อบันทึกการตรวจแปลง ${shpName}`}
+                >
+                  <span className="text-xs font-black text-amber-300">🏡 แปลง {shpName}</span>
+                  <span className={`text-[10px] font-black px-2 py-0.5 rounded-md border ${shpStatus.badgeBg} ${shpStatus.badgeColor}`}>
+                    {shpStatus.badgeLabel}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* 📊 4 KPI Stat Cards */}
@@ -825,6 +905,21 @@ export default function DailyVisitsScheduleView({
             setShowSurveyModal({ isOpen: true, lead });
           }}
           onSaved={onRefresh}
+        />
+      )}
+
+      {/* 🏡 Daily Routine House Inspection Modal (Morning / Evening) */}
+      {showDailyInspectionModal && (
+        <DailyHouseInspectionModal
+          isOpen={showDailyInspectionModal}
+          onClose={() => setShowDailyInspectionModal(false)}
+          projectName={filterProject !== 'all' ? filterProject : selectedProjectName !== 'all' ? selectedProjectName : 'ไอลิน 6'}
+          user={user}
+          sampleHouses={sampleHousePlots.map(p => p.plot_name || p.id)}
+          onSaved={() => {
+            refreshInspections();
+            onRefresh();
+          }}
         />
       )}
 

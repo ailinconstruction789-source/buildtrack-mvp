@@ -1,0 +1,93 @@
+{
+  "projectId": "kbthmdedilswdmmczfay",
+  "observedAt": "2026-09-30T05:08:20Z",
+  "authorization": "User confirmed production SQL, selected 79c5 deployment and bounded Visit activation on 2026-09-30",
+  "migration": {
+    "version": "20260930050752",
+    "name": "central_visits_sealed_reviewed_release",
+    "operationId": "1a8c415b-114c-4a7c-9a30-7b9233283a25",
+    "releaseDigest": "22010a5c929e087232de32b28230fbbfe9ae7fb5e2558583b734079740fc1827",
+    "fileSha256": "1B6F90D99682CD956A0BE0C210C7E3A03F2AEE23B6CD5209CC8E20C31FC94B67"
+  },
+  "postcheck": {
+    "bookingReady": true,
+    "visitsEnabled": false,
+    "visitSopEnabled": false,
+    "customerVoicesEnabled": false,
+    "visitReleaseCount": 0,
+    "newApiNonOwnerGrants": 0,
+    "restrictiveVoicePolicies": 4,
+    "recordedFunctions": 31
+  },
+  "backup": {
+    "refreshedBeforeInstall": true,
+    "latestListed": "2026-09-29T20:24:29Z",
+    "listedCount": 7,
+    "restoreTested": false
+  },
+  "advisors": {
+    "before": [
+      {
+        "name": "rls_enabled_no_policy",
+        "count": 27
+      },
+      {
+        "name": "security_definer_view",
+        "count": 10
+      },
+      {
+        "name": "function_search_path_mutable",
+        "count": 8
+      },
+      {
+        "name": "rls_references_user_metadata",
+        "count": 5
+      },
+      {
+        "name": "anon_security_definer_function_executable",
+        "count": 1
+      },
+      {
+        "name": "authenticated_security_definer_function_executable",
+        "count": 12
+      },
+      {
+        "name": "auth_leaked_password_protection",
+        "count": 1
+      }
+    ],
+    "after": [
+      {
+        "name": "rls_enabled_no_policy",
+        "count": 40
+      },
+      {
+        "name": "security_definer_view",
+        "count": 10
+      },
+      {
+        "name": "function_search_path_mutable",
+        "count": 8
+      },
+      {
+        "name": "rls_references_user_metadata",
+        "count": 5
+      },
+      {
+        "name": "anon_security_definer_function_executable",
+        "count": 1
+      },
+      {
+        "name": "authenticated_security_definer_function_executable",
+        "count": 12
+      },
+      {
+        "name": "auth_leaked_password_protection",
+        "count": 1
+      }
+    ],
+    "interpretation": "Only private RLS/no-policy notices increased 27 to 40 for 13 intentionally client-sealed private tables. No new public API grants. Pre-existing findings not remediated in this scope."
+  },
+  "customerDataChanged": false,
+  "activationPerformed": false
+}

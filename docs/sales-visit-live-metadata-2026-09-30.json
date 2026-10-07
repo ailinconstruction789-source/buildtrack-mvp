@@ -1,0 +1,3730 @@
+{
+  "reportVersion": "central-visits-live-metadata-2026-09-30",
+  "projectId": "kbthmdedilswdmmczfay",
+  "scope": "Read-only catalogs, feature settings and batch/digest receipts; no customer records or credentials; no installation or activation",
+  "preflight": {
+    "notice": "Metadata only; not approval to install. Compare fingerprints, flags, grants, backup and release identity before producing the production installer.",
+    "settings": {
+      "id": true,
+      "version": 1,
+      "updated_at": "2026-09-29T10:14:01.730442+00:00",
+      "timezone_name": "Asia/Bangkok",
+      "booking_enabled": true,
+      "lead_work_enabled": true,
+      "notification_channel": "in_app",
+      "initial_contact_hours": 24,
+      "central_intake_enabled": true,
+      "lead_lifecycle_enabled": true,
+      "follow_up_max_gap_hours": 48,
+      "booking_cutover_reviewed": true,
+      "next_shift_response_minutes": 120
+    },
+    "relations": [
+      {
+        "acl": null,
+        "rls": true,
+        "name": "crm_external_private.booking_activation_permits",
+        "owner": "postgres",
+        "columns": [
+          {
+            "acl": null,
+            "name": "transaction_id",
+            "type": "bigint",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "backend_pid",
+            "type": "integer",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "batch_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": true
+          }
+        ],
+        "indexes": [
+          "CREATE UNIQUE INDEX booking_activation_permits_pkey ON crm_external_private.booking_activation_permits USING btree (transaction_id)"
+        ],
+        "forceRls": false,
+        "policies": [],
+        "triggers": [],
+        "constraints": [
+          {
+            "name": "booking_activation_permits_pkey",
+            "definition": "PRIMARY KEY (transaction_id)"
+          }
+        ]
+      },
+      {
+        "acl": null,
+        "rls": true,
+        "name": "crm_external_private.booking_writer_releases",
+        "owner": "postgres",
+        "columns": [
+          {
+            "acl": null,
+            "name": "batch_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "plan_digest",
+            "type": "text",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "review_reference",
+            "type": "text",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "activated_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": true
+          }
+        ],
+        "indexes": [
+          "CREATE UNIQUE INDEX booking_writer_releases_pkey ON crm_external_private.booking_writer_releases USING btree (batch_id)"
+        ],
+        "forceRls": false,
+        "policies": [],
+        "triggers": [
+          {
+            "name": "booking_writer_release_immutable",
+            "enabled": "O",
+            "definition": "CREATE TRIGGER booking_writer_release_immutable BEFORE DELETE OR UPDATE OR TRUNCATE ON crm_external_private.booking_writer_releases FOR EACH STATEMENT EXECUTE FUNCTION account_security_private.prevent_role_review_change()"
+          }
+        ],
+        "constraints": [
+          {
+            "name": "booking_writer_releases_batch_id_fkey",
+            "definition": "FOREIGN KEY (batch_id) REFERENCES crm_external_private.sales_cutover_receipts(batch_id)"
+          },
+          {
+            "name": "booking_writer_releases_pkey",
+            "definition": "PRIMARY KEY (batch_id)"
+          },
+          {
+            "name": "booking_writer_releases_review_reference_check",
+            "definition": "CHECK ((length(btrim(review_reference)) > 0))"
+          }
+        ]
+      },
+      {
+        "acl": null,
+        "rls": true,
+        "name": "crm_external_private.sales_rollback_receipts",
+        "owner": "postgres",
+        "columns": [
+          {
+            "acl": null,
+            "name": "batch_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "request",
+            "type": "jsonb",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "response",
+            "type": "jsonb",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "recorded_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": true
+          }
+        ],
+        "indexes": [
+          "CREATE UNIQUE INDEX sales_rollback_receipts_pkey ON crm_external_private.sales_rollback_receipts USING btree (batch_id)"
+        ],
+        "forceRls": false,
+        "policies": [],
+        "triggers": [
+          {
+            "name": "immutable_history",
+            "enabled": "O",
+            "definition": "CREATE TRIGGER immutable_history BEFORE DELETE OR UPDATE OR TRUNCATE ON crm_external_private.sales_rollback_receipts FOR EACH STATEMENT EXECUTE FUNCTION crm_external_private.reject_history_change()"
+          }
+        ],
+        "constraints": [
+          {
+            "name": "sales_rollback_receipts_batch_id_fkey",
+            "definition": "FOREIGN KEY (batch_id) REFERENCES crm_external_private.sales_cutover_receipts(batch_id)"
+          },
+          {
+            "name": "sales_rollback_receipts_pkey",
+            "definition": "PRIMARY KEY (batch_id)"
+          }
+        ]
+      },
+      {
+        "acl": null,
+        "rls": true,
+        "name": "crm_external_private.snapshot_batches",
+        "owner": "postgres",
+        "columns": [
+          {
+            "acl": null,
+            "name": "id",
+            "type": "uuid",
+            "default": "gen_random_uuid()",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "feed",
+            "type": "text",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "source_sha256",
+            "type": "text",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "plan_digest",
+            "type": "text",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "payload",
+            "type": "jsonb",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "captured_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": true
+          }
+        ],
+        "indexes": [
+          "CREATE UNIQUE INDEX snapshot_batches_pkey ON crm_external_private.snapshot_batches USING btree (id)",
+          "CREATE UNIQUE INDEX snapshot_batches_feed_key ON crm_external_private.snapshot_batches USING btree (feed)"
+        ],
+        "forceRls": false,
+        "policies": [],
+        "triggers": [
+          {
+            "name": "immutable_history",
+            "enabled": "O",
+            "definition": "CREATE TRIGGER immutable_history BEFORE DELETE OR UPDATE OR TRUNCATE ON crm_external_private.snapshot_batches FOR EACH STATEMENT EXECUTE FUNCTION crm_external_private.reject_history_change()"
+          }
+        ],
+        "constraints": [
+          {
+            "name": "snapshot_batches_feed_check",
+            "definition": "CHECK ((feed = 'customer-sheet'::text))"
+          },
+          {
+            "name": "snapshot_batches_feed_key",
+            "definition": "UNIQUE (feed)"
+          },
+          {
+            "name": "snapshot_batches_payload_check",
+            "definition": "CHECK ((jsonb_typeof(payload) = 'object'::text))"
+          },
+          {
+            "name": "snapshot_batches_pkey",
+            "definition": "PRIMARY KEY (id)"
+          },
+          {
+            "name": "snapshot_batches_plan_digest_check",
+            "definition": "CHECK ((plan_digest ~ '^[a-f0-9]{64}$'::text))"
+          },
+          {
+            "name": "snapshot_batches_source_sha256_check",
+            "definition": "CHECK ((source_sha256 ~ '^[a-f0-9]{64}$'::text))"
+          }
+        ]
+      },
+      {
+        "acl": [
+          "postgres=arwdDxtm/postgres"
+        ],
+        "rls": true,
+        "name": "crm_next_actions",
+        "owner": "postgres",
+        "columns": [
+          {
+            "acl": null,
+            "name": "id",
+            "type": "uuid",
+            "default": "gen_random_uuid()",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "customer_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "project_interest_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "scope_key",
+            "type": "text",
+            "default": "\nCASE\n    WHEN (project_interest_id IS NULL) THEN ('customer:'::text || (customer_id)::text)\n    ELSE ('interest:'::text || (project_interest_id)::text)\nEND",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "owner_user_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "action_text",
+            "type": "text",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "due_at",
+            "type": "timestamp with time zone",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "status",
+            "type": "text",
+            "default": "'open'::text",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "plan_started_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "previous_action_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "source_activity_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "recorded_by_user_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "recorded_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "closed_at",
+            "type": "timestamp with time zone",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "closed_by_user_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "close_reason",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          }
+        ],
+        "indexes": [
+          "CREATE UNIQUE INDEX crm_next_actions_pkey ON public.crm_next_actions USING btree (id)",
+          "CREATE UNIQUE INDEX crm_next_actions_id_customer_id_scope_key_key ON public.crm_next_actions USING btree (id, customer_id, scope_key)",
+          "CREATE UNIQUE INDEX crm_next_actions_one_open_idx ON public.crm_next_actions USING btree (customer_id, scope_key) WHERE (status = 'open'::text)",
+          "CREATE INDEX crm_next_actions_due_idx ON public.crm_next_actions USING btree (owner_user_id, due_at) WHERE (status = 'open'::text)",
+          "CREATE INDEX crm_next_actions_scope_history_idx ON public.crm_next_actions USING btree (customer_id, scope_key, recorded_at DESC, id DESC)"
+        ],
+        "forceRls": false,
+        "policies": [
+          {
+            "name": "crm_next_actions_read",
+            "check": null,
+            "roles": [
+              "16485"
+            ],
+            "using": "(crm_v2_role() = ANY (ARRAY['sales'::text, 'admin'::text, 'owner'::text]))",
+            "command": "r",
+            "permissive": true
+          }
+        ],
+        "triggers": [],
+        "constraints": [
+          {
+            "name": "crm_next_action_activity_scope_fk",
+            "definition": "FOREIGN KEY (source_activity_id, customer_id, scope_key) REFERENCES lead_activities(id, customer_id, crm_scope_key) ON DELETE RESTRICT"
+          },
+          {
+            "name": "crm_next_actions_action_text_check",
+            "definition": "CHECK (((length(btrim(action_text)) >= 1) AND (length(btrim(action_text)) <= 500)))"
+          },
+          {
+            "name": "crm_next_actions_check",
+            "definition": "CHECK (((previous_action_id IS NULL) OR (previous_action_id <> id)))"
+          },
+          {
+            "name": "crm_next_actions_check1",
+            "definition": "CHECK ((isfinite(plan_started_at) AND (plan_started_at <= recorded_at) AND (due_at > plan_started_at)))"
+          },
+          {
+            "name": "crm_next_actions_check2",
+            "definition": "CHECK ((((status = 'open'::text) AND (closed_at IS NULL) AND (closed_by_user_id IS NULL) AND (close_reason IS NULL)) OR ((status = ANY (ARRAY['superseded'::text, 'cancelled'::text])) AND (closed_at IS NOT NULL) AND (closed_at >= recorded_at) AND (closed_by_user_id IS NOT NULL) AND (close_reason IS NOT NULL) AND (btrim(close_reason) <> ''::text))))"
+          },
+          {
+            "name": "crm_next_actions_closed_by_user_id_fkey",
+            "definition": "FOREIGN KEY (closed_by_user_id) REFERENCES auth.users(id) ON DELETE RESTRICT"
+          },
+          {
+            "name": "crm_next_actions_customer_id_fkey",
+            "definition": "FOREIGN KEY (customer_id) REFERENCES sales_customers(id) ON DELETE RESTRICT"
+          },
+          {
+            "name": "crm_next_actions_due_at_check",
+            "definition": "CHECK (isfinite(due_at))"
+          },
+          {
+            "name": "crm_next_actions_id_customer_id_scope_key_key",
+            "definition": "UNIQUE (id, customer_id, scope_key)"
+          },
+          {
+            "name": "crm_next_actions_owner_user_id_fkey",
+            "definition": "FOREIGN KEY (owner_user_id) REFERENCES auth.users(id) ON DELETE RESTRICT"
+          },
+          {
+            "name": "crm_next_actions_pkey",
+            "definition": "PRIMARY KEY (id)"
+          },
+          {
+            "name": "crm_next_actions_previous_action_id_customer_id_scope_key_fkey",
+            "definition": "FOREIGN KEY (previous_action_id, customer_id, scope_key) REFERENCES crm_next_actions(id, customer_id, scope_key) ON DELETE RESTRICT"
+          },
+          {
+            "name": "crm_next_actions_project_interest_id_customer_id_fkey",
+            "definition": "FOREIGN KEY (project_interest_id, customer_id) REFERENCES lead_project_interests(id, customer_id) ON DELETE RESTRICT"
+          },
+          {
+            "name": "crm_next_actions_recorded_by_user_id_fkey",
+            "definition": "FOREIGN KEY (recorded_by_user_id) REFERENCES auth.users(id) ON DELETE RESTRICT"
+          },
+          {
+            "name": "crm_next_actions_status_check",
+            "definition": "CHECK ((status = ANY (ARRAY['open'::text, 'superseded'::text, 'cancelled'::text])))"
+          }
+        ]
+      },
+      {
+        "acl": [
+          "postgres=arwdDxtm/postgres"
+        ],
+        "rls": true,
+        "name": "crm_settings",
+        "owner": "postgres",
+        "columns": [
+          {
+            "acl": null,
+            "name": "id",
+            "type": "boolean",
+            "default": "true",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "central_intake_enabled",
+            "type": "boolean",
+            "default": "false",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "initial_contact_hours",
+            "type": "integer",
+            "default": "24",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "follow_up_max_gap_hours",
+            "type": "integer",
+            "default": "48",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "next_shift_response_minutes",
+            "type": "integer",
+            "default": "120",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "timezone_name",
+            "type": "text",
+            "default": "'Asia/Bangkok'::text",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "notification_channel",
+            "type": "text",
+            "default": "'in_app'::text",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "version",
+            "type": "integer",
+            "default": "1",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "updated_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "lead_work_enabled",
+            "type": "boolean",
+            "default": "false",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "lead_lifecycle_enabled",
+            "type": "boolean",
+            "default": "false",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "booking_enabled",
+            "type": "boolean",
+            "default": "false",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "booking_cutover_reviewed",
+            "type": "boolean",
+            "default": "false",
+            "notNull": true
+          }
+        ],
+        "indexes": [
+          "CREATE UNIQUE INDEX crm_settings_pkey ON public.crm_settings USING btree (id)"
+        ],
+        "forceRls": false,
+        "policies": [
+          {
+            "name": "crm_v2_read",
+            "check": null,
+            "roles": [
+              "16485"
+            ],
+            "using": "(crm_v2_role() = ANY (ARRAY['admin'::text, 'owner'::text, 'sales'::text]))",
+            "command": "r",
+            "permissive": true
+          }
+        ],
+        "triggers": [
+          {
+            "name": "external_bridge_activation_seal",
+            "enabled": "O",
+            "definition": "CREATE TRIGGER external_bridge_activation_seal BEFORE INSERT OR UPDATE ON public.crm_settings FOR EACH ROW EXECUTE FUNCTION crm_external_private.reject_unreviewed_activation()"
+          }
+        ],
+        "constraints": [
+          {
+            "name": "crm_settings_follow_up_max_gap_hours_check",
+            "definition": "CHECK ((follow_up_max_gap_hours > 0))"
+          },
+          {
+            "name": "crm_settings_id_check",
+            "definition": "CHECK (id)"
+          },
+          {
+            "name": "crm_settings_initial_contact_hours_check",
+            "definition": "CHECK ((initial_contact_hours > 0))"
+          },
+          {
+            "name": "crm_settings_next_shift_response_minutes_check",
+            "definition": "CHECK ((next_shift_response_minutes > 0))"
+          },
+          {
+            "name": "crm_settings_notification_channel_check",
+            "definition": "CHECK ((notification_channel = 'in_app'::text))"
+          },
+          {
+            "name": "crm_settings_pkey",
+            "definition": "PRIMARY KEY (id)"
+          },
+          {
+            "name": "crm_settings_version_check",
+            "definition": "CHECK ((version > 0))"
+          }
+        ]
+      },
+      {
+        "acl": [
+          "postgres=arwdDxtm/postgres",
+          "anon=arwdDxtm/postgres",
+          "authenticated=arwdDxtm/postgres",
+          "service_role=arwdDxtm/postgres"
+        ],
+        "rls": true,
+        "name": "customer_voices",
+        "owner": "postgres",
+        "columns": [
+          {
+            "acl": null,
+            "name": "id",
+            "type": "uuid",
+            "default": "gen_random_uuid()",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "lead_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "survey_date",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "customer_name",
+            "type": "character varying",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "nickname",
+            "type": "character varying",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "age",
+            "type": "character varying",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "gender",
+            "type": "character varying",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "phone",
+            "type": "character varying",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "line_id",
+            "type": "character varying",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "project_name",
+            "type": "character varying",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "agent_name",
+            "type": "character varying",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "marital_status",
+            "type": "character varying",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "education_level",
+            "type": "character varying",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "occupation",
+            "type": "character varying",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "monthly_income",
+            "type": "character varying",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "family_members",
+            "type": "character varying",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "previous_residence",
+            "type": "character varying",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "monthly_rent",
+            "type": "numeric(15,2)",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "purpose_relocate",
+            "type": "boolean",
+            "default": "false",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "purpose_family_expansion",
+            "type": "boolean",
+            "default": "false",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "purpose_independence",
+            "type": "boolean",
+            "default": "false",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "purpose_rent_to_own",
+            "type": "boolean",
+            "default": "false",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "purpose_debt_consolidation",
+            "type": "boolean",
+            "default": "false",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "reason_price",
+            "type": "boolean",
+            "default": "false",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "reason_location",
+            "type": "boolean",
+            "default": "false",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "reason_promotion",
+            "type": "boolean",
+            "default": "false",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "reason_design",
+            "type": "boolean",
+            "default": "false",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "reason_house_type",
+            "type": "boolean",
+            "default": "false",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "reason_other",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "source_facebook",
+            "type": "boolean",
+            "default": "false",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "source_tiktok",
+            "type": "boolean",
+            "default": "false",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "source_youtube",
+            "type": "boolean",
+            "default": "false",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "source_billboard",
+            "type": "boolean",
+            "default": "false",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "source_other",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "score_knowledge",
+            "type": "integer",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "score_problem_solving",
+            "type": "integer",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "score_service_mind",
+            "type": "integer",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "score_appearance",
+            "type": "integer",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "score_cleanliness",
+            "type": "integer",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "score_house_design",
+            "type": "integer",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "score_price",
+            "type": "integer",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "score_location",
+            "type": "integer",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "score_average",
+            "type": "numeric(4,2)",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "created_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "updated_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "visit_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "crm_answers",
+            "type": "jsonb",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "crm_form_version",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "crm_submission_state",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "crm_submitted_at",
+            "type": "timestamp with time zone",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "crm_validated_at",
+            "type": "timestamp with time zone",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "crm_submitted_by_customer",
+            "type": "boolean",
+            "default": null,
+            "notNull": false
+          }
+        ],
+        "indexes": [
+          "CREATE UNIQUE INDEX customer_voices_pkey ON public.customer_voices USING btree (id)",
+          "CREATE UNIQUE INDEX customer_voices_one_per_visit_idx ON public.customer_voices USING btree (visit_id) WHERE (visit_id IS NOT NULL)",
+          "CREATE UNIQUE INDEX customer_voices_submission_identity_key ON public.customer_voices USING btree (id, visit_id, crm_submission_state)"
+        ],
+        "forceRls": false,
+        "policies": [
+          {
+            "name": "Allow read access to customer_voices",
+            "check": null,
+            "roles": [
+              "16485"
+            ],
+            "using": "true",
+            "command": "r",
+            "permissive": true
+          },
+          {
+            "name": "Allow write access to customer_voices",
+            "check": "true",
+            "roles": [
+              "16485"
+            ],
+            "using": "true",
+            "command": "*",
+            "permissive": true
+          }
+        ],
+        "triggers": [
+          {
+            "name": "crm_foundation_legacy_fields_sealed",
+            "enabled": "O",
+            "definition": "CREATE TRIGGER crm_foundation_legacy_fields_sealed BEFORE INSERT OR UPDATE ON public.customer_voices FOR EACH ROW EXECUTE FUNCTION sales_private.reject_sealed_legacy_fields('[\"visit_id\", \"crm_answers\", \"crm_form_version\", \"crm_submission_state\", \"crm_submitted_at\", \"crm_validated_at\", \"crm_submitted_by_customer\"]')"
+          },
+          {
+            "name": "update_customer_voices_updated_at",
+            "enabled": "O",
+            "definition": "CREATE TRIGGER update_customer_voices_updated_at BEFORE UPDATE ON public.customer_voices FOR EACH ROW EXECUTE FUNCTION update_sales_updated_at_column()"
+          }
+        ],
+        "constraints": [
+          {
+            "name": "customer_voices_crm_submission_state_check",
+            "definition": "CHECK ((crm_submission_state = ANY (ARRAY['draft'::text, 'submitted'::text])))"
+          },
+          {
+            "name": "customer_voices_lead_id_fkey",
+            "definition": "FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE"
+          },
+          {
+            "name": "customer_voices_pkey",
+            "definition": "PRIMARY KEY (id)"
+          },
+          {
+            "name": "customer_voices_submission_identity_key",
+            "definition": "UNIQUE (id, visit_id, crm_submission_state)"
+          },
+          {
+            "name": "customer_voices_v2_submission_check",
+            "definition": "CHECK (((visit_id IS NULL) OR ((crm_submission_state IS NOT NULL) AND (crm_form_version IS NOT NULL) AND (btrim(crm_form_version) <> ''::text) AND (crm_answers IS NOT NULL) AND (jsonb_typeof(crm_answers) = 'object'::text) AND ((crm_submission_state = 'draft'::text) OR ((crm_submitted_at IS NOT NULL) AND (crm_validated_at IS NOT NULL) AND (crm_submitted_by_customer IS NOT NULL) AND (crm_submitted_by_customer = true))))))"
+          },
+          {
+            "name": "customer_voices_visit_id_fkey",
+            "definition": "FOREIGN KEY (visit_id) REFERENCES lead_visits(id) ON DELETE RESTRICT"
+          }
+        ]
+      },
+      {
+        "acl": [
+          "postgres=arwdDxtm/postgres"
+        ],
+        "rls": true,
+        "name": "house_visit_checklist_runs",
+        "owner": "postgres",
+        "columns": [
+          {
+            "acl": null,
+            "name": "id",
+            "type": "uuid",
+            "default": "gen_random_uuid()",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "project_name",
+            "type": "text",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "plot_id",
+            "type": "text",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "project_interest_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "appointment_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "visit_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "responsible_sales_user_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "template_version",
+            "type": "text",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "current_stage",
+            "type": "text",
+            "default": "'stage_a'::text",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "stage_a_completed_at",
+            "type": "timestamp with time zone",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "stage_b_started_at",
+            "type": "timestamp with time zone",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "stage_c_completed_at",
+            "type": "timestamp with time zone",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "recap",
+            "type": "jsonb",
+            "default": "'{}'::jsonb",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "next_action",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "next_follow_up_at",
+            "type": "timestamp with time zone",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "created_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "updated_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": true
+          }
+        ],
+        "indexes": [
+          "CREATE UNIQUE INDEX house_visit_checklist_runs_pkey ON public.house_visit_checklist_runs USING btree (id)",
+          "CREATE UNIQUE INDEX checklist_run_per_visit_idx ON public.house_visit_checklist_runs USING btree (visit_id) WHERE (visit_id IS NOT NULL)"
+        ],
+        "forceRls": false,
+        "policies": [
+          {
+            "name": "crm_v2_read",
+            "check": null,
+            "roles": [
+              "16485"
+            ],
+            "using": "(crm_v2_role() = ANY (ARRAY['admin'::text, 'owner'::text, 'sales'::text]))",
+            "command": "r",
+            "permissive": true
+          }
+        ],
+        "triggers": [],
+        "constraints": [
+          {
+            "name": "house_visit_checklist_runs_appointment_id_project_interest_fkey",
+            "definition": "FOREIGN KEY (appointment_id, project_interest_id) REFERENCES lead_appointments(id, project_interest_id) ON DELETE RESTRICT"
+          },
+          {
+            "name": "house_visit_checklist_runs_check",
+            "definition": "CHECK ((((appointment_id IS NULL) AND (visit_id IS NULL)) OR (project_interest_id IS NOT NULL)))"
+          },
+          {
+            "name": "house_visit_checklist_runs_check1",
+            "definition": "CHECK (((current_stage <> 'completed'::text) OR ((stage_a_completed_at IS NOT NULL) AND (stage_b_started_at IS NOT NULL) AND (stage_c_completed_at IS NOT NULL))))"
+          },
+          {
+            "name": "house_visit_checklist_runs_current_stage_check",
+            "definition": "CHECK ((current_stage = ANY (ARRAY['stage_a'::text, 'stage_b'::text, 'stage_c'::text, 'completed'::text])))"
+          },
+          {
+            "name": "house_visit_checklist_runs_pkey",
+            "definition": "PRIMARY KEY (id)"
+          },
+          {
+            "name": "house_visit_checklist_runs_plot_id_fkey",
+            "definition": "FOREIGN KEY (plot_id) REFERENCES plots(id) ON UPDATE CASCADE ON DELETE RESTRICT"
+          },
+          {
+            "name": "house_visit_checklist_runs_project_interest_id_project_nam_fkey",
+            "definition": "FOREIGN KEY (project_interest_id, project_name) REFERENCES lead_project_interests(id, project_name) ON UPDATE CASCADE ON DELETE RESTRICT"
+          },
+          {
+            "name": "house_visit_checklist_runs_project_name_fkey",
+            "definition": "FOREIGN KEY (project_name) REFERENCES projects(name) ON UPDATE CASCADE ON DELETE RESTRICT"
+          },
+          {
+            "name": "house_visit_checklist_runs_responsible_sales_user_id_fkey",
+            "definition": "FOREIGN KEY (responsible_sales_user_id) REFERENCES auth.users(id) ON DELETE RESTRICT"
+          },
+          {
+            "name": "house_visit_checklist_runs_visit_id_project_interest_id_fkey",
+            "definition": "FOREIGN KEY (visit_id, project_interest_id) REFERENCES lead_visits(id, project_interest_id) ON DELETE RESTRICT"
+          }
+        ]
+      },
+      {
+        "acl": [
+          "postgres=arwdDxtm/postgres"
+        ],
+        "rls": true,
+        "name": "lead_appointments",
+        "owner": "postgres",
+        "columns": [
+          {
+            "acl": null,
+            "name": "id",
+            "type": "uuid",
+            "default": "gen_random_uuid()",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "project_interest_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "starts_at",
+            "type": "timestamp with time zone",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "ends_at",
+            "type": "timestamp with time zone",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "status",
+            "type": "text",
+            "default": "'scheduled'::text",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "assigned_sales_user_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "notes",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "created_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "updated_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": true
+          }
+        ],
+        "indexes": [
+          "CREATE UNIQUE INDEX lead_appointments_pkey ON public.lead_appointments USING btree (id)",
+          "CREATE UNIQUE INDEX lead_appointments_id_project_interest_id_key ON public.lead_appointments USING btree (id, project_interest_id)"
+        ],
+        "forceRls": false,
+        "policies": [
+          {
+            "name": "crm_v2_read",
+            "check": null,
+            "roles": [
+              "16485"
+            ],
+            "using": "(crm_v2_role() = ANY (ARRAY['admin'::text, 'owner'::text, 'sales'::text]))",
+            "command": "r",
+            "permissive": true
+          }
+        ],
+        "triggers": [],
+        "constraints": [
+          {
+            "name": "lead_appointments_assigned_sales_user_id_fkey",
+            "definition": "FOREIGN KEY (assigned_sales_user_id) REFERENCES auth.users(id) ON DELETE RESTRICT"
+          },
+          {
+            "name": "lead_appointments_check",
+            "definition": "CHECK (((ends_at IS NULL) OR (ends_at > starts_at)))"
+          },
+          {
+            "name": "lead_appointments_id_project_interest_id_key",
+            "definition": "UNIQUE (id, project_interest_id)"
+          },
+          {
+            "name": "lead_appointments_pkey",
+            "definition": "PRIMARY KEY (id)"
+          },
+          {
+            "name": "lead_appointments_project_interest_id_fkey",
+            "definition": "FOREIGN KEY (project_interest_id) REFERENCES lead_project_interests(id) ON DELETE RESTRICT"
+          },
+          {
+            "name": "lead_appointments_status_check",
+            "definition": "CHECK ((status = ANY (ARRAY['scheduled'::text, 'rescheduled'::text, 'attended'::text, 'no_show'::text, 'cancelled'::text])))"
+          }
+        ]
+      },
+      {
+        "acl": [
+          "postgres=arwdDxtm/postgres"
+        ],
+        "rls": true,
+        "name": "lead_project_interests",
+        "owner": "postgres",
+        "columns": [
+          {
+            "acl": null,
+            "name": "id",
+            "type": "uuid",
+            "default": "gen_random_uuid()",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "customer_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "project_name",
+            "type": "text",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "owner_user_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "owner_assigned_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "workspace_state",
+            "type": "text",
+            "default": "'central_interest'::text",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "activated_at",
+            "type": "timestamp with time zone",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "activation_reason",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "engagement_status",
+            "type": "text",
+            "default": "'new'::text",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "interested_plot_id",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "channel",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "source",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "interest_created_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "notes",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "created_by_user_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "created_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "updated_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "external_snapshot_batch_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "external_interest_key",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "lifecycle_revision",
+            "type": "uuid",
+            "default": "gen_random_uuid()",
+            "notNull": true
+          }
+        ],
+        "indexes": [
+          "CREATE UNIQUE INDEX lead_project_interests_pkey ON public.lead_project_interests USING btree (id)",
+          "CREATE UNIQUE INDEX lead_project_interests_customer_id_project_name_key ON public.lead_project_interests USING btree (customer_id, project_name)",
+          "CREATE UNIQUE INDEX lead_project_interests_id_customer_id_key ON public.lead_project_interests USING btree (id, customer_id)",
+          "CREATE UNIQUE INDEX lead_project_interests_id_project_name_key ON public.lead_project_interests USING btree (id, project_name)",
+          "CREATE INDEX lead_interests_owner_idx ON public.lead_project_interests USING btree (owner_user_id)",
+          "CREATE INDEX lead_interests_workspace_idx ON public.lead_project_interests USING btree (project_name, workspace_state)",
+          "CREATE UNIQUE INDEX crm_interest_external_unique ON public.lead_project_interests USING btree (external_snapshot_batch_id, external_interest_key)"
+        ],
+        "forceRls": false,
+        "policies": [
+          {
+            "name": "crm_v2_read",
+            "check": null,
+            "roles": [
+              "16485"
+            ],
+            "using": "(crm_v2_role() = ANY (ARRAY['admin'::text, 'owner'::text, 'sales'::text]))",
+            "command": "r",
+            "permissive": true
+          }
+        ],
+        "triggers": [
+          {
+            "name": "external_interest_seal",
+            "enabled": "O",
+            "definition": "CREATE TRIGGER external_interest_seal BEFORE INSERT OR DELETE OR UPDATE ON public.lead_project_interests FOR EACH ROW EXECUTE FUNCTION crm_external_private.guard_materialized_history()"
+          }
+        ],
+        "constraints": [
+          {
+            "name": "crm_interest_created_evidence_check",
+            "definition": "CHECK (((interest_created_at IS NOT NULL) OR ((external_snapshot_batch_id IS NOT NULL) AND (external_interest_key IS NOT NULL))))"
+          },
+          {
+            "name": "crm_interest_external_fk",
+            "definition": "FOREIGN KEY (external_snapshot_batch_id, external_interest_key) REFERENCES crm_external_private.interest_candidates(batch_id, entity_key) MATCH FULL ON DELETE RESTRICT"
+          },
+          {
+            "name": "crm_interest_external_unique",
+            "definition": "UNIQUE (external_snapshot_batch_id, external_interest_key)"
+          },
+          {
+            "name": "lead_project_interests_activation_reason_check",
+            "definition": "CHECK ((activation_reason = ANY (ARRAY['visit'::text, 'booking'::text, 'legacy_import'::text])))"
+          },
+          {
+            "name": "lead_project_interests_check",
+            "definition": "CHECK ((((workspace_state = 'central_interest'::text) AND (activated_at IS NULL) AND (activation_reason IS NULL)) OR ((workspace_state = 'project_active'::text) AND (activation_reason IS NOT NULL) AND ((activated_at IS NOT NULL) OR (activation_reason = 'legacy_import'::text)))))"
+          },
+          {
+            "name": "lead_project_interests_created_by_user_id_fkey",
+            "definition": "FOREIGN KEY (created_by_user_id) REFERENCES auth.users(id) ON DELETE RESTRICT"
+          },
+          {
+            "name": "lead_project_interests_customer_id_fkey",
+            "definition": "FOREIGN KEY (customer_id) REFERENCES sales_customers(id) ON DELETE RESTRICT"
+          },
+          {
+            "name": "lead_project_interests_customer_id_project_name_key",
+            "definition": "UNIQUE (customer_id, project_name)"
+          },
+          {
+            "name": "lead_project_interests_engagement_status_check",
+            "definition": "CHECK (((engagement_status = ANY (ARRAY['new'::text, 'contacted'::text, 'considering'::text, 'follow_up'::text, 'nurture'::text, 'lost'::text])) OR ((engagement_status = 'legacy_unclassified'::text) AND (external_snapshot_batch_id IS NOT NULL) AND (external_interest_key IS NOT NULL))))"
+          },
+          {
+            "name": "lead_project_interests_id_customer_id_key",
+            "definition": "UNIQUE (id, customer_id)"
+          },
+          {
+            "name": "lead_project_interests_id_project_name_key",
+            "definition": "UNIQUE (id, project_name)"
+          },
+          {
+            "name": "lead_project_interests_interested_plot_id_fkey",
+            "definition": "FOREIGN KEY (interested_plot_id) REFERENCES plots(id) ON UPDATE CASCADE ON DELETE RESTRICT"
+          },
+          {
+            "name": "lead_project_interests_owner_user_id_fkey",
+            "definition": "FOREIGN KEY (owner_user_id) REFERENCES auth.users(id) ON DELETE RESTRICT"
+          },
+          {
+            "name": "lead_project_interests_pkey",
+            "definition": "PRIMARY KEY (id)"
+          },
+          {
+            "name": "lead_project_interests_project_name_fkey",
+            "definition": "FOREIGN KEY (project_name) REFERENCES projects(name) ON UPDATE CASCADE ON DELETE RESTRICT"
+          },
+          {
+            "name": "lead_project_interests_workspace_state_check",
+            "definition": "CHECK ((workspace_state = ANY (ARRAY['central_interest'::text, 'project_active'::text])))"
+          }
+        ]
+      },
+      {
+        "acl": [
+          "postgres=arwdDxtm/postgres"
+        ],
+        "rls": true,
+        "name": "lead_visits",
+        "owner": "postgres",
+        "columns": [
+          {
+            "acl": null,
+            "name": "id",
+            "type": "uuid",
+            "default": "gen_random_uuid()",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "project_interest_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "appointment_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "status",
+            "type": "text",
+            "default": "'awaiting_voice'::text",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "checked_in_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "checked_in_by_user_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "completed_at",
+            "type": "timestamp with time zone",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "completed_voice_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "completion_evidence_state",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "created_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": true
+          }
+        ],
+        "indexes": [
+          "CREATE UNIQUE INDEX lead_visits_pkey ON public.lead_visits USING btree (id)",
+          "CREATE UNIQUE INDEX lead_visits_id_project_interest_id_key ON public.lead_visits USING btree (id, project_interest_id)",
+          "CREATE UNIQUE INDEX lead_visits_appointment_id_key ON public.lead_visits USING btree (appointment_id)"
+        ],
+        "forceRls": false,
+        "policies": [
+          {
+            "name": "crm_v2_read",
+            "check": null,
+            "roles": [
+              "16485"
+            ],
+            "using": "(crm_v2_role() = ANY (ARRAY['admin'::text, 'owner'::text, 'sales'::text]))",
+            "command": "r",
+            "permissive": true
+          }
+        ],
+        "triggers": [],
+        "constraints": [
+          {
+            "name": "lead_visits_appointment_id_key",
+            "definition": "UNIQUE (appointment_id)"
+          },
+          {
+            "name": "lead_visits_appointment_id_project_interest_id_fkey",
+            "definition": "FOREIGN KEY (appointment_id, project_interest_id) REFERENCES lead_appointments(id, project_interest_id) ON DELETE RESTRICT"
+          },
+          {
+            "name": "lead_visits_check",
+            "definition": "CHECK ((((status = 'completed'::text) AND (completed_at IS NOT NULL) AND (completed_voice_id IS NOT NULL) AND (completion_evidence_state IS NOT NULL) AND (completion_evidence_state = 'submitted'::text)) OR ((status <> 'completed'::text) AND (completed_at IS NULL) AND (completed_voice_id IS NULL) AND (completion_evidence_state IS NULL))))"
+          },
+          {
+            "name": "lead_visits_check1",
+            "definition": "CHECK (((completed_at IS NULL) OR (completed_at >= checked_in_at)))"
+          },
+          {
+            "name": "lead_visits_checked_in_by_user_id_fkey",
+            "definition": "FOREIGN KEY (checked_in_by_user_id) REFERENCES auth.users(id) ON DELETE RESTRICT"
+          },
+          {
+            "name": "lead_visits_id_project_interest_id_key",
+            "definition": "UNIQUE (id, project_interest_id)"
+          },
+          {
+            "name": "lead_visits_pkey",
+            "definition": "PRIMARY KEY (id)"
+          },
+          {
+            "name": "lead_visits_project_interest_id_fkey",
+            "definition": "FOREIGN KEY (project_interest_id) REFERENCES lead_project_interests(id) ON DELETE RESTRICT"
+          },
+          {
+            "name": "lead_visits_status_check",
+            "definition": "CHECK ((status = ANY (ARRAY['awaiting_voice'::text, 'completed'::text, 'cancelled'::text])))"
+          },
+          {
+            "name": "lead_visits_submission_evidence_fk",
+            "definition": "FOREIGN KEY (completed_voice_id, id, completion_evidence_state) REFERENCES customer_voices(id, visit_id, crm_submission_state) ON DELETE RESTRICT"
+          }
+        ]
+      },
+      {
+        "acl": [
+          "postgres=arwdDxtm/postgres",
+          "anon=arwdDxtm/postgres",
+          "authenticated=arwdDxtm/postgres",
+          "service_role=arwdDxtm/postgres"
+        ],
+        "rls": true,
+        "name": "plots",
+        "owner": "postgres",
+        "columns": [
+          {
+            "acl": null,
+            "name": "id",
+            "type": "text",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "house_type_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "foreman_name",
+            "type": "text",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "project_name",
+            "type": "text",
+            "default": "'โครงการที่ 1'::text",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "created_at",
+            "type": "timestamp with time zone",
+            "default": "timezone('utc'::text, now())",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "has_customer",
+            "type": "boolean",
+            "default": "false",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "is_completed",
+            "type": "boolean",
+            "default": "false",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "overview_image_url",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "sale_status",
+            "type": "character varying",
+            "default": "'active'::character varying",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "paused_for_sale_at",
+            "type": "timestamp with time zone",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "selling_price",
+            "type": "numeric",
+            "default": "0",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "handover_cycle",
+            "type": "integer",
+            "default": "1",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "inspection_round",
+            "type": "integer",
+            "default": "0",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "plot_name",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "land_size",
+            "type": "numeric",
+            "default": "0",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "house_model",
+            "type": "text",
+            "default": "''::text",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "land_appraisal_price",
+            "type": "numeric",
+            "default": "0",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "highlight_color",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "highlight_note",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "permit_status",
+            "type": "character varying",
+            "default": "'NotStarted'::character varying",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "registration_status",
+            "type": "character varying",
+            "default": "'NotStarted'::character varying",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "water_meter_status",
+            "type": "character varying",
+            "default": "'NotStarted'::character varying",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "electric_meter_status",
+            "type": "character varying",
+            "default": "'NotStarted'::character varying",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "permit_date",
+            "type": "date",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "registration_date",
+            "type": "date",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "water_meter_date",
+            "type": "date",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "electric_meter_date",
+            "type": "date",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "handover_status",
+            "type": "text",
+            "default": "'pending'::text",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "handover_completed_at",
+            "type": "timestamp with time zone",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "handover_completed_by",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "inspection_round1_date",
+            "type": "timestamp with time zone",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "inspection_round1_status",
+            "type": "text",
+            "default": "'pending'::text",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "inspection_round2_date",
+            "type": "timestamp with time zone",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "inspection_round2_status",
+            "type": "text",
+            "default": "'pending'::text",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "handover_notes",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          }
+        ],
+        "indexes": [
+          "CREATE UNIQUE INDEX plots_pkey ON public.plots USING btree (id)"
+        ],
+        "forceRls": false,
+        "policies": [
+          {
+            "name": "Allow auth all plots",
+            "check": "true",
+            "roles": [
+              "16485"
+            ],
+            "using": "true",
+            "command": "*",
+            "permissive": true
+          },
+          {
+            "name": "Allow foreman and engineers update plots",
+            "check": "(((auth.jwt() -> 'user_metadata'::text) ->> 'role'::text) = ANY (ARRAY['Foreman'::text, 'Site Engineer'::text, 'QC'::text]))",
+            "roles": [
+              "16485"
+            ],
+            "using": "(((auth.jwt() -> 'user_metadata'::text) ->> 'role'::text) = ANY (ARRAY['Foreman'::text, 'Site Engineer'::text, 'QC'::text]))",
+            "command": "w",
+            "permissive": true
+          },
+          {
+            "name": "Allow public access to plots",
+            "check": "true",
+            "roles": [
+              "0"
+            ],
+            "using": "true",
+            "command": "*",
+            "permissive": true
+          }
+        ],
+        "triggers": [
+          {
+            "name": "external_booking_plot_stock",
+            "enabled": "O",
+            "definition": "CREATE TRIGGER external_booking_plot_stock BEFORE INSERT OR UPDATE ON public.plots FOR EACH ROW EXECUTE FUNCTION crm_external_private.guard_booking_plot_stock()"
+          }
+        ],
+        "constraints": [
+          {
+            "name": "plots_house_type_id_fkey",
+            "definition": "FOREIGN KEY (house_type_id) REFERENCES house_types(id) ON DELETE CASCADE"
+          },
+          {
+            "name": "plots_pkey",
+            "definition": "PRIMARY KEY (id)"
+          }
+        ]
+      },
+      {
+        "acl": [
+          "postgres=arwdDxtm/postgres",
+          "anon=rm/postgres",
+          "authenticated=rm/postgres",
+          "service_role=rm/postgres"
+        ],
+        "rls": true,
+        "name": "sales",
+        "owner": "postgres",
+        "columns": [
+          {
+            "acl": null,
+            "name": "id",
+            "type": "uuid",
+            "default": "gen_random_uuid()",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "lead_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "plot_id",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "sale_price",
+            "type": "numeric(15,2)",
+            "default": "0",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "booking_amount",
+            "type": "numeric(15,2)",
+            "default": "0",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "land_office_price",
+            "type": "numeric(15,2)",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "bank_name",
+            "type": "character varying",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "contract_status",
+            "type": "character varying",
+            "default": "'Reserved'::character varying",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "bank_status",
+            "type": "character varying",
+            "default": "'Pending'::character varying",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "cancellation_reason",
+            "type": "character varying",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "transferred_at",
+            "type": "timestamp with time zone",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "created_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "updated_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "expected_transfer_date",
+            "type": "date",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "project_interest_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "booking_round",
+            "type": "integer",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "previous_sale_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "crm_stage",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "payment_method",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "booking_route",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "booking_route_reason",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "list_price",
+            "type": "numeric(15,2)",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "discount_amount",
+            "type": "numeric(15,2)",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "booked_at",
+            "type": "timestamp with time zone",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "contracted_at",
+            "type": "timestamp with time zone",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "crm_handover_at",
+            "type": "timestamp with time zone",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "cancelled_at",
+            "type": "timestamp with time zone",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "legacy_cancellation_batch_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "cancellation_category",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "closing_sales_user_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "external_booking_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "external_source_stage",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "booking_revision",
+            "type": "uuid",
+            "default": "gen_random_uuid()",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "booking_visit_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": false
+          }
+        ],
+        "indexes": [
+          "CREATE UNIQUE INDEX sales_pkey ON public.sales USING btree (id)",
+          "CREATE UNIQUE INDEX sales_v2_identity_key ON public.sales USING btree (id, project_interest_id)",
+          "CREATE UNIQUE INDEX sales_interest_booking_round_idx ON public.sales USING btree (project_interest_id, booking_round) WHERE (project_interest_id IS NOT NULL)",
+          "CREATE UNIQUE INDEX sales_external_booking_id_key ON public.sales USING btree (external_booking_id)",
+          "CREATE UNIQUE INDEX sales_active_plot_booking_idx ON public.sales USING btree (plot_id) WHERE ((plot_id IS NOT NULL) AND (COALESCE(crm_stage, lower((contract_status)::text), 'unknown'::text) <> 'cancelled'::text))"
+        ],
+        "forceRls": false,
+        "policies": [
+          {
+            "name": "Allow read access to sales",
+            "check": null,
+            "roles": [
+              "16485"
+            ],
+            "using": "true",
+            "command": "r",
+            "permissive": true
+          },
+          {
+            "name": "Allow write access to sales",
+            "check": "(((auth.jwt() -> 'user_metadata'::text) ->> 'role'::text) = ANY (ARRAY['Admin'::text, 'Owner'::text, 'Sales'::text]))",
+            "roles": [
+              "16485"
+            ],
+            "using": "(((auth.jwt() -> 'user_metadata'::text) ->> 'role'::text) = ANY (ARRAY['Admin'::text, 'Owner'::text, 'Sales'::text]))",
+            "command": "*",
+            "permissive": true
+          }
+        ],
+        "triggers": [
+          {
+            "name": "crm_booking_protect_sale",
+            "enabled": "O",
+            "definition": "CREATE TRIGGER crm_booking_protect_sale BEFORE INSERT OR DELETE OR UPDATE ON public.sales FOR EACH ROW EXECUTE FUNCTION sales_private.crm_booking_protect_sale()"
+          },
+          {
+            "name": "crm_foundation_legacy_fields_sealed",
+            "enabled": "O",
+            "definition": "CREATE TRIGGER crm_foundation_legacy_fields_sealed BEFORE INSERT OR UPDATE ON public.sales FOR EACH ROW EXECUTE FUNCTION crm_external_private.guard_cutover_sale('[\"project_interest_id\", \"booking_round\", \"previous_sale_id\", \"crm_stage\", \"payment_method\", \"booking_route\", \"booking_route_reason\", \"list_price\", \"discount_amount\", \"booked_at\", \"contracted_at\", \"crm_handover_at\", \"cancelled_at\", \"legacy_cancellation_batch_id\", \"cancellation_category\", \"closing_sales_user_id\"]')"
+          },
+          {
+            "name": "external_cutover_delete_seal",
+            "enabled": "O",
+            "definition": "CREATE TRIGGER external_cutover_delete_seal BEFORE DELETE ON public.sales FOR EACH ROW EXECUTE FUNCTION crm_external_private.guard_cutover_sale()"
+          },
+          {
+            "name": "external_cutover_truncate_seal",
+            "enabled": "O",
+            "definition": "CREATE TRIGGER external_cutover_truncate_seal BEFORE TRUNCATE ON public.sales FOR EACH STATEMENT EXECUTE FUNCTION crm_external_private.guard_cutover_sale()"
+          },
+          {
+            "name": "trigger_sync_plot_customer_status",
+            "enabled": "O",
+            "definition": "CREATE TRIGGER trigger_sync_plot_customer_status AFTER INSERT OR DELETE OR UPDATE OF plot_id, contract_status ON public.sales FOR EACH ROW EXECUTE FUNCTION sync_plot_customer_status()"
+          },
+          {
+            "name": "update_sales_table_updated_at",
+            "enabled": "O",
+            "definition": "CREATE TRIGGER update_sales_table_updated_at BEFORE UPDATE ON public.sales FOR EACH ROW EXECUTE FUNCTION update_sales_updated_at_column()"
+          }
+        ],
+        "constraints": [
+          {
+            "name": "sales_booking_round_check",
+            "definition": "CHECK ((booking_round > 0))"
+          },
+          {
+            "name": "sales_booking_route_check",
+            "definition": "CHECK ((booking_route = ANY (ARRAY['visited'::text, 'without_visit'::text, 'legacy_import'::text])))"
+          },
+          {
+            "name": "sales_booking_visit_interest_fk",
+            "definition": "FOREIGN KEY (booking_visit_id, project_interest_id) REFERENCES lead_visits(id, project_interest_id) ON DELETE RESTRICT"
+          },
+          {
+            "name": "sales_cancellation_category_check",
+            "definition": "CHECK ((cancellation_category = ANY (ARRAY['booking_cancelled'::text, 'downpayment_abandoned'::text, 'final_loan_rejection'::text, 'other'::text])))"
+          },
+          {
+            "name": "sales_closing_sales_user_id_fkey",
+            "definition": "FOREIGN KEY (closing_sales_user_id) REFERENCES auth.users(id) ON DELETE RESTRICT"
+          },
+          {
+            "name": "sales_crm_stage_check",
+            "definition": "CHECK ((crm_stage = ANY (ARRAY['booked'::text, 'contracted'::text, 'downpayment'::text, 'document_prep'::text, 'loan_submitted'::text, 'loan_rejected'::text, 'loan_approved'::text, 'transfer_pending'::text, 'transferred'::text, 'handover'::text, 'cancelled'::text])))"
+          },
+          {
+            "name": "sales_discount_amount_check",
+            "definition": "CHECK ((discount_amount >= (0)::numeric))"
+          },
+          {
+            "name": "sales_external_booking_id_fkey",
+            "definition": "FOREIGN KEY (external_booking_id) REFERENCES crm_external_private.prepared_booking_sales(id) ON DELETE RESTRICT"
+          },
+          {
+            "name": "sales_external_booking_id_key",
+            "definition": "UNIQUE (external_booking_id)"
+          },
+          {
+            "name": "sales_external_source_stage_fk",
+            "definition": "FOREIGN KEY (external_booking_id, external_source_stage) REFERENCES crm_external_private.prepared_booking_sales(id, stage) MATCH FULL ON DELETE RESTRICT"
+          },
+          {
+            "name": "sales_lead_id_fkey",
+            "definition": "FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE"
+          },
+          {
+            "name": "sales_list_price_check",
+            "definition": "CHECK ((list_price >= (0)::numeric))"
+          },
+          {
+            "name": "sales_payment_method_check",
+            "definition": "CHECK ((payment_method = ANY (ARRAY['cash'::text, 'mortgage'::text])))"
+          },
+          {
+            "name": "sales_pkey",
+            "definition": "PRIMARY KEY (id)"
+          },
+          {
+            "name": "sales_plot_id_fkey",
+            "definition": "FOREIGN KEY (plot_id) REFERENCES plots(id) ON DELETE SET NULL"
+          },
+          {
+            "name": "sales_previous_sale_id_fkey",
+            "definition": "FOREIGN KEY (previous_sale_id) REFERENCES sales(id) ON DELETE RESTRICT"
+          },
+          {
+            "name": "sales_project_interest_id_fkey",
+            "definition": "FOREIGN KEY (project_interest_id) REFERENCES lead_project_interests(id) ON DELETE RESTRICT"
+          },
+          {
+            "name": "sales_v2_cancellation_check",
+            "definition": "CHECK (((crm_stage IS DISTINCT FROM 'cancelled'::text) OR (COALESCE((booking_route = 'legacy_import'::text), false) AND ((legacy_cancellation_batch_id IS NOT NULL) OR ((external_booking_id IS NOT NULL) AND COALESCE((external_source_stage = 'cancelled'::text), false)))) OR ((cancelled_at IS NOT NULL) AND (cancellation_category IS NOT NULL) AND (cancellation_reason IS NOT NULL) AND (btrim((cancellation_reason)::text) <> ''::text))))"
+          },
+          {
+            "name": "sales_v2_fields_check",
+            "definition": "CHECK (((project_interest_id IS NULL) OR ((crm_stage IS NOT NULL) AND (booking_route IS NOT NULL) AND ((booking_round IS NOT NULL) OR (external_booking_id IS NOT NULL)))))"
+          },
+          {
+            "name": "sales_v2_identity_key",
+            "definition": "UNIQUE (id, project_interest_id)"
+          },
+          {
+            "name": "sales_v2_legacy_cancellation_origin_check",
+            "definition": "CHECK (((legacy_cancellation_batch_id IS NULL) OR (COALESCE((booking_route = 'legacy_import'::text), false) AND COALESCE((crm_stage = 'cancelled'::text), false))))"
+          },
+          {
+            "name": "sales_v2_legacy_cancellation_source_fk",
+            "definition": "FOREIGN KEY (legacy_cancellation_batch_id, id) REFERENCES sales_private.crm_legacy_source_snapshots(import_batch_id, legacy_cancelled_sale_id) ON DELETE RESTRICT"
+          },
+          {
+            "name": "sales_v2_legacy_provenance_check",
+            "definition": "CHECK (((booking_route IS DISTINCT FROM 'legacy_import'::text) OR ((booking_route_reason IS NOT NULL) AND (btrim(booking_route_reason) <> ''::text))))"
+          },
+          {
+            "name": "sales_v2_not_own_predecessor_check",
+            "definition": "CHECK (((previous_sale_id IS NULL) OR (previous_sale_id <> id)))"
+          },
+          {
+            "name": "sales_v2_remote_booking_check",
+            "definition": "CHECK (((booking_route IS DISTINCT FROM 'without_visit'::text) OR ((booking_route_reason IS NOT NULL) AND (btrim(booking_route_reason) <> ''::text))))"
+          }
+        ]
+      },
+      {
+        "acl": [
+          "postgres=arwdDxtm/postgres"
+        ],
+        "rls": true,
+        "name": "sales_customers",
+        "owner": "postgres",
+        "columns": [
+          {
+            "acl": null,
+            "name": "id",
+            "type": "uuid",
+            "default": "gen_random_uuid()",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "customer_name",
+            "type": "text",
+            "default": null,
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "record_origin",
+            "type": "text",
+            "default": "'live'::text",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "legacy_source_lead_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "phone",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "phone_data_status",
+            "type": "text",
+            "default": "'provided'::text",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "phone_normalized",
+            "type": "text",
+            "default": "\nCASE\n    WHEN (phone IS NULL) THEN NULL::text\n    ELSE crm_v2_normalize_phone(phone)\nEND",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "email",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "line_id",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "intake_channel",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "acquisition_source",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "intake_notes",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "occupation",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "monthly_income",
+            "type": "numeric(15,2)",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "personal_data",
+            "type": "jsonb",
+            "default": "'{}'::jsonb",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "intake_status",
+            "type": "text",
+            "default": "'new'::text",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "owner_user_id",
+            "type": "uuid",
+            "default": "auth.uid()",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "created_by_user_id",
+            "type": "uuid",
+            "default": "auth.uid()",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "owner_assigned_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "lead_created_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "first_contacted_at",
+            "type": "timestamp with time zone",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "merged_into_customer_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "created_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "updated_at",
+            "type": "timestamp with time zone",
+            "default": "now()",
+            "notNull": true
+          },
+          {
+            "acl": null,
+            "name": "external_snapshot_batch_id",
+            "type": "uuid",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "external_customer_key",
+            "type": "text",
+            "default": null,
+            "notNull": false
+          },
+          {
+            "acl": null,
+            "name": "lifecycle_revision",
+            "type": "uuid",
+            "default": "gen_random_uuid()",
+            "notNull": true
+          }
+        ],
+        "indexes": [
+          "CREATE UNIQUE INDEX sales_customers_pkey ON public.sales_customers USING btree (id)",
+          "CREATE UNIQUE INDEX sales_customers_legacy_source_lead_id_key ON public.sales_customers USING btree (legacy_source_lead_id)",
+          "CREATE INDEX sales_customers_phone_lookup_idx ON public.sales_customers USING btree (phone_normalized)",
+          "CREATE UNIQUE INDEX crm_customer_external_unique ON public.sales_customers USING btree (external_snapshot_batch_id, external_customer_key)"
+        ],
+        "forceRls": false,
+        "policies": [
+          {
+            "name": "crm_v2_read",
+            "check": null,
+            "roles": [
+              "16485"
+            ],
+            "using": "(crm_v2_role() = ANY (ARRAY['admin'::text, 'owner'::text, 'sales'::text]))",
+            "command": "r",
+            "permissive": true
+          }
+        ],
+        "triggers": [
+          {
+            "name": "external_customer_seal",
+            "enabled": "O",
+            "definition": "CREATE TRIGGER external_customer_seal BEFORE INSERT OR DELETE OR UPDATE ON public.sales_customers FOR EACH ROW EXECUTE FUNCTION crm_external_private.guard_materialized_history()"
+          }
+        ],
+        "constraints": [
+          {
+            "name": "crm_customer_external_fk",
+            "definition": "FOREIGN KEY (external_snapshot_batch_id, external_customer_key) REFERENCES crm_external_private.customer_candidates(batch_id, entity_key) MATCH FULL ON DELETE RESTRICT"
+          },
+          {
+            "name": "crm_customer_external_unique",
+            "definition": "UNIQUE (external_snapshot_batch_id, external_customer_key)"
+          },
+          {
+            "name": "crm_customer_origin_check",
+            "definition": "CHECK ((((record_origin = 'live'::text) AND (legacy_source_lead_id IS NULL) AND (external_snapshot_batch_id IS NULL) AND (external_customer_key IS NULL) AND (lead_created_at IS NOT NULL) AND (intake_status <> 'legacy_unclassified'::text)) OR ((record_origin = 'legacy_import'::text) AND (((legacy_source_lead_id IS NOT NULL) AND (external_snapshot_batch_id IS NULL) AND (external_customer_key IS NULL)) OR ((legacy_source_lead_id IS NULL) AND (external_snapshot_batch_id IS NOT NULL) AND (external_customer_key IS NOT NULL))))))"
+          },
+          {
+            "name": "crm_customer_phone_evidence_check",
+            "definition": "CHECK ((((phone_data_status = 'unknown_legacy'::text) AND (record_origin = 'legacy_import'::text) AND (phone IS NULL)) OR ((phone_data_status = 'provided'::text) AND (phone IS NOT NULL) AND (phone ~ '^\\+?[0-9 ()-]+$'::text) AND ((length(regexp_replace(phone, '[^0-9]'::text, ''::text, 'g'::text)) >= 7) AND (length(regexp_replace(phone, '[^0-9]'::text, ''::text, 'g'::text)) <= 15)))))"
+          },
+          {
+            "name": "sales_customers_check",
+            "definition": "CHECK (((merged_into_customer_id IS NULL) OR (merged_into_customer_id <> id)))"
+          },
+          {
+            "name": "sales_customers_created_by_user_id_fkey",
+            "definition": "FOREIGN KEY (created_by_user_id) REFERENCES auth.users(id) ON DELETE RESTRICT"
+          },
+          {
+            "name": "sales_customers_customer_name_check",
+            "definition": "CHECK ((btrim(customer_name) <> ''::text))"
+          },
+          {
+            "name": "sales_customers_intake_status_check",
+            "definition": "CHECK ((intake_status = ANY (ARRAY['new'::text, 'contacted'::text, 'following_up'::text, 'nurture'::text, 'lost'::text, 'legacy_unclassified'::text])))"
+          },
+          {
+            "name": "sales_customers_legacy_source_lead_id_fkey",
+            "definition": "FOREIGN KEY (legacy_source_lead_id) REFERENCES leads(id) ON DELETE RESTRICT"
+          },
+          {
+            "name": "sales_customers_legacy_source_lead_id_key",
+            "definition": "UNIQUE (legacy_source_lead_id)"
+          },
+          {
+            "name": "sales_customers_merged_into_customer_id_fkey",
+            "definition": "FOREIGN KEY (merged_into_customer_id) REFERENCES sales_customers(id) ON DELETE RESTRICT"
+          },
+          {
+            "name": "sales_customers_monthly_income_check",
+            "definition": "CHECK ((monthly_income >= (0)::numeric))"
+          },
+          {
+            "name": "sales_customers_owner_user_id_fkey",
+            "definition": "FOREIGN KEY (owner_user_id) REFERENCES auth.users(id) ON DELETE RESTRICT"
+          },
+          {
+            "name": "sales_customers_phone_data_status_check",
+            "definition": "CHECK ((phone_data_status = ANY (ARRAY['provided'::text, 'unknown_legacy'::text])))"
+          },
+          {
+            "name": "sales_customers_pkey",
+            "definition": "PRIMARY KEY (id)"
+          },
+          {
+            "name": "sales_customers_record_origin_check",
+            "definition": "CHECK ((record_origin = ANY (ARRAY['live'::text, 'legacy_import'::text])))"
+          }
+        ]
+      }
+    ],
+    "bookingReview": [
+      {
+        "batchId": "5d3f05d2-2a5d-44ed-a0e3-9385b8ace3a5",
+        "hasRollback": false,
+        "sourceDigest": "d831341f3441ad7f29dd6f61ed9913801fc362dc002ce82001dfc6b9b877588b",
+        "bookingDigest": "d831341f3441ad7f29dd6f61ed9913801fc362dc002ce82001dfc6b9b877588b"
+      }
+    ],
+    "reportVersion": "central-visits-preflight-v1",
+    "databaseVersion": "17.6",
+    "functionMetadata": [
+      {
+        "acl": [
+          "postgres=X/postgres"
+        ],
+        "owner": "postgres",
+        "config": [
+          "search_path=\"\""
+        ],
+        "signature": "crm_external_private.booking_activation_allowed(jsonb)",
+        "definitionMd5": "f0d50bbae0043915ae588490f673b4ae",
+        "securityDefiner": false
+      },
+      {
+        "acl": [
+          "postgres=X/postgres"
+        ],
+        "owner": "postgres",
+        "config": [
+          "search_path=\"\""
+        ],
+        "signature": "crm_external_private.booking_interest_allowed(jsonb,jsonb)",
+        "definitionMd5": "1fbb9b46979c268563e9781db4c5825f",
+        "securityDefiner": false
+      },
+      {
+        "acl": [
+          "postgres=X/postgres"
+        ],
+        "owner": "postgres",
+        "config": [
+          "search_path=\"\""
+        ],
+        "signature": "crm_external_private.booking_writer_ready()",
+        "definitionMd5": "b6d890bf232f8efa2135c1d071168ce0",
+        "securityDefiner": false
+      },
+      {
+        "acl": [
+          "postgres=X/postgres"
+        ],
+        "owner": "postgres",
+        "config": [
+          "search_path=\"\""
+        ],
+        "signature": "crm_external_private.cutover_operator_check()",
+        "definitionMd5": "c06fe48cef869055be2d1c5831a3c655",
+        "securityDefiner": false
+      },
+      {
+        "acl": [
+          "postgres=X/postgres"
+        ],
+        "owner": "postgres",
+        "config": [
+          "search_path=\"\""
+        ],
+        "signature": "crm_external_private.guard_booking_plot_stock()",
+        "definitionMd5": "1b509e9c572a97ee806daca19299b9be",
+        "securityDefiner": true
+      },
+      {
+        "acl": [
+          "postgres=X/postgres"
+        ],
+        "owner": "postgres",
+        "config": [
+          "search_path=\"\""
+        ],
+        "signature": "crm_external_private.guard_materialized_history()",
+        "definitionMd5": "80a0dac6079aa28d2353640f373aec3a",
+        "securityDefiner": false
+      },
+      {
+        "acl": [
+          "postgres=X/postgres"
+        ],
+        "owner": "postgres",
+        "config": [
+          "search_path=\"\""
+        ],
+        "signature": "crm_external_private.reject_unreviewed_activation()",
+        "definitionMd5": "e9ecf0f7ac279609f5d5fae8cbabfef2",
+        "securityDefiner": false
+      },
+      {
+        "acl": [
+          "postgres=X/postgres",
+          "authenticated=X/postgres"
+        ],
+        "owner": "postgres",
+        "config": [
+          "search_path=pg_catalog"
+        ],
+        "signature": "crm_v2_booking_capabilities()",
+        "definitionMd5": "5b19bc7cb3c8a0b8f06a848eb6e60afc",
+        "securityDefiner": true
+      },
+      {
+        "acl": [
+          "postgres=X/postgres",
+          "authenticated=X/postgres"
+        ],
+        "owner": "postgres",
+        "config": [
+          "search_path=pg_catalog"
+        ],
+        "signature": "crm_v2_booking_command(uuid,jsonb)",
+        "definitionMd5": "2d3db53ef64ed9c69cc3e534b901e420",
+        "securityDefiner": true
+      },
+      {
+        "acl": [
+          "postgres=X/postgres",
+          "authenticated=X/postgres"
+        ],
+        "owner": "postgres",
+        "config": [
+          "search_path=pg_catalog"
+        ],
+        "signature": "crm_v2_booking_context(uuid,integer)",
+        "definitionMd5": "01189834e30c09fd74afad36250a2884",
+        "securityDefiner": true
+      },
+      {
+        "acl": [
+          "postgres=X/postgres"
+        ],
+        "owner": "postgres",
+        "config": [
+          "search_path=pg_catalog"
+        ],
+        "signature": "crm_v2_change_lead_lifecycle(uuid,jsonb)",
+        "definitionMd5": "7d9101fa804127c23e0afc30edfa3c05",
+        "securityDefiner": true
+      },
+      {
+        "acl": [
+          "postgres=X/postgres"
+        ],
+        "owner": "postgres",
+        "config": [
+          "search_path=pg_catalog"
+        ],
+        "signature": "crm_v2_lead_work_snapshot(uuid,uuid)",
+        "definitionMd5": "caae528a86a6fdf236f71d84a549c032",
+        "securityDefiner": true
+      },
+      {
+        "acl": [
+          "postgres=X/postgres",
+          "authenticated=X/postgres"
+        ],
+        "owner": "postgres",
+        "config": [
+          "search_path=pg_catalog",
+          "TimeZone=UTC"
+        ],
+        "signature": "crm_v2_project_sales_capabilities()",
+        "definitionMd5": "379c1a671c21637a183341299b3a46ab",
+        "securityDefiner": true
+      },
+      {
+        "acl": [
+          "postgres=X/postgres",
+          "authenticated=X/postgres"
+        ],
+        "owner": "postgres",
+        "config": [
+          "search_path=pg_catalog",
+          "TimeZone=UTC"
+        ],
+        "signature": "crm_v2_project_sales(text,text,text,integer)",
+        "definitionMd5": "98563643d181f904fc893e6171b0b05b",
+        "securityDefiner": true
+      },
+      {
+        "acl": [
+          "postgres=X/postgres"
+        ],
+        "owner": "postgres",
+        "config": [
+          "search_path=pg_catalog"
+        ],
+        "signature": "crm_v2_record_lead_work(uuid,jsonb)",
+        "definitionMd5": "9a578d32898ea1c16bf0837d62663279",
+        "securityDefiner": true
+      },
+      {
+        "acl": [
+          "postgres=X/postgres",
+          "authenticated=X/postgres"
+        ],
+        "owner": "postgres",
+        "config": [
+          "search_path=\"\""
+        ],
+        "signature": "crm_v2_role()",
+        "definitionMd5": "5cc44c68a40570b022552b354f30e622",
+        "securityDefiner": false
+      },
+      {
+        "acl": [
+          "postgres=X/postgres"
+        ],
+        "owner": "postgres",
+        "config": [
+          "search_path=\"\""
+        ],
+        "signature": "sales_private.reject_sealed_legacy_fields()",
+        "definitionMd5": "a62f5290470e4a6d7b38b4fef0800497",
+        "securityDefiner": false
+      }
+    ],
+    "transactionTimeoutSupported": true
+  },
+  "privileges": {
+    "roles": [
+      {
+        "oid": "16484",
+        "rolname": "anon",
+        "rolsuper": false,
+        "rolinherit": true,
+        "rolbypassrls": false
+      },
+      {
+        "oid": "16485",
+        "rolname": "authenticated",
+        "rolsuper": false,
+        "rolinherit": true,
+        "rolbypassrls": false
+      },
+      {
+        "oid": "16487",
+        "rolname": "authenticator",
+        "rolsuper": false,
+        "rolinherit": false,
+        "rolbypassrls": false
+      },
+      {
+        "oid": "16486",
+        "rolname": "service_role",
+        "rolsuper": false,
+        "rolinherit": true,
+        "rolbypassrls": true
+      }
+    ],
+    "memberships": [
+      {
+        "set": true,
+        "member": "authenticator",
+        "inherit": false,
+        "grantedRole": "anon"
+      },
+      {
+        "set": true,
+        "member": "authenticator",
+        "inherit": false,
+        "grantedRole": "authenticated"
+      },
+      {
+        "set": true,
+        "member": "authenticator",
+        "inherit": false,
+        "grantedRole": "service_role"
+      },
+      {
+        "set": true,
+        "member": "supabase_storage_admin",
+        "inherit": false,
+        "grantedRole": "authenticator"
+      },
+      {
+        "set": true,
+        "member": "postgres",
+        "inherit": true,
+        "grantedRole": "anon"
+      },
+      {
+        "set": true,
+        "member": "postgres",
+        "inherit": true,
+        "grantedRole": "authenticated"
+      },
+      {
+        "set": true,
+        "member": "postgres",
+        "inherit": true,
+        "grantedRole": "service_role"
+      },
+      {
+        "set": true,
+        "member": "postgres",
+        "inherit": true,
+        "grantedRole": "authenticator"
+      }
+    ],
+    "voicePrivileges": [
+      {
+        "role": "authenticated",
+        "delete": true,
+        "insert": true,
+        "select": true,
+        "update": true
+      },
+      {
+        "role": "anon",
+        "delete": true,
+        "insert": true,
+        "select": true,
+        "update": true
+      },
+      {
+        "role": "service_role",
+        "delete": true,
+        "insert": true,
+        "select": true,
+        "update": true
+      },
+      {
+        "role": "authenticator",
+        "delete": false,
+        "insert": false,
+        "select": false,
+        "update": false
+      }
+    ],
+    "effectiveExecute": [
+      {
+        "role": "anon",
+        "execute": false,
+        "signature": "crm_external_private.booking_activation_allowed(jsonb)",
+        "schemaUsage": false
+      },
+      {
+        "role": "anon",
+        "execute": false,
+        "signature": "crm_external_private.booking_interest_allowed(jsonb,jsonb)",
+        "schemaUsage": false
+      },
+      {
+        "role": "anon",
+        "execute": false,
+        "signature": "crm_external_private.booking_writer_ready()",
+        "schemaUsage": false
+      },
+      {
+        "role": "anon",
+        "execute": false,
+        "signature": "crm_external_private.cutover_operator_check()",
+        "schemaUsage": false
+      },
+      {
+        "role": "anon",
+        "execute": false,
+        "signature": "crm_external_private.guard_booking_plot_stock()",
+        "schemaUsage": false
+      },
+      {
+        "role": "anon",
+        "execute": false,
+        "signature": "crm_external_private.guard_materialized_history()",
+        "schemaUsage": false
+      },
+      {
+        "role": "anon",
+        "execute": false,
+        "signature": "crm_external_private.reject_unreviewed_activation()",
+        "schemaUsage": false
+      },
+      {
+        "role": "anon",
+        "execute": false,
+        "signature": "crm_v2_booking_capabilities()",
+        "schemaUsage": true
+      },
+      {
+        "role": "anon",
+        "execute": false,
+        "signature": "crm_v2_booking_command(uuid,jsonb)",
+        "schemaUsage": true
+      },
+      {
+        "role": "anon",
+        "execute": false,
+        "signature": "crm_v2_booking_context(uuid,integer)",
+        "schemaUsage": true
+      },
+      {
+        "role": "anon",
+        "execute": false,
+        "signature": "crm_v2_change_lead_lifecycle(uuid,jsonb)",
+        "schemaUsage": true
+      },
+      {
+        "role": "anon",
+        "execute": false,
+        "signature": "crm_v2_lead_work_snapshot(uuid,uuid)",
+        "schemaUsage": true
+      },
+      {
+        "role": "anon",
+        "execute": false,
+        "signature": "crm_v2_project_sales_capabilities()",
+        "schemaUsage": true
+      },
+      {
+        "role": "anon",
+        "execute": false,
+        "signature": "crm_v2_project_sales(text,text,text,integer)",
+        "schemaUsage": true
+      },
+      {
+        "role": "anon",
+        "execute": false,
+        "signature": "crm_v2_record_lead_work(uuid,jsonb)",
+        "schemaUsage": true
+      },
+      {
+        "role": "anon",
+        "execute": false,
+        "signature": "crm_v2_role()",
+        "schemaUsage": true
+      },
+      {
+        "role": "anon",
+        "execute": false,
+        "signature": "sales_private.reject_sealed_legacy_fields()",
+        "schemaUsage": false
+      },
+      {
+        "role": "authenticated",
+        "execute": false,
+        "signature": "crm_external_private.booking_activation_allowed(jsonb)",
+        "schemaUsage": false
+      },
+      {
+        "role": "authenticated",
+        "execute": false,
+        "signature": "crm_external_private.booking_interest_allowed(jsonb,jsonb)",
+        "schemaUsage": false
+      },
+      {
+        "role": "authenticated",
+        "execute": false,
+        "signature": "crm_external_private.booking_writer_ready()",
+        "schemaUsage": false
+      },
+      {
+        "role": "authenticated",
+        "execute": false,
+        "signature": "crm_external_private.cutover_operator_check()",
+        "schemaUsage": false
+      },
+      {
+        "role": "authenticated",
+        "execute": false,
+        "signature": "crm_external_private.guard_booking_plot_stock()",
+        "schemaUsage": false
+      },
+      {
+        "role": "authenticated",
+        "execute": false,
+        "signature": "crm_external_private.guard_materialized_history()",
+        "schemaUsage": false
+      },
+      {
+        "role": "authenticated",
+        "execute": false,
+        "signature": "crm_external_private.reject_unreviewed_activation()",
+        "schemaUsage": false
+      },
+      {
+        "role": "authenticated",
+        "execute": true,
+        "signature": "crm_v2_booking_capabilities()",
+        "schemaUsage": true
+      },
+      {
+        "role": "authenticated",
+        "execute": true,
+        "signature": "crm_v2_booking_command(uuid,jsonb)",
+        "schemaUsage": true
+      },
+      {
+        "role": "authenticated",
+        "execute": true,
+        "signature": "crm_v2_booking_context(uuid,integer)",
+        "schemaUsage": true
+      },
+      {
+        "role": "authenticated",
+        "execute": false,
+        "signature": "crm_v2_change_lead_lifecycle(uuid,jsonb)",
+        "schemaUsage": true
+      },
+      {
+        "role": "authenticated",
+        "execute": false,
+        "signature": "crm_v2_lead_work_snapshot(uuid,uuid)",
+        "schemaUsage": true
+      },
+      {
+        "role": "authenticated",
+        "execute": true,
+        "signature": "crm_v2_project_sales_capabilities()",
+        "schemaUsage": true
+      },
+      {
+        "role": "authenticated",
+        "execute": true,
+        "signature": "crm_v2_project_sales(text,text,text,integer)",
+        "schemaUsage": true
+      },
+      {
+        "role": "authenticated",
+        "execute": false,
+        "signature": "crm_v2_record_lead_work(uuid,jsonb)",
+        "schemaUsage": true
+      },
+      {
+        "role": "authenticated",
+        "execute": true,
+        "signature": "crm_v2_role()",
+        "schemaUsage": true
+      },
+      {
+        "role": "authenticated",
+        "execute": false,
+        "signature": "sales_private.reject_sealed_legacy_fields()",
+        "schemaUsage": false
+      },
+      {
+        "role": "authenticator",
+        "execute": false,
+        "signature": "crm_external_private.booking_activation_allowed(jsonb)",
+        "schemaUsage": false
+      },
+      {
+        "role": "authenticator",
+        "execute": false,
+        "signature": "crm_external_private.booking_interest_allowed(jsonb,jsonb)",
+        "schemaUsage": false
+      },
+      {
+        "role": "authenticator",
+        "execute": false,
+        "signature": "crm_external_private.booking_writer_ready()",
+        "schemaUsage": false
+      },
+      {
+        "role": "authenticator",
+        "execute": false,
+        "signature": "crm_external_private.cutover_operator_check()",
+        "schemaUsage": false
+      },
+      {
+        "role": "authenticator",
+        "execute": false,
+        "signature": "crm_external_private.guard_booking_plot_stock()",
+        "schemaUsage": false
+      },
+      {
+        "role": "authenticator",
+        "execute": false,
+        "signature": "crm_external_private.guard_materialized_history()",
+        "schemaUsage": false
+      },
+      {
+        "role": "authenticator",
+        "execute": false,
+        "signature": "crm_external_private.reject_unreviewed_activation()",
+        "schemaUsage": false
+      },
+      {
+        "role": "authenticator",
+        "execute": false,
+        "signature": "crm_v2_booking_capabilities()",
+        "schemaUsage": true
+      },
+      {
+        "role": "authenticator",
+        "execute": false,
+        "signature": "crm_v2_booking_command(uuid,jsonb)",
+        "schemaUsage": true
+      },
+      {
+        "role": "authenticator",
+        "execute": false,
+        "signature": "crm_v2_booking_context(uuid,integer)",
+        "schemaUsage": true
+      },
+      {
+        "role": "authenticator",
+        "execute": false,
+        "signature": "crm_v2_change_lead_lifecycle(uuid,jsonb)",
+        "schemaUsage": true
+      },
+      {
+        "role": "authenticator",
+        "execute": false,
+        "signature": "crm_v2_lead_work_snapshot(uuid,uuid)",
+        "schemaUsage": true
+      },
+      {
+        "role": "authenticator",
+        "execute": false,
+        "signature": "crm_v2_project_sales_capabilities()",
+        "schemaUsage": true
+      },
+      {
+        "role": "authenticator",
+        "execute": false,
+        "signature": "crm_v2_project_sales(text,text,text,integer)",
+        "schemaUsage": true
+      },
+      {
+        "role": "authenticator",
+        "execute": false,
+        "signature": "crm_v2_record_lead_work(uuid,jsonb)",
+        "schemaUsage": true
+      },
+      {
+        "role": "authenticator",
+        "execute": false,
+        "signature": "crm_v2_role()",
+        "schemaUsage": true
+      },
+      {
+        "role": "authenticator",
+        "execute": false,
+        "signature": "sales_private.reject_sealed_legacy_fields()",
+        "schemaUsage": false
+      },
+      {
+        "role": "service_role",
+        "execute": false,
+        "signature": "crm_external_private.booking_activation_allowed(jsonb)",
+        "schemaUsage": false
+      },
+      {
+        "role": "service_role",
+        "execute": false,
+        "signature": "crm_external_private.booking_interest_allowed(jsonb,jsonb)",
+        "schemaUsage": false
+      },
+      {
+        "role": "service_role",
+        "execute": false,
+        "signature": "crm_external_private.booking_writer_ready()",
+        "schemaUsage": false
+      },
+      {
+        "role": "service_role",
+        "execute": false,
+        "signature": "crm_external_private.cutover_operator_check()",
+        "schemaUsage": false
+      },
+      {
+        "role": "service_role",
+        "execute": false,
+        "signature": "crm_external_private.guard_booking_plot_stock()",
+        "schemaUsage": false
+      },
+      {
+        "role": "service_role",
+        "execute": false,
+        "signature": "crm_external_private.guard_materialized_history()",
+        "schemaUsage": false
+      },
+      {
+        "role": "service_role",
+        "execute": false,
+        "signature": "crm_external_private.reject_unreviewed_activation()",
+        "schemaUsage": false
+      },
+      {
+        "role": "service_role",
+        "execute": false,
+        "signature": "crm_v2_booking_capabilities()",
+        "schemaUsage": true
+      },
+      {
+        "role": "service_role",
+        "execute": false,
+        "signature": "crm_v2_booking_command(uuid,jsonb)",
+        "schemaUsage": true
+      },
+      {
+        "role": "service_role",
+        "execute": false,
+        "signature": "crm_v2_booking_context(uuid,integer)",
+        "schemaUsage": true
+      },
+      {
+        "role": "service_role",
+        "execute": false,
+        "signature": "crm_v2_change_lead_lifecycle(uuid,jsonb)",
+        "schemaUsage": true
+      },
+      {
+        "role": "service_role",
+        "execute": false,
+        "signature": "crm_v2_lead_work_snapshot(uuid,uuid)",
+        "schemaUsage": true
+      },
+      {
+        "role": "service_role",
+        "execute": false,
+        "signature": "crm_v2_project_sales_capabilities()",
+        "schemaUsage": true
+      },
+      {
+        "role": "service_role",
+        "execute": false,
+        "signature": "crm_v2_project_sales(text,text,text,integer)",
+        "schemaUsage": true
+      },
+      {
+        "role": "service_role",
+        "execute": false,
+        "signature": "crm_v2_record_lead_work(uuid,jsonb)",
+        "schemaUsage": true
+      },
+      {
+        "role": "service_role",
+        "execute": false,
+        "signature": "crm_v2_role()",
+        "schemaUsage": true
+      },
+      {
+        "role": "service_role",
+        "execute": false,
+        "signature": "sales_private.reject_sealed_legacy_fields()",
+        "schemaUsage": false
+      }
+    ],
+    "voicePolicyRoles": [
+      {
+        "role": "authenticated",
+        "policy": "Allow read access to customer_voices"
+      },
+      {
+        "role": "authenticated",
+        "policy": "Allow write access to customer_voices"
+      }
+    ]
+  },
+  "sourceComparison": {
+    "method": "Exact prosrc body comparison against dollar-quoted CREATE FUNCTION bodies; final definition checked for repeated crm_v2_role. No whitespace normalization required. Not a complete canonical-definition or all-object equivalence test.",
+    "results": [
+      {
+        "signature": "crm_external_private.booking_activation_allowed(jsonb)",
+        "definitions": [
+          {
+            "file": "supabase/migrations/20260929080153_central_booking_commands_candidate.sql",
+            "exact": true,
+            "lineEndingOnly": true
+          }
+        ]
+      },
+      {
+        "signature": "crm_external_private.booking_interest_allowed(jsonb,jsonb)",
+        "definitions": [
+          {
+            "file": "supabase/migrations/20260929080153_central_booking_commands_candidate.sql",
+            "exact": true,
+            "lineEndingOnly": true
+          }
+        ]
+      },
+      {
+        "signature": "crm_external_private.booking_writer_ready()",
+        "definitions": [
+          {
+            "file": "supabase/migrations/20260929080153_central_booking_commands_candidate.sql",
+            "exact": true,
+            "lineEndingOnly": true
+          }
+        ]
+      },
+      {
+        "signature": "crm_external_private.cutover_operator_check()",
+        "definitions": [
+          {
+            "file": "supabase/migrations/20260929082516_central_booking_external_data_candidate.sql",
+            "exact": true,
+            "lineEndingOnly": true
+          }
+        ]
+      },
+      {
+        "signature": "crm_external_private.guard_booking_plot_stock()",
+        "definitions": [
+          {
+            "file": "supabase/migrations/20260929080153_central_booking_commands_candidate.sql",
+            "exact": true,
+            "lineEndingOnly": true
+          }
+        ]
+      },
+      {
+        "signature": "crm_external_private.guard_materialized_history()",
+        "definitions": [
+          {
+            "file": "supabase/migrations/20260929082516_central_booking_external_data_candidate.sql",
+            "exact": true,
+            "lineEndingOnly": true
+          }
+        ]
+      },
+      {
+        "signature": "crm_external_private.reject_unreviewed_activation()",
+        "definitions": [
+          {
+            "file": "supabase/migrations/20260929082516_central_booking_external_data_candidate.sql",
+            "exact": true,
+            "lineEndingOnly": true
+          }
+        ]
+      },
+      {
+        "signature": "crm_v2_booking_capabilities()",
+        "definitions": [
+          {
+            "file": "supabase/migrations/20260929080153_central_booking_commands_candidate.sql",
+            "exact": true,
+            "lineEndingOnly": true
+          }
+        ]
+      },
+      {
+        "signature": "crm_v2_booking_command(uuid,jsonb)",
+        "definitions": [
+          {
+            "file": "supabase/migrations/20260929080153_central_booking_commands_candidate.sql",
+            "exact": true,
+            "lineEndingOnly": true
+          }
+        ]
+      },
+      {
+        "signature": "crm_v2_booking_context(uuid,integer)",
+        "definitions": [
+          {
+            "file": "supabase/migrations/20260929080153_central_booking_commands_candidate.sql",
+            "exact": true,
+            "lineEndingOnly": true
+          }
+        ]
+      },
+      {
+        "signature": "crm_v2_change_lead_lifecycle(uuid,jsonb)",
+        "definitions": [
+          {
+            "file": "supabase/migrations/20260929080153_central_booking_commands_candidate.sql",
+            "exact": true,
+            "lineEndingOnly": true
+          }
+        ]
+      },
+      {
+        "signature": "crm_v2_lead_work_snapshot(uuid,uuid)",
+        "definitions": [
+          {
+            "file": "supabase/migrations/20260929080153_central_booking_commands_candidate.sql",
+            "exact": true,
+            "lineEndingOnly": true
+          }
+        ]
+      },
+      {
+        "signature": "crm_v2_project_sales_capabilities()",
+        "definitions": [
+          {
+            "file": "supabase/migrations/20260929080153_central_booking_commands_candidate.sql",
+            "exact": true,
+            "lineEndingOnly": true
+          }
+        ]
+      },
+      {
+        "signature": "crm_v2_project_sales(text,text,text,integer)",
+        "definitions": [
+          {
+            "file": "supabase/migrations/20260929080153_central_booking_commands_candidate.sql",
+            "exact": true,
+            "lineEndingOnly": true
+          }
+        ]
+      },
+      {
+        "signature": "crm_v2_record_lead_work(uuid,jsonb)",
+        "definitions": [
+          {
+            "file": "supabase/migrations/20260929080153_central_booking_commands_candidate.sql",
+            "exact": true,
+            "lineEndingOnly": true
+          }
+        ]
+      },
+      {
+        "signature": "crm_v2_role()",
+        "definitions": [
+          {
+            "file": "supabase/migrations/20260928090010_crm_sealed_foundation_candidate.sql",
+            "exact": false,
+            "lineEndingOnly": false
+          },
+          {
+            "file": "supabase/migrations/20260928090010_crm_sealed_foundation_candidate.sql",
+            "exact": true,
+            "lineEndingOnly": true
+          }
+        ]
+      },
+      {
+        "signature": "sales_private.reject_sealed_legacy_fields()",
+        "definitions": [
+          {
+            "file": "supabase/migrations/20260928090010_crm_sealed_foundation_candidate.sql",
+            "exact": true,
+            "lineEndingOnly": true
+          }
+        ]
+      }
+    ]
+  },
+  "localSourceSha256": {
+    "supabase/migrations/20260929080153_central_booking_commands_candidate.sql": "BFAFADB339FFA4776F4B35CB9CCEBC0510C1CCD478CA7B8C7BB27A5637B197C1",
+    "supabase/migrations/20260929082516_central_booking_external_data_candidate.sql": "DDCA549D538EDE777DC4FE4E0F8436BACCA3A0F30555359C087ADDA81D0D2CAC",
+    "supabase/migrations/20260928090010_crm_sealed_foundation_candidate.sql": "975497FD9348246AB41962BB78D555D2F5562A4F77DBC9498242529DE8929595"
+  },
+  "outcome": "Sampled baseline source and execution grants match intended booking-only state; Visit production installation is not approved by this report."
+}
+

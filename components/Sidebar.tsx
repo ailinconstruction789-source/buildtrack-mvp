@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, ClipboardList, Home, PieChart, BarChartHorizontal, TrendingUp, Building2, Users, Lightbulb, Grid, Calendar, Activity, ShieldAlert, PlusCircle, MapIcon, Building, DollarSign, Monitor, FileSpreadsheet, Wrench, FolderOpen, Smartphone, ChevronRight, Gift, CalendarDays } from 'lucide-react';
+import { LayoutDashboard, ClipboardList, Home, PieChart, BarChartHorizontal, TrendingUp, Building2, Users, Lightbulb, Grid, Calendar, Activity, ShieldAlert, PlusCircle, MapIcon, Building, DollarSign, Monitor, FileSpreadsheet, Wrench, FolderOpen, Smartphone, ChevronRight, Gift, CalendarDays, FileText, ShieldCheck, Key, User } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
 
@@ -23,6 +23,7 @@ const Sidebar = React.memo(({
 }: any) => {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
   const [todayVisitsCount, setTodayVisitsCount] = useState<number>(0);
+  const [rentalAlertsCount, setRentalAlertsCount] = useState<number>(0);
 
   useEffect(() => {
     if (!isSales && !isAdmin && !isOwner) return;
@@ -49,7 +50,43 @@ const Sidebar = React.memo(({
         // silent fallback
       }
     };
+
+    const fetchRentalAlerts = async () => {
+      try {
+        const today = new Date();
+        const todayStr = today.toISOString().split('T')[0];
+        
+        // 1. Expiring contracts within 30 days
+        const { data: contracts } = await supabase
+          .from('rental_contracts')
+          .select('id, lease_end_date, status')
+          .eq('status', 'Active');
+        
+        let expiring = 0;
+        if (contracts) {
+          contracts.forEach(c => {
+            if (!c.lease_end_date) return;
+            const end = new Date(c.lease_end_date);
+            const diffDays = Math.ceil((end.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+            if (diffDays <= 30 && diffDays >= 0) expiring++;
+          });
+        }
+
+        // 2. Overdue payments
+        const { data: overdues } = await supabase
+          .from('rental_payments')
+          .select('id')
+          .or(`payment_status.eq.Overdue,and(payment_status.eq.Pending,due_date.lt.${todayStr})`);
+
+        const overdueCount = overdues?.length || 0;
+        setRentalAlertsCount(expiring + overdueCount);
+      } catch (e) {
+        // silent fallback
+      }
+    };
+
     fetchTodayVisits();
+    fetchRentalAlerts();
   }, [isSales, isAdmin, isOwner]);
 
   return (
@@ -97,10 +134,24 @@ const Sidebar = React.memo(({
                     <div>
                       <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3 px-2">Sales & CRM</p>
                       <nav className="space-y-1">
-                          <Link href="/sales-crm" title="Lead ส่วนกลาง (เตรียมเปิดใช้)" aria-label="Lead ส่วนกลาง (เตรียมเปิดใช้)"
-                            className={`w-full flex items-center gap-3 py-3 rounded-xl font-bold hover:bg-slate-800 hover:text-[#d4af37] ${isSidebarCollapsed ? 'justify-center px-0' : 'px-4'}`}>
-                            <Users size={18} />{!isSidebarCollapsed && <span>Lead ส่วนกลาง <span className="text-[10px] text-slate-500">เตรียมเปิดใช้</span></span>}
-                          </Link>
+                          <button
+                            onClick={() => { setView('my-sales-workspace'); setSelectedProject(null); }}
+                            onMouseEnter={() => { import('@/components/sales/MySalesWorkspace').catch(() => {}); }}
+                            title="ลูกค้าของฉัน (My Leads)"
+                            aria-label="ลูกค้าของฉัน (My Leads)"
+                            className={`w-full flex items-center gap-3 py-3 rounded-xl font-bold transition-all ${activeView === 'my-sales-workspace' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-4'}`}
+                          >
+                            <User size={18} />{!isSidebarCollapsed && <span>ลูกค้าของฉัน (My Leads)</span>}
+                          </button>
+                          <button
+                            onClick={() => { setView('central-leads'); setSelectedProject(null); }}
+                            onMouseEnter={() => { import('@/components/sales/CentralLeadsView').catch(() => {}); }}
+                            title="Lead ส่วนกลาง (CRM)"
+                            aria-label="Lead ส่วนกลาง (CRM)"
+                            className={`w-full flex items-center gap-3 py-3 rounded-xl font-bold transition-all ${activeView === 'central-leads' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-4'}`}
+                          >
+                            <Users size={18} />{!isSidebarCollapsed && <span>Lead ส่วนกลาง (CRM)</span>}
+                          </button>
                           <button 
                             onClick={() => setView('sales-daily-visits')} 
                             className={`w-full flex items-center justify-between px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-daily-visits' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}
@@ -117,6 +168,7 @@ const Sidebar = React.memo(({
                           </button>
                           <button onClick={() => setView('sales-dashboard-excel')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-dashboard-excel' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><BarChartHorizontal size={18} /> Dashboard (Excel)</button>
                           <button onClick={() => setView('sales-dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-dashboard' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><LayoutDashboard size={18} /> ระบบฝ่ายขาย (Kanban)</button>
+                          <button onClick={() => { setView('sales-funnel-analytics'); setSelectedProject(null); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-funnel-analytics' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><TrendingUp size={18} /> Funnel & KPI Analytics</button>
                           <button onClick={() => setView('sales-reports')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-reports' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><TrendingUp size={18} /> รายงานสรุปยอด (Sales)</button>
                           <button onClick={() => setView('sales-summary-table')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-summary-table' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><Building2 size={18} /> ตารางสรุปฝั่งขาย</button>
                           {/* 🎁 ของแถมโครงการ (Promotions) - เฉพาะ Admin & Sales */}
@@ -125,6 +177,60 @@ const Sidebar = React.memo(({
                           )}
                           <button onClick={() => setView('agent-performance')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'agent-performance' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><Users size={18} /> สรุปผลงานเซลล์</button>
                           <button onClick={() => setView('sales-intelligence')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-intelligence' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><Lightbulb size={18} /> Strategic Report</button>
+                          <button onClick={() => { setView('sales-admin-docs'); setSelectedProject(null); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-admin-docs' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><FileText size={18} /> อัพเดทเอกสาร & สาธารณูปโภค (ธุรการ)</button>
+                          <button onClick={() => { setView('sales-sample-house-logs'); setSelectedProject(null); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'sales-sample-house-logs' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'}`}><ShieldCheck size={18} /> บันทึกตรวจบ้านตัวอย่าง</button>
+                      </nav>
+                    </div>
+                  )}
+
+                  {/* 🔑 AILIN RENTAL (งานเช่า & ผ่อนตรง) */}
+                  {(isAdmin || isOwner || isSales) && (
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-amber-500 mb-3 px-2">Ailin Rental (งานเช่า)</p>
+                      <nav className="space-y-1">
+                        <button
+                          onClick={() => { setView('rental-contracts'); setSelectedProject(null); }}
+                          onMouseEnter={() => { import('@/components/sales/RentalManagementWorkspace').catch(() => {}); }}
+                          title="สัญญาเช่า & ตารางค่างวด"
+                          aria-label="สัญญาเช่า & ตารางค่างวด"
+                          className={`w-full flex items-center gap-3 py-3 rounded-xl font-bold transition-all ${
+                            activeView === 'rental-contracts' ? 'bg-amber-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-amber-400'
+                          } ${isSidebarCollapsed ? 'justify-center px-0' : 'px-4'}`}
+                        >
+                          <Key size={18} />{!isSidebarCollapsed && <span>สัญญาเช่า & ตารางค่างวด</span>}
+                        </button>
+
+                        <button
+                          onClick={() => { setView('rental-analytics'); setSelectedProject(null); }}
+                          onMouseEnter={() => { import('@/components/sales/RentalPortfolioAnalytics').catch(() => {}); }}
+                          title="วิเคราะห์พอร์ตบ้านเช่า & Yield"
+                          aria-label="วิเคราะห์พอร์ตบ้านเช่า & Yield"
+                          className={`w-full flex items-center gap-3 py-3 rounded-xl font-bold transition-all ${
+                            activeView === 'rental-analytics' ? 'bg-amber-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-amber-400'
+                          } ${isSidebarCollapsed ? 'justify-center px-0' : 'px-4'}`}
+                        >
+                          <TrendingUp size={18} />{!isSidebarCollapsed && <span>วิเคราะห์พอร์ต & Yield</span>}
+                        </button>
+
+                        <button
+                          onClick={() => { setView('rental-alerts'); setSelectedProject(null); }}
+                          onMouseEnter={() => { import('@/components/sales/RentalAlertsWidget').catch(() => {}); }}
+                          title="แจ้งเตือนสัญญา & ค้างชำระ"
+                          aria-label="แจ้งเตือนสัญญา & ค้างชำระ"
+                          className={`w-full flex items-center justify-between py-3 rounded-xl font-bold transition-all ${
+                            activeView === 'rental-alerts' ? 'bg-amber-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-amber-400'
+                          } ${isSidebarCollapsed ? 'justify-center px-0' : 'px-4'}`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <ShieldAlert size={18} />
+                            {!isSidebarCollapsed && <span>แจ้งเตือนสัญญา & ค้างชำระ</span>}
+                          </div>
+                          {!isSidebarCollapsed && rentalAlertsCount > 0 && (
+                            <span className="bg-rose-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full animate-pulse shadow-sm">
+                              {rentalAlertsCount}
+                            </span>
+                          )}
+                        </button>
                       </nav>
                     </div>
                   )}
