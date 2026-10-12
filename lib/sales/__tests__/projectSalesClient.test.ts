@@ -29,6 +29,12 @@ describe('project sales browser read client', () => {
     mock.fetch.mockResolvedValue(Response.json({ data: projectSnapshot(projectScope({ projectName: 'โครงการ B' })) }));
     await expect(projectSalesApi.read(projectScope())).rejects.toMatchObject({ code: 'READ_UNAVAILABLE' });
   });
+  it('rejects an old response if the active account changes while the read is pending', async () => {
+    mock.getSession.mockResolvedValueOnce({ data: { session: { user: { id: pid(8) }, access_token: 'fake-token' } }, error: null })
+      .mockResolvedValueOnce({ data: { session: { user: { id: pid(9) }, access_token: 'other-fixture-token' } }, error: null });
+    await expect(projectSalesApi.read(projectScope())).rejects.toMatchObject({ code: 'UNAUTHENTICATED', status: 401 });
+    expect(mock.fetch).toHaveBeenCalledTimes(1);
+  });
   it('keeps setup/permission errors visible without legacy fallback or automatic retry', async () => {
     mock.fetch.mockResolvedValue(Response.json({ error: { code: 'SETUP_REQUIRED', message: 'ยังไม่พร้อม' } }, { status: 503 }));
     await expect(projectSalesApi.read(projectScope())).rejects.toMatchObject({ code: 'SETUP_REQUIRED', status: 503 });

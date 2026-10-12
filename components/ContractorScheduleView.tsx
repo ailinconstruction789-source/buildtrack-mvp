@@ -1,5 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Calendar, Phone, HardHat, AlertTriangle, CheckCircle, PackageCheck, CloudRain, ChevronLeft, ChevronRight, User, Home, Clock } from 'lucide-react';
+import { constructionScheduleAssignmentIndex, constructionScheduleDateMs, constructionScheduleDayGroups, constructionScheduleFirstIndex } from '@/lib/constructionSchedule';
+import { useConstructionScheduleToday } from '@/hooks/constructionScheduleToday';
 
 interface ContractorScheduleViewProps {
   view: string;
@@ -17,11 +19,7 @@ const ContractorScheduleView = function ContractorScheduleView({
   view, schedules, assignments, plots, taskTemplates, contractors, weatherInfo, latestUpdatesMap, loggedInUser
 }: ContractorScheduleViewProps) {
   // View is now conditionally rendered by parent
-  const today = useMemo(() => {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return d;
-  }, []);
+  const today = useConstructionScheduleToday();
 
   const [currentWeekOffset, setCurrentWeekOffset] = useState(0);
   const [checklists, setChecklists] = useState<Record<string, boolean>>({});
@@ -54,7 +52,10 @@ const ContractorScheduleView = function ContractorScheduleView({
     try {
       const stored = localStorage.getItem('buildtrack_call_checklists');
       if (stored) {
-        setChecklists(JSON.parse(stored));
+        const parsed: unknown = JSON.parse(stored);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          setChecklists(Object.fromEntries(Object.entries(parsed).filter(([, value]) => typeof value === 'boolean')));
+        }
       }
     } catch (e) {}
   }, []);
@@ -62,31 +63,36 @@ const ContractorScheduleView = function ContractorScheduleView({
   const toggleChecklist = (key: string) => {
     setChecklists(prev => {
       const updated = { ...prev, [key]: !prev[key] };
-      localStorage.setItem('buildtrack_call_checklists', JSON.stringify(updated));
+      try { localStorage.setItem('buildtrack_call_checklists', JSON.stringify(updated)); } catch {}
       return updated;
     });
   };
 
   // === 1. Prepare Data ===
   const isForeman = loggedInUser?.role?.toLowerCase() === 'foreman';
+  const plotIndex = useMemo(() => constructionScheduleFirstIndex(plots, plot => plot.id), [plots]);
+  const taskIndex = useMemo(() => constructionScheduleFirstIndex(taskTemplates, task => task.id), [taskTemplates]);
+  const assignmentIndex = useMemo(() => constructionScheduleAssignmentIndex(assignments), [assignments]);
+  const contractorIndex = useMemo(() => constructionScheduleFirstIndex(contractors, contractor => contractor.name), [contractors]);
 
   const scheduleList = useMemo(() => {
     return Object.values(schedules || {}).map((sched: any) => {
-      const plot = plots.find(p => p.id === sched.plot_id);
+      const plot = plotIndex.get(sched.plot_id);
       if (!plot) return null;
       if (isForeman && plot.foreman !== loggedInUser.username) return null;
 
-      const task = taskTemplates.find(t => t.id === sched.task_template_id);
+      const task = taskIndex.get(sched.task_template_id);
       
       // Find assignment to get contractor name
-      const assignment = assignments.find(a => a.plot_id === sched.plot_id && a.task_template_id === sched.task_template_id);
+      const assignment = assignmentIndex.get(sched.plot_id)?.get(sched.task_template_id);
       const contractorName = assignment?.contractor_name || 'ไม่ระบุช่าง';
-      const contractor = contractors.find(c => c.name === contractorName);
+      const contractor = contractorIndex.get(contractorName);
       
       const updateData = latestUpdatesMap?.[`${sched.plot_id}-${sched.task_template_id}`];
-      const actualProgress = updateData?.progress || assignment?.current_progress || 0;
-      const pStart = new Date(sched.planned_start).getTime();
-      const pEnd = new Date(sched.planned_end).getTime();
+      const actualProgress = updateData?.progress ?? assignment?.current_progress ?? 0;
+      const pStart = constructionScheduleDateMs(sched.planned_start);
+      const pEnd = constructionScheduleDateMs(sched.planned_end);
+      if (!Number.isFinite(pStart) || !Number.isFinite(pEnd) || pEnd < pStart) return null;
 
       const t = today.getTime();
       const isLateOngoing = pEnd < t && actualProgress < 100;
@@ -105,7 +111,7 @@ const ContractorScheduleView = function ContractorScheduleView({
         isOverdue
       };
     }).filter(s => s !== null && s.task); // Filter out invalid or unauthorized plots
-  }, [schedules, assignments, plots, taskTemplates, contractors, latestUpdatesMap, isForeman, loggedInUser]);
+  }, [schedules, assignmentIndex, plotIndex, taskIndex, contractorIndex, latestUpdatesMap, isForeman, loggedInUser, today]);
 
   // === 2. Generate Calendar Dates ===
   const calendarDays = useMemo(() => {
@@ -121,48 +127,10 @@ const ContractorScheduleView = function ContractorScheduleView({
   }, [today, currentWeekOffset]);
 
   // === 3. Clash Detection ===
-  // Check if multiple contractors are scheduled for the same plot on the same day
-  const getClashesForDay = (date: Date, list: typeof scheduleList) => {
-    const time = date.getTime();
-    const activeForDay = list.filter(s => s.pStart <= time && time <= s.pEnd);
-    
-    // Group by plot
-    const plotGroups: Record<string, typeof scheduleList> = {};
-    activeForDay.forEach(s => {
-      if (!plotGroups[s.plot_id]) plotGroups[s.plot_id] = [];
-      plotGroups[s.plot_id].push(s);
-    });
-
-    // Find plots with multiple different contractors
-    const clashes: any[] = [];
-    Object.entries(plotGroups).forEach(([plotId, tasks]) => {
-      const uniqueContractors = new Set(tasks.map(t => t.contractorName));
-      if (uniqueContractors.size > 1) {
-        clashes.push({ plotId, tasks });
-      }
-    });
-    return clashes;
-  };
-
   const calendarDaysData = useMemo(() => {
     return calendarDays.map((date) => {
       const isToday = date.getTime() === today.getTime();
-      const clashes = getClashesForDay(date, scheduleList);
-      const tasksForDay = scheduleList.filter(s => s.pStart <= date.getTime() && date.getTime() <= s.pEnd);
-      
-      const groupedTasks = Object.entries(
-        tasksForDay.reduce((acc: any, t: any) => {
-          if (!acc[t.plot_id]) acc[t.plot_id] = [];
-          acc[t.plot_id].push(t);
-          return acc;
-        }, {})
-      );
-
-      const groupedTasksWithDetails = groupedTasks.map(([plotId, tasks]: [string, any]) => {
-        const isClashing = clashes.some(c => c.plotId === plotId);
-        const uniqueContractorNames = Array.from(new Set(tasks.map((t:any) => t.contractorName.split(' ')[0]))).join(' / ');
-        return { plotId, tasks, isClashing, uniqueContractorNames };
-      });
+      const { clashes, tasksForDay, groupedTasksWithDetails } = constructionScheduleDayGroups(scheduleList, date.getTime());
 
       return {
         date,

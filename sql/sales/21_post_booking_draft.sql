@@ -1,7 +1,7 @@
 -- SALES V2 POST-BOOKING COMMANDS -- DESIGN ONLY, 2026-09-23.
 -- NEVER RUN ON SUPABASE. Depends on guarded base + 04/05/18.
 -- Actual transfer uses an explicitly entered civil DATE, never a fabricated time.
--- No handover, money/stock mutation,
+-- Explicit day-only handover after actual transfer; no money/stock mutation,
 -- verified-upload claim, backfill, KPI credit, fake Visit or legacy bank status.
 BEGIN;
 DO $draft_only$
@@ -13,9 +13,30 @@ $draft_only$;
 ALTER TABLE public.crm_settings ADD COLUMN post_booking_enabled boolean NOT NULL DEFAULT false;
 ALTER TABLE public.sales ADD COLUMN crm_transfer_date date NULL
   CHECK(crm_transfer_date IS NULL OR (isfinite(crm_transfer_date) AND crm_transfer_date>=DATE '0001-01-01' AND crm_transfer_date<DATE '10000-01-01'));
+ALTER TABLE public.sales ADD COLUMN crm_handover_date date NULL
+  CHECK(crm_handover_date IS NULL OR (isfinite(crm_handover_date) AND crm_handover_date>=DATE '0001-01-01' AND crm_handover_date<DATE '10000-01-01'));
 CREATE TABLE sales_private.post_booking_write_permits (
   transaction_id bigint PRIMARY KEY,backend_pid integer NOT NULL
 );
+-- Exact row images bind the imported-sale adapter to the one locked deal.
+CREATE TABLE sales_private.post_booking_external_write_permits (
+  transaction_id bigint PRIMARY KEY, backend_pid integer NOT NULL, actor_user_id uuid NOT NULL,
+  old_sale jsonb NOT NULL, new_sale jsonb NOT NULL
+);
+ALTER TABLE sales_private.post_booking_external_write_permits ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON sales_private.post_booking_external_write_permits FROM PUBLIC,anon,authenticated;
+CREATE FUNCTION sales_private.crm_post_booking_external_sale_allowed(p_old jsonb,p_new jsonb)
+RETURNS boolean LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog AS $external_allowed$
+DECLARE permit sales_private.post_booking_external_write_permits%ROWTYPE;
+BEGIN
+  SELECT * INTO permit FROM sales_private.post_booking_external_write_permits
+    WHERE transaction_id=txid_current() AND backend_pid=pg_backend_pid();
+  RETURN permit.transaction_id IS NOT NULL AND auth.uid() IS NOT NULL AND permit.actor_user_id=auth.uid()
+    AND public.crm_v2_role() IN ('sales','admin') AND permit.old_sale=p_old
+    AND permit.new_sale-'updated_at'=p_new-'updated_at';
+END;
+$external_allowed$;
+REVOKE ALL ON FUNCTION sales_private.crm_post_booking_external_sale_allowed(jsonb,jsonb) FROM PUBLIC,anon,authenticated;
 CREATE TABLE sales_private.post_booking_command_requests (
   actor_user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE RESTRICT,
   request_id uuid NOT NULL,request_payload jsonb NOT NULL,response jsonb NOT NULL,
@@ -25,21 +46,24 @@ CREATE TABLE sales_private.post_booking_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   customer_id uuid NOT NULL REFERENCES public.sales_customers(id) ON DELETE RESTRICT,
   project_interest_id uuid NOT NULL,sale_id uuid NOT NULL,
-  command text NOT NULL CHECK(command IN ('advance','submit_loan','loan_result','confirm_transfer')),
+  command text NOT NULL CHECK(command IN ('advance','submit_loan','loan_result','confirm_transfer','confirm_handover')),
   from_stage text NOT NULL,to_stage text NOT NULL,
   actor_user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE RESTRICT,
   reason text NOT NULL CHECK(length(btrim(reason)) BETWEEN 1 AND 1000),
   evidence_note text NULL CHECK(length(btrim(evidence_note)) BETWEEN 1 AND 1000),
   occurred_at timestamptz NULL CHECK(isfinite(occurred_at)),
   transfer_date date NULL CHECK(isfinite(transfer_date) AND transfer_date>=DATE '0001-01-01' AND transfer_date<DATE '10000-01-01'),
+  handover_date date NULL CHECK(isfinite(handover_date) AND handover_date>=DATE '0001-01-01' AND handover_date<DATE '10000-01-01'),
   recorded_at timestamptz NOT NULL CHECK(isfinite(recorded_at)),
   loan_attempt_id uuid REFERENCES public.loan_attempts(id) ON DELETE RESTRICT,
   FOREIGN KEY(project_interest_id,customer_id) REFERENCES public.lead_project_interests(id,customer_id) ON DELETE RESTRICT,
   FOREIGN KEY(sale_id,project_interest_id) REFERENCES public.sales(id,project_interest_id) ON DELETE RESTRICT,
   CHECK(occurred_at<=recorded_at),CHECK(from_stage<>to_stage),
   CHECK((command='confirm_transfer' AND transfer_date IS NOT NULL AND occurred_at IS NULL AND evidence_note IS NULL
-      AND loan_attempt_id IS NULL AND from_stage='transfer_pending' AND to_stage='transferred')
-    OR (command<>'confirm_transfer' AND transfer_date IS NULL AND occurred_at IS NOT NULL AND evidence_note IS NOT NULL))
+      AND handover_date IS NULL AND loan_attempt_id IS NULL AND from_stage='transfer_pending' AND to_stage='transferred')
+    OR (command='confirm_handover' AND handover_date IS NOT NULL AND transfer_date IS NULL AND occurred_at IS NULL AND evidence_note IS NULL
+      AND loan_attempt_id IS NULL AND from_stage='transferred' AND to_stage='handover')
+    OR (command NOT IN ('confirm_transfer','confirm_handover') AND transfer_date IS NULL AND handover_date IS NULL AND occurred_at IS NOT NULL AND evidence_note IS NOT NULL))
 );
 CREATE INDEX post_booking_events_sale_history_idx ON sales_private.post_booking_events(sale_id,recorded_at DESC,id DESC);
 ALTER TABLE sales_private.post_booking_write_permits ENABLE ROW LEVEL SECURITY;
@@ -57,7 +81,23 @@ AS $protect_transfer$
 BEGIN
   IF TG_OP='UPDATE' AND OLD.project_interest_id IS NOT NULL AND OLD.crm_stage IN ('transferred','handover')
     AND (NEW.crm_stage IS DISTINCT FROM OLD.crm_stage OR NEW.contract_status IS DISTINCT FROM OLD.contract_status
-      OR NEW.crm_transfer_date IS DISTINCT FROM OLD.crm_transfer_date) THEN RAISE EXCEPTION 'CRM_POST_BOOKING_CONFLICT'; END IF;
+      OR NEW.crm_transfer_date IS DISTINCT FROM OLD.crm_transfer_date) THEN
+    IF OLD.crm_stage<>'transferred' OR NEW.crm_stage<>'handover' OR NEW.contract_status IS DISTINCT FROM OLD.contract_status
+      OR NEW.crm_transfer_date IS DISTINCT FROM OLD.crm_transfer_date OR OLD.crm_handover_date IS NOT NULL OR NEW.crm_handover_date IS NULL
+      OR NOT EXISTS(SELECT 1 FROM sales_private.post_booking_write_permits WHERE transaction_id=txid_current() AND backend_pid=pg_backend_pid()) THEN
+      RAISE EXCEPTION 'CRM_POST_BOOKING_CONFLICT'; END IF;
+  END IF;
+  IF (TG_OP='INSERT' AND NEW.crm_handover_date IS NOT NULL)
+    OR (TG_OP='UPDATE' AND (NEW.crm_handover_date IS DISTINCT FROM OLD.crm_handover_date
+      OR (NEW.project_interest_id IS NOT NULL AND NEW.crm_stage='handover' AND OLD.crm_stage IS DISTINCT FROM NEW.crm_stage))) THEN
+    IF NOT EXISTS(SELECT 1 FROM sales_private.post_booking_write_permits WHERE transaction_id=txid_current() AND backend_pid=pg_backend_pid()) THEN
+      RAISE EXCEPTION 'CRM_POST_BOOKING_FORBIDDEN'; END IF;
+    IF TG_OP<>'UPDATE' OR OLD.crm_stage IS DISTINCT FROM 'transferred' OR NEW.crm_stage IS DISTINCT FROM 'handover'
+      OR OLD.crm_handover_date IS NOT NULL OR NEW.crm_handover_date IS NULL OR NEW.crm_transfer_date IS DISTINCT FROM OLD.crm_transfer_date
+      OR to_jsonb(OLD)-ARRAY['crm_stage','booking_revision','crm_handover_date','updated_at']
+        IS DISTINCT FROM to_jsonb(NEW)-ARRAY['crm_stage','booking_revision','crm_handover_date','updated_at'] THEN
+      RAISE EXCEPTION 'CRM_POST_BOOKING_CONFLICT'; END IF;
+  END IF;
   IF (TG_OP='INSERT' AND NEW.crm_transfer_date IS NOT NULL)
     OR (TG_OP='UPDATE' AND (NEW.crm_transfer_date IS DISTINCT FROM OLD.crm_transfer_date
       OR (NEW.project_interest_id IS NOT NULL AND NEW.crm_stage='transferred' AND OLD.crm_stage IS DISTINCT FROM NEW.crm_stage))) THEN
@@ -116,7 +156,7 @@ CREATE TRIGGER crm_post_booking_protect_event BEFORE INSERT OR UPDATE OR DELETE 
 CREATE FUNCTION public.crm_v2_post_booking_capabilities()
 RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog SET timezone='UTC'
 AS $capabilities$
-  SELECT jsonb_build_object('contract_version','post_booking_v2','enabled',
+  SELECT jsonb_build_object('contract_version','post_booking_v3','enabled',
     COALESCE((public.crm_v2_booking_capabilities()->>'enabled')::boolean,false)
       AND COALESCE((SELECT post_booking_enabled FROM public.crm_settings WHERE id),false));
 $capabilities$;
@@ -138,7 +178,7 @@ AS $context$
 DECLARE
   actor_id uuid:=auth.uid(); actor_role text:=public.crm_v2_role(); sale_row public.sales%ROWTYPE;
   interest_row public.lead_project_interests%ROWTYPE; customer_row public.sales_customers%ROWTYPE;
-  attempts_json jsonb; events_json jsonb; latest_json jsonb; attempts_more boolean; events_more boolean;
+  imported_history jsonb; attempts_json jsonb; events_json jsonb; latest_json jsonb; attempts_more boolean; events_more boolean;
 BEGIN
   IF actor_id IS NULL OR COALESCE(actor_role,'') NOT IN ('sales','admin','owner') THEN RAISE EXCEPTION 'CRM_POST_BOOKING_FORBIDDEN'; END IF;
   IF (public.crm_v2_post_booking_capabilities()->>'enabled')::boolean IS DISTINCT FROM true THEN RAISE EXCEPTION 'CRM_POST_BOOKING_SETUP_REQUIRED'; END IF;
@@ -151,7 +191,8 @@ BEGIN
   SELECT * INTO customer_row FROM public.sales_customers WHERE id=interest_row.customer_id;
   IF NOT FOUND OR customer_row.merged_into_customer_id IS NOT NULL OR NOT EXISTS(SELECT 1 FROM sales_private.crm_user_roles
     WHERE user_id=interest_row.owner_user_id AND role='sales') THEN RAISE EXCEPTION 'CRM_POST_BOOKING_SETUP_REQUIRED'; END IF;
-  IF sale_row.crm_stage IS NULL OR sale_row.booking_round IS NULL
+  imported_history:=sales_private.crm_booking_imported_history(to_jsonb(sale_row));
+  IF sale_row.crm_stage IS NULL OR (sale_row.booking_round IS NULL AND imported_history IS NULL)
     OR (sale_row.plot_id IS NULL AND sale_row.crm_stage<>'cancelled')
     OR (sale_row.plot_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM public.plots WHERE id=sale_row.plot_id AND project_name=interest_row.project_name))
     OR EXISTS(SELECT 1 FROM public.loan_attempts a WHERE a.sale_id=p_sale_id AND a.kind='purchase' AND a.project_interest_id<>interest_row.id) THEN
@@ -169,15 +210,15 @@ BEGIN
     SELECT *,row_number() OVER(ORDER BY recorded_at DESC,id DESC) rn FROM rows)
   SELECT COALESCE(jsonb_agg(jsonb_build_object('id',id,'command',command,'fromStage',from_stage,'toStage',to_stage,
     'occurredAt',occurred_at,'recordedAt',recorded_at,'actorUserId',actor_user_id,'reason',reason,
-    'evidenceNote',evidence_note,'loanAttemptId',loan_attempt_id,'transferDate',transfer_date) ORDER BY recorded_at DESC,id DESC)
+    'evidenceNote',evidence_note,'loanAttemptId',loan_attempt_id,'transferDate',transfer_date,'handoverDate',handover_date) ORDER BY recorded_at DESC,id DESC)
     FILTER(WHERE rn<=50),'[]'::jsonb),count(*)>50 INTO events_json,events_more FROM numbered;
   RETURN jsonb_build_object('actor',jsonb_build_object('userId',actor_id,'role',actor_role),
     'sale',jsonb_build_object('id',sale_row.id,'customerId',customer_row.id,'customerName',customer_row.customer_name,
       'interestId',interest_row.id,'projectName',interest_row.project_name,'plotId',sale_row.plot_id,'stage',sale_row.crm_stage,
-      'paymentMethod',sale_row.payment_method,'bookedAt',sale_row.booked_at,'contractedAt',sale_row.contracted_at,'transferDate',sale_row.crm_transfer_date,
+      'paymentMethod',sale_row.payment_method,'bookedAt',sale_row.booked_at,'contractedAt',sale_row.contracted_at,'transferDate',sale_row.crm_transfer_date,'handoverDate',sale_row.crm_handover_date,'importedHistory',imported_history,
       'revision',sale_row.booking_revision,'interestRevision',interest_row.lifecycle_revision,'ownerUserId',interest_row.owner_user_id,
       'canEdit',(actor_role='admin' OR (actor_role='sales' AND actor_id=interest_row.owner_user_id))
-        AND sale_row.payment_method IS NOT NULL AND sale_row.crm_stage NOT IN ('cancelled','transferred','handover')
+        AND (sale_row.payment_method IS NOT NULL OR sale_row.crm_stage='transferred') AND sale_row.crm_stage NOT IN ('cancelled','handover')
         AND (sale_row.payment_method='mortgage' OR sale_row.crm_stage NOT IN ('loan_submitted','loan_rejected','loan_approved'))
         AND EXISTS(SELECT 1 FROM sales_private.crm_user_roles WHERE user_id=interest_row.owner_user_id AND role='sales' AND is_active)),
     'latestAttempt',latest_json,'attempts',attempts_json,'attemptPage',p_attempt_page,'attemptsHasMore',attempts_more,
@@ -195,12 +236,12 @@ DECLARE
   command_name text; allowed_keys text[]; reason_value text; evidence_value text; bank_value text; next_stage text;
   customer_id_value uuid; sale_id_value uuid; expected_sale uuid; expected_interest uuid; loan_id_value uuid;
   occurred_value timestamptz; server_now timestamptz; latest_event_time timestamptz; enabled boolean;
-  transfer_value date; latest_loan_time timestamptz; plot_row public.plots%ROWTYPE;
+  transfer_value date; handover_value date; imported_history jsonb; latest_loan_time timestamptz; plot_row public.plots%ROWTYPE;
   actor_active boolean:=false; owner_active boolean:=false; role_row sales_private.crm_user_roles%ROWTYPE;
   customer_row public.sales_customers%ROWTYPE; interest_row public.lead_project_interests%ROWTYPE; sale_row public.sales%ROWTYPE;
   latest_attempt public.loan_attempts%ROWTYPE; loan_row public.loan_attempts%ROWTYPE;
   request_row sales_private.post_booking_command_requests%ROWTYPE;
-  amount_satang bigint; next_attempt integer; event_id_value uuid; response_value jsonb; old_sale jsonb; old_loan jsonb;
+  amount_satang bigint; next_attempt integer; event_id_value uuid; response_value jsonb; old_sale jsonb; old_loan jsonb; next_revision uuid;
 BEGIN
   IF actor_id IS NULL OR COALESCE(actor_role,'') NOT IN ('sales','admin') THEN RAISE EXCEPTION 'CRM_POST_BOOKING_FORBIDDEN'; END IF;
   SELECT central_intake_enabled AND lead_work_enabled AND lead_lifecycle_enabled AND booking_enabled AND booking_cutover_reviewed AND post_booking_enabled
@@ -210,20 +251,21 @@ BEGIN
     OR jsonb_typeof(p_payload->'command') IS DISTINCT FROM 'string' THEN RAISE EXCEPTION 'CRM_POST_BOOKING_INVALID_INPUT'; END IF;
   command_name:=p_payload->>'command';
   allowed_keys:=ARRAY['command','customerId','saleId','expectedSaleRevision','expectedInterestRevision','reason']||
-    CASE WHEN command_name='confirm_transfer' THEN ARRAY['transferDate'] ELSE ARRAY['evidenceNote','occurredAt']||
+    CASE WHEN command_name='confirm_transfer' THEN ARRAY['transferDate'] WHEN command_name='confirm_handover' THEN ARRAY['handoverDate'] ELSE ARRAY['evidenceNote','occurredAt']||
     CASE command_name WHEN 'advance' THEN ARRAY['nextStage'] WHEN 'submit_loan' THEN ARRAY['bankName']
       WHEN 'loan_result' THEN ARRAY['loanAttemptId','result','approvedAmountSatang'] ELSE NULL END END;
-  IF command_name NOT IN ('advance','submit_loan','loan_result','confirm_transfer') OR NOT(p_payload ?& allowed_keys)
+  IF command_name NOT IN ('advance','submit_loan','loan_result','confirm_transfer','confirm_handover') OR NOT(p_payload ?& allowed_keys)
     OR EXISTS(SELECT 1 FROM jsonb_object_keys(p_payload) k WHERE NOT(k=ANY(allowed_keys)))
     OR jsonb_typeof(p_payload->'reason') IS DISTINCT FROM 'string'
     OR (command_name='confirm_transfer' AND jsonb_typeof(p_payload->'transferDate') IS DISTINCT FROM 'string')
-    OR (command_name<>'confirm_transfer' AND (jsonb_typeof(p_payload->'evidenceNote') IS DISTINCT FROM 'string'
+    OR (command_name='confirm_handover' AND jsonb_typeof(p_payload->'handoverDate') IS DISTINCT FROM 'string')
+    OR (command_name NOT IN ('confirm_transfer','confirm_handover') AND (jsonb_typeof(p_payload->'evidenceNote') IS DISTINCT FROM 'string'
       OR jsonb_typeof(p_payload->'occurredAt') IS DISTINCT FROM 'string')) THEN RAISE EXCEPTION 'CRM_POST_BOOKING_INVALID_INPUT'; END IF;
   BEGIN
     customer_id_value:=sales_private.crm_booking_uuid(p_payload->'customerId'); sale_id_value:=sales_private.crm_booking_uuid(p_payload->'saleId');
     expected_sale:=sales_private.crm_booking_uuid(p_payload->'expectedSaleRevision'); expected_interest:=sales_private.crm_booking_uuid(p_payload->'expectedInterestRevision');
     reason_value:=sales_private.crm_work_text(p_payload->>'reason',1000);
-    IF command_name<>'confirm_transfer' THEN
+    IF command_name NOT IN ('confirm_transfer','confirm_handover') THEN
       evidence_value:=sales_private.crm_work_text(p_payload->>'evidenceNote',1000);
       occurred_value:=sales_private.crm_work_timestamp(p_payload->>'occurredAt');
     END IF;
@@ -238,6 +280,13 @@ BEGIN
     IF NOT isfinite(transfer_value) OR transfer_value<DATE '0001-01-01' OR transfer_value>=DATE '10000-01-01' THEN
       RAISE EXCEPTION 'CRM_POST_BOOKING_INVALID_INPUT'; END IF;
     next_stage:='transferred';
+  ELSIF command_name='confirm_handover' THEN
+    IF (p_payload->>'handoverDate') !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN RAISE EXCEPTION 'CRM_POST_BOOKING_INVALID_INPUT'; END IF;
+    BEGIN handover_value:=(p_payload->>'handoverDate')::date;
+    EXCEPTION WHEN invalid_datetime_format OR datetime_field_overflow THEN RAISE EXCEPTION 'CRM_POST_BOOKING_INVALID_INPUT'; END;
+    IF NOT isfinite(handover_value) OR handover_value<DATE '0001-01-01' OR handover_value>=DATE '10000-01-01' THEN
+      RAISE EXCEPTION 'CRM_POST_BOOKING_INVALID_INPUT'; END IF;
+    next_stage:='handover';
   ELSIF command_name='advance' THEN
     IF jsonb_typeof(p_payload->'nextStage') IS DISTINCT FROM 'string' OR p_payload->>'nextStage' NOT IN ('contracted','downpayment','document_prep','transfer_pending') THEN
       RAISE EXCEPTION 'CRM_POST_BOOKING_INVALID_INPUT'; END IF;
@@ -283,9 +332,10 @@ BEGIN
   END IF;
   IF sale_row.booking_revision IS DISTINCT FROM expected_sale OR interest_row.lifecycle_revision IS DISTINCT FROM expected_interest THEN
     RAISE EXCEPTION 'CRM_POST_BOOKING_STALE_STATE'; END IF;
-  IF sale_row.crm_stage IN ('cancelled','transferred','handover') OR (sale_row.crm_stage='transfer_pending' AND command_name<>'confirm_transfer') THEN
+  IF sale_row.crm_stage IN ('cancelled','handover') OR (sale_row.crm_stage='transferred' AND command_name<>'confirm_handover') OR (sale_row.crm_stage='transfer_pending' AND command_name<>'confirm_transfer') THEN
     RAISE EXCEPTION 'CRM_POST_BOOKING_CONFLICT'; END IF;
-  IF sale_row.payment_method IS NULL OR sale_row.crm_stage IS NULL OR sale_row.booking_round IS NULL
+  imported_history:=sales_private.crm_booking_imported_history(to_jsonb(sale_row));
+  IF (sale_row.payment_method IS NULL AND command_name<>'confirm_handover') OR sale_row.crm_stage IS NULL OR (sale_row.booking_round IS NULL AND imported_history IS NULL)
     OR NOT EXISTS(SELECT 1 FROM public.plots WHERE id=sale_row.plot_id AND project_name=interest_row.project_name)
     OR EXISTS(SELECT 1 FROM public.sales WHERE lead_id=customer_row.legacy_source_lead_id AND project_interest_id IS NULL) THEN
     RAISE EXCEPTION 'CRM_POST_BOOKING_SETUP_REQUIRED'; END IF;
@@ -295,12 +345,27 @@ BEGIN
     ORDER BY attempt_number DESC,id LIMIT 1 FOR UPDATE;
   SELECT max(occurred_at) INTO latest_event_time FROM sales_private.post_booking_events WHERE sale_id=sale_row.id;
   IF (sale_row.booked_at IS NOT NULL AND NOT isfinite(sale_row.booked_at)) OR (sale_row.contracted_at IS NOT NULL AND NOT isfinite(sale_row.contracted_at))
+    OR (sale_row.transferred_at IS NOT NULL AND NOT isfinite(sale_row.transferred_at))
     OR (latest_attempt.submitted_at IS NOT NULL AND NOT isfinite(latest_attempt.submitted_at))
     OR (latest_attempt.result_at IS NOT NULL AND NOT isfinite(latest_attempt.result_at)) THEN RAISE EXCEPTION 'CRM_POST_BOOKING_SETUP_REQUIRED'; END IF;
   IF occurred_value<sale_row.booked_at OR occurred_value<sale_row.contracted_at OR occurred_value<latest_event_time
     OR occurred_value<latest_attempt.submitted_at OR occurred_value<latest_attempt.result_at THEN RAISE EXCEPTION 'CRM_POST_BOOKING_INVALID_INPUT'; END IF;
+  IF occurred_value IS NOT NULL AND (occurred_value AT TIME ZONE 'Asia/Bangkok')::date<(imported_history->>'bookedDate')::date THEN
+    RAISE EXCEPTION 'CRM_POST_BOOKING_INVALID_INPUT'; END IF;
   old_sale:=to_jsonb(sale_row); old_loan:=NULL;
-  IF command_name='confirm_transfer' THEN
+  IF command_name='confirm_handover' THEN
+    IF sale_row.crm_stage<>'transferred' OR sale_row.crm_handover_date IS NOT NULL THEN RAISE EXCEPTION 'CRM_POST_BOOKING_CONFLICT'; END IF;
+    SELECT * INTO plot_row FROM public.plots WHERE id=sale_row.plot_id FOR UPDATE;
+    IF NOT FOUND OR plot_row.project_name IS DISTINCT FROM interest_row.project_name OR plot_row.has_customer IS DISTINCT FROM true THEN
+      RAISE EXCEPTION 'CRM_POST_BOOKING_SETUP_REQUIRED'; END IF;
+    SELECT max(GREATEST(submitted_at,result_at)) INTO latest_loan_time FROM public.loan_attempts WHERE sale_id=sale_row.id AND kind='purchase';
+    IF handover_value>(server_now AT TIME ZONE 'Asia/Bangkok')::date OR handover_value<sale_row.crm_transfer_date
+      OR handover_value<(imported_history->>'bookedDate')::date OR handover_value<(imported_history->>'transferredDate')::date
+      OR handover_value<(sale_row.transferred_at AT TIME ZONE 'Asia/Bangkok')::date
+      OR handover_value<(sale_row.booked_at AT TIME ZONE 'Asia/Bangkok')::date OR handover_value<(sale_row.contracted_at AT TIME ZONE 'Asia/Bangkok')::date
+      OR handover_value<(latest_event_time AT TIME ZONE 'Asia/Bangkok')::date OR handover_value<(latest_loan_time AT TIME ZONE 'Asia/Bangkok')::date THEN
+      RAISE EXCEPTION 'CRM_POST_BOOKING_INVALID_INPUT'; END IF;
+  ELSIF command_name='confirm_transfer' THEN
     IF sale_row.crm_stage<>'transfer_pending' OR sale_row.crm_transfer_date IS NOT NULL THEN RAISE EXCEPTION 'CRM_POST_BOOKING_CONFLICT'; END IF;
     SELECT * INTO plot_row FROM public.plots WHERE id=sale_row.plot_id FOR UPDATE;
     IF NOT FOUND OR plot_row.project_name IS DISTINCT FROM interest_row.project_name OR plot_row.has_customer IS DISTINCT FROM true THEN
@@ -317,7 +382,7 @@ BEGIN
       AND ((submitted_at IS NOT NULL AND NOT isfinite(submitted_at)) OR (result_at IS NOT NULL AND NOT isfinite(result_at)))) THEN
       RAISE EXCEPTION 'CRM_POST_BOOKING_SETUP_REQUIRED'; END IF;
     SELECT max(GREATEST(submitted_at,result_at)) INTO latest_loan_time FROM public.loan_attempts WHERE sale_id=sale_row.id AND kind='purchase';
-    IF transfer_value>(server_now AT TIME ZONE 'Asia/Bangkok')::date
+    IF transfer_value<(imported_history->>'bookedDate')::date OR transfer_value>(server_now AT TIME ZONE 'Asia/Bangkok')::date
       OR transfer_value<(sale_row.booked_at AT TIME ZONE 'Asia/Bangkok')::date
       OR transfer_value<(sale_row.contracted_at AT TIME ZONE 'Asia/Bangkok')::date
       OR transfer_value<(latest_event_time AT TIME ZONE 'Asia/Bangkok')::date
@@ -326,9 +391,13 @@ BEGIN
     IF NOT ((sale_row.crm_stage='booked' AND next_stage='contracted')
       OR (sale_row.crm_stage='contracted' AND next_stage IN ('downpayment','document_prep'))
       OR (sale_row.crm_stage='downpayment' AND next_stage='document_prep')
+      OR (sale_row.payment_method='mortgage' AND sale_row.crm_stage='loan_rejected' AND next_stage='document_prep')
       OR (next_stage='transfer_pending' AND ((sale_row.payment_method='cash' AND sale_row.crm_stage IN ('contracted','downpayment','document_prep'))
         OR (sale_row.payment_method='mortgage' AND sale_row.crm_stage='loan_approved')))) THEN RAISE EXCEPTION 'CRM_POST_BOOKING_CONFLICT'; END IF;
     IF next_stage='contracted' AND sale_row.contracted_at IS NOT NULL THEN RAISE EXCEPTION 'CRM_POST_BOOKING_SETUP_REQUIRED'; END IF;
+    IF sale_row.crm_stage='loan_rejected' AND (latest_attempt.id IS NULL OR latest_attempt.result_status<>'rejected'
+      OR latest_attempt.result_at IS NULL OR latest_attempt.submitted_at IS NULL OR latest_attempt.result_at<latest_attempt.submitted_at
+      OR latest_attempt.approved_amount IS NOT NULL) THEN RAISE EXCEPTION 'CRM_POST_BOOKING_SETUP_REQUIRED'; END IF;
     IF sale_row.payment_method='cash' AND latest_attempt.id IS NOT NULL THEN RAISE EXCEPTION 'CRM_POST_BOOKING_SETUP_REQUIRED'; END IF;
     IF next_stage='transfer_pending' AND sale_row.payment_method='mortgage' AND (latest_attempt.id IS NULL
       OR latest_attempt.project_interest_id<>interest_row.id OR latest_attempt.result_status<>'approved'
@@ -338,13 +407,9 @@ BEGIN
       OR EXISTS(SELECT 1 FROM public.loan_attempts WHERE sale_id=sale_row.id AND kind='purchase' AND result_status IN ('submitted','pending'))) THEN
       RAISE EXCEPTION 'CRM_POST_BOOKING_SETUP_REQUIRED'; END IF;
   ELSIF command_name='submit_loan' THEN
-    IF sale_row.payment_method<>'mortgage' OR sale_row.crm_stage NOT IN ('document_prep','loan_rejected') THEN RAISE EXCEPTION 'CRM_POST_BOOKING_CONFLICT'; END IF;
+    IF sale_row.payment_method<>'mortgage' OR sale_row.crm_stage<>'document_prep' THEN RAISE EXCEPTION 'CRM_POST_BOOKING_CONFLICT'; END IF;
     IF EXISTS(SELECT 1 FROM public.loan_attempts WHERE sale_id=sale_row.id AND kind='purchase' AND result_status IN ('submitted','pending')) THEN
       RAISE EXCEPTION 'CRM_POST_BOOKING_CONFLICT'; END IF;
-    IF sale_row.crm_stage='loan_rejected' AND (latest_attempt.id IS NULL OR latest_attempt.result_status<>'rejected'
-      OR latest_attempt.result_at IS NULL OR latest_attempt.submitted_at IS NULL OR latest_attempt.result_at<latest_attempt.submitted_at
-      OR latest_attempt.approved_amount IS NOT NULL) THEN
-      RAISE EXCEPTION 'CRM_POST_BOOKING_SETUP_REQUIRED'; END IF;
     SELECT COALESCE(max(attempt_number),0)+1 INTO next_attempt FROM public.loan_attempts WHERE sale_id=sale_row.id;
     INSERT INTO sales_private.post_booking_write_permits VALUES(txid_current(),pg_backend_pid());
     INSERT INTO public.loan_attempts(project_interest_id,sale_id,attempt_number,kind,bank_name,result_status,submitted_at,recorded_by_user_id,created_at)
@@ -362,25 +427,34 @@ BEGIN
     UPDATE public.loan_attempts SET result_status=p_payload->>'result',result_at=occurred_value,result_reason=reason_value,
       approved_amount=CASE WHEN p_payload->>'result'='approved' THEN amount_satang/100.0 ELSE NULL END WHERE id=loan_id_value RETURNING * INTO loan_row;
   END IF;
-  IF command_name IN ('advance','confirm_transfer') THEN INSERT INTO sales_private.post_booking_write_permits VALUES(txid_current(),pg_backend_pid()); END IF;
+  IF command_name IN ('advance','confirm_transfer','confirm_handover') THEN INSERT INTO sales_private.post_booking_write_permits VALUES(txid_current(),pg_backend_pid()); END IF;
   INSERT INTO sales_private.booking_write_permits VALUES(txid_current(),pg_backend_pid());
-  UPDATE public.sales SET crm_stage=next_stage,booking_revision=gen_random_uuid(),
+  next_revision:=gen_random_uuid();
+  INSERT INTO sales_private.post_booking_external_write_permits VALUES(txid_current(),pg_backend_pid(),actor_id,old_sale,
+    old_sale||jsonb_build_object('crm_stage',next_stage,'booking_revision',next_revision,
+      'contracted_at',CASE WHEN next_stage='contracted' THEN occurred_value ELSE sale_row.contracted_at END,
+      'crm_transfer_date',CASE WHEN command_name='confirm_transfer' THEN transfer_value ELSE sale_row.crm_transfer_date END,
+      'crm_handover_date',CASE WHEN command_name='confirm_handover' THEN handover_value ELSE sale_row.crm_handover_date END,
+      'contract_status',CASE WHEN command_name='confirm_transfer' THEN 'Transferred' ELSE sale_row.contract_status END));
+  UPDATE public.sales SET crm_stage=next_stage,booking_revision=next_revision,
     contracted_at=CASE WHEN next_stage='contracted' THEN occurred_value ELSE contracted_at END,
     crm_transfer_date=CASE WHEN command_name='confirm_transfer' THEN transfer_value ELSE crm_transfer_date END,
+    crm_handover_date=CASE WHEN command_name='confirm_handover' THEN handover_value ELSE crm_handover_date END,
     contract_status=CASE WHEN command_name='confirm_transfer' THEN 'Transferred' ELSE contract_status END
     WHERE id=sale_row.id RETURNING * INTO sale_row;
   DELETE FROM sales_private.booking_write_permits WHERE transaction_id=txid_current();
-  INSERT INTO sales_private.post_booking_events(customer_id,project_interest_id,sale_id,command,from_stage,to_stage,actor_user_id,reason,evidence_note,occurred_at,recorded_at,loan_attempt_id,transfer_date)
-    VALUES(customer_id_value,interest_row.id,sale_row.id,command_name,old_sale->>'crm_stage',next_stage,actor_id,reason_value,evidence_value,occurred_value,server_now,loan_id_value,transfer_value)
+  DELETE FROM sales_private.post_booking_external_write_permits WHERE transaction_id=txid_current() AND backend_pid=pg_backend_pid();
+  INSERT INTO sales_private.post_booking_events(customer_id,project_interest_id,sale_id,command,from_stage,to_stage,actor_user_id,reason,evidence_note,occurred_at,recorded_at,loan_attempt_id,transfer_date,handover_date)
+    VALUES(customer_id_value,interest_row.id,sale_row.id,command_name,old_sale->>'crm_stage',next_stage,actor_id,reason_value,evidence_value,occurred_value,server_now,loan_id_value,transfer_value,handover_value)
     RETURNING id INTO event_id_value;
   DELETE FROM sales_private.post_booking_write_permits WHERE transaction_id=txid_current();
   INSERT INTO public.crm_audit_events(customer_id,entity_type,entity_id,event_type,reason_text,actor_user_id,actor_kind,
     actor_name_snapshot,old_values,new_values,occurred_at,recorded_at)
     VALUES(customer_id_value,'sale',sale_row.id,'post_booking_'||command_name,reason_value,actor_id,'staff',actor_name,
       jsonb_build_object('sale',old_sale,'loanAttempt',old_loan),jsonb_build_object('sale',to_jsonb(sale_row),'loanAttempt',
-        CASE WHEN loan_row.id IS NULL THEN NULL ELSE to_jsonb(loan_row) END,'eventId',event_id_value,'evidenceNote',evidence_value,'transferDate',transfer_value),occurred_value,server_now);
+        CASE WHEN loan_row.id IS NULL THEN NULL ELSE to_jsonb(loan_row) END,'eventId',event_id_value,'evidenceNote',evidence_value,'transferDate',transfer_value,'handoverDate',handover_value),occurred_value,server_now);
   response_value:=jsonb_build_object('requestId',p_request_id,'command',command_name,'customerId',customer_id_value,'interestId',interest_row.id,
-    'saleId',sale_row.id,'saleRevision',sale_row.booking_revision,'stage',next_stage,'eventId',event_id_value,'loanAttemptId',loan_id_value,'transferDate',transfer_value,'replayed',false);
+    'saleId',sale_row.id,'saleRevision',sale_row.booking_revision,'stage',next_stage,'eventId',event_id_value,'loanAttemptId',loan_id_value,'transferDate',transfer_value,'handoverDate',handover_value,'replayed',false);
   INSERT INTO sales_private.post_booking_command_requests(actor_user_id,request_id,request_payload,response,created_at)
     VALUES(actor_id,p_request_id,p_payload,response_value,server_now);
   RETURN response_value;
@@ -388,6 +462,97 @@ END;
 $command$;
 REVOKE ALL ON FUNCTION public.crm_v2_post_booking_command(uuid,jsonb) FROM PUBLIC,anon;
 GRANT EXECUTE ON FUNCTION public.crm_v2_post_booking_command(uuid,jsonb) TO authenticated;
+
+-- Optional exact-row adapter for an already sealed imported-sales installation.
+-- Preserve the original cutover/rollback checks and its existing EXECUTE grants.
+-- Refuse unknown definitions/owners; never rewrite the historical cutover draft.
+DO $external_adapter$
+DECLARE definition text; original_source text; function_settings text[]; owner_name name; secured boolean;
+  expected_source text:=$expected_cutover$
+DECLARE permit crm_external_private.sales_cutover_permits%ROWTYPE;
+  source crm_external_private.prepared_booking_sales%ROWTYPE; baseline jsonb; allowed boolean:=false;
+BEGIN
+  SELECT * INTO permit FROM crm_external_private.sales_cutover_permits
+    WHERE transaction_id=txid_current() AND backend_pid=pg_backend_pid();
+  IF TG_OP='TRUNCATE' THEN RAISE EXCEPTION 'EXTERNAL_CUTOVER_TRUNCATE_FORBIDDEN'; END IF;
+  IF permit.transaction_id IS NULL THEN
+    IF to_regprocedure('crm_external_private.booking_sale_allowed(text,jsonb,jsonb)') IS NOT NULL THEN
+      EXECUTE 'SELECT crm_external_private.booking_sale_allowed($1,$2,$3)' INTO allowed
+        USING TG_OP,CASE WHEN TG_OP='INSERT' THEN NULL ELSE to_jsonb(OLD) END,
+          CASE WHEN TG_OP='DELETE' THEN NULL ELSE to_jsonb(NEW) END;
+      IF allowed IS TRUE THEN RETURN NEW; END IF;
+    END IF;
+    IF EXISTS(SELECT 1 FROM crm_external_private.sales_cutover_receipts c
+      WHERE NOT EXISTS(SELECT 1 FROM crm_external_private.sales_rollback_receipts r WHERE r.batch_id=c.batch_id)) THEN
+      RAISE EXCEPTION 'EXTERNAL_CUTOVER_SALES_SEALED';
+    END IF;
+    IF TG_OP<>'DELETE' AND (NEW.external_booking_id IS NOT NULL OR NEW.external_source_stage IS NOT NULL OR
+      (TG_NARGS>0 AND EXISTS(SELECT 1 FROM jsonb_array_elements_text(TG_ARGV[0]::jsonb) k
+        WHERE to_jsonb(NEW)->k IS DISTINCT FROM 'null'::jsonb))) THEN
+      RAISE EXCEPTION 'CRM_FOUNDATION_COLUMNS_SEALED';
+    END IF;
+    RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+  END IF;
+  IF TG_OP='UPDATE' THEN RAISE EXCEPTION 'EXTERNAL_CUTOVER_UPDATE_FORBIDDEN'; END IF;
+  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+  IF permit.operation='rollback' THEN
+    SELECT row_value INTO baseline FROM crm_external_private.sales_cutover_receipts r,
+      LATERAL jsonb_array_elements(r.before_sales) row_value
+      WHERE r.batch_id=permit.batch_id AND row_value->>'id'=NEW.id::text;
+    IF baseline IS NULL OR baseline IS DISTINCT FROM to_jsonb(NEW) THEN
+      RAISE EXCEPTION 'EXTERNAL_CUTOVER_RESTORE_EVIDENCE_REQUIRED';
+    END IF;
+    RETURN NEW;
+  END IF;
+  SELECT * INTO source FROM crm_external_private.prepared_booking_sales
+    WHERE id=NEW.external_booking_id AND batch_id=permit.batch_id;
+  IF source.id IS NULL OR (source.payload->>'eligible_for_release_review')::boolean IS DISTINCT FROM true
+    OR NEW.id IS DISTINCT FROM source.id OR NEW.external_source_stage IS DISTINCT FROM source.stage OR NEW.lead_id IS NOT NULL
+    OR NEW.project_interest_id IS DISTINCT FROM (source.payload->>'interest_id')::uuid
+    OR NEW.plot_id IS DISTINCT FROM source.plot_id OR NEW.crm_stage IS DISTINCT FROM source.stage
+    OR NEW.sale_price IS DISTINCT FROM (source.payload->>'sale_price')::numeric
+    OR NEW.booking_amount IS DISTINCT FROM (source.payload->>'deposit_amount')::numeric
+    OR NEW.closing_sales_user_id IS DISTINCT FROM (source.payload->>'closing_sales_user_id')::uuid
+    OR NEW.payment_method IS DISTINCT FROM (source.payload->>'payment_method')
+    OR NEW.cancellation_reason IS DISTINCT FROM (source.payload->>'cancellation_reason')
+    OR NEW.contract_status IS DISTINCT FROM (CASE source.stage WHEN 'booked' THEN 'Reserved' WHEN 'transferred' THEN 'Transferred' ELSE 'Cancelled' END)
+    OR NEW.booking_route IS DISTINCT FROM 'legacy_import'
+    OR NEW.booking_route_reason IS DISTINCT FROM 'External snapshot: '||source.booking_key
+    OR NEW.booking_round IS NOT NULL OR NEW.previous_sale_id IS NOT NULL
+    OR NEW.booked_at IS NOT NULL OR NEW.cancelled_at IS NOT NULL
+    OR NEW.contracted_at IS NOT NULL OR NEW.crm_handover_at IS NOT NULL
+    OR NEW.list_price IS NOT NULL OR NEW.discount_amount IS NOT NULL
+    OR NEW.bank_status IS NOT NULL OR NEW.bank_name IS NOT NULL OR NEW.land_office_price IS NOT NULL
+    OR NEW.transferred_at IS NOT NULL OR NEW.expected_transfer_date IS NOT NULL
+    OR NEW.legacy_cancellation_batch_id IS NOT NULL OR NEW.cancellation_category IS NOT NULL THEN
+    RAISE EXCEPTION 'EXTERNAL_CUTOVER_SALE_EVIDENCE_REQUIRED';
+  END IF;
+  RETURN NEW;
+END;
+$expected_cutover$;
+  marker text:='  IF permit.transaction_id IS NULL THEN';
+  hook text:=$hook$
+    IF TG_OP='UPDATE' AND to_regprocedure('sales_private.crm_post_booking_external_sale_allowed(jsonb,jsonb)') IS NOT NULL THEN
+      EXECUTE 'SELECT sales_private.crm_post_booking_external_sale_allowed($1,$2)' INTO allowed USING to_jsonb(OLD),to_jsonb(NEW);
+      IF allowed IS TRUE THEN RETURN NEW; END IF;
+    END IF;$hook$;
+BEGIN
+  IF to_regprocedure('crm_external_private.guard_cutover_sale()') IS NULL THEN RETURN; END IF;
+  SELECT pg_get_functiondef(p.oid),p.prosrc,p.proconfig,pg_get_userbyid(p.proowner),p.prosecdef INTO definition,original_source,function_settings,owner_name,secured
+    FROM pg_proc p WHERE p.oid='crm_external_private.guard_cutover_sale()'::regprocedure;
+  definition:=replace(definition,E'\r\n',E'\n');
+  IF owner_name IS DISTINCT FROM current_user OR NOT secured
+    OR replace(original_source,E'\r\n',E'\n') IS DISTINCT FROM expected_source
+    OR function_settings IS DISTINCT FROM ARRAY['search_path=""']
+    OR (length(definition)-length(replace(definition,marker,'')))/length(marker)<>1
+    OR position('crm_external_private.booking_sale_allowed' IN definition)=0
+    OR position('EXTERNAL_CUTOVER_SALES_SEALED' IN definition)=0
+    OR position('EXTERNAL_CUTOVER_RESTORE_EVIDENCE_REQUIRED' IN definition)=0
+    OR position('crm_post_booking_external_sale_allowed' IN definition)>0 THEN
+    RAISE EXCEPTION 'CRM_POST_BOOKING_EXTERNAL_ADAPTER_REVIEW_REQUIRED'; END IF;
+  EXECUTE replace(definition,marker,marker||hook);
+END;
+$external_adapter$;
 
 -- Required before enablement: independently reviewed real schema/RLS/legacy
 -- writers, imported loan evidence and staging workflow; separate user approval.

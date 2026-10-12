@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { FileText, Loader2, CheckCircle, Clock, X, DollarSign, Activity, FileSpreadsheet, Search, Printer } from 'lucide-react';
+import { constructionQueueBillingPartition } from '@/lib/constructionQueue';
 
 interface BillingQueueViewProps {
   billingData: any[];
@@ -20,6 +21,18 @@ const BillingQueueView = ({ billingData, setBillingData, loading, onRefresh, all
   const [showBillingModal, setShowBillingModal] = useState(false);
   const [selectedTask, setSelectedTask] = useState<any>(null);
   const [billingRef, setBillingRef] = useState('');
+  const billingModalVersion = useRef(0);
+  const billingInFlight = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  const closeBillingModal = () => {
+    billingModalVersion.current++;
+    setShowBillingModal(false);
+    setBillingRef('');
+  };
   
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'pending' | 'billed'>('pending');
@@ -30,39 +43,11 @@ const BillingQueueView = ({ billingData, setBillingData, loading, onRefresh, all
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 50;
 
-  // คัดกรองเฉพาะงานที่ผ่าน QC (หรือถ้าไม่ต้องตรวจ QC ก็ให้ถือว่าผ่านเมื่อ SE อนุมัติ)
-  const filteredBillingData = billingData.filter(item => {
-    const template = taskTemplates.find(t => t.id === item.task_template_id);
-    const requireQC = template ? template.require_qc : true; // ถ้าไม่มีข้อมูลให้ถือว่าต้องมี QC ไปก่อน
-    const action = item.latest_action || '';
-    
-    // เงื่อนไขการเข้าระบบ Billing Queue:
-    if (requireQC) {
-       return action.includes('QC อนุมัติ'); // เช่น QC อนุมัติ, QC อนุมัติผ่าน
-    } else {
-       return action.includes('Site Engineer อนุมัติ') || action.includes('QC อนุมัติ'); 
-    }
-  });
-
-  // แยก Pending / Billed และตัดรอบวันที่ 4 ก.ค. 2026
-  const CUTOFF_DATE = new Date('2026-07-04T00:00:00Z');
-
-  const pendingItems = filteredBillingData.filter(item => {
-    if (item.billing_status === 'billed') return false;
-    const updateDate = new Date(item.latest_update_created_at);
-    if (updateDate < CUTOFF_DATE) return false; // ถือว่าตั้งเบิกไปแล้ว
-    return true;
-  });
-
-  const billedItems = filteredBillingData.filter(item => {
-    if (item.billing_status === 'billed') return true;
-    const updateDate = new Date(item.latest_update_created_at);
-    if (updateDate < CUTOFF_DATE) return true; // วันที่เก่าให้ถือว่าเบิกแล้ว
-    return false;
-  });
-
-  const totalPendingValue = pendingItems.reduce((sum, item) => sum + (Number(item.task_cost) || 0), 0);
-  const totalBilledValue = billedItems.reduce((sum, item) => sum + (Number(item.task_cost) || 0), 0);
+  // Preserve approval rules, the original UTC cutoff, and first matching template.
+  const { pendingItems, billedItems, totalPendingValue, totalBilledValue } = useMemo(
+    () => constructionQueueBillingPartition<any>(billingData, taskTemplates),
+    [billingData, taskTemplates],
+  );
 
   const filteredPendingItems = pendingItems.filter(item => {
     const matchPlotOrTask = !searchPlotOrTask || (item.plot_id || '').toLowerCase().includes(searchPlotOrTask.toLowerCase()) || (item.task_name || '').toLowerCase().includes(searchPlotOrTask.toLowerCase());
@@ -80,22 +65,29 @@ const BillingQueueView = ({ billingData, setBillingData, loading, onRefresh, all
   });
 
   const totalPages = Math.ceil(filteredBilledItems.length / itemsPerPage);
+  const visiblePage = Math.min(currentPage, Math.max(1, totalPages));
+  useEffect(() => {
+    setCurrentPage(page => Math.min(page, Math.max(1, totalPages)));
+  }, [totalPages]);
   const currentBilledItems = filteredBilledItems.slice(
-    (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
+    (visiblePage - 1) * itemsPerPage,
+    visiblePage * itemsPerPage
   );
 
   const handleMarkAsBilled = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (billingInFlight.current) return;
     if (!selectedTask || !billingRef.trim()) {
       showToast ? showToast('กรุณากรอกเลขที่เอกสาร', 'error') : alert('กรุณากรอกเลขที่เอกสาร');
       return;
     }
 
+    billingInFlight.current = true;
+    const modalVersion = billingModalVersion.current;
     setProcessingId(selectedTask.assignment_id);
     
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('plot_task_assignments')
         .update({
           billing_status: 'billed',
@@ -103,20 +95,28 @@ const BillingQueueView = ({ billingData, setBillingData, loading, onRefresh, all
           billed_by: currentUserRole,
           billing_ref: billingRef.trim()
         })
-        .eq('id', selectedTask.assignment_id);
+        .eq('id', selectedTask.assignment_id)
+        .select('id');
 
       if (error) throw error;
+      if (!data || data.length !== 1 || String(data[0].id) !== String(selectedTask.assignment_id)) {
+        throw new Error('ไม่พบรายการที่บันทึกได้ กรุณาตรวจสอบสิทธิ์และโหลดข้อมูลใหม่');
+      }
+      if (!mounted.current) return;
 
       showToast ? showToast('บันทึกการตั้งเบิกเรียบร้อย', 'success') : alert('บันทึกสำเร็จ');
-      setShowBillingModal(false);
-      setBillingRef('');
-      setSelectedTask(null);
+      if (billingModalVersion.current === modalVersion) {
+        closeBillingModal();
+        setSelectedTask(null);
+      }
       onRefresh(); // โหลดข้อมูลใหม่
     } catch (err: any) {
+      if (!mounted.current) return;
       console.error(err);
       showAlert ? showAlert('ข้อผิดพลาด', 'ไม่สามารถบันทึกได้: ' + err.message) : alert('Error: ' + err.message);
     } finally {
-      setProcessingId(null);
+      billingInFlight.current = false;
+      if (mounted.current) setProcessingId(null);
     }
   };
 
@@ -289,7 +289,7 @@ const BillingQueueView = ({ billingData, setBillingData, loading, onRefresh, all
                       <td className="p-4 pr-6">
                         <div className="flex gap-2 justify-center">
                           <button 
-                            onClick={() => { setSelectedTask(item); setShowHistoryModal(true); }}
+                            onClick={() => { billingModalVersion.current++; setSelectedTask(item); setShowHistoryModal(true); }}
                             className="p-2 bg-slate-100 text-slate-600 hover:bg-slate-200 rounded-lg transition-colors font-bold text-xs flex items-center gap-1"
                             title="ดูประวัติการตรวจ"
                           >
@@ -305,7 +305,7 @@ const BillingQueueView = ({ billingData, setBillingData, loading, onRefresh, all
                             </button>
                           )}
                           <button 
-                            onClick={() => { setSelectedTask(item); setShowBillingModal(true); }}
+                            onClick={() => { billingModalVersion.current++; setSelectedTask(item); setBillingRef(''); setShowBillingModal(true); }}
                             className="px-3 py-2 bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg shadow-sm transition-colors font-bold text-xs flex items-center gap-1 active:scale-95"
                           >
                             <FileText size={14} /> ตั้งเบิกแล้ว
@@ -355,7 +355,7 @@ const BillingQueueView = ({ billingData, setBillingData, loading, onRefresh, all
                              {item.billed_at ? new Date(item.billed_at).toLocaleDateString('th-TH') : ''}
                            </span>
                            <button 
-                             onClick={() => { setSelectedTask(item); setShowHistoryModal(true); }}
+                             onClick={() => { billingModalVersion.current++; setSelectedTask(item); setShowHistoryModal(true); }}
                              className="w-full py-1 mb-1 bg-slate-100 text-slate-600 hover:bg-slate-200 rounded transition-colors font-bold text-[10px] flex items-center justify-center gap-1"
                              title="ดูประวัติการตรวจ"
                            >
@@ -384,7 +384,7 @@ const BillingQueueView = ({ billingData, setBillingData, loading, onRefresh, all
         {activeTab === 'billed' && totalPages > 1 && (
           <div className="p-4 border-t border-black/5 bg-white flex items-center justify-between">
             <span className="text-xs text-slate-500 font-medium">
-              แสดง {(currentPage - 1) * itemsPerPage + 1} ถึง {Math.min(currentPage * itemsPerPage, filteredBilledItems.length)} จากทั้งหมด {filteredBilledItems.length} รายการ
+              แสดง {(visiblePage - 1) * itemsPerPage + 1} ถึง {Math.min(visiblePage * itemsPerPage, filteredBilledItems.length)} จากทั้งหมด {filteredBilledItems.length} รายการ
             </span>
             <div className="flex gap-1">
               <button
@@ -440,7 +440,7 @@ const BillingQueueView = ({ billingData, setBillingData, loading, onRefresh, all
                     <h3 className="font-black text-xl text-[#1d1d1f]">ยืนยันการตั้งเบิก</h3>
                     <p className="text-sm font-medium text-slate-500 mt-1">แปลง {selectedTask.plot_id} - {selectedTask.task_name}</p>
                   </div>
-                  <button onClick={() => { setShowBillingModal(false); setBillingRef(''); }} className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-full transition-colors">
+                  <button onClick={closeBillingModal} className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-full transition-colors">
                      <X size={20} />
                   </button>
                </div>
@@ -467,14 +467,14 @@ const BillingQueueView = ({ billingData, setBillingData, loading, onRefresh, all
                  <div className="flex gap-3">
                    <button 
                      type="button" 
-                     onClick={() => { setShowBillingModal(false); setBillingRef(''); }}
+                     onClick={closeBillingModal}
                      className="flex-1 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold transition-colors"
                    >
                      ยกเลิก
                    </button>
                    <button 
                      type="submit" 
-                     disabled={!billingRef.trim() || processingId === selectedTask.assignment_id}
+                     disabled={!billingRef.trim() || processingId !== null}
                      className="flex-1 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition-all shadow-sm flex justify-center items-center gap-2 disabled:opacity-50"
                    >
                      {processingId === selectedTask.assignment_id ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle size={18} />}
@@ -531,10 +531,10 @@ const BillingQueueView = ({ billingData, setBillingData, loading, onRefresh, all
                              <div className="text-xs font-medium text-slate-600 mt-1">
                                 ทำรายการโดย: <span className="font-bold">{upd.role}</span>
                              </div>
-                             {upd.note && (
+                             {(upd.text_content || upd.note) && (
                                 <div className="mt-2 text-xs text-slate-700 bg-white p-2 rounded border border-slate-100">
                                    <span className="font-bold text-slate-400 block mb-0.5">หมายเหตุ:</span>
-                                   {upd.note}
+                                   {upd.text_content || upd.note}
                                 </div>
                              )}
                           </div>

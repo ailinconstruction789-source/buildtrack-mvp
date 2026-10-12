@@ -1,12 +1,17 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   X, Phone, MessageSquare, UserCheck, Calendar, Clock, 
   Building2, User, FileText, CheckCircle2, AlertCircle, Loader2,
   History, ArrowRight, PhoneCall, PhoneOff, Clock3, PlusCircle
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { selectSalesStaffName } from '@/lib/sales/salesStaff';
+import SalesOverlay from './SalesOverlay';
+import { canEditSalesRole, getLeadStage } from '@/lib/sales/leadStage';
+import { followUpStatusPatch, nativeLeadId } from '@/lib/sales/leadLifecycle';
+import { readLeadActivitySnapshot, writeLeadActivitySummary } from '@/lib/sales/leadActivity';
 
 interface ActivityItem {
   id: string;
@@ -23,11 +28,16 @@ interface Props {
   onClose: () => void;
   customer: {
     id: string;
-    name: string;
+    leadId?: string | null;
+    customer_name?: string;
+    name?: string;
     phone?: string | null;
     channel?: string | null;
     notes?: string | null;
     status?: string | null;
+    crm_status?: string | null;
+    booking_date?: string | null;
+    transferred_date?: string | null;
     ownerUserId?: string;
     salesOwner?: string | null;
   } | null;
@@ -40,16 +50,22 @@ interface Props {
   projects: string[];
   salesOwners: { userId: string; displayName: string }[];
   onSaved?: (notice: string) => void;
+  currentUserRole?: string;
+  currentUserId?: string;
 }
 
-export default function CentralLeadFollowUpModal({
+export default function CentralLeadFollowUpModal(props: Props) {
+  return <FollowUpSession key={JSON.stringify([props.customer?.leadId, props.customer?.id, props.currentUserId, props.currentUserRole])} {...props} />;
+}
+function FollowUpSession({
   isOpen,
   onClose,
   customer,
   initialInterest,
   projects = [],
   salesOwners = [],
-  onSaved
+  onSaved,
+  currentUserRole
 }: Props) {
   const [projectName, setProjectName] = useState('');
   const [channel, setChannel] = useState<'call' | 'chat' | 'follow_up' | 'note'>('call');
@@ -67,15 +83,26 @@ export default function CentralLeadFollowUpModal({
   const [historyList, setHistoryList] = useState<ActivityItem[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [activeTab, setActiveTab] = useState<'form' | 'history'>('form');
+  const savedActivityKey = useRef<string | null>(null);
+  const mounted = useRef(true);
+  const writing = useRef(false);
+  const initialized = useRef<string | null>(null);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => { savedActivityKey.current = null; }, [isOpen, customer?.id]);
 
   // Initialize defaults on open
   useEffect(() => {
+    if (!isOpen) { initialized.current = null; return; }
     if (isOpen && customer) {
+      const context = JSON.stringify([customer.id, initialInterest?.id, initialInterest?.projectName]);
+      if (initialized.current === context) return;
+      initialized.current = context;
       setErrorMsg('');
       setActiveTab('form');
       setChannel('call');
       setResult('contact_success');
-      setLeadStatus(customer.status || 'Follow Up');
+      const initialStatus = customer.status || 'Follow Up';
+      setLeadStatus(['active', 'appointment'].includes(getLeadStage(customer)) && !['Follow Up', 'Contacted', 'Interested'].includes(initialStatus) ? 'Follow Up' : initialStatus);
       setNotes('');
       setHasSchedule(false);
 
@@ -93,12 +120,16 @@ export default function CentralLeadFollowUpModal({
 
       const initialOwnerId = initialInterest?.ownerUserId || customer.ownerUserId;
       const ownerObj = salesOwners.find(o => o.userId === initialOwnerId);
-      setAgentName(ownerObj?.displayName || customer.salesOwner || salesOwners[0]?.displayName || 'Sales');
+      setAgentName(selectSalesStaffName(salesOwners, [ownerObj?.displayName, customer.salesOwner]));
 
       // Load history
-      loadHistory(customer.id);
+      const id = nativeLeadId(customer);
+      if (id) void loadHistory(id);
     }
   }, [isOpen, customer, initialInterest, projects, salesOwners]);
+  useEffect(() => {
+    setAgentName(previous => previous || selectSalesStaffName(salesOwners, [customer?.salesOwner]));
+  }, [salesOwners, customer?.salesOwner]);
 
   const loadHistory = async (customerId: string) => {
     setLoadingHistory(true);
@@ -110,19 +141,23 @@ export default function CentralLeadFollowUpModal({
         .order('occurred_at', { ascending: false })
         .limit(20);
 
+      if (!mounted.current) return;
       if (!error && data) {
         setHistoryList(data);
       } else {
         setHistoryList([]);
       }
     } catch {
-      setHistoryList([]);
+      if (mounted.current) setHistoryList([]);
     } finally {
-      setLoadingHistory(false);
+      if (mounted.current) setLoadingHistory(false);
     }
   };
 
   if (!isOpen || !customer) return null;
+  const customerName = customer.name || customer.customer_name || 'ลูกค้า';
+  const protectedStage = ['loan', 'booked', 'transferred', 'rented', 'lost'].includes(getLeadStage(customer));
+  const readOnly = currentUserRole != null && !canEditSalesRole(currentUserRole);
 
   const getChannelLabel = (ch: string) => {
     switch (ch) {
@@ -146,15 +181,25 @@ export default function CentralLeadFollowUpModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (writing.current) return;
+    if (readOnly) { setErrorMsg('บัญชีนี้ดูข้อมูลได้อย่างเดียว'); return; }
+    if (!salesOwners.some(owner => owner.displayName === agentName)) {
+      setErrorMsg('กรุณาเลือกพนักงานฝ่ายขาย');
+      return;
+    }
     if (!notes.trim()) {
       setErrorMsg('กรุณาระบุรายละเอียดการติดตามหรือสิ่งที่ได้พูดคุยกับลูกค้า');
       return;
     }
 
+    writing.current = true;
     setIsSubmitting(true);
     setErrorMsg('');
 
     try {
+      const latest = await readLeadActivitySnapshot(customer);
+      if (!mounted.current) return;
+      const statusPatch = followUpStatusPatch(latest.lead, leadStatus, latest.historyExists);
       const now = new Date();
       const timeBangkokStr = now.toLocaleDateString('th-TH', { 
         day: '2-digit', month: 'short', year: 'numeric', 
@@ -165,60 +210,59 @@ export default function CentralLeadFollowUpModal({
         ? `${nextDate}T${nextTime || '10:00'}:00+07:00`
         : null;
 
-      // 1. Try to record in lead_activities table
-      try {
-        await supabase
+      // A retry of the same form after a failed summary write must not duplicate its activity.
+      const activityKey = JSON.stringify([latest.lead.id, channel, result, notes.trim(), nextFollowUpAt, leadStatus, agentName]);
+      if (savedActivityKey.current && savedActivityKey.current !== activityKey) throw new Error('ประวัติบันทึกบางส่วนแล้ว กรุณาคงข้อมูลเดิมเพื่อดำเนินการส่วนที่เหลือ');
+      if (savedActivityKey.current !== activityKey) {
+        const { error: activityError } = await supabase
           .from('lead_activities')
           .insert([{
-            customer_id: customer.id,
+            customer_id: latest.lead.id,
             activity_type: channel,
             result: result,
             occurred_at: now.toISOString(),
             note: notes.trim(),
             next_follow_up_at: nextFollowUpAt
           }]);
-      } catch (err) {
-        console.warn('Could not insert to lead_activities (schema or RLS policy), falling back to leads update:', err);
+        if (activityError) throw new Error(activityError.message || 'บันทึกประวัติการติดตามไม่สำเร็จ');
+        savedActivityKey.current = activityKey;
       }
+      if (!mounted.current) return;
 
       // 2. Prepare timestamped summary notes for customer profile
       const newEntryHeader = `[${timeBangkokStr} โดย ${agentName} (${getChannelLabel(channel)}: ${getResultLabel(result)})]`;
       const scheduleHeader = hasSchedule && nextDate ? `\n➡️ นัดติดตามต่อ: ${nextDate} ${nextTime}` : '';
       const formattedNote = `${newEntryHeader}\n${notes.trim()}${scheduleHeader}`;
       
-      const combinedNotes = customer.notes 
-        ? `${formattedNote}\n\n---\n${customer.notes}` 
+      const combinedNotes = latest.lead.notes
+        ? `${formattedNote}\n\n---\n${latest.lead.notes}`
         : formattedNote;
 
       // 3. Update main leads table in Supabase
-      const { error: updateError } = await supabase
-        .from('leads')
-        .update({
-          status: leadStatus,
+      await writeLeadActivitySummary(latest, {
+          ...statusPatch,
           auto_status: `ติดตาม: ${getResultLabel(result)}`,
           notes: combinedNotes,
-          sales_owner: agentName,
+          agent_name: agentName,
           updated_at: now.toISOString()
-        })
-        .eq('id', customer.id);
+        });
 
-      if (updateError) {
-        throw new Error(updateError.message || 'บันทึกข้อมูลลงฐานข้อมูลไม่สำเร็จ');
-      }
-
-      const successNotice = `บันทึกการติดตามลูกค้า "${customer.name}" สำเร็จแล้ว (${getResultLabel(result)})`;
+      if (!mounted.current) return;
+      const successNotice = `บันทึกการติดตามลูกค้า "${customerName}" สำเร็จแล้ว (${getResultLabel(result)})`;
       if (onSaved) onSaved(successNotice);
       onClose();
     } catch (err: any) {
+      if (!mounted.current) return;
       console.error('Error saving follow-up:', err);
-      setErrorMsg(err.message || 'เกิดข้อผิดพลาดในการบันทึก กรุณาลองใหม่อีกครั้ง');
+      setErrorMsg((savedActivityKey.current ? 'ประวัติการติดตามบันทึกแล้ว แต่ข้อมูลลูกค้ายังบันทึกไม่ครบ: ' : '') + (err.message || 'เกิดข้อผิดพลาดในการบันทึก กรุณาลองใหม่อีกครั้ง'));
     } finally {
-      setIsSubmitting(false);
+      writing.current = false;
+      if (mounted.current) setIsSubmitting(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center p-3 sm:p-6 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-200">
+    <SalesOverlay className="fixed inset-0 z-[300] flex items-center justify-center p-3 sm:p-6 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-200">
       <div 
         className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[88vh] my-auto animate-in zoom-in-95 duration-200"
         role="dialog"
@@ -254,7 +298,7 @@ export default function CentralLeadFollowUpModal({
           {/* Customer Summary Banner & Tabs */}
           <div className="px-5 sm:px-6 py-2.5 bg-slate-50 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2.5 text-xs">
             <div className="flex items-center gap-2.5 flex-wrap">
-              <span className="font-bold text-slate-800 text-sm">{customer.name}</span>
+              <span className="font-bold text-slate-800 text-sm">{customerName}</span>
               {customer.phone && (
                 <span className="text-slate-600 flex items-center gap-1 font-mono bg-white px-2 py-0.5 rounded-md border border-slate-200 text-xs">
                   <Phone size={12} className="text-blue-500" /> {customer.phone}
@@ -437,16 +481,20 @@ export default function CentralLeadFollowUpModal({
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                    ปรับสถานะ Lead
+                    {protectedStage ? 'สถานะลูกค้าปัจจุบัน' : 'ปรับสถานะ Lead'}
                   </label>
                   <select
+                    aria-label="สถานะลูกค้า"
                     value={leadStatus}
+                    disabled={protectedStage}
                     onChange={(e) => setLeadStatus(e.target.value)}
                     className="w-full text-xs font-medium bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
                   >
+                    {protectedStage && <option value={leadStatus}>{customer.crm_status || leadStatus}</option>}
                     <option value="Follow Up">🟢 Follow Up (กำลังติดตามงาน)</option>
                     <option value="Contacted">🟢 Contacted (ติดต่อแล้ว)</option>
                     <option value="Interested">🔥 Interested (สนใจมาก)</option>
+                    <option value="Lost">Lost — ไม่สนใจ / ยุติการติดตาม</option>
                     <option value="Unqualified">💤 Unqualified (ไม่สนใจ / ยกเลิกติดตาม)</option>
                     <option value="Nurture">💤 Nurture (พักการติดต่อ / Cold Lead)</option>
                   </select>
@@ -454,7 +502,7 @@ export default function CentralLeadFollowUpModal({
               </div>
 
               {/* Quick reason pills when marking as Unqualified / Nurture */}
-              {(leadStatus === 'Unqualified' || leadStatus === 'Nurture') && (
+              {(['Lost', 'Unqualified', 'Nurture'].includes(leadStatus)) && (
                 <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-xl space-y-2 animate-in fade-in">
                   <span className="text-[11px] font-bold text-amber-900 block">
                     คลิกเพื่อใส่เหตุผลด่วนในบันทึก:
@@ -513,7 +561,7 @@ export default function CentralLeadFollowUpModal({
                         <option key={o.userId} value={o.displayName}>{o.displayName}</option>
                       ))
                     ) : (
-                      <option value="Sales">Sales</option>
+                      <option value="" disabled>ไม่พบพนักงานฝ่ายขาย</option>
                     )}
                   </select>
                 </div>
@@ -586,7 +634,7 @@ export default function CentralLeadFollowUpModal({
             <button
               type="submit"
               form="followup-form"
-              disabled={isSubmitting}
+              disabled={isSubmitting || readOnly}
               className="px-5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
             >
               {isSubmitting ? (
@@ -604,6 +652,6 @@ export default function CentralLeadFollowUpModal({
           )}
         </div>
       </div>
-    </div>
+    </SalesOverlay>
   );
 }

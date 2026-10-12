@@ -7,6 +7,7 @@ import {
   Calendar, Hash, FileText, Image as ImageIcon, Trash2
 } from 'lucide-react';
 import { Plot } from '@/types/database.types';
+import SalesOverlay from './sales/SalesOverlay';
 
 interface MeterPhotoConfirmationModalProps {
   isOpen: boolean;
@@ -16,6 +17,7 @@ interface MeterPhotoConfirmationModalProps {
   onSuccess?: () => void;
   currentUserRole?: string;
   currentUserName?: string;
+  portalToBody?: boolean;
 }
 
 // Compress image helper using canvas
@@ -73,7 +75,8 @@ export default function MeterPhotoConfirmationModal({
   meterType,
   onSuccess,
   currentUserRole,
-  currentUserName
+  currentUserName,
+  portalToBody = false
 }: MeterPhotoConfirmationModalProps) {
   if (!isOpen || !plot) return null;
 
@@ -165,8 +168,9 @@ export default function MeterPhotoConfirmationModal({
     }
   };
 
+  const Overlay = portalToBody ? SalesOverlay : 'div';
   return (
-    <div className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+    <Overlay className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
       <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[92vh] border border-slate-200">
         
         {/* Header */}
@@ -352,6 +356,6 @@ export default function MeterPhotoConfirmationModal({
         </div>
 
       </div>
-    </div>
+    </Overlay>
   );
 }

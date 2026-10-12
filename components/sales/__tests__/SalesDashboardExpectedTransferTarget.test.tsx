@@ -79,7 +79,8 @@ const mockSales = [
 const mockPlots = [
   { id: 'plot-1', plot_name: 'แปลง 1', project_name: 'โครงการไอลิน 4', selling_price: 3000000, land_appraisal_price: 3000000 },
   { id: 'plot-2', plot_name: 'แปลง 2', project_name: 'โครงการไอลิน 4', selling_price: 3200000, land_appraisal_price: 3200000 },
-  { id: 'plot-3', plot_name: 'แปลง 3', project_name: 'โครงการไอลิน 4', selling_price: 2800000, land_appraisal_price: 2800000 },
+  // An older plot forecast must not supply this customer's unknown booking forecast.
+  { id: 'plot-3', plot_name: 'แปลง 3', project_name: 'โครงการไอลิน 4', selling_price: 2800000, land_appraisal_price: 2800000, expected_transfer_date: '2026-09-23' },
   { id: 'plot-4', plot_name: 'แปลง 4', project_name: 'โครงการไอลิน 4', selling_price: 3500000, land_appraisal_price: 3500000 },
 ];
 
@@ -97,8 +98,9 @@ vi.mock('@/lib/supabase', () => ({
         if (table === 'projects') result = Promise.resolve({ data: mockProjects, error: null });
         if (table === 'leads') result = Promise.resolve({ data: [], error: null });
         
-        result.order = () => Promise.resolve({ data: mockProjects, error: null });
-        result.in = () => Promise.resolve({ data: [], error: null });
+        result.order = () => result;
+        result.range = () => result;
+        result.in = () => result;
         result.eq = () => result;
         return result;
       }

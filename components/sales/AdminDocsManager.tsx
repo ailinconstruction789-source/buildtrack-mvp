@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { Plot } from '@/types/database.types';
 import MeterPhotoConfirmationModal from '../MeterPhotoConfirmationModal';
+import SalesOverlay from './SalesOverlay';
 
 interface AdminDocsManagerProps {
   plots: Plot[];
@@ -282,7 +283,7 @@ export default function AdminDocsManager({
                                 <Clock size={12} className="text-amber-600" /> รอช่างมาติดตั้งหน้างาน
                               </span>
                             </div>
-                            <button
+                            {!meterImage && <button
                               type="button"
                               onClick={() => setSelectedMeterModal({
                                 isOpen: true,
@@ -292,7 +293,7 @@ export default function AdminDocsManager({
                               className="w-full py-1.5 px-2 bg-amber-500 hover:bg-amber-600 text-white font-black text-[10px] rounded-lg shadow-xs flex items-center justify-center gap-1 cursor-pointer transition-colors"
                             >
                               <Camera size={12} /> ถ่ายรูปยืนยันติดตั้ง
-                            </button>
+                            </button>}
                           </div>
                         )}
 
@@ -371,6 +372,7 @@ export default function AdminDocsManager({
       {/* Meter Photo Confirmation Modal */}
       {selectedMeterModal.isOpen && selectedMeterModal.plot && (
         <MeterPhotoConfirmationModal
+        portalToBody
           isOpen={selectedMeterModal.isOpen}
           onClose={() => setSelectedMeterModal({ isOpen: false, plot: null, meterType: 'water_meter' })}
           plot={selectedMeterModal.plot}
@@ -383,7 +385,7 @@ export default function AdminDocsManager({
 
       {/* Image Lightbox Modal */}
       {lightboxImageUrl?.isOpen && (
-        <div 
+        <SalesOverlay
           onClick={() => setLightboxImageUrl(null)}
           className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
         >
@@ -418,7 +420,7 @@ export default function AdminDocsManager({
               </div>
             )}
           </div>
-        </div>
+        </SalesOverlay>
       )}
 
     </div>

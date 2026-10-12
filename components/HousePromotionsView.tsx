@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Gift, PlusCircle, CheckCircle2, Circle, Clock, Search, Trash2, Edit3, X, Loader2, Calendar, Package, Sparkles, Filter, Home, ChevronRight, Building2, CheckSquare, Square, Save, Layers, ListChecks, Check, Table, Grid } from 'lucide-react';
 import AppCustomModal, { AppModalConfig } from './AppCustomModal';
+import SalesOverlay from './sales/SalesOverlay';
 
 // 🏠 Standard Room Categories & Master Catalog
 const ROOM_GROUPS: { room: string; icon: string; items: { category: string; item_name: string; quantity: number }[] }[] = [
@@ -1260,7 +1261,7 @@ export default function HousePromotionsView({
 
       {/* 🛠️ Matrix Cell Status & Action Confirmation Modal */}
       {matrixModal && matrixModal.isOpen && (
-        <div className="fixed inset-0 bg-black/70 z-[99999] flex items-center justify-center p-4">
+        <SalesOverlay className="fixed inset-0 bg-black/70 z-[99999] flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl w-full max-w-md p-6 shadow-2xl border border-slate-100 animate-fade-in space-y-5 relative">
             
             <div className="flex justify-between items-start border-b border-slate-100 pb-3">
@@ -1391,12 +1392,12 @@ export default function HousePromotionsView({
             </div>
 
           </div>
-        </div>
+        </SalesOverlay>
       )}
 
       {/* 🛠️ Modal: Add Custom Item in Checklist */}
       {customItemModal.isOpen && (
-        <div className="fixed inset-0 bg-black/70 z-[99999] flex items-center justify-center p-4">
+        <SalesOverlay className="fixed inset-0 bg-black/70 z-[99999] flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl w-full max-w-md p-6 shadow-2xl border border-slate-100 animate-fade-in space-y-4">
             <div className="flex justify-between items-center pb-3 border-b border-slate-100">
               <h4 className="font-black text-base text-slate-800 flex items-center gap-2">
@@ -1452,12 +1453,12 @@ export default function HousePromotionsView({
               </div>
             </form>
           </div>
-        </div>
+        </SalesOverlay>
       )}
 
       {/* 🛠️ Modal: Add / Edit Item in Tracker */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black/70 z-[99999] flex items-center justify-center p-4">
+        <SalesOverlay className="fixed inset-0 bg-black/70 z-[99999] flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl w-full max-w-lg p-6 shadow-2xl border border-slate-100 animate-fade-in relative overflow-hidden">
             
             <div className="flex justify-between items-center pb-4 border-b border-slate-100 mb-4">
@@ -1567,11 +1568,11 @@ export default function HousePromotionsView({
             </form>
 
           </div>
-        </div>
+        </SalesOverlay>
       )}
 
       {/* 🌟 Custom App Modal */}
-      <AppCustomModal config={modalConfig} onClose={() => setModalConfig(null)} />
+      <AppCustomModal portalToBody config={modalConfig} onClose={() => setModalConfig(null)} />
     </div>
   );
 }

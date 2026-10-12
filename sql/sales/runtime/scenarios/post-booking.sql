@@ -62,7 +62,8 @@ RETURNS jsonb LANGUAGE sql STABLE SECURITY INVOKER SET search_path=pg_catalog AS
     'events',(SELECT jsonb_agg(to_jsonb(r) ORDER BY id) FROM sales_private.post_booking_events r),
     'receipts',(SELECT jsonb_agg(to_jsonb(r) ORDER BY actor_user_id,request_id) FROM sales_private.post_booking_command_requests r),
     'bookingPermits',(SELECT jsonb_agg(to_jsonb(r) ORDER BY transaction_id) FROM sales_private.booking_write_permits r),
-    'loanPermits',(SELECT jsonb_agg(to_jsonb(r) ORDER BY transaction_id) FROM sales_private.post_booking_write_permits r));
+    'loanPermits',(SELECT jsonb_agg(to_jsonb(r) ORDER BY transaction_id) FROM sales_private.post_booking_write_permits r),
+    'externalPermits',(SELECT jsonb_agg(to_jsonb(r) ORDER BY transaction_id) FROM sales_private.post_booking_external_write_permits r));
 $business$;
 REVOKE ALL ON FUNCTION runtime_post_booking.business_snapshot() FROM PUBLIC;
 INSERT INTO auth.users(id) VALUES('bc210000-0000-4000-8000-000000000001'),('bc210000-0000-4000-8000-000000000002'),
@@ -94,7 +95,7 @@ BEGIN
   END LOOP;
 END;
 $seed_bookings$;
-SELECT runtime_post_booking.assert_true(public.crm_v2_post_booking_capabilities()='{"contract_version":"post_booking_v2","enabled":false}'::jsonb,'new post-booking gate defaults off');
+SELECT runtime_post_booking.assert_true(public.crm_v2_post_booking_capabilities()='{"contract_version":"post_booking_v3","enabled":false}'::jsonb,'new post-booking gate defaults off');
 SELECT runtime_post_booking.expect_error('SELECT public.crm_v2_post_booking_context((SELECT (value->>''saleId'')::uuid FROM runtime_post_booking.context WHERE key=''book1''))','CRM_POST_BOOKING_SETUP_REQUIRED','default disabled context');
 SELECT runtime_post_booking.expect_error('SELECT public.crm_v2_post_booking_command(gen_random_uuid(),''{}'')','CRM_POST_BOOKING_SETUP_REQUIRED','default disabled command before payload');
 RESET ROLE;
@@ -106,7 +107,7 @@ INSERT INTO runtime_post_booking.context SELECT 'unchanged-business',jsonb_build
 INSERT INTO runtime_post_booking.context SELECT 'sale1-before',to_jsonb(s)-ARRAY['crm_stage','booking_revision','contracted_at'] FROM public.sales s
  WHERE id=(SELECT (value->>'saleId')::uuid FROM runtime_post_booking.context WHERE key='book1');
 SET LOCAL ROLE authenticated;
-SELECT runtime_post_booking.assert_true(public.crm_v2_post_booking_capabilities()='{"contract_version":"post_booking_v2","enabled":true}'::jsonb,'enabled post booking capabilities exact contract');
+SELECT runtime_post_booking.assert_true(public.crm_v2_post_booking_capabilities()='{"contract_version":"post_booking_v3","enabled":true}'::jsonb,'enabled post booking capabilities exact contract');
 INSERT INTO runtime_post_booking.context VALUES('input1',runtime_post_booking.payload('book1'));
 SELECT runtime_post_booking.expect_error('SELECT public.crm_v2_post_booking_command(gen_random_uuid(),(SELECT value FROM runtime_post_booking.context WHERE key=''input1'')||''{"extra":"forged"}'')','CRM_POST_BOOKING_INVALID_INPUT','unknown payload metadata rejected');
 SELECT runtime_post_booking.expect_error('SELECT public.crm_v2_post_booking_command(gen_random_uuid(),(SELECT value FROM runtime_post_booking.context WHERE key=''input1'')-''evidenceNote'')','CRM_POST_BOOKING_INVALID_INPUT','staff declaration required');
@@ -162,6 +163,8 @@ SELECT runtime_post_booking.expect_error('UPDATE public.loan_attempts SET result
 SELECT runtime_post_booking.expect_error('DELETE FROM public.loan_attempts WHERE id=(SELECT (value->>''loanAttemptId'')::uuid FROM runtime_post_booking.context WHERE key=''reject1'')','CRM_POST_BOOKING_CONFLICT','purchase history never deleted even with permit');
 DELETE FROM sales_private.post_booking_write_permits WHERE transaction_id=txid_current();
 SET LOCAL ROLE authenticated;
+SELECT runtime_post_booking.expect_error('SELECT public.crm_v2_post_booking_command(gen_random_uuid(),runtime_post_booking.payload(''book1'',''submit_loan'',''{"bankName":"SYNTHETIC BANK B"}''))','CRM_POST_BOOKING_CONFLICT','rejected loan requires new document preparation before resubmit');
+SELECT public.crm_v2_post_booking_command(gen_random_uuid(),runtime_post_booking.payload('book1','advance','{"nextStage":"document_prep"}'));
 INSERT INTO runtime_post_booking.context VALUES('submit2',public.crm_v2_post_booking_command(gen_random_uuid(),runtime_post_booking.payload('book1','submit_loan','{"bankName":"SYNTHETIC BANK B"}')));
 SELECT runtime_post_booking.assert_true((SELECT value->>'loanAttemptId'<>(SELECT value->>'loanAttemptId' FROM runtime_post_booking.context WHERE key='submit1') FROM runtime_post_booking.context WHERE key='submit2'),'resubmission creates new attempt identity');
 INSERT INTO runtime_post_booking.context VALUES('approve2',public.crm_v2_post_booking_command(gen_random_uuid(),runtime_post_booking.payload('book1','loan_result',
@@ -170,8 +173,8 @@ SELECT runtime_post_booking.expect_error('SELECT public.crm_v2_post_booking_comm
 INSERT INTO runtime_post_booking.context VALUES('pending1',public.crm_v2_post_booking_command(gen_random_uuid(),runtime_post_booking.payload('book1','advance','{"nextStage":"transfer_pending"}')));
 INSERT INTO runtime_post_booking.context VALUES('history',public.crm_v2_post_booking_context((SELECT (value->>'saleId')::uuid FROM runtime_post_booking.context WHERE key='book1')));
 SELECT runtime_post_booking.assert_true((SELECT value#>>'{sale,stage}'='transfer_pending' AND value#>>'{sale,canEdit}'='true'
- AND jsonb_array_length(value->'events')=8 AND jsonb_array_length(value->'attempts')=2
- AND value#>>'{latestAttempt,attemptNumber}'='2' AND value#>>'{latestAttempt,approvedAmount}'='876543.21' FROM runtime_post_booking.context WHERE key='history'),'mortgage history reaches pending with eight events and two retained loan rounds');
+ AND jsonb_array_length(value->'events')=9 AND jsonb_array_length(value->'attempts')=2
+ AND value#>>'{latestAttempt,attemptNumber}'='2' AND value#>>'{latestAttempt,approvedAmount}'='876543.21' FROM runtime_post_booking.context WHERE key='history'),'mortgage history reaches pending with nine events and two retained loan rounds');
 SELECT runtime_post_booking.assert_true((SELECT value->'loanAttemptId'='null'::jsonb FROM runtime_post_booking.context WHERE key='pending1'),'advance receipt does not invent new loan application');
 RESET ROLE;
 SELECT runtime_post_booking.assert_true((SELECT to_jsonb(a)=(SELECT value FROM runtime_post_booking.context WHERE key='rejected-row') FROM public.loan_attempts a
@@ -199,7 +202,7 @@ DELETE FROM sales_private.booking_write_permits WHERE transaction_id=txid_curren
 SET LOCAL ROLE authenticated;
 SELECT runtime_post_booking.assert_true(public.crm_v2_post_booking_context((SELECT (value->>'saleId')::uuid FROM runtime_post_booking.context WHERE key='book4'))#>>'{sale,canEdit}'='false','unknown payment stays readable but not editable');
 SELECT runtime_post_booking.expect_error('SELECT public.crm_v2_post_booking_command(gen_random_uuid(),runtime_post_booking.payload(''book4''))','CRM_POST_BOOKING_SETUP_REQUIRED','unknown payment never inferred as cash or mortgage');
-SELECT runtime_post_booking.expect_error('SELECT public.crm_v2_post_booking_command(gen_random_uuid(),runtime_post_booking.payload(''book9'',''submit_loan'',''{"bankName":"SYNTHETIC BANK"}''))','CRM_POST_BOOKING_SETUP_REQUIRED','loan rejected stage requires actual rejected attempt for resubmission');
+SELECT runtime_post_booking.expect_error('SELECT public.crm_v2_post_booking_command(gen_random_uuid(),runtime_post_booking.payload(''book9'',''advance'',''{"nextStage":"document_prep"}''))','CRM_POST_BOOKING_SETUP_REQUIRED','loan rejected stage requires actual rejected attempt for resubmission');
 SELECT runtime_post_booking.expect_error('SELECT public.crm_v2_post_booking_command(gen_random_uuid(),runtime_post_booking.payload(''book10'',''advance'',''{"nextStage":"transfer_pending"}''))','CRM_POST_BOOKING_SETUP_REQUIRED','loan approved label is not evidence of trusted latest approval');
 SELECT set_config('request.jwt.claim.sub','bc210000-0000-4000-8000-000000000003',true);
 SELECT runtime_post_booking.assert_true(public.crm_v2_post_booking_context((SELECT (value->>'saleId')::uuid FROM runtime_post_booking.context WHERE key='book6'))#>>'{sale,canEdit}'='false','Owner context read only');
@@ -263,6 +266,7 @@ DO $loan_pages$
 DECLARE n integer; attempt jsonb;
 BEGIN
   FOR n IN 1..51 LOOP
+    IF n>1 THEN PERFORM public.crm_v2_post_booking_command(gen_random_uuid(),runtime_post_booking.payload('book7','advance','{"nextStage":"document_prep"}')); END IF;
     attempt:=public.crm_v2_post_booking_command(gen_random_uuid(),runtime_post_booking.payload('book7','submit_loan',jsonb_build_object('bankName','SYNTHETIC PAGE BANK '||n)));
     PERFORM public.crm_v2_post_booking_command(gen_random_uuid(),runtime_post_booking.payload('book7','loan_result',jsonb_build_object(
       'loanAttemptId',attempt->'loanAttemptId','result','rejected','approvedAmountSatang',NULL)));
@@ -270,7 +274,7 @@ BEGIN
 END;
 $loan_pages$;
 INSERT INTO runtime_post_booking.context VALUES('page0',public.crm_v2_post_booking_context((SELECT (value->>'saleId')::uuid FROM runtime_post_booking.context WHERE key='book7'))),
- ('page1',public.crm_v2_post_booking_context((SELECT (value->>'saleId')::uuid FROM runtime_post_booking.context WHERE key='book7'),1,2));
+ ('page1',public.crm_v2_post_booking_context((SELECT (value->>'saleId')::uuid FROM runtime_post_booking.context WHERE key='book7'),1,3));
 SELECT runtime_post_booking.assert_true((SELECT jsonb_array_length(value->'attempts')=50 AND value->>'attemptsHasMore'='true'
  AND jsonb_array_length(value->'events')=50 AND value->>'eventsHasMore'='true' FROM runtime_post_booking.context WHERE key='page0'),'loan and event lists each bounded fifty with lookahead');
 SELECT runtime_post_booking.assert_true((SELECT jsonb_array_length(value->'attempts')=1 AND value->>'attemptsHasMore'='false'
@@ -342,9 +346,9 @@ UPDATE public.plots SET has_customer=true WHERE id='SYNTHETIC-POST-3';
 SET LOCAL ROLE authenticated;
 INSERT INTO runtime_post_booking.context VALUES('transfer1',public.crm_v2_post_booking_command('bc211000-0000-4000-8000-000000000101',(SELECT value FROM runtime_post_booking.context WHERE key='transfer-input1')));
 INSERT INTO runtime_post_booking.context VALUES('transfer-history',public.crm_v2_post_booking_context((SELECT (value->>'saleId')::uuid FROM runtime_post_booking.context WHERE key='book1')));
-SELECT runtime_post_booking.assert_true((SELECT value#>>'{sale,stage}'='transferred' AND value#>>'{sale,canEdit}'='false'
+SELECT runtime_post_booking.assert_true((SELECT value#>>'{sale,stage}'='transferred' AND value#>>'{sale,canEdit}'='true'
  AND value#>'{sale,transferDate}'=(SELECT value->'transferDate' FROM runtime_post_booking.context WHERE key='transfer-input1')
- AND jsonb_array_length(value->'events')=9 AND value#>'{events,0,occurredAt}'='null'::jsonb AND value#>'{events,0,evidenceNote}'='null'::jsonb
+ AND jsonb_array_length(value->'events')=10 AND value#>'{events,0,occurredAt}'='null'::jsonb AND value#>'{events,0,evidenceNote}'='null'::jsonb
  AND value#>>'{events,0,command}'='confirm_transfer' AND value#>'{events,0,loanAttemptId}'='null'::jsonb
  AND value#>'{events,0,transferDate}'=value#>'{sale,transferDate}' FROM runtime_post_booking.context WHERE key='transfer-history'),'date-only transfer context has civil date and recorded clock without fake occurrence or evidence');
 SELECT runtime_post_booking.assert_true(public.crm_v2_post_booking_command('bc211000-0000-4000-8000-000000000101',(SELECT value FROM runtime_post_booking.context WHERE key='transfer-input1'))=(SELECT value||'{"replayed":true}'::jsonb FROM runtime_post_booking.context WHERE key='transfer1'),'repeated transfer returns same receipt and date');
@@ -381,7 +385,7 @@ SET LOCAL ROLE authenticated;
 SELECT runtime_post_booking.expect_error('SELECT public.crm_v2_post_booking_command(''bc211000-0000-4000-8000-000000000001'',(SELECT value FROM runtime_post_booking.context WHERE key=''input1''))','CRM_POST_BOOKING_SETUP_REQUIRED','kill switch blocks even saved receipts');
 RESET ROLE;
 UPDATE public.crm_settings SET post_booking_enabled=true WHERE id;
-SELECT runtime_post_booking.assert_true(NOT EXISTS(SELECT 1 FROM sales_private.booking_write_permits) AND NOT EXISTS(SELECT 1 FROM sales_private.post_booking_write_permits),'no reusable permits remain');
+SELECT runtime_post_booking.assert_true(NOT EXISTS(SELECT 1 FROM sales_private.booking_write_permits) AND NOT EXISTS(SELECT 1 FROM sales_private.post_booking_write_permits) AND NOT EXISTS(SELECT 1 FROM sales_private.post_booking_external_write_permits),'no reusable permits remain');
 INSERT INTO runtime_post_booking.context VALUES('before-read',runtime_post_booking.business_snapshot());
 SET LOCAL ROLE authenticated;
 INSERT INTO runtime_post_booking.context VALUES('readonly',public.crm_v2_post_booking_context((SELECT (value->>'saleId')::uuid FROM runtime_post_booking.context WHERE key='book1')));

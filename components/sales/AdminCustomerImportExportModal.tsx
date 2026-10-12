@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/supabase';
+import SalesOverlay from './SalesOverlay';
 
 interface Props {
   isOpen: boolean;
@@ -473,7 +474,7 @@ export default function AdminCustomerImportExportModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[500] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in">
+    <SalesOverlay className="fixed inset-0 z-[500] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in">
       <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-4xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95">
         
         {/* 1. Header */}
@@ -823,6 +824,6 @@ export default function AdminCustomerImportExportModal({
         )}
 
       </div>
-    </div>
+    </SalesOverlay>
   );
 }

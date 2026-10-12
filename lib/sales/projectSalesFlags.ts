@@ -9,7 +9,8 @@ export function projectSalesEnabled(): boolean {
 export function salesReportsEnabled(): boolean {
   return true;
 }
-/** Default to legacy mode so the rich BuildTrack sales workspace is always active without blocking */
+/** An explicit cutover keeps the rich workspace while changing its trusted reader. */
 export function projectWorkspaceMode(): ProjectWorkspaceMode {
-  return 'legacy';
+  if (process.env.SALES_CRM_PROJECT_WORKSPACE_ENABLED !== 'true') return 'legacy';
+  return centralBookingReleaseAllowed() && projectSalesEnabled() ? 'central' : 'blocked';
 }

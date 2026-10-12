@@ -244,9 +244,13 @@ export default function DailyAccountabilityModal({
     const link = document.createElement('a');
     link.href = url;
     link.setAttribute('download', `Daily_Accountability_Report_${selectedDate}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    try {
+      document.body.appendChild(link);
+      link.click();
+    } finally {
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
   };
 
   if (!isOpen) return null;

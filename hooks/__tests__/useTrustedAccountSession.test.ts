@@ -29,6 +29,30 @@ function fixture(initial:ActorSession|null=null){
 beforeEach(()=>{vi.useFakeTimers();vi.setSystemTime(new Date('2026-09-25T10:00:00Z'));localStorage.clear();vi.mocked(readTrustedActor).mockReset().mockResolvedValue(actor);});
 afterEach(()=>{cleanup();vi.useRealTimers();});
 describe('trusted session lifecycle',()=>{
+    it('supports the root 24-hour idle window without changing the default 60-minute window',async()=>{
+        const idleMs=24*60*60*1000;
+        localStorage.setItem('buildtrack_last_active',String(Date.now()-idleMs+60_000));
+        const f=fixture(session);const {result}=renderHook(()=>useTrustedAccountSession(true,f.client,{idleMs}));await flush();
+        expect(result.current.actor).toEqual(actor);expect(f.client.auth.signOut).not.toHaveBeenCalled();
+        await act(async()=>{await vi.advanceTimersByTimeAsync(60_001);});
+        expect(result.current.actor).toBeNull();expect(result.current.error).toContain('24 ชั่วโมง');
+        expect(f.client.auth.signOut).toHaveBeenCalledExactlyOnceWith({scope:'local'});
+    });
+    it('records root activity after one hour but cannot revive an already expired 24-hour session',async()=>{
+        const idleMs=24*60*60*1000;
+        localStorage.setItem('buildtrack_last_active',String(Date.now()-2*60*60*1000));
+        const f=fixture(session);const {result}=renderHook(()=>useTrustedAccountSession(true,f.client,{idleMs}));await flush();
+        act(()=>window.dispatchEvent(new Event('keydown')));
+        const recent=localStorage.getItem('buildtrack_last_active');expect(recent).toBe(String(Date.now()));
+        vi.setSystemTime(Date.now()+idleMs+1);
+        act(()=>{window.dispatchEvent(new Event('mousemove'));window.dispatchEvent(new Event('focus'));});
+        expect(localStorage.getItem('buildtrack_last_active')).toBe(recent);
+        await flush();expect(result.current.actor).toBeNull();expect(result.current.error).toContain('24 ชั่วโมง');
+    });
+    it.each([0,-1,NaN,Infinity,1.5,Number.MAX_SAFE_INTEGER+1])('rejects invalid idle window %s',idleMs=>{
+        const f=fixture();expect(()=>renderHook(()=>useTrustedAccountSession(true,f.client,{idleMs}))).toThrow('idleMs must be a positive safe integer');
+        expect(f.client.auth.onAuthStateChange).not.toHaveBeenCalled();
+    });
     it('does nothing while default-off mode is disabled',async()=>{
         const f=fixture(session);renderHook(()=>useTrustedAccountSession(false,f.client));await flush();
         expect(f.client.auth.getSession).not.toHaveBeenCalled();expect(f.client.auth.onAuthStateChange).not.toHaveBeenCalled();
@@ -70,6 +94,27 @@ describe('trusted session lifecycle',()=>{
         await act(async()=>{f.emit('TOKEN_REFRESHED');});await flush();
         await act(async()=>{resolve(actor);});await flush();
         expect(result.current.actor?.role).toBe('Owner');expect(readTrustedActor).toHaveBeenCalledTimes(2);
+    });
+    it('never publishes the previous actor when the account switches during a pending restore',async()=>{
+        restoreStamp();let resolve!:(value:TrustedActor)=>void;
+        const next={...actor,authUserId:'a0250000-0000-4000-8000-000000000003',legacyUserId:3,username:'Sales B'};
+        vi.mocked(readTrustedActor).mockReturnValueOnce(new Promise(accept=>{resolve=accept;})).mockResolvedValue(next);
+        const f=fixture(session);const {result}=renderHook(()=>useTrustedAccountSession(true,f.client));await flush();
+        act(()=>{f.setSession({access_token:'second-synthetic',user:{id:next.authUserId}});f.emit('SIGNED_IN');});await flush();
+        await act(async()=>{resolve(actor);});expect(result.current.actor).toBeNull();
+        await flush();expect(result.current.actor).toEqual(next);
+    });
+    it('invalidates a login actor when the account switches while its presence request is pending',async()=>{
+        let resolve!:(value:{data:null;error:null})=>void;
+        const f=fixture();f.client.rpc.mockReturnValueOnce(new Promise(accept=>{resolve=accept;}));
+        const {result}=renderHook(()=>useTrustedAccountSession(true,f.client));await flush();
+        let pending!:Promise<void>;await act(async()=>{pending=result.current.login('Sales A','1234');});
+        expect(f.client.rpc).toHaveBeenCalledWith('app_touch_current_user');
+        const next={...actor,authUserId:'a0250000-0000-4000-8000-000000000003',legacyUserId:3,username:'Sales B'};
+        vi.mocked(readTrustedActor).mockResolvedValue(next);
+        act(()=>{f.setSession({access_token:'second-synthetic',user:{id:next.authUserId}});f.emit('SIGNED_IN');});
+        await act(async()=>{resolve({data:null,error:null});await pending;});
+        expect(result.current.actor).toBeNull();await flush();expect(result.current.actor).toEqual(next);
     });
     it('permission revocation on the next periodic check locks the app',async()=>{
         restoreStamp();const f=fixture(session);const {result}=renderHook(()=>useTrustedAccountSession(true,f.client));await flush();

@@ -39,7 +39,7 @@ describe('post-booking workspace', () => {
     expect(screen.getByRole('article', { name: 'ยื่นกู้รอบ 1' })).toHaveTextContent('เอกสารไม่ครบ');
     expect(screen.getByRole('article', { name: `เหตุการณ์ ${eventId}` })).toHaveTextContent('สัญญาเลขที่ทดสอบ 01');
     expect(screen.getAllByText('ไม่ทราบเวลา').length).toBeGreaterThan(0);
-    expect(screen.getByText(/ยังไม่เปิดส่งมอบ/)).toBeInTheDocument();
+    expect(screen.getByText(/วันที่เดิมที่ไม่มีบันทึกจะคงเป็นไม่ทราบ/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /ยืนยันโอน|ส่งมอบ|ลบ|แก้ไขประวัติ/ })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'ประวัติจอง / ยกเลิกจอง' })).toHaveAttribute('href', `/sales-crm/bookings?customerId=${advanceInput.customerId}`);
     expect(api.save).not.toHaveBeenCalled();
@@ -50,17 +50,17 @@ describe('post-booking workspace', () => {
     ['contracted', 'cash', ['บันทึกดาวน์', 'บันทึกเตรียมเอกสาร', 'บันทึกรอโอน']],
     ['document_prep', 'cash', ['บันทึกรอโอน']],
     ['document_prep', 'mortgage', ['บันทึกยื่นกู้']],
-    ['loan_rejected', 'mortgage', ['บันทึกยื่นกู้']],
+    ['loan_rejected', 'mortgage', ['บันทึกเตรียมเอกสาร']],
     ['loan_submitted', 'mortgage', ['บันทึกกู้อนุมัติ', 'บันทึกกู้ถูกปฏิเสธ']],
     ['loan_approved', 'mortgage', ['บันทึกรอโอน']],
     ['transfer_pending', 'cash', ['ยืนยันโอนจริง']],
     ['transfer_pending', 'mortgage', ['ยืนยันโอนจริง']],
-    ['transferred', 'mortgage', []],
+    ['transferred', 'mortgage', ['ยืนยันรับมอบบ้าน']],
     ['handover', 'mortgage', []],
     ['cancelled', 'mortgage', []],
   ] as [SaleStage, PaymentMethod, string[]][])('offers only safe targets for %s / %s', async (stage, method, expected) => {
     renderWorkspace(apiFor(postBookingSnapshot(stage, method))); await screen.findByText('ลูกค้าทดสอบ');
-    expect(screen.queryAllByRole('button', { name: /^(บันทึก|ยืนยันโอนจริง$)/ }).map(button => button.textContent)).toEqual(expected);
+    expect(screen.queryAllByRole('button', { name: /^(บันทึก|ยืนยันโอนจริง$|ยืนยันรับมอบบ้าน$)/ }).map(button => button.textContent)).toEqual(expected);
   });
   it.each(['owner', 'not-owner', 'unknown-payment'] as const)('stays read-only for %s', async reason => {
     const snapshot = postBookingSnapshot();
@@ -173,7 +173,7 @@ describe('post-booking workspace', () => {
     await act(async () => resolve(second)); fireEvent.click(screen.getByRole('button', { name: 'เหตุการณ์ถัดไป' }));
     expect(api.read).toHaveBeenLastCalledWith({ saleId, attemptPage: 1, eventPage: 1 });
   });
-  it('confirms the explicit transfer date, then shows day-only history with no further transfer or handover action', async () => {
+  it('confirms the explicit transfer date, then shows day-only history with handover action without another transfer', async () => {
     const api = apiFor(postBookingSnapshot('transfer_pending', 'cash'));
     api.read.mockResolvedValueOnce(postBookingSnapshot('transfer_pending', 'cash')).mockResolvedValue(transferredSnapshot());
     renderWorkspace(api); await startTransfer();
@@ -185,7 +185,8 @@ describe('post-booking workspace', () => {
     expect(history).toHaveTextContent('บันทึกเข้าระบบ:'); expect(history).toHaveTextContent('โอนกรรมสิทธิ์เสร็จแล้ว');
     expect(history).not.toHaveTextContent('เกิดเหตุการณ์:'); expect(history).not.toHaveTextContent('หลักฐานที่ผู้บันทึกอ้างอิง:');
     expect(screen.getByText(`วันโอนจริง: ${displayTransferDate('2026-09-21')}`)).not.toHaveTextContent(/\d{2}:\d{2}/);
-    expect(screen.queryByRole('button', { name: /ยืนยันโอน|ยืนยันวันโอน|ส่งมอบ/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /ยืนยันโอน|ยืนยันวันโอน/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'ยืนยันรับมอบบ้าน' })).toBeInTheDocument();
     expect(readPostBookingPending(actorId)).toBeNull();
   });
   it.each(['owner', 'other-sales', 'unknown-payment'] as const)('does not expose transfer confirmation for %s', async restriction => {
@@ -216,4 +217,15 @@ describe('post-booking workspace', () => {
     await waitFor(() => expect(api.save).toHaveBeenCalledWith(transferInput, actorId));
     expect(api.save.mock.calls[0][0]).not.toHaveProperty('occurredAt');
   });
+});
+
+
+it('offers handover for a transferred historical customer without asking to infer old payment evidence', async () => {
+  const s = postBookingSnapshot('transferred', null); s.events = [];
+  s.sale.importedHistory = { source: 'customer_sheet', batchId: advanceInput.customerId, sourceRow: 2, sourceStage: 'transferred',
+    bookedDate: '2024-02-01', transferredDate: null, cancelledDate: null };
+  renderWorkspace(apiFor(s)); await screen.findByText('ลูกค้าทดสอบ');
+  expect(screen.getByRole('button', { name: 'ยืนยันรับมอบบ้าน' })).toBeInTheDocument();
+  expect(screen.queryByText(/กรุณาให้ Admin ตรวจสอบหลักฐาน/)).not.toBeInTheDocument();
+  expect(screen.getByLabelText('ข้อมูลรอบจอง')).toHaveTextContent('ข้อมูลเดิม');
 });

@@ -5,7 +5,7 @@ import type { ExcelHouseDetails } from './excelHouseDetails';
 
 export interface ExcelSaleRow { sale: ProjectSaleRow; bookedDate: string | null; cancelledDate: string | null; transferredDate: string | null; expectedTransferDate: string | null; leadDate: string | null; houseDetails?: ExcelHouseDetails; tdPrice?: number | null }
 export interface ExcelStockRow {
-  projectName: string; plotId: string; plotName: string; status: ProjectMapStatus; sale: ProjectSaleRow | null;
+  projectName: string; plotId: string; plotName: string; status: Exclude<ProjectMapStatus, 'rented'>; sale: ProjectSaleRow | null;
   basePrice: number | null; appraisalPrice: number | null; transferredDate: string | null; expectedTransferDate: string | null;
 }
 export interface ExcelProjectGroup {
@@ -60,7 +60,9 @@ export function buildExcelReport(data: ExcelReportData, projectName: string | nu
       const region = regions.find(region => region.plotId === catalog.plotId);
       if (!region) throw new Error('Missing plot inventory');
       return { projectName: project.map.projectName, plotId: catalog.plotId, plotName: region.name,
-        status: catalog.isInfrastructure === null ? 'unknown' as const : region.status,
+        // This purchase report has no rental financial projection. Keep rental
+        // stock under review rather than count it as vacant or a booked sale.
+        status: catalog.isInfrastructure === null || region.status === 'rented' ? 'unknown' as const : region.status,
         sale: region.currentSale, basePrice: catalog.basePrice, appraisalPrice: catalog.appraisalPrice,
         transferredDate: region.currentSale ? eventDates(region.currentSale).transferredDate : null,
         expectedTransferDate: region.currentSale ? rows.find(row => row.sale.saleId === region.currentSale!.saleId)?.expectedTransferDate ?? null : null };

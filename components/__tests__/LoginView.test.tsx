@@ -107,7 +107,7 @@ describe('LoginView Component', () => {
   });
 
   it.each([
-    { namesLoading: true }, { namesError: 'โหลดไม่สำเร็จ' }, { isLoggingIn: true },
+    { namesLoading: true }, { namesError: 'โหลดไม่สำเร็จ' }, { isLoggingIn: true }, { isLoggingOut: true },
     { loginNames: [] }, { loginData: { username: 'admin', pin: '123' } },
     { loginData: { username: 'not-in-directory', pin: '1234' } },
   ])('blocks both click and Enter when unavailable: %j', overrides => {

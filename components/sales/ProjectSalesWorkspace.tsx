@@ -167,8 +167,8 @@ function ProjectSalesSession({ initialProjectName = null, initialTab = 'booked',
             {sale.stage === 'cancelled' && <div className="mt-2 space-y-1 rounded-lg bg-rose-50 p-2 text-rose-800">
               <p>วันที่ยกเลิก: {snapshot.prepared ? historyDate(sale.historyEvidence?.cancelledDate) : displayBookingHistoryDate(sale.cancelledAt, sale.importedHistory?.cancelledDate)}</p><p className="whitespace-pre-wrap break-words">เหตุผล: {sale.cancellationReason ?? 'ไม่ทราบ'}</p>
             </div>}</td>
-          <td className="min-w-52 space-y-1 p-3 text-slate-600"><p>ราคาก่อนส่วนลด: {money(sale.listPrice)}</p><p>ส่วนลด: {money(sale.discountAmount)}</p>
-            <p className="font-semibold text-slate-900">ราคาขายบ้าน: {money(sale.salePrice)}</p><p>เงินจองที่รับ: {money(sale.depositAmount)}</p>
+          <td className="min-w-52 space-y-1 p-3 text-slate-600"><p>ราคาก่อนส่วนลดตอนจอง: {money(sale.listPrice)}</p><p>ส่วนลดตอนจอง: {money(sale.discountAmount)}</p>
+            <p className="font-semibold text-slate-900">ราคาขายปัจจุบัน: {money(sale.salePrice)}</p><p>เงินจองที่รับ: {money(sale.depositAmount)}</p>
             <p>การชำระ: {sale.paymentMethod === 'cash' ? 'เงินสด' : sale.paymentMethod === 'mortgage' ? 'กู้ธนาคาร' : 'ไม่ทราบ'}</p></td>
           <td className="min-w-52 max-w-64 space-y-2 p-3"><p className="break-all text-[10px] text-slate-400">รหัสจอง {sale.saleId}</p>
             {sale.previousSaleId && <p className="break-all text-[10px] text-slate-500">อ้างอิงจองเดิม {sale.previousSaleId}</p>}

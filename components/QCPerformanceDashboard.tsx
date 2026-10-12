@@ -1,18 +1,23 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { TrendingUp, AlertTriangle, Target, CheckCircle, Clock, PieChart as PieChartIcon, Calendar, List, X, ShieldAlert, Printer, ChevronLeft, ChevronRight, Filter } from 'lucide-react';
 import { XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, BarChart, Bar, Legend } from 'recharts';
+import { constructionQueueDate, constructionQueueFirstIndex, constructionQueueHistoryIndex, constructionQueueKey } from '@/lib/constructionQueue';
 
 export default function QCPerformanceDashboard({
   plots, taskTemplates, defects, allUpdatesRecord, assignments, isAdmin, isOwner, inspectionQueue
 }: any) {
-  const [qcFilterStartDate, setQcFilterStartDate] = useState<string>(new Date().toISOString().split('T')[0]);
-  const [qcFilterEndDate, setQcFilterEndDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [qcFilterStartDate, setQcFilterStartDate] = useState<string>(() => constructionQueueDate());
+  const [qcFilterEndDate, setQcFilterEndDate] = useState<string>(() => constructionQueueDate());
   const [showQCDailyModal, setShowQCDailyModal] = useState(false);
   const [groupBy, setGroupBy] = useState<'time' | 'contractor' | 'plot'>('time');
   const [lightbox, setLightbox] = useState<{isOpen: boolean, images: string[], currentIndex: number}>({ isOpen: false, images: [], currentIndex: 0 });
   const [valueChartRange, setValueChartRange] = useState<number>(14);
   const [suspectPage, setSuspectPage] = useState(1);
+  const plotIndex = useMemo(() => constructionQueueFirstIndex<any, string>(plots || [], p => String(p.id)), [plots]);
+  const taskIndex = useMemo(() => constructionQueueFirstIndex<any, string>(taskTemplates || [], t => String(t.id)), [taskTemplates]);
+  const assignmentIndex = useMemo(() => constructionQueueFirstIndex<any, string>(assignments || [], a => constructionQueueKey(a.plot_id, a.task_template_id)), [assignments]);
+  const historyIndex = useMemo(() => constructionQueueHistoryIndex<any>(allUpdatesRecord || []), [allUpdatesRecord]);
 
   const qcAnalytics = useMemo(() => {
     if (!defects || !allUpdatesRecord) return null;
@@ -158,7 +163,7 @@ export default function QCPerformanceDashboard({
 
     const worstOffenders = Object.keys(taskStats).map(taskId => {
        const stat = taskStats[taskId];
-       const task = taskTemplates?.find((t:any) => String(t.id) === String(taskId));
+       const task = taskIndex.get(String(taskId));
        const avgLeadTime = stat.leadTimes.length > 0 ? (stat.totalLeadTime / stat.leadTimes.length) : 0;
        return {
          taskName: task ? task.task_name : 'ไม่ระบุ',
@@ -177,27 +182,22 @@ export default function QCPerformanceDashboard({
        const updDateStr = new Date(upd.created_at).toLocaleDateString('en-CA');
        if (updDateStr >= qcFilterStartDate && updDateStr <= qcFilterEndDate) {
           if (upd.action === 'QC อนุมัติผ่าน' || upd.action === 'QC อนุมัติ' || upd.action === 'QC แจ้งแก้ไข') {
-             const plot = plots?.find((p:any) => String(p.id) === String(upd.plot_id));
-             const task = taskTemplates?.find((t:any) => String(t.id) === String(upd.task_template_id));
-             const assign = assignments?.find((a:any) => String(a.plot_id) === String(upd.plot_id) && String(a.task_template_id) === String(upd.task_template_id));
+             const plot = plotIndex.get(String(upd.plot_id));
+             const task = taskIndex.get(String(upd.task_template_id));
+             const assign = assignmentIndex.get(constructionQueueKey(upd.plot_id, upd.task_template_id));
              const foremanName = plot?.foreman || 'ไม่ระบุ';
              const contractorName = assign?.contractor_name || 'ไม่ระบุ';
              
              // Find previous SE submit
-             const taskUpdates = allUpdatesRecord.filter((u:any) => 
-               String(u.plot_id) === String(upd.plot_id) && 
-               String(u.task_template_id) === String(upd.task_template_id) &&
-               new Date(u.created_at) < new Date(upd.created_at) &&
-               u.progress === 100 && (u.action === 'ส่งงาน 100%' || !u.action?.includes('QC'))
-             ).sort((a:any, b:any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+             const previousSubmit = historyIndex.previousSubmission(upd);
              
-             const seSubmitTime = taskUpdates.length > 0 
-               ? new Date(taskUpdates[0].created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
+             const seSubmitTime = previousSubmit
+               ? new Date(previousSubmit.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
                : '-';
-             const seSubmitDate = taskUpdates.length > 0 
-               ? new Date(taskUpdates[0].created_at).toLocaleDateString('th-TH', { day: '2-digit', month: 'short' })
+             const seSubmitDate = previousSubmit
+               ? new Date(previousSubmit.created_at).toLocaleDateString('th-TH', { day: '2-digit', month: 'short' })
                : '';
-             const seSubmitFullStr = taskUpdates.length > 0 ? `${seSubmitDate} ${seSubmitTime}` : '-';
+             const seSubmitFullStr = previousSubmit ? `${seSubmitDate} ${seSubmitTime}` : '-';
              const qcTimeFullStr = `${new Date(upd.created_at).toLocaleDateString('th-TH', { day: '2-digit', month: 'short' })} ${new Date(upd.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}`;
 
              const detailObj = {
@@ -253,7 +253,7 @@ export default function QCPerformanceDashboard({
 
         // Value Metrics (Only Passed Tasks)
         if (upd.action === 'QC อนุมัติผ่าน' || upd.action === 'QC อนุมัติ') {
-          const task = taskTemplates?.find((t: any) => String(t.id) === String(upd.task_template_id));
+          const task = taskIndex.get(String(upd.task_template_id));
           const cost = task?.cost || 0;
           dailyValueMap[dateStr].value += cost;
           dailyValueMap[dateStr].count += 1;
@@ -279,8 +279,8 @@ export default function QCPerformanceDashboard({
     });
 
     todayActivities.forEach(act => {
-       const plot = plots?.find((p:any) => String(p.id) === String(act.plot_id));
-       const task = taskTemplates?.find((t:any) => String(t.id) === String(act.task_template_id));
+       const plot = plotIndex.get(String(act.plot_id));
+       const task = taskIndex.get(String(act.task_template_id));
        act.projectName = plot?.project_name || 'ไม่ระบุโครงการ';
        act.plotName = plot?.plot_name || plot?.id || 'ไม่ระบุแปลง';
        act.taskName = task?.task_name || 'ไม่ระบุงาน';
@@ -292,7 +292,7 @@ export default function QCPerformanceDashboard({
     
     (inspectionQueue || []).forEach((q: any) => {
       if (q.statusFor === 'QC') {
-         const task = taskTemplates?.find((t: any) => String(t.id) === String(q.task_template_id));
+         const task = taskIndex.get(String(q.task_template_id));
          const cost = task?.cost || 0;
          pendingValue += cost;
          
@@ -313,25 +313,18 @@ export default function QCPerformanceDashboard({
     const suspectApprovals: any[] = [];
     const SUSPECT_MINUTES = 10; // Threshold
 
-    const groupedUpdates: Record<string, any[]> = {};
-    allUpdatesRecord.forEach((upd: any) => {
-      const key = `${upd.plot_id}_${upd.task_template_id}`;
-      if (!groupedUpdates[key]) groupedUpdates[key] = [];
-      groupedUpdates[key].push(upd);
-    });
-
-    Object.values(groupedUpdates).forEach(updates => {
-      for (let i = 0; i < updates.length - 1; i++) {
+    historyIndex.grouped.forEach(updates => {
+      for (let i = 0; i < updates.length; i++) {
         const upd = updates[i];
         if (upd.action === 'QC อนุมัติผ่าน' || upd.action === 'QC อนุมัติ') {
-           const seSubmit = updates.slice(i + 1).find(u => u.progress === 100 && (u.action === 'ส่งงาน 100%' || !u.action?.includes('QC')));
+           const seSubmit = historyIndex.previousSubmission(upd, true);
            if (seSubmit) {
              const qcTime = new Date(upd.created_at).getTime();
              const seTime = new Date(seSubmit.created_at).getTime();
              const diffMinutes = (qcTime - seTime) / (1000 * 60);
              if (diffMinutes >= 0 && diffMinutes <= SUSPECT_MINUTES) {
-               const plot = plots?.find((p:any) => String(p.id) === String(upd.plot_id));
-               const task = taskTemplates?.find((t:any) => String(t.id) === String(upd.task_template_id));
+               const plot = plotIndex.get(String(upd.plot_id));
+               const task = taskIndex.get(String(upd.task_template_id));
                suspectApprovals.push({
                  id: upd.id,
                  plotName: plot ? (plot.plot_name || plot.id) : 'ไม่ระบุแปลง',
@@ -370,7 +363,11 @@ export default function QCPerformanceDashboard({
       suspectApprovals,
       todayActivities
     };
-  }, [defects, allUpdatesRecord, taskTemplates, plots, qcFilterStartDate, qcFilterEndDate, assignments, valueChartRange, inspectionQueue]);
+  }, [defects, allUpdatesRecord, taskIndex, plotIndex, qcFilterStartDate, qcFilterEndDate, assignmentIndex, historyIndex, valueChartRange, inspectionQueue]);
+
+  useEffect(() => {
+    setSuspectPage(page => Math.min(page, Math.max(1, Math.ceil((qcAnalytics?.suspectApprovals.length || 0) / 10))));
+  }, [qcAnalytics?.suspectApprovals.length]);
 
   const groupedDailyQC = useMemo(() => {
     if (!qcAnalytics) return null;
@@ -817,8 +814,8 @@ export default function QCPerformanceDashboard({
                     if (priorityA !== priorityB) return priorityA - priorityB;
 
                     // 2. Sort by Project Name + Plot Name (A-Z)
-                    const plotA = plots?.find((p: any) => String(p.id) === String(a.plot_id));
-                    const plotB = plots?.find((p: any) => String(p.id) === String(b.plot_id));
+                    const plotA = plotIndex.get(String(a.plot_id));
+                    const plotB = plotIndex.get(String(b.plot_id));
                     const nameA = `${plotA?.project_name || ''} ${plotA?.plot_name || ''}`;
                     const nameB = `${plotB?.project_name || ''} ${plotB?.plot_name || ''}`;
                     
@@ -832,8 +829,8 @@ export default function QCPerformanceDashboard({
                   const isWaitingQC = item.statusFor === 'QC' && !item.isRejected;
                   const isRework = item.isRejected;
                   
-                  const plot = plots?.find((p: any) => String(p.id) === String(item.plot_id));
-                  const task = taskTemplates?.find((t: any) => String(t.id) === String(item.task_template_id));
+                  const plot = plotIndex.get(String(item.plot_id));
+                  const task = taskIndex.get(String(item.task_template_id));
                   
                   return (
                     <div key={idx} className={`bg-white border ${isRework ? 'border-rose-300 shadow-rose-100' : 'border-slate-200'} rounded-xl p-4 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4`}>

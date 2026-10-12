@@ -1,0 +1,17 @@
+import { describe,expect,it } from 'vitest';
+import { parseRentalProjectPage,type RentalProjectPage,type RentalProjectRow } from '../rentalProjectReadContracts';
+import { pid } from './projectSalesFixtures';
+export const leaseRow=(overrides:Partial<RentalProjectRow>={}):RentalProjectRow=>({contractId:pid(70),customerId:pid(71),interestId:pid(72),ownerUserId:pid(8),projectName:'โครงการ A',plotId:'P-2',customerName:'ลูกค้าเช่าจริงตาม snapshot',customerPhone:null,programType:'program_b',status:'active',revision:pid(73),startDate:'2026-01-01',endDate:'2026-12-31',endedDate:null,convertedSaleId:null,...overrides});
+export const leasePage=(overrides:Partial<RentalProjectPage>={}):RentalProjectPage=>({projectName:'โครงการ A',actor:{userId:pid(8),role:'sales'},snapshotRevision:'a'.repeat(32),page:0,hasMore:false,rows:[leaseRow()],...overrides});
+const parse=(value:unknown)=>parseRentalProjectPage(value,{projectName:'โครงการ A',page:0});
+describe('rental project read parser',()=>{
+ it('accepts canonical customer/contract identity and owner read role',()=>{const value=leasePage({actor:{userId:pid(8),role:'owner'}});expect(parse(value)).toEqual(value);});
+ it('retains precise plot ID, leading zeroes and source spelling without fuzzy normalization',()=>{expect(parse(leasePage({rows:[leaseRow({plotId:' P-02 '})]})).rows[0].plotId).toBe(' P-02 ');});
+ it.each(['ended','converted'] as const)('requires actual ending date for %s',status=>{const row=leaseRow({status,convertedSaleId:status==='converted'?pid(74):null});expect(()=>parse(leasePage({rows:[row]}))).toThrow();row.endedDate='2026-10-09';expect(parse(leasePage({rows:[row]})).rows[0]).toEqual(row);});
+ it.each([{status:'active',endedDate:'2026-10-09'},{status:'renewed',convertedSaleId:pid(74)},{status:'ended',endedDate:'2026-10-09',convertedSaleId:pid(74)},{status:'converted',endedDate:'2026-10-09'}])('rejects incoherent status %#',fields=>expect(()=>parse(leasePage({rows:[{...leaseRow(),...fields} as RentalProjectRow]}))).toThrow());
+ it.each([{customerId:'nickname'},{interestId:'name'},{ownerUserId:'Sale'},{contractId:'alias'},{revision:'old'},{projectName:'โครงการ B'},{startDate:'2026-02-30'},{endDate:'2025-12-01'},{endedDate:'2025-12-01',status:'ended'},{customerName:'name\nsecret'},{customerPhone:'phone\u0000'},{plotId:'P-1\u2028'},{programType:'A'}])('rejects unsafe/mismatched row %#',fields=>expect(()=>parse(leasePage({rows:[{...leaseRow(),...fields} as RentalProjectRow]}))).toThrow());
+ it('rejects missing, extra row/page/actor fields',()=>{const v=leasePage();expect(()=>parse({...v,extra:1})).toThrow();expect(()=>parse({...v,actor:{...v.actor,extra:1}})).toThrow();expect(()=>parse({...v,rows:[{...v.rows[0],extra:1}]})).toThrow();const {revision,...row}=v.rows[0];expect(()=>parse({...v,rows:[row]})).toThrow();});
+ it.each([-1,100,0.5,'0'])('rejects invalid page %s',page=>expect(()=>parse({...leasePage(),page})).toThrow());
+ it.each(['A'.repeat(32),'a'.repeat(31),'','secret'])('rejects invalid fingerprint %s',snapshotRevision=>expect(()=>parse({...leasePage(),snapshotRevision})).toThrow());
+ it('rejects partial continuation pages, duplicate contracts, overflow rows and foreign role',()=>{expect(()=>parse(leasePage({hasMore:true}))).toThrow();expect(()=>parse(leasePage({rows:[leaseRow(),leaseRow()]}))).toThrow();expect(()=>parse(leasePage({rows:Array.from({length:51},(_,i)=>leaseRow({contractId:pid(i+100)}))}))).toThrow();expect(()=>parse({...leasePage(),actor:{userId:pid(8),role:'construction'}})).toThrow();});
+});

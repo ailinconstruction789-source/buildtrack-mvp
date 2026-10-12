@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { RentalMaintenanceTicket, Lead } from '@/types/sales';
+import SalesOverlay from './SalesOverlay';
 
 interface RentalMaintenanceModalProps {
   isOpen: boolean;
@@ -167,7 +168,7 @@ export default function RentalMaintenanceModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[350] flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto animate-fade-in">
+    <SalesOverlay className="fixed inset-0 z-[350] flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto animate-fade-in">
       <div className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden my-auto flex flex-col max-h-[90vh]">
         
         {/* Header */}
@@ -423,6 +424,6 @@ export default function RentalMaintenanceModal({
         </div>
 
       </div>
-    </div>
+    </SalesOverlay>
   );
 }

@@ -7,12 +7,11 @@
  * trust a role, owner, validation flag, or loan history supplied by the browser.
  */
 
+import { PURCHASE_STAGES, PURCHASE_NEXT } from './purchaseFlow';
+
 export const CUSTOMER_STATUSES = ['new', 'contacted', 'following_up', 'nurture', 'lost'] as const;
 export const INTEREST_STATUSES = ['new', 'contacted', 'considering', 'follow_up', 'nurture', 'lost'] as const;
-export const SALE_STAGES = [
-    'booked', 'contracted', 'downpayment', 'document_prep', 'loan_submitted',
-    'loan_rejected', 'loan_approved', 'transfer_pending', 'transferred', 'handover', 'cancelled',
-] as const;
+export const SALE_STAGES = PURCHASE_STAGES;
 
 export type CustomerStatus = typeof CUSTOMER_STATUSES[number];
 export type InterestStatus = typeof INTEREST_STATUSES[number];
@@ -184,19 +183,7 @@ export function appendLoanAttempt(
     return success([...history, { ...next }]);
 }
 
-const NEXT_SALE_STAGES: Readonly<Record<SaleStage, readonly SaleStage[]>> = {
-    booked: ['contracted', 'cancelled'],
-    contracted: ['downpayment', 'document_prep', 'transfer_pending', 'cancelled'],
-    downpayment: ['document_prep', 'transfer_pending', 'cancelled'],
-    document_prep: ['loan_submitted', 'transfer_pending', 'cancelled'],
-    loan_submitted: ['loan_rejected', 'loan_approved', 'cancelled'],
-    loan_rejected: ['loan_submitted', 'cancelled'],
-    loan_approved: ['transfer_pending', 'cancelled'],
-    transfer_pending: ['transferred', 'cancelled'],
-    transferred: ['handover'],
-    handover: [],
-    cancelled: [],
-};
+const NEXT_SALE_STAGES = PURCHASE_NEXT;
 
 export interface SaleTransitionInput {
     readonly actor: CrmActor;

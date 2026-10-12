@@ -1,18 +1,19 @@
+import { parseRentalProjectPage, type RentalProjectPage, type RentalProjectRow } from './rentalProjectReadContracts';
 import { bookingRecord, bookingUuid } from './bookingContracts';
 import { parseProjectSalesPageQuery, parseProjectSalesSnapshot, type ProjectSaleRow, type ProjectSalesSnapshot } from './projectSalesContracts';
 
-export type ProjectMapStatus = 'available' | 'booked' | 'transferred' | 'unknown';
+export type ProjectMapStatus = 'available' | 'booked' | 'transferred' | 'rented' | 'unknown';
 export type ProjectMapCellType = 'plot' | 'road' | 'park' | 'fence-h' | 'fence-v' | 'infra-h' | 'infra-v';
 export interface ProjectMapCell { x: number; y: number; type: ProjectMapCellType; plotId?: string }
 export interface ProjectMapLayout { cols: number; rows: number; cells: ProjectMapCell[] }
 export interface ProjectMapPlot { id: string; name: string; hasCustomer: boolean | null; isCompleted: boolean | null; saleStatus: string | null }
 export interface ProjectMapSnapshot {
   projectName: string; actor: ProjectSalesSnapshot['actor']; layout: ProjectMapLayout;
-  plots: ProjectMapPlot[]; salePages: ProjectSalesSnapshot[];
+  plots: ProjectMapPlot[]; salePages: ProjectSalesSnapshot[]; rentalPages?: RentalProjectPage[];
 }
 export interface ProjectMapRegion {
   key: string; plotId: string | null; name: string; x: number; y: number; width: number; height: number;
-  status: ProjectMapStatus; isCompleted: boolean | null; currentSale: ProjectSaleRow | null; history: ProjectSaleRow[];
+  status: ProjectMapStatus; isCompleted: boolean | null; currentSale: ProjectSaleRow | null; history: ProjectSaleRow[]; currentRental: RentalProjectRow | null; rentalHistory: RentalProjectRow[];
 }
 export const PROJECT_MAP_MAX_PAGES = 100;
 export const PROJECT_MAP_MAX_PLOTS = 2000;
@@ -71,11 +72,34 @@ export function parseProjectMapSnapshot(value: unknown, projectName: string): Pr
     for (const row of parsed.rows) { if (seen.has(row.saleId)) return bad(); seen.add(row.saleId); }
     return parsed;
   });
-  return { projectName, actor: salePages[0].actor, layout: parseProjectMapLayout(raw.layout), plots: parseProjectMapPlots(raw.plots), salePages };
+  let rentalPages: RentalProjectPage[] | undefined;
+  if (Object.hasOwn(raw, 'rentalPages')) {
+    if (!Array.isArray(raw.rentalPages) || !raw.rentalPages.length || raw.rentalPages.length > PROJECT_MAP_MAX_PAGES) return bad();
+    const seenContracts = new Set<string>();
+    let snapshotRevision: string | undefined;
+    rentalPages = raw.rentalPages.map((value, page) => {
+      const parsed = parseRentalProjectPage(value, { projectName, page });
+      if (parsed.actor.userId !== userId || parsed.actor.role !== actor.role || parsed.hasMore !== (page < (raw.rentalPages as unknown[]).length - 1)) return bad();
+      if (snapshotRevision !== undefined && parsed.snapshotRevision !== snapshotRevision) return bad();
+      snapshotRevision = parsed.snapshotRevision;
+      for (const row of parsed.rows) { if (seenContracts.has(row.contractId)) return bad(); seenContracts.add(row.contractId); }
+      return parsed;
+    });
+  }
+  return { projectName, actor: salePages[0].actor, layout: parseProjectMapLayout(raw.layout), plots: parseProjectMapPlots(raw.plots), salePages, ...(rentalPages ? { rentalPages } : {}) };
 }
 
 export function buildProjectMap(snapshot: ProjectMapSnapshot): { regions: ProjectMapRegion[]; unmappedPlots: ProjectMapRegion[] } {
-  const sales = snapshot.salePages.flatMap(page => page.rows);
+  // Group once by canonical plot ID. No per-plot scans or nickname matching.
+  const salesByPlot = new Map<string, ProjectSaleRow[]>(), rentalsByPlot = new Map<string, RentalProjectRow[]>();
+  for (const page of snapshot.salePages) for (const row of page.rows) {
+    if (row.projectName !== snapshot.projectName || row.plotId === null) continue;
+    const rows = salesByPlot.get(row.plotId); if (rows) rows.push(row); else salesByPlot.set(row.plotId, [row]);
+  }
+  for (const page of snapshot.rentalPages ?? []) for (const row of page.rows) {
+    if (row.projectName !== snapshot.projectName) continue;
+    const rows = rentalsByPlot.get(row.plotId); if (rows) rows.push(row); else rentalsByPlot.set(row.plotId, [row]);
+  }
   const plots = new Map(snapshot.plots.map(plot => [plot.id, plot]));
   const bounds = new Map<string, { minX: number; minY: number; maxX: number; maxY: number }>();
   for (const cell of snapshot.layout.cells) {
@@ -87,20 +111,24 @@ export function buildProjectMap(snapshot: ProjectMapSnapshot): { regions: Projec
   const region = (id: string): ProjectMapRegion => {
     const plot = plots.get(id), b = bounds.get(id);
     // Canonical ID and project only. Nicknames, leading zeroes and fuzzy names are not identity.
-    const history = plot ? sales.filter(sale => sale.plotId === id && sale.projectName === snapshot.projectName) : [];
+    const history = plot ? salesByPlot.get(id) ?? [] : [];
+    const rentalHistory = plot ? rentalsByPlot.get(id) ?? [] : [];
+    const activeRentals = rentalHistory.filter(rental => ['active', 'renewed'].includes(rental.status));
     const active = history.filter(sale => sale.stage !== 'cancelled');
     const currentSale = active.length === 1 ? active[0] : null;
+    const currentRental = activeRentals.length === 1 ? activeRentals[0] : null;
     let status: ProjectMapStatus = 'unknown';
-    if (plot && active.length === 0 && plot.hasCustomer === false && ['active', 'ready_for_sale'].includes(plot.saleStatus ?? '')) status = 'available';
-    if (plot?.hasCustomer === true && currentSale) {
+    if (plot && active.length === 0 && activeRentals.length === 0 && plot.hasCustomer === false && ['active', 'ready_for_sale'].includes(plot.saleStatus ?? '')) status = 'available';
+    if (plot?.hasCustomer === true && currentSale && activeRentals.length === 0) {
       const transferred = ['transferred', 'handover'].includes(currentSale.stage);
       if (transferred && plot.saleStatus === 'transferred') status = 'transferred';
       if (!transferred && ['active', 'ready_for_sale'].includes(plot.saleStatus ?? '')) status = 'booked';
     }
+    if (plot?.hasCustomer === true && currentRental && active.length === 0 && ['', 'active', 'normal', 'ready_for_sale', 'available', 'vacant'].includes((plot.saleStatus ?? '').trim().toLowerCase())) status = 'rented';
     return { key: id, plotId: plot?.id ?? null, name: plot?.name ?? id, x: b?.minX ?? 0, y: b?.minY ?? 0,
       width: b ? b.maxX - b.minX + 1 : 1, height: b ? b.maxY - b.minY + 1 : 1,
       // Unplaced registry entries may be infrastructure, not saleable house plots.
-      status: !b && status === 'available' ? 'unknown' : status, isCompleted: plot?.isCompleted ?? null, currentSale, history };
+      status: !b && ['available', 'rented'].includes(status) ? 'unknown' : status, isCompleted: plot?.isCompleted ?? null, currentSale, history, currentRental, rentalHistory };
   };
   return { regions: [...bounds.keys()].map(region), unmappedPlots: snapshot.plots.filter(p => !bounds.has(p.id)).map(p => region(p.id)) };
 }

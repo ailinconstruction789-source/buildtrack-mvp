@@ -17,6 +17,18 @@ export function excelData(): ExcelReportData {
 }
 const report = (data = excelData()) => buildExcelReport(data, null, '2026-09-15', '2026');
 describe('Excel report evidence and complete inventory', () => {
+  it('keeps rental stock in the inventory without treating a lease as a vacant plot or booked purchase',()=>{
+    const data=excelData(),map=data.projects[0].map;map.plots[1].hasCustomer=true;
+    map.rentalPages=[{projectName:map.projectName,actor:map.actor,snapshotRevision:'a'.repeat(32),page:0,hasMore:false,rows:[{
+      contractId:pid(100),customerId:pid(101),interestId:pid(102),ownerUserId:pid(8),projectName:map.projectName,plotId:'P-2',
+      customerName:'ลูกค้าเช่าสังเคราะห์',customerPhone:null,programType:'program_b',status:'active',revision:pid(103),
+      startDate:'2025-01-01',endDate:'2026-12-31',endedDate:null,convertedSaleId:null,
+    }]}];
+    const value=report(data),stock=value.stocks.find(row=>row.plotId==='P-2');
+    expect(stock).toMatchObject({status:'unknown',sale:null});
+    expect(value.stocks).toHaveLength(2);expect(value.rows).toHaveLength(1);
+    expect(value.groups[0]).toMatchObject({total:2,available:0,booked:1,transferred:0,unknown:1});
+  });
   it('does not turn missing money or dates into zero/defaults', () => {
     expect(sumReportMoney([100, null])).toBeNull(); expect(sumReportMoney([0, 100])).toBe(100);
     expect(report().unknownDates.booked).toBe(1); expect(report().monthly.booked).toHaveLength(0);
@@ -145,5 +157,23 @@ describe('Excel report evidence and complete inventory', () => {
     data.projects.push(structuredClone(data.projects[0])); data.projects[1].map.projectName = 'B';
     expect(report(data).monthly.visits).toHaveLength(1); expect(report(data).unassignedLegacyVisits).toBe(1);
     expect(buildExcelReport(data, 'B', '2026-09-15', '2026').monthly.visits).toHaveLength(0);
+  });
+  it('keeps separate source visits on the same day for one Customer while deduplicating across projects', () => {
+    const data=excelData(),first=data.projects[0];
+    first.evidence.legacyVisits=[{key:'original:926',customerId:pid(2),visitDate:'2026-09-02',leadDate:'2026-09-02'},
+      {key:'source:new438',customerId:pid(2),visitDate:'2026-09-02',leadDate:'2026-09-02'}];
+    first.evidence.unassignedLegacyVisits=[{key:'unknown:237',customerId:pid(2),visitDate:'2026-09-02',leadDate:'2026-09-02'}];
+    const other=structuredClone(first);other.map.projectName='B';data.projects.push(other);
+    expect(report(data).monthly.visits).toHaveLength(3);expect(report(data).completedVisits).toBe(0);
+    expect(buildExcelReport(data,'B','2026-09-15','2026').monthly.visits).toHaveLength(2);
+  });
+  it('uses the new historical booking P forecast without turning it into actual transfer or contract', () => {
+    const data=excelData(),project=data.projects[0];
+    project.map.salePages[0].rows=[projectSale({bookedAt:null,bookingRound:null,paymentMethod:null,salePrice:2643000,
+      importedHistory:{source:'customer_sheet',batchId:pid(30),sourceRow:964,sourceStage:'booked',bookedDate:'2026-09-29',cancelledDate:null,transferredDate:null}})];
+    project.evidence.forecasts=[{saleId:project.map.salePages[0].rows[0].saleId,expectedTransferDate:'2026-10-30'}];
+    const result=buildExcelReport(data,null,'2026-10-10','2026');
+    expect(result.forecast).toHaveLength(1);expect(result.rows[0]).toMatchObject({bookedDate:'2026-09-29',expectedTransferDate:'2026-10-30',transferredDate:null});
+    expect(result.yearly.transferred).toHaveLength(0);expect(result.rows[0].sale.paymentMethod).toBeNull();
   });
 });

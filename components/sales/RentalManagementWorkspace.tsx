@@ -98,6 +98,7 @@ export default function RentalManagementWorkspace({
     isOpen: boolean;
     lead?: Lead | null;
     plot?: any | null;
+    contractId?: string;
   }>({
     isOpen: false
   });
@@ -211,17 +212,17 @@ export default function RentalManagementWorkspace({
 
       // 3. Status Filter
       if (statusFilter === 'all') return true;
-      if (statusFilter === 'Active') return c.status === 'Active';
+      if (statusFilter === 'Active') return ['Active', 'Renewed'].includes(c.status);
       if (statusFilter === 'ConvertedToBuy') return c.status === 'ConvertedToBuy';
       if (statusFilter === 'MovedOut') return c.status === 'MovedOut';
       if (statusFilter === 'Cancelled') return c.status === 'Cancelled';
       if (statusFilter === 'expiring') {
         const days = getRemainingDays(c.lease_end_date);
-        return c.status === 'Active' && days <= 60 && days >= 0;
+        return ['Active', 'Renewed'].includes(c.status) && days <= 60 && days >= 0;
       }
       if (statusFilter === 'overdue') {
         const hasOverdue = (overdueMap[c.id] || overdueMap[c.plot_id] || 0) > 0;
-        return c.status === 'Active' && hasOverdue;
+        return ['Active', 'Renewed'].includes(c.status) && hasOverdue;
       }
 
       return true;
@@ -237,7 +238,7 @@ export default function RentalManagementWorkspace({
     let overdueCount = 0;
 
     contracts.forEach((c) => {
-      if (c.status === 'Active') {
+      if (['Active', 'Renewed'].includes(c.status)) {
         activeCount++;
         totalMonthlyRevenue += Number(c.monthly_rent || 0);
         totalSavingsPool += Number(c.accumulated_savings || 0);
@@ -593,9 +594,9 @@ export default function RentalManagementWorkspace({
                 {filteredContracts.map((contract) => {
                   const programInfo = RENTAL_PROGRAM_DETAILS[contract.program_type] || RENTAL_PROGRAM_DETAILS.program_a;
                   const daysRemaining = getRemainingDays(contract.lease_end_date);
-                  const isExpiring = contract.status === 'Active' && daysRemaining <= 60 && daysRemaining >= 0;
+                  const isExpiring = ['Active', 'Renewed'].includes(contract.status) && daysRemaining <= 60 && daysRemaining >= 0;
                   const overdueAmount = overdueMap[contract.id] || overdueMap[contract.plot_id] || 0;
-                  const isOverdue = contract.status === 'Active' && overdueAmount > 0;
+                  const isOverdue = ['Active', 'Renewed'].includes(contract.status) && overdueAmount > 0;
 
                   return (
                     <tr key={contract.id} className="hover:bg-slate-50/80 transition-colors">
@@ -667,7 +668,7 @@ export default function RentalManagementWorkspace({
                         <div className="text-slate-700 font-mono text-[11px]">
                           {contract.lease_start_date} <span className="text-slate-400">ถึง</span> {contract.lease_end_date}
                         </div>
-                        {contract.status === 'Active' && (
+                        {['Active', 'Renewed'].includes(contract.status) && (
                           <div className={`text-[10px] font-bold mt-0.5 ${
                             daysRemaining <= 30
                               ? 'text-rose-600 animate-pulse'
@@ -692,7 +693,7 @@ export default function RentalManagementWorkspace({
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-800 border border-amber-300">
                             ⏳ สัญญาใกล้หมด
                           </span>
-                        ) : contract.status === 'Active' ? (
+                        ) : ['Active', 'Renewed'].includes(contract.status) ? (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                             <CheckCircle2 size={11} /> กำลังเช่า
                           </span>
@@ -731,8 +732,10 @@ export default function RentalManagementWorkspace({
                           {/* ⚡ ดำเนินการ (ต่อสัญญา/ซื้อบ้าน/ย้ายออก) */}
                           <button
                             type="button"
+                            disabled={!['Active', 'Renewed'].includes(contract.status)}
                             onClick={() => setActionModal({
                               isOpen: true,
+                              contractId: contract.id,
                               plot: { id: contract.plot_id, plot_name: contract.plot_name, project_name: contract.project_name },
                               lead: contract.lead_id ? { id: contract.lead_id, customer_name: contract.tenant_name, phone: contract.tenant_phone || undefined } as any : null
                             })}
@@ -807,9 +810,9 @@ export default function RentalManagementWorkspace({
           {filteredContracts.map((contract) => {
             const programInfo = RENTAL_PROGRAM_DETAILS[contract.program_type] || RENTAL_PROGRAM_DETAILS.program_a;
             const daysRemaining = getRemainingDays(contract.lease_end_date);
-            const isExpiring = contract.status === 'Active' && daysRemaining <= 60 && daysRemaining >= 0;
+            const isExpiring = ['Active', 'Renewed'].includes(contract.status) && daysRemaining <= 60 && daysRemaining >= 0;
             const overdueAmount = overdueMap[contract.id] || overdueMap[contract.plot_id] || 0;
-            const isOverdue = contract.status === 'Active' && overdueAmount > 0;
+            const isOverdue = ['Active', 'Renewed'].includes(contract.status) && overdueAmount > 0;
 
             return (
               <div
@@ -910,8 +913,10 @@ export default function RentalManagementWorkspace({
 
                   <button
                     type="button"
+                    disabled={!['Active', 'Renewed'].includes(contract.status)}
                     onClick={() => setActionModal({
                       isOpen: true,
+                      contractId: contract.id,
                       plot: { id: contract.plot_id, plot_name: contract.plot_name, project_name: contract.project_name },
                       lead: contract.lead_id ? { id: contract.lead_id, customer_name: contract.tenant_name, phone: contract.tenant_phone || undefined } as any : null
                     })}
@@ -985,6 +990,7 @@ export default function RentalManagementWorkspace({
         <RentalActionModal
           isOpen={actionModal.isOpen}
           onClose={() => setActionModal({ isOpen: false })}
+          contractId={actionModal.contractId}
           lead={actionModal.lead}
           plot={actionModal.plot}
           user={user}

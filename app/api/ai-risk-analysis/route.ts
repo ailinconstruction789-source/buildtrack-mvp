@@ -4,7 +4,7 @@ import { GoogleGenerativeAI, SchemaType, Schema } from '@google/generative-ai';
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { 
+    let { 
       bottleneckData, 
       sCurveData, 
       contractorPerformance, 
@@ -15,6 +15,12 @@ export async function POST(request: Request) {
       predictiveDelays,
       activePlotStats 
     } = body;
+
+    // OPTIMIZATION: Trim massive arrays to prevent token limit errors and save memory
+    if (Array.isArray(bottleneckData)) bottleneckData = bottleneckData.slice(0, 50);
+    if (Array.isArray(sCurveData)) sCurveData = sCurveData.slice(-12); // Only last 12 months
+    if (Array.isArray(contractorPerformance)) contractorPerformance = contractorPerformance.slice(0, 30);
+    if (Array.isArray(predictiveDelays)) predictiveDelays = predictiveDelays.slice(0, 20);
 
     const apiKey = process.env.GEMINI_API_KEY;
     

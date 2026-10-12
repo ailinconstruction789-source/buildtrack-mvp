@@ -1,0 +1,61 @@
+{
+  "manifest": {
+    "version": "historical-timeline-manifest-v1",
+    "sourceSystem": "synthetic-example-only",
+    "datasetKey": "fictional-historical-customers",
+    "snapshotSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "mappingReviewRef": "fictional-review-not-database-verification",
+    "records": [
+      { "recordKey": "synthetic-row-1", "rowNumber": 2, "rowSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+      { "recordKey": "synthetic-row-2", "rowNumber": 3, "rowSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
+      { "recordKey": "synthetic-row-3", "rowNumber": 4, "rowSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" }
+    ]
+  },
+  "records": [
+    {
+      "recordKey": "synthetic-row-1", "rowNumber": 2, "rowSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "customerKey": "synthetic-customer-1", "dealKey": "synthetic-purchase-1", "kind": "purchase", "stage": "transferred", "rentalType": null,
+      "events": [
+        { "eventKey": "purchase-visit", "kind": "visited", "sequence": 1, "date": "2024-01-01", "precision": "day", "evidenceRef": "fictional-visit-register" },
+        { "eventKey": "purchase-booking", "kind": "booked", "sequence": 2, "date": null, "precision": "unknown", "evidenceRef": "fictional-booking-date-not-recorded" },
+        { "eventKey": "purchase-contract", "kind": "contracted", "sequence": 3, "date": "2024-02-29", "precision": "day", "evidenceRef": "fictional-contract-register" },
+        { "eventKey": "purchase-transfer", "kind": "transferred", "sequence": 4, "date": "2024-03-01", "precision": "day", "evidenceRef": "fictional-transfer-register" }
+      ]
+    },
+    {
+      "recordKey": "synthetic-row-2", "rowNumber": 3, "rowSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "customerKey": "synthetic-customer-2", "dealKey": "synthetic-rental-1", "kind": "rental", "stage": "rental_active", "rentalType": "B",
+      "events": [
+        { "eventKey": "rental-start", "kind": "rental_started", "sequence": 1, "date": "2025-01-31", "precision": "day", "evidenceRef": "fictional-rental-register" },
+        { "eventKey": "rental-renewal", "kind": "rental_renewed", "sequence": 2, "date": null, "precision": "unknown", "evidenceRef": "fictional-renewal-date-not-recorded" }
+      ]
+    },
+    {
+      "recordKey": "synthetic-row-3", "rowNumber": 4, "rowSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "customerKey": "synthetic-customer-3", "dealKey": null, "kind": "visit", "stage": "visited", "rentalType": null,
+      "events": [
+        { "eventKey": "visit-only", "kind": "visited", "sequence": 1, "date": null, "precision": "unknown", "evidenceRef": "fictional-visit-date-not-recorded" }
+      ]
+    }
+  ],
+  "bindings": [
+    {
+      "recordKey": "synthetic-row-1", "rowSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "customerKey": "synthetic-customer-1", "dealKey": "synthetic-purchase-1",
+      "customerId": "18000000-0000-4000-8000-000000000001", "interestId": "18000000-0000-4000-8000-000000000011",
+      "saleId": "18000000-0000-4000-8000-000000000021", "rentalId": null, "evidenceRef": "fictional-mapping-1"
+    },
+    {
+      "recordKey": "synthetic-row-2", "rowSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "customerKey": "synthetic-customer-2", "dealKey": "synthetic-rental-1",
+      "customerId": "18000000-0000-4000-8000-000000000002", "interestId": "18000000-0000-4000-8000-000000000012",
+      "saleId": null, "rentalId": "18000000-0000-4000-8000-000000000022", "evidenceRef": "fictional-mapping-2"
+    },
+    {
+      "recordKey": "synthetic-row-3", "rowSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "customerKey": "synthetic-customer-3", "dealKey": null,
+      "customerId": "18000000-0000-4000-8000-000000000003", "interestId": "18000000-0000-4000-8000-000000000013",
+      "saleId": null, "rentalId": null, "evidenceRef": "fictional-mapping-3"
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import CentralLeadBookingModal from '../CentralLeadBookingModal';
 
@@ -7,6 +7,7 @@ const mockUpdate = vi.fn().mockReturnValue({
   eq: vi.fn().mockResolvedValue({ data: {}, error: null })
 });
 const mockInsert = vi.fn().mockResolvedValue({ data: {}, error: null });
+const mockConstruction = vi.hoisted(() => ({ withPlan: false, scheduleError: false }));
 
 const mockPlotData = {
   id: 'A01',
@@ -30,9 +31,12 @@ vi.mock('@/lib/supabase', () => ({
       if (table === 'lead_activities') {
         return { insert: mockInsert };
       }
+      if (table === 'sales') return { insert: (rows: { id: string }[]) => ({
+        select: () => ({ single: async () => ({ data: { id: rows[0].id }, error: null }) })
+      }) };
       if (table === 'plots') {
         return { 
-          update: vi.fn().mockReturnValue({ or: vi.fn().mockResolvedValue({}) }),
+          update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({}) }),
           select: vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
               or: vi.fn().mockReturnValue({
@@ -51,12 +55,23 @@ vi.mock('@/lib/supabase', () => ({
           })
         };
       }
-      if (table === 'task_templates' || table === 'schedules' || table === 'plot_task_assignments') {
+      if (table === 'task_templates' || table === 'plot_task_schedules' || table === 'plot_task_assignments') {
+        const data = !mockConstruction.withPlan ? [] : table === 'task_templates'
+          ? [{ id: 'task-1', task_name: 'งานโครงสร้าง' }]
+          : table === 'plot_task_schedules'
+            ? [{ task_template_id: 'task-1', planned_start: '2020-01-01', planned_end: '2020-01-02' }]
+            : [{ task_template_id: 'task-1', current_progress: 50 }];
         return {
           select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockResolvedValue({ data: [], error: null })
+            eq: vi.fn().mockResolvedValue({
+              data: table === 'plot_task_schedules' && mockConstruction.scheduleError ? null : data,
+              error: table === 'plot_task_schedules' && mockConstruction.scheduleError ? { message: 'read failed' } : null
+            })
           })
         };
+      }
+      if (table === 'plot_promotions') {
+        return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ data: [], error: null }) }), delete: vi.fn().mockReturnValue({ or: vi.fn().mockResolvedValue({ error: null }) }), insert: vi.fn().mockResolvedValue({ error: null }) };
       }
       return {};
     })
@@ -73,6 +88,9 @@ vi.mock('@/lib/sales/plotAvailabilityClient', () => ({
 describe('CentralLeadBookingModal', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockConstruction.withPlan = false;
+    mockConstruction.scheduleError = false;
+    mockPlotData.sale_status = 'ready_for_sale';
   });
 
   const mockCustomer = {
@@ -88,6 +106,32 @@ describe('CentralLeadBookingModal', () => {
     { userId: 'user-1', displayName: 'Sales Bell' },
     { userId: 'user-2', displayName: 'Sales Joy' }
   ];
+
+  it('does not add a logged-in non-sales user back into the eligible closer options', async () => {
+    render(<CentralLeadBookingModal isOpen onClose={vi.fn()} customer={mockCustomer}
+      projects={['โครงการ สวนหลวง']} salesOwners={mockOwners}
+      currentUser={{ userId: 'admin-1', displayName: 'Admin Test' }} />);
+    const select = screen.getAllByRole('combobox').find(element =>
+      within(element).queryByRole('option', { name: 'Sales Bell' }));
+    expect(select).toBeDefined();
+    expect(within(select!).getAllByRole('option').map(option => option.textContent))
+      .toEqual(['Sales Bell', 'Sales Joy']);
+    expect(select).toHaveValue('Sales Bell');
+    expect(screen.getByText('ระบุผู้ปิดการขายกำหนดเอง')).toBeInTheDocument();
+    expect(mockInsert).not.toHaveBeenCalled();
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it('does not allow a fabricated staff name when no sales account is available', () => {
+    render(<CentralLeadBookingModal isOpen onClose={vi.fn()} customer={mockCustomer}
+      projects={['โครงการ สวนหลวง']} salesOwners={[]}
+      currentUser={{ userId: 'admin-1', displayName: 'Admin Test' }} />);
+    expect(screen.getByRole('option', { name: 'ไม่พบพนักงานฝ่ายขาย' })).toHaveValue('');
+    fireEvent.click(screen.getByRole('button', { name: /ยืนยันการจองแปลง/i }));
+    expect(screen.getByText('กรุณาเลือกพนักงานฝ่ายขาย')).toBeInTheDocument();
+    expect(mockInsert).not.toHaveBeenCalled();
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
 
   it('renders booking modal with customer information pre-filled', async () => {
     render(
@@ -167,6 +211,35 @@ describe('CentralLeadBookingModal', () => {
     });
   });
 
+  it('uses the saved task schedule to show delayed construction instead of a zero-plan status', async () => {
+    mockConstruction.withPlan = true;
+    mockPlotData.sale_status = 'available';
+    render(<CentralLeadBookingModal isOpen onClose={vi.fn()} customer={mockCustomer}
+      projects={['โครงการ สวนหลวง']} salesOwners={mockOwners} />);
+    await screen.findByRole('option', { name: 'แปลง A01 (แปลงว่าง)' });
+    fireEvent.change(screen.getByRole('combobox', { name: /แปลงที่จอง/i }), { target: { value: 'A01' } });
+    await screen.findByText('ล่าช้ากว่าแผน');
+    expect(screen.queryByText('เร็วกว่าแผน')).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/เช่น 2,793,000/i)).toHaveValue('2,793,000');
+    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(mockInsert).not.toHaveBeenCalled();
+  });
+
+  it('shows a schedule read failure without inventing a construction status or losing the price', async () => {
+    mockConstruction.withPlan = true;
+    mockConstruction.scheduleError = true;
+    mockPlotData.sale_status = 'available';
+    render(<CentralLeadBookingModal isOpen onClose={vi.fn()} customer={mockCustomer}
+      projects={['โครงการ สวนหลวง']} salesOwners={mockOwners} />);
+    await screen.findByRole('option', { name: 'แปลง A01 (แปลงว่าง)' });
+    fireEvent.change(screen.getByRole('combobox', { name: /แปลงที่จอง/i }), { target: { value: 'A01' } });
+    expect(await screen.findByRole('alert')).toHaveTextContent('ยังตรวจสอบสถานะเทียบแผนไม่ได้');
+    expect(screen.queryByText('เร็วกว่าแผน')).not.toBeInTheDocument();
+    expect(screen.queryByText('ล่าช้ากว่าแผน')).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/เช่น 2,793,000/i)).toHaveValue('2,793,000');
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
   it('submits booking successfully with net price and triggers onSaved callback', async () => {
     const handleSaved = vi.fn();
     const handleClose = vi.fn();
@@ -189,6 +262,8 @@ describe('CentralLeadBookingModal', () => {
 
     const plotSelect = screen.getByRole('combobox', { name: /แปลงที่จอง/i });
     fireEvent.change(plotSelect, { target: { value: 'A01' } });
+
+    await waitFor(() => expect(screen.getByPlaceholderText('เช่น 2,793,000')).toHaveValue('2,793,000'));
 
     // Change deposit amount
     const depositInput = screen.getByPlaceholderText('10000');

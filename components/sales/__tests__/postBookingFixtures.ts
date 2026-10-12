@@ -24,22 +24,22 @@ export function postBookingSnapshot(stage: SaleStage = 'booked', paymentMethod: 
     submittedAt: '2026-09-21T09:00:00+07:00', resultAt: stage === 'loan_submitted' ? null : '2026-09-21T10:00:00+07:00',
     resultReason: stage === 'loan_rejected' ? 'เอกสารไม่ครบ' : null, approvedAmount: stage === 'loan_approved' ? 1900000 : null, recordedByUserId: actorId } : null;
   return { actor: { userId: actorId, role: 'sales' }, sale: { id: saleId, customerId, customerName: 'ลูกค้าทดสอบ', interestId,
-    projectName: 'โครงการทดสอบ A', plotId: 'A-01', stage, paymentMethod, bookedAt: null, contractedAt: null, transferDate: null,
+    projectName: 'โครงการทดสอบ A', plotId: 'A-01', stage, paymentMethod, bookedAt: null, contractedAt: null, transferDate: null, handoverDate: null, importedHistory: null,
     revision: revisionId, interestRevision: revisionId, ownerUserId: actorId, canEdit: postBookingTargets(stage, paymentMethod).length > 0 },
     latestAttempt, attempts: latestAttempt ? [latestAttempt] : [], attemptPage: 0, attemptsHasMore: false, eventPage: 0, eventsHasMore: false,
     events: [{ id: eventId, command: 'advance', fromStage: 'booked', toStage: 'contracted', occurredAt: '2026-09-21T10:00:00+07:00',
-      recordedAt: '2026-09-21T10:05:00+07:00', actorUserId: actorId, reason: 'ลูกค้าลงนามแล้ว', evidenceNote: 'สัญญาเลขที่ทดสอบ 01', loanAttemptId: null, transferDate: null }] };
+      recordedAt: '2026-09-21T10:05:00+07:00', actorUserId: actorId, reason: 'ลูกค้าลงนามแล้ว', evidenceNote: 'สัญญาเลขที่ทดสอบ 01', loanAttemptId: null, transferDate: null, handoverDate: null }] };
 }
 export function transferredSnapshot(): PostBookingSnapshot {
   const snapshot = postBookingSnapshot('transferred', 'cash'); snapshot.sale.transferDate = '2026-09-21';
   snapshot.events = [{ id: eventId, command: 'confirm_transfer', fromStage: 'transfer_pending', toStage: 'transferred',
     occurredAt: null, recordedAt: '2026-09-23T11:30:00+07:00', actorUserId: actorId, reason: 'โอนกรรมสิทธิ์เสร็จแล้ว',
-    evidenceNote: null, loanAttemptId: null, transferDate: '2026-09-21' }];
+    evidenceNote: null, loanAttemptId: null, transferDate: '2026-09-21', handoverDate: null }];
   return snapshot;
 }
 export function postBookingResult(input: PostBookingInput = advanceInput): PostBookingResult {
   return { requestId: input.requestId, command: input.command, customerId: input.customerId, interestId, saleId: input.saleId,
     saleRevision: nextRevisionId, stage: postBookingResultStage(input), eventId,
-    loanAttemptId: input.command === 'advance' || input.command === 'confirm_transfer' ? null : input.command === 'loan_result' ? input.loanAttemptId : attemptId,
-    transferDate: input.command === 'confirm_transfer' ? input.transferDate : null, replayed: false };
+    loanAttemptId: input.command === 'advance' || input.command === 'confirm_transfer' || input.command === 'confirm_handover' ? null : input.command === 'loan_result' ? input.loanAttemptId : attemptId,
+    transferDate: input.command === 'confirm_transfer' ? input.transferDate : null, handoverDate: input.command === 'confirm_handover' ? input.handoverDate : null, replayed: false };
 }

@@ -6,19 +6,25 @@ import {
   Building2, CheckCircle, ArrowLeft, Bell, Shield, Layers, Loader2
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { fetchSalesWithoutLimit } from '@/lib/sales/fetchWithoutLimit';
+import { isSalesStaffRole } from '@/lib/sales/salesStaff';
 import { CentralApiError, centralApi, type CentralApi } from '@/lib/sales/centralClient';
 import { parseCentralSearchFilters, type CentralSearchSnapshot, type CentralSearchFilters, type CentralCreateInput, type CentralCreateResult } from '@/lib/sales/centralContracts';
 import CentralLeadForm from './CentralLeadForm';
 import CentralLeadTracker from './CentralLeadTracker';
 import { LeadTrackerHeader } from './LeadTrackerPresentation';
 import { EMPTY_TRACKER_FILTERS } from '@/lib/sales/centralTracker';
+import SalesOverlay from './SalesOverlay';
+import { getLeadStage } from '@/lib/sales/leadStage';
+type CurrentSalesActor = { id?: string | number; userId?: string; username?: string; role?: string };
 
 const snapshotCache = new Map<string, CentralSearchSnapshot>();
 
 async function fetchCentralLeadsSnapshot(
   page: number,
   filters: CentralSearchFilters,
-  customApi?: CentralApi
+  customApi?: CentralApi,
+  currentUser?: CurrentSalesActor | null
 ): Promise<CentralSearchSnapshot> {
   // If a custom mock API is passed for testing (and not centralApi), use it
   if (customApi && customApi !== centralApi) {
@@ -26,13 +32,8 @@ async function fetchCentralLeadsSnapshot(
   }
 
   try {
-    // 1. Fetch all leads from public.leads
-    const { data: rawLeads, error: leadsErr } = await supabase
-      .from('leads')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (leadsErr) throw leadsErr;
+    // 1. Fetch all leads from public.leads without limit
+    const rawLeads = await fetchSalesWithoutLimit('leads', { orderBy: 'created_at', ascending: false });
 
     // 2. Fetch projects
     const { data: rawProjects } = await supabase
@@ -44,9 +45,10 @@ async function fetchCentralLeadsSnapshot(
     const projectNames = projects.map(p => p.name);
 
     // 3. Fetch users / staff for sales owner options
-    const { data: rawUsers } = await supabase
+    const { data: rawUsers, error: usersError } = await supabase
       .from('users')
       .select('id, username, role');
+    if (usersError) throw usersError;
 
     const leads = rawLeads || [];
 
@@ -70,45 +72,27 @@ async function fetchCentralLeadsSnapshot(
         ownersMap.set(name.trim(), name.trim());
       }
     });
-    const salesOwners = Array.from(ownersMap.entries()).map(([k, v]) => ({
+    const ownerFilterOptions = Array.from(ownersMap.entries()).map(([k, v]) => ({
       userId: k,
       displayName: v
     }));
 
+    const salesOwners = (rawUsers || [])
+      .filter((staff: { role?: unknown }) => isSalesStaffRole(staff.role))
+      .map((staff: { username: string }) => ({ userId: staff.username, displayName: staff.username }));
+
     // Map each lead into CentralSearchSnapshot format
     const allCustomers = leads.map((lead: any) => {
-      const isRented = 
-        (lead.status || '').toLowerCase().includes('เช่า') || 
-        (lead.deal_type || '').toLowerCase().includes('rent') || 
-        (lead.crm_status || '').toLowerCase().includes('เช่า') ||
-        (lead.rental_program != null && lead.rental_program !== '') ||
-        (lead.notes || '').includes('สัญญาเช่า') ||
-        (lead.notes || '').includes('ผู้เช่า');
-
-      const isBooked = 
-        (lead.status || '').toLowerCase().includes('จอง') ||
-        (lead.crm_status || '').toLowerCase().includes('จอง') ||
-        (lead.notes || '').includes('🏷️ บันทึกการจอง') ||
-        lead.booking_date != null ||
-        lead.booking_amount != null;
-
-      const isLost = 
-        ['ยกเลิก', 'ไม่สนใจ', 'ยกเลิกการจอง', 'cancel', 'cancelled', 'lost', 'closed_lost', 'nurture', 'cold', 'unqualified'].some((s: string) => 
-          (lead.status || '').toLowerCase().includes(s) || 
-          (lead.crm_status || '').toLowerCase().includes(s)
-        );
-
-      let intakeStatus = 'follow_up';
-      if (isRented) intakeStatus = 'rented';
-      else if (isBooked) intakeStatus = 'booked';
-      else if (isLost) intakeStatus = 'lost';
-      else if (lead.status === 'โอนกรรมสิทธิ์แล้ว' || lead.transferred_date != null) intakeStatus = 'contracted';
-      else if (lead.contacted_date || lead.actual_visit_date) intakeStatus = 'contacted';
+      const stage = getLeadStage(lead);
+      const intakeStatus = stage === 'transferred' ? 'transferred' : stage === 'booked' ? 'booked' : stage === 'rented' ? 'rented' : stage === 'lost' ? 'lost' : (lead.contacted_date || lead.actual_visit_date ? 'contacted' : 'follow_up');
 
       const ownerUserId = lead.agent_name || lead.sales_owner || lead.created_by_agent || lead.closing_agent || 'unassigned';
 
       return {
         id: lead.id,
+        leadId: lead.id, status: lead.status, crm_status: lead.crm_status,
+        booking_date: lead.booking_date, booking_amount: lead.booking_amount, transferred_date: lead.transferred_date,
+        active_rental_contract_id: lead.active_rental_contract_id,
         name: lead.customer_name || 'ไม่ระบุชื่อ',
         phone: lead.phone || null,
         channel: lead.channel || 'Walk in',
@@ -157,10 +141,10 @@ async function fetchCentralLeadsSnapshot(
       filtered = filtered.filter(c => c.intakeStatus === filters.status);
     }
 
-    const { data: sessionData } = await supabase.auth.getSession();
-    const currentUserId = sessionData?.session?.user?.id || 'admin-user';
-    const roleRaw = (sessionData?.session?.user?.user_metadata?.role || 'admin').toLowerCase();
-    const userRole = (['sales', 'admin', 'owner'].includes(roleRaw) ? roleRaw : 'admin') as any;
+    const { data: sessionData } = currentUser ? { data: null } : await supabase.auth.getSession();
+    const currentUserId = String(currentUser?.userId || currentUser?.id || sessionData?.session?.user?.id || 'read-only-user');
+    const roleRaw = (currentUser?.role || sessionData?.session?.user?.app_metadata?.role || 'owner').toLowerCase();
+    const userRole = (roleRaw === 'sale' ? 'sales' : ['sales', 'admin', 'owner'].includes(roleRaw) ? roleRaw : ['superadmin', 'manager'].includes(roleRaw) ? 'admin' : 'owner') as 'sales' | 'admin' | 'owner';
 
     return {
       actor: {
@@ -176,7 +160,7 @@ async function fetchCentralLeadsSnapshot(
         contractVersion: 'central_search_v1',
         filters,
         projects: projectNames,
-        owners: salesOwners,
+        owners: ownerFilterOptions,
         channels,
         hasMoreChannels: false
       }
@@ -199,8 +183,10 @@ export default function CentralLeadsView({
   projectSalesEnabled = false, 
   reportsEnabled = projectSalesEnabled,
   embedded = false,
-  onBack
+  onBack,
+  currentUser
 }: { 
+  currentUser?: CurrentSalesActor | null;
   api?: CentralApi; 
   visitsEnabled?: boolean; 
   leadWorkEnabled?: boolean; 
@@ -223,7 +209,9 @@ export default function CentralLeadsView({
   const [formEpoch, setFormEpoch] = useState(0);
   const [showForm, setShowForm] = useState(false);
   const [notice, setNotice] = useState('');
-  const key = `${page}:${revision}:${JSON.stringify(appliedFilters)}`;
+  const actorKey = `${currentUser?.userId || currentUser?.id || 'server'}:${currentUser?.role || ''}`;
+  useEffect(() => { setShowForm(false); setNotice(''); }, [actorKey]);
+  const key = `${actorKey}:${page}:${revision}:${JSON.stringify(appliedFilters)}`;
   const [state, setState] = useState<{ key: string; api?: CentralApi; data: CentralSearchSnapshot | null; error: Error | null }>(() => {
     const cached = snapshotCache.get(key);
     return cached ? { key, api, data: cached, error: null } : { key: '', data: null, error: null };
@@ -257,7 +245,7 @@ export default function CentralLeadsView({
   useEffect(() => {
     let cancelled = false;
     const epoch = identityEpoch.current;
-    fetchCentralLeadsSnapshot(page, appliedFilters, api).then(data => {
+    fetchCentralLeadsSnapshot(page, appliedFilters, api, currentUser).then(data => {
       if (!cancelled && epoch === identityEpoch.current) {
         snapshotCache.set(key, data);
         setState({ key, api, data, error: null });
@@ -268,7 +256,7 @@ export default function CentralLeadsView({
       }
     });
     return () => { cancelled = true; };
-  }, [api, page, key, appliedFilters]);
+  }, [api, page, key, appliedFilters, actorKey]);
 
   useEffect(() => api.watchIdentity?.(() => {
     snapshotCache.clear();
@@ -402,14 +390,14 @@ export default function CentralLeadsView({
 
               {/* 🌟 Modal Dialog for "+ บันทึก Lead ใหม่" */}
               {showForm && (
-                <div className="fixed inset-0 z-[300] flex items-center justify-center p-3 sm:p-5 bg-slate-950/70 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-200">
+                <SalesOverlay className="fixed inset-0 z-[300] flex items-center justify-center p-3 sm:p-5 bg-slate-950/70 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-200">
                   <div className="relative w-full max-w-2xl bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[90vh] my-auto animate-in zoom-in-95 duration-200">
                     <CentralLeadForm snapshot={snapshot} save={handleCreateLead} onClose={() => setShowForm(false)} onSaved={() => {
                       if (formEpoch !== identityEpoch.current) return;
                       setShowForm(false); setNotice('บันทึก Lead ส่วนกลางแล้ว ผู้ดูแลและโครงการที่สนใจถูกบันทึกในคำขอเดียวกัน'); setFilters({ ...EMPTY_TRACKER_FILTERS }); setAppliedFilters({ ...EMPTY_TRACKER_FILTERS }); setPage(0); setRevision(n => n + 1);
                     }} />
                   </div>
-                </div>
+                </SalesOverlay>
               )}
 
               <section>

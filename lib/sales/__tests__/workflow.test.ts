@@ -164,12 +164,14 @@ describe('new loan attempts preserve rejected history', () => {
         const result = appendLoanAttempt(rejectedSale, history, next);
         expect(result).toEqual({ ok: true, value: [rejected, next] });
         expect(history).toEqual([rejected]);
-        expect(validateSaleTransition({ actor: salesA, interest, sale: rejectedSale, nextStage: 'loan_submitted', reason, loanHistory: history, newLoanAttempt: next }).ok).toBe(true);
+        expect(validateSaleTransition({ actor: salesA, interest, sale: rejectedSale, nextStage: 'document_prep', reason, loanHistory: history }).ok).toBe(true);
+        expect(validateSaleTransition({ actor: salesA, interest, sale: { ...rejectedSale, stage: 'document_prep' }, nextStage: 'loan_submitted', reason, loanHistory: history, newLoanAttempt: next }).ok).toBe(true);
+        expectError(validateSaleTransition({ actor: salesA, interest, sale: rejectedSale, nextStage: 'loan_submitted', reason, loanHistory: history, newLoanAttempt: next }), 'ILLEGAL_TRANSITION');
     });
 
     it('requires a new attempt for both first submission and resubmission', () => {
         expectError(transition('document_prep', 'loan_submitted'), 'NEW_LOAN_ATTEMPT_REQUIRED');
-        expectError(transition('loan_rejected', 'loan_submitted'), 'NEW_LOAN_ATTEMPT_REQUIRED');
+        expectError(transition('loan_rejected', 'loan_submitted'), 'ILLEGAL_TRANSITION');
         expect(appendLoanAttempt({ ...sale, stage: 'document_prep' }, [], { ...next, attemptNumber: 1 }).ok).toBe(true);
     });
 

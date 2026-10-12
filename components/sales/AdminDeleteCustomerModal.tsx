@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { Lead } from '@/types/sales';
 import { deleteCustomerWithCascade, DeleteCustomerResult } from '@/lib/customerDeletionHelper';
+import SalesOverlay from './SalesOverlay';
 
 interface AdminDeleteCustomerModalProps {
   isOpen: boolean;
@@ -68,7 +69,7 @@ export default function AdminDeleteCustomerModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[350] flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4 animate-fade-in">
+    <SalesOverlay className="fixed inset-0 z-[350] flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4 animate-fade-in">
       <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl border border-rose-200 overflow-hidden my-auto">
         
         {/* Header */}
@@ -187,6 +188,6 @@ export default function AdminDeleteCustomerModal({
         </div>
 
       </div>
-    </div>
+    </SalesOverlay>
   );
 }

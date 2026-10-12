@@ -1,6 +1,7 @@
 /** Server route helpers only. Do not import this module into a client component. */
 import { createClient } from '@supabase/supabase-js';
 import { centralBookingReleaseAllowed } from './releaseScope';
+import { WORKSPACE_READ_CONTRACT_VERSION, parseSourceMembershipMetadata } from './workspaceReadContracts';
 import {
     CENTRAL_CONTRACT_VERSION, CENTRAL_SEARCH_CONTRACT_VERSION, CENTRAL_MAX_BODY_BYTES,
     CentralInputError, isCentralUuid, parseCentralCreateInput, parseCentralSearchQuery, parseCentralSearchSnapshot,
@@ -153,12 +154,19 @@ export async function handleCentralGet(request: Request): Promise<Response> {
         gate();
         const { page, filters } = parseCentralSearchQuery(request.url);
         const { client, actor } = await authorize(request, false);
-        const { data: capability, error: capabilityError } = await client.rpc('crm_v2_central_search_capabilities');
+        const workspace = process.env.SALES_CRM_PROJECT_WORKSPACE_ENABLED === 'true';
+        const { data: capability, error: capabilityError } = await client.rpc(workspace ? 'crm_v2_workspace_capabilities' : 'crm_v2_central_search_capabilities');
         if (capabilityError) throw rpcError(capabilityError);
-        if (!isRecord(capability) || capability.contract_version !== CENTRAL_SEARCH_CONTRACT_VERSION || capability.enabled !== true) throw setupRequired();
-        const { data, error } = await client.rpc('crm_v2_central_search', { p_filters: filters, p_page: page });
+        if (!isRecord(capability) || capability.contract_version !== (workspace ? WORKSPACE_READ_CONTRACT_VERSION : CENTRAL_SEARCH_CONTRACT_VERSION) || capability.enabled !== true) throw setupRequired();
+        const membership = workspace ? parseSourceMembershipMetadata(capability.sourceMembership) : undefined;
+        if (workspace && membership?.active !== true) throw setupRequired();
+        const { data, error } = await client.rpc(workspace ? 'crm_v2_workspace_central_search' : 'crm_v2_central_search', { p_filters: filters, p_page: page });
         if (error) throw rpcError(error);
-        try { return json({ data: parseCentralSearchSnapshot(data, filters, page, actor) }); }
+        try {
+            const snapshot = parseCentralSearchSnapshot(data, filters, page, actor);
+            if (workspace && (snapshot.sourceMembership?.active !== true || snapshot.sourceMembership.revisionId !== membership?.revisionId)) throw setupRequired();
+            return json({ data: snapshot });
+        }
         catch { throw setupRequired(); }
     } catch (error) { return errorResponse(error); }
 }

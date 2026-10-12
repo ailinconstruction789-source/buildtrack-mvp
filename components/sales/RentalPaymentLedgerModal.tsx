@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { 
   CreditCard, 
   XCircle, 
@@ -41,6 +41,7 @@ import {
 import RentalReceiptModal from './RentalReceiptModal';
 import TenantPortalModal from './TenantPortalModal';
 import RentalMaintenanceModal from './RentalMaintenanceModal';
+import SalesOverlay from './SalesOverlay';
 
 interface RentalPaymentLedgerModalProps {
   isOpen: boolean;
@@ -67,9 +68,17 @@ export default function RentalPaymentLedgerModal({
 }: RentalPaymentLedgerModalProps) {
   const [contract, setContract] = useState<RentalContract | null>(null);
   const [payments, setPayments] = useState<RentalPaymentRecord[]>([]);
+  const [unlinkedPayments, setUnlinkedPayments] = useState<RentalPaymentRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const loadVersion = useRef(0);
+  const busy = useRef(false);
+  const saveProgress = useRef<{ period: number; completed: number; steps: (() => Promise<void>)[] } | null>(null);
+  const scope = `${isOpen}:${contractId || lead?.active_rental_contract_id || ''}:${plotId || plot?.id || ''}:${lead?.id || ''}:${user?.id || user?.username || ''}`;
+  const currentScope = useRef(scope);
+  currentScope.current = scope;
+
 
   // Advanced Feature Modals State
   const [receiptModalData, setReceiptModalData] = useState<RentalReceiptData | null>(null);
@@ -89,100 +98,63 @@ export default function RentalPaymentLedgerModal({
   const [slipUrl, setSlipUrl] = useState<string>('');
   const [viewingSlipUrl, setViewingSlipUrl] = useState<string | null>(null);
 
-  // Fetch active contract & payment history from Supabase
-  const fetchData = async () => {
+  // Contract-specific history must never merge another tenancy on the same plot.
+  const fetchData = useCallback(async () => {
+    const version = ++loadVersion.current;
+    const requestScope = scope;
+    const isCurrent = () => version === loadVersion.current && requestScope === currentScope.current;
     setLoading(true);
     setErrorMsg(null);
     try {
-      let contractData: RentalContract | null = null;
-
-      // 1. Fetch Contract
-      if (contractId) {
-        const { data, error } = await supabase
-          .from('rental_contracts')
-          .select('*')
-          .eq('id', contractId)
-          .maybeSingle();
-        if (error) throw error;
-        contractData = data;
-      } else if (plotId) {
-        const { data, error } = await supabase
-          .from('rental_contracts')
-          .select('*')
-          .eq('plot_id', plotId)
-          .eq('status', 'Active')
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (!error && data) contractData = data;
-      } else if (lead?.id) {
-        const { data, error } = await supabase
-          .from('rental_contracts')
-          .select('*')
-          .eq('lead_id', lead.id)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (!error && data) contractData = data;
+      const exactId = contractId || lead?.active_rental_contract_id;
+      const targetPlotId = plotId || plot?.id;
+      if (!exactId && !targetPlotId && !lead?.id) throw new Error('กรุณาระบุสัญญา ลูกค้า หรือแปลง');
+      let query = supabase.from('rental_contracts').select('*');
+      if (exactId) query = query.eq('id', exactId);
+      else {
+        query = query.in('status', ['Active', 'Renewed']);
+        query = targetPlotId ? query.eq('plot_id', targetPlotId) : query.eq('lead_id', lead.id);
       }
-
-      // Fallback synthetic contract if table doesn't have it yet
-      if (!contractData) {
-        const rentNum = plot?.monthly_rent || lead?.rental_monthly_rent || 15000;
-        contractData = {
-          id: contractId || 'temp-contract',
-          project_name: projectName || plot?.project_name || lead?.project_name || 'ไอลิน สันทราย 2',
-          plot_id: plotId || plot?.id || lead?.interested_plot_id || '32',
-          plot_name: plot?.plot_name || plotId || '32',
-          tenant_name: plot?.current_tenant_name || lead?.customer_name || 'ผู้เช่า',
-          tenant_phone: plot?.current_tenant_phone || lead?.phone || '',
-          agent_name: lead?.agent_name || user?.username || 'ทีมขาย',
-          program_type: plot?.rental_program || lead?.rental_program || 'program_b',
-          monthly_rent: rentNum,
-          security_deposit: rentNum * 2,
-          advance_rent: rentNum,
-          savings_per_month: (plot?.rental_program === 'program_b' || lead?.rental_program === 'program_b') ? 5000 : 0,
-          accumulated_savings: 0,
-          base_price: 2990000,
-          lease_duration_months: 12,
-          lease_start_date: plot?.lease_start_date || lead?.rental_start_date || new Date().toISOString().split('T')[0],
-          lease_end_date: plot?.lease_end_date || lead?.rental_end_date || new Date().toISOString().split('T')[0],
-          status: 'Active',
-          created_at: new Date().toISOString()
-        };
+      const { data: contractData, error: contractError } = await query.order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (contractError) throw contractError;
+      if (!contractData?.id) throw new Error('ไม่พบสัญญาเช่า กรุณาตรวจสอบสัญญาก่อนบันทึกรับเงิน');
+      const [linkedResult, unlinkedResult] = await Promise.all([
+        supabase.from('rental_payments').select('*').eq('contract_id', contractData.id)
+          .order('period_month', { ascending: true }),
+        supabase.from('rental_payments').select('*').is('contract_id', null)
+          .eq('plot_id', contractData.plot_id).eq('project_name', contractData.project_name)
+          .order('period_month', { ascending: true })
+      ]);
+      const { data, error } = linkedResult;
+      if (error) throw error;
+      if (unlinkedResult.error) throw unlinkedResult.error;
+      if (isCurrent()) {
+        setContract(contractData);
+        setPayments(generateMonthlyPaymentSchedule(contractData, data || []));
+        setUnlinkedPayments(unlinkedResult.data || []);
       }
-
-      setContract(contractData);
-
-      // 2. Fetch Payments for this contract or plot
-      let paymentsQuery = supabase.from('rental_payments').select('*');
-      if (contractData.id && contractData.id !== 'temp-contract') {
-        paymentsQuery = paymentsQuery.or(`contract_id.eq.${contractData.id},plot_id.eq.${contractData.plot_id}`);
-      } else {
-        paymentsQuery = paymentsQuery.eq('plot_id', contractData.plot_id);
-      }
-
-      const { data: paymentsData, error: paymentsErr } = await paymentsQuery.order('period_month', { ascending: true });
-
-      if (paymentsErr) {
-        console.warn('Could not fetch rental_payments:', paymentsErr);
-      }
-
-      const generated = generateMonthlyPaymentSchedule(contractData, paymentsData || []);
-      setPayments(generated as any);
-    } catch (err: any) {
-      console.error('Error fetching rental payments ledger:', err);
-      setErrorMsg(err.message || 'ไม่สามารถโหลดประวัติการชำระเงินได้');
+      return true;
+    } catch (error) {
+      if (isCurrent()) setErrorMsg(error instanceof Error ? error.message : (error as { message?: string })?.message || 'ไม่สามารถโหลดประวัติการชำระเงินได้');
+      return false;
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  };
+  }, [scope, contractId, lead?.active_rental_contract_id, lead?.id, plotId, plot?.id]);
 
   useEffect(() => {
-    if (isOpen) {
-      fetchData();
-    }
-  }, [isOpen, contractId, plotId, lead, plot]);
+    saveProgress.current = null;
+    busy.current = false;
+    setSubmitting(false);
+    setContract(null);
+    setPayments([]);
+    setUnlinkedPayments([]);
+    setPaymentDialog({ isOpen: false, period: null });
+    setReceiptModalData(null);
+    setViewingSlipUrl(null);
+    if (isOpen) void fetchData();
+    return () => { ++loadVersion.current; };
+  }, [isOpen, fetchData]);
 
   // Financial summary
   const summary = useMemo(() => {
@@ -195,6 +167,11 @@ export default function RentalPaymentLedgerModal({
 
   // Open Payment Dialog for a specific installment
   const handleOpenPaymentDialog = (period: any) => {
+    if (loading || !contract || !['Active', 'Renewed'].includes(contract.status)) return;
+    if (saveProgress.current && saveProgress.current.period !== period.period_month) {
+      setErrorMsg('กรุณาบันทึกส่วนที่เหลือของค่างวดเดิมให้ครบก่อน');
+      return;
+    }
     setPaymentDialog({ isOpen: true, period });
     setPayDate(period.paid_date ? period.paid_date.split('T')[0] : new Date().toISOString().split('T')[0]);
     setPayAmount((period.amount_paid > 0 ? period.amount_paid : period.amount_due).toString());
@@ -203,100 +180,100 @@ export default function RentalPaymentLedgerModal({
     setSlipUrl(period.slip_url || '');
   };
 
-  // Save payment for an installment
+  // Resume after an acknowledged primary payment write; do not insert it again.
   const handleSavePayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!paymentDialog.period || !contract) return;
+    if (!paymentDialog.period || !contract || busy.current || loading) return;
+    const requestScope = currentScope.current;
+    const period = paymentDialog.period;
+    if (saveProgress.current && saveProgress.current.period !== period.period_month) {
+      setErrorMsg('กรุณาบันทึกส่วนที่เหลือของค่างวดเดิมให้ครบก่อน');
+      return;
+    }
+    busy.current = true;
     setSubmitting(true);
     setErrorMsg(null);
-
+    let progress = saveProgress.current;
     try {
-      const period = paymentDialog.period;
-      const parsedAmount = parseFloat(payAmount) || 0;
-      const now = new Date().toISOString();
-      const isPaid = parsedAmount >= period.amount_due;
-      const savingsNum = contract.program_type === 'program_b' && isPaid ? (contract.savings_per_month || 5000) : 0;
-
-      const todayStr = new Date().toISOString().split('T')[0];
-      const isPastDue = period.due_date < todayStr;
-      const statusValue: 'Paid' | 'Pending' | 'Overdue' = isPaid 
-        ? 'Paid' 
-        : (parsedAmount > 0 ? 'Pending' : (isPastDue ? 'Overdue' : 'Pending'));
-
-      const payload = {
-        contract_id: contract.id !== 'temp-contract' ? contract.id : null,
-        lead_id: contract.lead_id || lead?.id || null,
-        plot_id: contract.plot_id,
-        plot_name: contract.plot_name || contract.plot_id,
-        project_name: contract.project_name,
-        tenant_name: contract.tenant_name,
-        period_month: period.period_month,
-        period_label: period.period_label,
-        due_date: period.due_date,
-        amount_due: period.amount_due,
-        amount_paid: parsedAmount,
-        savings_amount: savingsNum,
-        paid_date: parsedAmount > 0 ? `${payDate}T12:00:00Z` : null,
-        payment_status: statusValue,
-        payment_method: payMethod,
-        slip_url: slipUrl.trim() || null,
-        notes: payNotes.trim() || null,
-        recorded_by: user?.username || user?.email || 'ทีมงาน',
-        updated_at: now
-      };
-
-      // 1. Upsert into rental_payments table
-      if (period.id) {
-        await supabase
-          .from('rental_payments')
-          .update(payload)
-          .eq('id', period.id);
-      } else {
-        await supabase
-          .from('rental_payments')
-          .insert([{ ...payload, created_at: now }]);
+      if (!progress) {
+        const parsedAmount = parseFloat(payAmount) || 0;
+        const now = new Date().toISOString();
+        const isPaid = parsedAmount >= period.amount_due;
+        const savingsNum = contract.program_type === 'program_b' && isPaid ? contract.savings_per_month || 5000 : 0;
+        const statusValue = isPaid ? 'Paid' : parsedAmount > 0 || period.due_date >= now.split('T')[0] ? 'Pending' : 'Overdue';
+        const payload = {
+          contract_id: contract.id, lead_id: contract.lead_id || null,
+          plot_id: contract.plot_id, plot_name: contract.plot_name || contract.plot_id,
+          project_name: contract.project_name, tenant_name: contract.tenant_name,
+          period_month: period.period_month, period_label: period.period_label,
+          due_date: period.due_date, amount_due: period.amount_due, amount_paid: parsedAmount,
+          savings_amount: savingsNum, paid_date: parsedAmount > 0 ? payDate + 'T12:00:00Z' : null,
+          payment_status: statusValue, payment_method: payMethod, slip_url: slipUrl.trim() || null,
+          notes: payNotes.trim() || null, recorded_by: user?.username || user?.email || 'ทีมงาน', updated_at: now
+        };
+        const steps: (() => Promise<void>)[] = [async () => {
+          const query = period.id
+            ? supabase.from('rental_payments').update(payload).eq('id', period.id).eq('contract_id', contract.id)
+            : supabase.from('rental_payments').insert([{ ...payload, created_at: now }]);
+          const { data, error } = await query.select('id').single();
+          if (error) throw error;
+          if (!data?.id) throw new Error('ไม่พบค่างวดที่บันทึกได้');
+          if (requestScope === currentScope.current) {
+            setPayments(current => current.map(item => item.period_month === period.period_month
+              ? { ...item, ...payload, id: data.id, payment_status: statusValue as RentalPaymentRecord['payment_status'] }
+              : item));
+          }
+        }];
+        if (contract.program_type === 'program_b') {
+          let totalSavings = 0;
+          steps.push(async () => {
+            const { data, error } = await supabase.from('rental_payments').select('savings_amount, payment_status')
+              .eq('payment_status', 'Paid').eq('contract_id', contract.id);
+            if (error) throw error;
+            totalSavings = (data || []).reduce((sum, item) => sum + Number(item.savings_amount || 0), 0);
+          });
+          steps.push(async () => {
+            const { data, error } = await supabase.from('rental_contracts').update({ accumulated_savings: totalSavings })
+              .eq('id', contract.id).select('id').single();
+            if (error) throw error;
+            if (!data?.id) throw new Error('อัปเดตยอดสะสมของสัญญาไม่สำเร็จ');
+          });
+          if (contract.lead_id) steps.push(async () => {
+            const { data, error } = await supabase.from('leads').update({ rental_accumulated_savings: totalSavings })
+              .eq('id', contract.lead_id!).select('id').single();
+            if (error) throw error;
+            if (!data?.id) throw new Error('อัปเดตยอดสะสมของลูกค้าไม่สำเร็จ');
+          });
+        }
+        progress = { period: period.period_month, completed: 0, steps };
+        saveProgress.current = progress;
       }
-
-      // 2. If Program B, recalculate total accumulated savings and update contract & lead
-      if (contract.program_type === 'program_b') {
-        let savingsQuery = supabase
-          .from('rental_payments')
-          .select('savings_amount, payment_status')
-          .eq('payment_status', 'Paid');
-
-        if (contract.id && contract.id !== 'temp-contract') {
-          savingsQuery = savingsQuery.or(`contract_id.eq.${contract.id},plot_id.eq.${contract.plot_id}`);
-        } else {
-          savingsQuery = savingsQuery.eq('plot_id', contract.plot_id);
-        }
-
-        const { data: allPayments } = await savingsQuery;
-
-        const totalSavings = (allPayments || []).reduce((sum, p) => sum + Number(p.savings_amount || 0), 0);
-
-        if (contract.id && contract.id !== 'temp-contract') {
-          await supabase
-            .from('rental_contracts')
-            .update({ accumulated_savings: totalSavings })
-            .eq('id', contract.id);
-        }
-
-        if (contract.lead_id) {
-          await supabase
-            .from('leads')
-            .update({ rental_accumulated_savings: totalSavings })
-            .eq('id', contract.lead_id);
-        }
+      while (progress.completed < progress.steps.length) {
+        if (requestScope !== currentScope.current) return;
+        await progress.steps[progress.completed]();
+        progress.completed++;
       }
-
+      if (requestScope !== currentScope.current) return;
+      saveProgress.current = null;
       setPaymentDialog({ isOpen: false, period: null });
-      await fetchData();
-      if (onSaved) onSaved();
-    } catch (err: any) {
-      console.error('Error saving rental payment:', err);
-      setErrorMsg(err.message || 'บันทึกการชำระเงินไม่สำเร็จ');
+      const refreshed = await fetchData();
+      if (!refreshed) setErrorMsg('บันทึกค่างวดสำเร็จแล้ว แต่โหลดประวัติล่าสุดไม่สำเร็จ กรุณาปิดแล้วเปิดตารางใหม่ ไม่ต้องบันทึกซ้ำ');
+      onSaved?.();
+    } catch (error) {
+      if (requestScope === currentScope.current) {
+        const detail = error instanceof Error ? error.message : (error as { message?: string })?.message || 'บันทึกการชำระเงินไม่สำเร็จ';
+        if (progress && progress.completed > 0) {
+          setErrorMsg('บันทึกค่างวดแล้ว แต่ข้อมูลประกอบยังไม่ครบ: ' + detail + ' กดบันทึกอีกครั้งเพื่อทำเฉพาะส่วนที่เหลือ');
+        } else {
+          saveProgress.current = null;
+          setErrorMsg(detail);
+        }
+      }
     } finally {
-      setSubmitting(false);
+      if (requestScope === currentScope.current) {
+        busy.current = false;
+        setSubmitting(false);
+      }
     }
   };
 
@@ -331,7 +308,7 @@ export default function RentalPaymentLedgerModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto animate-fade-in">
+    <SalesOverlay className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto animate-fade-in">
       <div className="bg-white rounded-3xl max-w-4xl w-full shadow-2xl border border-slate-200 overflow-hidden my-auto flex flex-col max-h-[90vh]">
         
         {/* Header */}
@@ -392,6 +369,27 @@ export default function RentalPaymentLedgerModal({
               <AlertCircle size={16} className="shrink-0" />
               <span>{errorMsg}</span>
             </div>
+          )}
+
+          {unlinkedPayments.length > 0 && (
+            <details className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs">
+              <summary className="font-bold text-amber-900 cursor-pointer">
+                ประวัติเดิมที่ยังไม่ระบุสัญญา ({unlinkedPayments.length}) — อ่านอย่างเดียว
+              </summary>
+              <p className="text-amber-800 mt-2">รายการของแปลงและโครงการเดียวกัน ยังไม่ยืนยันว่าเป็นสัญญานี้ จึงแสดงแยกและไม่รวมยอดของสัญญาปัจจุบัน</p>
+              <div className="overflow-x-auto mt-2">
+                <table className="w-full text-left">
+                  <thead><tr><th>ผู้เช่า</th><th>งวด</th><th>วันที่รับเงิน</th><th>ยอดรับ</th><th>สถานะ</th></tr></thead>
+                  <tbody>{unlinkedPayments.map((item, index) => (
+                    <tr key={item.id || index}>
+                      <td>{item.tenant_name || '-'}</td><td>{item.period_label || item.period_month}</td>
+                      <td>{item.paid_date?.split('T')[0] || '-'}</td>
+                      <td>{Number(item.amount_paid || 0).toLocaleString()}</td><td>{item.payment_status}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            </details>
           )}
 
           {/* 📊 KPI Summary Cards */}
@@ -570,6 +568,7 @@ export default function RentalPaymentLedgerModal({
                           </button>
                           <button
                             type="button"
+                            disabled={loading || !contract || !['Active', 'Renewed'].includes(contract.status)}
                             onClick={() => handleOpenPaymentDialog(period)}
                             className={`px-3 py-1 rounded-xl font-bold text-xs shadow-2xs transition-all cursor-pointer ${
                               isPaid
@@ -607,7 +606,7 @@ export default function RentalPaymentLedgerModal({
 
         {/* 💳 Quick Payment Record Dialog */}
         {paymentDialog.isOpen && paymentDialog.period && (
-          <div className="fixed inset-0 z-[350] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-fade-in">
+          <SalesOverlay className="fixed inset-0 z-[350] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-fade-in">
             <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden my-auto">
               <div className="bg-gradient-to-r from-blue-900 to-indigo-900 text-white p-4 flex items-center justify-between">
                 <div>
@@ -644,6 +643,7 @@ export default function RentalPaymentLedgerModal({
                 <div>
                   <label className="block text-slate-700 font-bold mb-1">วันที่รับชำระจริง *</label>
                   <input
+                        disabled={submitting || (saveProgress.current?.completed || 0) > 0}
                     type="date"
                     required
                     value={payDate}
@@ -656,6 +656,7 @@ export default function RentalPaymentLedgerModal({
                 <div>
                   <label className="block text-slate-700 font-bold mb-1">จำนวนเงินที่ได้รับ (บาท) *</label>
                   <input
+                        disabled={submitting || (saveProgress.current?.completed || 0) > 0}
                     type="number"
                     required
                     value={payAmount}
@@ -669,6 +670,7 @@ export default function RentalPaymentLedgerModal({
                 <div>
                   <label className="block text-slate-700 font-bold mb-1">ช่องทางการชำระเงิน *</label>
                   <select
+                        disabled={submitting || (saveProgress.current?.completed || 0) > 0}
                     value={payMethod}
                     onChange={e => setPayMethod(e.target.value as any)}
                     className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 focus:outline-none"
@@ -684,6 +686,7 @@ export default function RentalPaymentLedgerModal({
                 <div>
                   <label className="block text-slate-700 font-bold mb-1">ลิงก์รูปภาพสลิปการโอน (Slip URL - ถ้ามี)</label>
                   <input
+                        disabled={submitting || (saveProgress.current?.completed || 0) > 0}
                     type="url"
                     value={slipUrl}
                     onChange={e => setSlipUrl(e.target.value)}
@@ -696,6 +699,7 @@ export default function RentalPaymentLedgerModal({
                 <div>
                   <label className="block text-slate-700 font-bold mb-1">หมายเหตุเพิ่มเติม</label>
                   <input
+                        disabled={submitting || (saveProgress.current?.completed || 0) > 0}
                     type="text"
                     value={payNotes}
                     onChange={e => setPayNotes(e.target.value)}
@@ -715,7 +719,7 @@ export default function RentalPaymentLedgerModal({
                   </button>
                   <button
                     type="submit"
-                    disabled={submitting}
+                    disabled={submitting || loading}
                     className="flex-1 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-bold rounded-xl shadow-md transition-all cursor-pointer disabled:opacity-50"
                   >
                     {submitting ? 'กำลังบันทึก...' : '✓ บันทึกรับเงิน'}
@@ -723,12 +727,12 @@ export default function RentalPaymentLedgerModal({
                 </div>
               </form>
             </div>
-          </div>
+          </SalesOverlay>
         )}
 
         {/* View Slip Modal */}
         {viewingSlipUrl && (
-          <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/80 p-4 animate-fade-in" onClick={() => setViewingSlipUrl(null)}>
+          <SalesOverlay className="fixed inset-0 z-[400] flex items-center justify-center bg-black/80 p-4 animate-fade-in" onClick={() => setViewingSlipUrl(null)}>
             <div className="relative max-w-lg w-full bg-white rounded-2xl overflow-hidden p-2" onClick={e => e.stopPropagation()}>
               <div className="flex justify-between items-center p-2">
                 <span className="font-bold text-xs text-slate-800">สลิปการโอนเงิน</span>
@@ -738,7 +742,7 @@ export default function RentalPaymentLedgerModal({
               </div>
               <img src={viewingSlipUrl} alt="Slip" className="w-full max-h-[70vh] object-contain rounded-xl" />
             </div>
-          </div>
+          </SalesOverlay>
         )}
 
       </div>
@@ -785,7 +789,7 @@ export default function RentalPaymentLedgerModal({
         />
       )}
 
-    </div>
+    </SalesOverlay>
   );
 }
 

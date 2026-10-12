@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const getSession = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/supabase', () => ({ supabase: { auth: { getSession } } }));
 import { postBookingApi, PostBookingApiError } from '../postBookingClient';
-import { pbid, pbInput, pbLoanResult, pbResult, pbScope, pbSnapshot, pbSubmit, pbTransfer } from './postBookingFixtures';
+import { pbid, pbInput, pbLoanResult, pbResult, pbScope, pbSnapshot, pbSubmit, pbTransfer, pbHandover } from './postBookingFixtures';
 const fetchMock = vi.fn();
 beforeEach(() => {
   vi.clearAllMocks(); vi.stubGlobal('fetch', fetchMock);
@@ -19,7 +19,7 @@ describe('post-booking caller JWT client', () => {
       method: 'GET', cache: 'no-store', credentials: 'omit', headers: { Authorization: 'Bearer synthetic-token' },
     });
   });
-  it.each([pbInput(), pbSubmit(), pbLoanResult(), pbTransfer()])('sends one normalized command and validates its receipt: $command', async input => {
+  it.each([pbInput(), pbSubmit(), pbLoanResult(), pbTransfer(), pbHandover()])('sends one normalized command and validates its receipt: $command', async input => {
     fetchMock.mockResolvedValue(Response.json({ data: pbResult(input) }, { status: 201 }));
     expect(await postBookingApi.save(input, pbid(6))).toEqual(pbResult(input));
     expect(fetchMock).toHaveBeenCalledOnce();
@@ -74,4 +74,19 @@ describe('post-booking caller JWT client', () => {
     fetchMock.mockResolvedValueOnce(Response.json({ data: pbSnapshot(pbScope({ eventPage: 1 })) }));
     await expect(postBookingApi.read(pbScope())).rejects.toMatchObject({ code: 'READ_UNAVAILABLE' });
   });
+});
+
+
+it('rejects a snapshot returned after the active account changes', async () => {
+  getSession.mockResolvedValueOnce({ data: { session: { access_token: 'synthetic-token', user: { id: pbid(6) } } }, error: null })
+    .mockResolvedValueOnce({ data: { session: { access_token: 'synthetic-other', user: { id: pbid(99) } } }, error: null });
+  fetchMock.mockResolvedValue(Response.json({ data: pbSnapshot() }));
+  await expect(postBookingApi.read(pbScope())).rejects.toMatchObject({ code: 'READ_UNAVAILABLE' });
+});
+it('keeps a committed handover uncertain for its original actor when the account changes during the response', async () => {
+  getSession.mockResolvedValueOnce({ data: { session: { access_token: 'synthetic-token', user: { id: pbid(6) } } }, error: null })
+    .mockResolvedValueOnce({ data: { session: { access_token: 'synthetic-other', user: { id: pbid(99) } } }, error: null });
+  fetchMock.mockResolvedValue(Response.json({ data: pbResult(pbHandover()) }, { status: 201 }));
+  await expect(postBookingApi.save(pbHandover(), pbid(6))).rejects.toMatchObject({ code: 'UNKNOWN_RESULT', definitelyNotSaved: false });
+  expect(fetchMock).toHaveBeenCalledOnce();
 });

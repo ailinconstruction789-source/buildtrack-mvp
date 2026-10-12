@@ -1,0 +1,977 @@
+{
+  "note": "Read-only catalog source only; synthetic view definitions intentionally simplify real joins/aggregates. No real business rows/credentials. No Supabase API/JWT/trigger/constraint emulation.",
+  "snapshot": {
+    "columns": [
+      {
+        "type": "uuid",
+        "table": "leads",
+        "column": "id"
+      },
+      {
+        "type": "character varying",
+        "table": "leads",
+        "column": "project_name"
+      },
+      {
+        "type": "character varying",
+        "table": "leads",
+        "column": "customer_name"
+      },
+      {
+        "type": "character varying",
+        "table": "leads",
+        "column": "phone"
+      },
+      {
+        "type": "character varying",
+        "table": "leads",
+        "column": "occupation"
+      },
+      {
+        "type": "character varying",
+        "table": "leads",
+        "column": "interest"
+      },
+      {
+        "type": "character varying",
+        "table": "leads",
+        "column": "source"
+      },
+      {
+        "type": "character varying",
+        "table": "leads",
+        "column": "status"
+      },
+      {
+        "type": "character varying",
+        "table": "leads",
+        "column": "agent_name"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "leads",
+        "column": "created_at"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "leads",
+        "column": "updated_at"
+      },
+      {
+        "type": "character varying",
+        "table": "leads",
+        "column": "channel"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "leads",
+        "column": "lead_date"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "leads",
+        "column": "contacted_date"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "leads",
+        "column": "appointment_date"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "leads",
+        "column": "actual_visit_date"
+      },
+      {
+        "type": "integer",
+        "table": "leads",
+        "column": "follow_up_count"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "leads",
+        "column": "last_follow_up_date"
+      },
+      {
+        "type": "character varying",
+        "table": "leads",
+        "column": "interested_plot_id"
+      },
+      {
+        "type": "character varying",
+        "table": "leads",
+        "column": "interested_plot_name"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "leads",
+        "column": "booking_date"
+      },
+      {
+        "type": "numeric(15,2)",
+        "table": "leads",
+        "column": "booking_amount"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "leads",
+        "column": "loan_submission_date"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "leads",
+        "column": "loan_approved_date"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "leads",
+        "column": "transferred_date"
+      },
+      {
+        "type": "character varying",
+        "table": "leads",
+        "column": "lost_reason"
+      },
+      {
+        "type": "text",
+        "table": "leads",
+        "column": "lost_reason_detail"
+      },
+      {
+        "type": "character varying",
+        "table": "leads",
+        "column": "crm_status"
+      },
+      {
+        "type": "character varying",
+        "table": "leads",
+        "column": "auto_status"
+      },
+      {
+        "type": "text",
+        "table": "leads",
+        "column": "notes"
+      },
+      {
+        "type": "character varying",
+        "table": "leads",
+        "column": "created_by_agent"
+      },
+      {
+        "type": "character varying",
+        "table": "leads",
+        "column": "closing_agent"
+      },
+      {
+        "type": "character varying",
+        "table": "leads",
+        "column": "deal_type"
+      },
+      {
+        "type": "character varying",
+        "table": "leads",
+        "column": "rental_program"
+      },
+      {
+        "type": "numeric(15,2)",
+        "table": "leads",
+        "column": "rental_monthly_rent"
+      },
+      {
+        "type": "numeric(15,2)",
+        "table": "leads",
+        "column": "rental_deposit"
+      },
+      {
+        "type": "numeric(15,2)",
+        "table": "leads",
+        "column": "rental_savings_per_month"
+      },
+      {
+        "type": "numeric(15,2)",
+        "table": "leads",
+        "column": "rental_accumulated_savings"
+      },
+      {
+        "type": "numeric(15,2)",
+        "table": "leads",
+        "column": "rental_base_price"
+      },
+      {
+        "type": "date",
+        "table": "leads",
+        "column": "rental_start_date"
+      },
+      {
+        "type": "date",
+        "table": "leads",
+        "column": "rental_end_date"
+      },
+      {
+        "type": "character varying",
+        "table": "leads",
+        "column": "rental_status"
+      },
+      {
+        "type": "uuid",
+        "table": "leads",
+        "column": "active_rental_contract_id"
+      },
+      {
+        "type": "bigint",
+        "table": "plot_task_assignments",
+        "column": "id"
+      },
+      {
+        "type": "text",
+        "table": "plot_task_assignments",
+        "column": "plot_id"
+      },
+      {
+        "type": "text",
+        "table": "plot_task_assignments",
+        "column": "contractor_name"
+      },
+      {
+        "type": "text",
+        "table": "plot_task_assignments",
+        "column": "contractor_phone"
+      },
+      {
+        "type": "timestamp without time zone",
+        "table": "plot_task_assignments",
+        "column": "created_at"
+      },
+      {
+        "type": "uuid",
+        "table": "plot_task_assignments",
+        "column": "task_template_id"
+      },
+      {
+        "type": "integer",
+        "table": "plot_task_assignments",
+        "column": "current_progress"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "plot_task_assignments",
+        "column": "actual_start_date"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "plot_task_assignments",
+        "column": "actual_end_date"
+      },
+      {
+        "type": "text",
+        "table": "plot_task_assignments",
+        "column": "latest_action"
+      },
+      {
+        "type": "text",
+        "table": "plot_task_assignments",
+        "column": "latest_role"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "plot_task_assignments",
+        "column": "latest_update_created_at"
+      },
+      {
+        "type": "boolean",
+        "table": "plot_task_assignments",
+        "column": "is_excluded"
+      },
+      {
+        "type": "character varying(50)",
+        "table": "plot_task_assignments",
+        "column": "billing_status"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "plot_task_assignments",
+        "column": "billed_at"
+      },
+      {
+        "type": "character varying(255)",
+        "table": "plot_task_assignments",
+        "column": "billed_by"
+      },
+      {
+        "type": "character varying(255)",
+        "table": "plot_task_assignments",
+        "column": "billing_ref"
+      },
+      {
+        "type": "bigint",
+        "table": "plot_task_schedules",
+        "column": "id"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "plot_task_schedules",
+        "column": "created_at"
+      },
+      {
+        "type": "text",
+        "table": "plot_task_schedules",
+        "column": "plot_id"
+      },
+      {
+        "type": "uuid",
+        "table": "plot_task_schedules",
+        "column": "task_template_id"
+      },
+      {
+        "type": "date",
+        "table": "plot_task_schedules",
+        "column": "planned_start"
+      },
+      {
+        "type": "date",
+        "table": "plot_task_schedules",
+        "column": "planned_end"
+      },
+      {
+        "type": "text",
+        "table": "plots",
+        "column": "id"
+      },
+      {
+        "type": "uuid",
+        "table": "plots",
+        "column": "house_type_id"
+      },
+      {
+        "type": "text",
+        "table": "plots",
+        "column": "foreman_name"
+      },
+      {
+        "type": "text",
+        "table": "plots",
+        "column": "project_name"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "plots",
+        "column": "created_at"
+      },
+      {
+        "type": "boolean",
+        "table": "plots",
+        "column": "has_customer"
+      },
+      {
+        "type": "boolean",
+        "table": "plots",
+        "column": "is_completed"
+      },
+      {
+        "type": "text",
+        "table": "plots",
+        "column": "overview_image_url"
+      },
+      {
+        "type": "character varying",
+        "table": "plots",
+        "column": "sale_status"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "plots",
+        "column": "paused_for_sale_at"
+      },
+      {
+        "type": "numeric",
+        "table": "plots",
+        "column": "selling_price"
+      },
+      {
+        "type": "integer",
+        "table": "plots",
+        "column": "handover_cycle"
+      },
+      {
+        "type": "integer",
+        "table": "plots",
+        "column": "inspection_round"
+      },
+      {
+        "type": "text",
+        "table": "plots",
+        "column": "plot_name"
+      },
+      {
+        "type": "numeric",
+        "table": "plots",
+        "column": "land_size"
+      },
+      {
+        "type": "text",
+        "table": "plots",
+        "column": "house_model"
+      },
+      {
+        "type": "numeric",
+        "table": "plots",
+        "column": "land_appraisal_price"
+      },
+      {
+        "type": "text",
+        "table": "plots",
+        "column": "highlight_color"
+      },
+      {
+        "type": "text",
+        "table": "plots",
+        "column": "highlight_note"
+      },
+      {
+        "type": "character varying",
+        "table": "plots",
+        "column": "permit_status"
+      },
+      {
+        "type": "character varying",
+        "table": "plots",
+        "column": "registration_status"
+      },
+      {
+        "type": "character varying",
+        "table": "plots",
+        "column": "water_meter_status"
+      },
+      {
+        "type": "character varying",
+        "table": "plots",
+        "column": "electric_meter_status"
+      },
+      {
+        "type": "date",
+        "table": "plots",
+        "column": "permit_date"
+      },
+      {
+        "type": "date",
+        "table": "plots",
+        "column": "registration_date"
+      },
+      {
+        "type": "date",
+        "table": "plots",
+        "column": "water_meter_date"
+      },
+      {
+        "type": "date",
+        "table": "plots",
+        "column": "electric_meter_date"
+      },
+      {
+        "type": "text",
+        "table": "plots",
+        "column": "handover_status"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "plots",
+        "column": "handover_completed_at"
+      },
+      {
+        "type": "text",
+        "table": "plots",
+        "column": "handover_completed_by"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "plots",
+        "column": "inspection_round1_date"
+      },
+      {
+        "type": "text",
+        "table": "plots",
+        "column": "inspection_round1_status"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "plots",
+        "column": "inspection_round2_date"
+      },
+      {
+        "type": "text",
+        "table": "plots",
+        "column": "inspection_round2_status"
+      },
+      {
+        "type": "text",
+        "table": "plots",
+        "column": "handover_notes"
+      },
+      {
+        "type": "boolean",
+        "table": "plots",
+        "column": "is_sample_house"
+      },
+      {
+        "type": "character varying",
+        "table": "plots",
+        "column": "current_tenant_name"
+      },
+      {
+        "type": "character varying",
+        "table": "plots",
+        "column": "current_tenant_phone"
+      },
+      {
+        "type": "character varying",
+        "table": "plots",
+        "column": "rental_program"
+      },
+      {
+        "type": "numeric(15,2)",
+        "table": "plots",
+        "column": "monthly_rent"
+      },
+      {
+        "type": "numeric(15,2)",
+        "table": "plots",
+        "column": "security_deposit"
+      },
+      {
+        "type": "numeric(15,2)",
+        "table": "plots",
+        "column": "accumulated_downpayment"
+      },
+      {
+        "type": "date",
+        "table": "plots",
+        "column": "lease_start_date"
+      },
+      {
+        "type": "date",
+        "table": "plots",
+        "column": "lease_end_date"
+      },
+      {
+        "type": "text",
+        "table": "plots",
+        "column": "water_meter_image_url"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "plots",
+        "column": "water_meter_installed_date"
+      },
+      {
+        "type": "text",
+        "table": "plots",
+        "column": "water_meter_meter_no"
+      },
+      {
+        "type": "text",
+        "table": "plots",
+        "column": "electric_meter_image_url"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "plots",
+        "column": "electric_meter_installed_date"
+      },
+      {
+        "type": "text",
+        "table": "plots",
+        "column": "electric_meter_meter_no"
+      },
+      {
+        "type": "uuid",
+        "table": "sales",
+        "column": "id"
+      },
+      {
+        "type": "uuid",
+        "table": "sales",
+        "column": "lead_id"
+      },
+      {
+        "type": "text",
+        "table": "sales",
+        "column": "plot_id"
+      },
+      {
+        "type": "numeric(15,2)",
+        "table": "sales",
+        "column": "sale_price"
+      },
+      {
+        "type": "numeric(15,2)",
+        "table": "sales",
+        "column": "booking_amount"
+      },
+      {
+        "type": "numeric(15,2)",
+        "table": "sales",
+        "column": "land_office_price"
+      },
+      {
+        "type": "character varying",
+        "table": "sales",
+        "column": "bank_name"
+      },
+      {
+        "type": "character varying",
+        "table": "sales",
+        "column": "contract_status"
+      },
+      {
+        "type": "character varying",
+        "table": "sales",
+        "column": "bank_status"
+      },
+      {
+        "type": "character varying",
+        "table": "sales",
+        "column": "cancellation_reason"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "sales",
+        "column": "transferred_at"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "sales",
+        "column": "created_at"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "sales",
+        "column": "updated_at"
+      },
+      {
+        "type": "date",
+        "table": "sales",
+        "column": "expected_transfer_date"
+      },
+      {
+        "type": "uuid",
+        "table": "sales",
+        "column": "project_interest_id"
+      },
+      {
+        "type": "integer",
+        "table": "sales",
+        "column": "booking_round"
+      },
+      {
+        "type": "uuid",
+        "table": "sales",
+        "column": "previous_sale_id"
+      },
+      {
+        "type": "text",
+        "table": "sales",
+        "column": "crm_stage"
+      },
+      {
+        "type": "text",
+        "table": "sales",
+        "column": "payment_method"
+      },
+      {
+        "type": "text",
+        "table": "sales",
+        "column": "booking_route"
+      },
+      {
+        "type": "text",
+        "table": "sales",
+        "column": "booking_route_reason"
+      },
+      {
+        "type": "numeric(15,2)",
+        "table": "sales",
+        "column": "list_price"
+      },
+      {
+        "type": "numeric(15,2)",
+        "table": "sales",
+        "column": "discount_amount"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "sales",
+        "column": "booked_at"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "sales",
+        "column": "contracted_at"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "sales",
+        "column": "crm_handover_at"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "sales",
+        "column": "cancelled_at"
+      },
+      {
+        "type": "uuid",
+        "table": "sales",
+        "column": "legacy_cancellation_batch_id"
+      },
+      {
+        "type": "text",
+        "table": "sales",
+        "column": "cancellation_category"
+      },
+      {
+        "type": "uuid",
+        "table": "sales",
+        "column": "closing_sales_user_id"
+      },
+      {
+        "type": "uuid",
+        "table": "sales",
+        "column": "external_booking_id"
+      },
+      {
+        "type": "text",
+        "table": "sales",
+        "column": "external_source_stage"
+      },
+      {
+        "type": "uuid",
+        "table": "sales",
+        "column": "booking_revision"
+      },
+      {
+        "type": "uuid",
+        "table": "sales",
+        "column": "booking_visit_id"
+      },
+      {
+        "type": "uuid",
+        "table": "status_history",
+        "column": "id"
+      },
+      {
+        "type": "character varying",
+        "table": "status_history",
+        "column": "entity_type"
+      },
+      {
+        "type": "uuid",
+        "table": "status_history",
+        "column": "entity_id"
+      },
+      {
+        "type": "character varying",
+        "table": "status_history",
+        "column": "old_status"
+      },
+      {
+        "type": "character varying",
+        "table": "status_history",
+        "column": "new_status"
+      },
+      {
+        "type": "character varying",
+        "table": "status_history",
+        "column": "changed_by"
+      },
+      {
+        "type": "timestamp with time zone",
+        "table": "status_history",
+        "column": "created_at"
+      }
+    ],
+    "policies": [
+      {
+        "cmd": "SELECT",
+        "name": "Allow read access to leads",
+        "qual": "true",
+        "check": null,
+        "roles": [
+          "authenticated"
+        ],
+        "table": "leads",
+        "permissive": "PERMISSIVE"
+      },
+      {
+        "cmd": "ALL",
+        "name": "Allow write access to leads",
+        "qual": "(((auth.jwt() -> 'user_metadata'::text) ->> 'role'::text) = ANY (ARRAY['Admin'::text, 'Owner'::text, 'Sales'::text]))",
+        "check": "(((auth.jwt() -> 'user_metadata'::text) ->> 'role'::text) = ANY (ARRAY['Admin'::text, 'Owner'::text, 'Sales'::text]))",
+        "roles": [
+          "authenticated"
+        ],
+        "table": "leads",
+        "permissive": "PERMISSIVE"
+      },
+      {
+        "cmd": "ALL",
+        "name": "Allow admin write assignments",
+        "qual": "true",
+        "check": "((latest_role = ANY (ARRAY['Admin'::text, 'Owner'::text, 'Project Planner'::text, 'Site Engineer'::text, 'Foreman'::text, 'QC'::text, 'Procurement'::text])) OR (latest_role IS NULL))",
+        "roles": [
+          "public"
+        ],
+        "table": "plot_task_assignments",
+        "permissive": "PERMISSIVE"
+      },
+      {
+        "cmd": "ALL",
+        "name": "Allow all for authenticated users",
+        "qual": "true",
+        "check": "true",
+        "roles": [
+          "public"
+        ],
+        "table": "plot_task_assignments",
+        "permissive": "PERMISSIVE"
+      },
+      {
+        "cmd": "ALL",
+        "name": "Allow auth all assignments",
+        "qual": "true",
+        "check": "true",
+        "roles": [
+          "authenticated"
+        ],
+        "table": "plot_task_assignments",
+        "permissive": "PERMISSIVE"
+      },
+      {
+        "cmd": "ALL",
+        "name": "Allow admin write schedules",
+        "qual": "(((auth.jwt() -> 'user_metadata'::text) ->> 'role'::text) = ANY (ARRAY['Admin'::text, 'Owner'::text, 'Project Planner'::text, 'Site Engineer'::text, 'Foreman'::text, 'QC'::text]))",
+        "check": "(((auth.jwt() -> 'user_metadata'::text) ->> 'role'::text) = ANY (ARRAY['Admin'::text, 'Owner'::text, 'Project Planner'::text, 'Site Engineer'::text, 'Foreman'::text, 'QC'::text]))",
+        "roles": [
+          "authenticated"
+        ],
+        "table": "plot_task_schedules",
+        "permissive": "PERMISSIVE"
+      },
+      {
+        "cmd": "ALL",
+        "name": "Allow auth all schedules",
+        "qual": "true",
+        "check": "true",
+        "roles": [
+          "authenticated"
+        ],
+        "table": "plot_task_schedules",
+        "permissive": "PERMISSIVE"
+      },
+      {
+        "cmd": "ALL",
+        "name": "Allow auth all plots",
+        "qual": "true",
+        "check": "true",
+        "roles": [
+          "authenticated"
+        ],
+        "table": "plots",
+        "permissive": "PERMISSIVE"
+      },
+      {
+        "cmd": "UPDATE",
+        "name": "Allow foreman and engineers update plots",
+        "qual": "(((auth.jwt() -> 'user_metadata'::text) ->> 'role'::text) = ANY (ARRAY['Foreman'::text, 'Site Engineer'::text, 'QC'::text]))",
+        "check": "(((auth.jwt() -> 'user_metadata'::text) ->> 'role'::text) = ANY (ARRAY['Foreman'::text, 'Site Engineer'::text, 'QC'::text]))",
+        "roles": [
+          "authenticated"
+        ],
+        "table": "plots",
+        "permissive": "PERMISSIVE"
+      },
+      {
+        "cmd": "ALL",
+        "name": "Allow public access to plots",
+        "qual": "true",
+        "check": "true",
+        "roles": [
+          "public"
+        ],
+        "table": "plots",
+        "permissive": "PERMISSIVE"
+      },
+      {
+        "cmd": "SELECT",
+        "name": "Allow read access to sales",
+        "qual": "true",
+        "check": null,
+        "roles": [
+          "authenticated"
+        ],
+        "table": "sales",
+        "permissive": "PERMISSIVE"
+      },
+      {
+        "cmd": "ALL",
+        "name": "Allow write access to sales",
+        "qual": "(((auth.jwt() -> 'user_metadata'::text) ->> 'role'::text) = ANY (ARRAY['Admin'::text, 'Owner'::text, 'Sales'::text]))",
+        "check": "(((auth.jwt() -> 'user_metadata'::text) ->> 'role'::text) = ANY (ARRAY['Admin'::text, 'Owner'::text, 'Sales'::text]))",
+        "roles": [
+          "authenticated"
+        ],
+        "table": "sales",
+        "permissive": "PERMISSIVE"
+      },
+      {
+        "cmd": "SELECT",
+        "name": "Allow read access to status_history",
+        "qual": "true",
+        "check": null,
+        "roles": [
+          "authenticated"
+        ],
+        "table": "status_history",
+        "permissive": "PERMISSIVE"
+      },
+      {
+        "cmd": "INSERT",
+        "name": "Allow write access to status_history",
+        "qual": null,
+        "check": "(((auth.jwt() -> 'user_metadata'::text) ->> 'role'::text) = ANY (ARRAY['Admin'::text, 'Owner'::text, 'Sales'::text]))",
+        "roles": [
+          "authenticated"
+        ],
+        "table": "status_history",
+        "permissive": "PERMISSIVE"
+      }
+    ],
+    "policyHash": "064c322a1ca96593ee2e9c7719e9d65e"
+  },
+  "actor": [
+    {
+      "nspname": "public",
+      "proname": "app_current_actor",
+      "prosrc": " SELECT account_security_private.current_actor(); ",
+      "source_hash": "48c81bc5b496996c1a21a6bad59e6897"
+    },
+    {
+      "nspname": "account_security_private",
+      "proname": "current_actor",
+      "prosrc": "\nDECLARE\n  v_uid uuid := auth.uid();\n  v_session uuid;\n  v_actor record;\n  v_manage boolean := false;\nBEGIN\n  IF v_uid IS NULL THEN RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='APP_ACTOR_REQUIRED'; END IF;\n  BEGIN\n    v_session := NULLIF(auth.jwt()->>'session_id','')::uuid;\n  EXCEPTION WHEN invalid_text_representation THEN\n    RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='APP_ACTOR_REQUIRED';\n  END;\n  SELECT r.auth_user_id,r.legacy_user_id,r.role,p.username INTO v_actor\n  FROM account_security_private.reviewed_roles r\n  JOIN auth.users u ON u.id=r.auth_user_id\n  JOIN auth.sessions s ON s.user_id=u.id AND s.id=v_session\n  JOIN public.users p ON p.id=r.legacy_user_id\n  WHERE r.auth_user_id=v_uid AND r.enabled\n    AND u.deleted_at IS NULL AND NOT COALESCE(u.is_anonymous,false)\n    AND (u.banned_until IS NULL OR u.banned_until<=statement_timestamp())\n    AND (s.not_after IS NULL OR s.not_after>statement_timestamp())\n  FOR SHARE OF r,u,s;\n  IF NOT FOUND THEN RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='APP_ACTOR_REQUIRED'; END IF;\n  -- Do not lock users: existing presence updates must not require lock upgrades.\n  IF v_actor.role='Admin' THEN\n    PERFORM 1 FROM account_security_private.reviewed_admins a\n    WHERE a.auth_user_id=v_uid AND a.legacy_user_id=v_actor.legacy_user_id AND a.enabled\n    FOR SHARE;\n    v_manage := FOUND;\n  END IF;\n  RETURN jsonb_build_object('contract','buildtrack.actor.v1','authUserId',v_uid,\n    'legacyUserId',v_actor.legacy_user_id,'username',v_actor.username,'role',v_actor.role,\n    'canManageAccounts',v_manage);\nEND;\n",
+      "source_hash": "a5596aa5d22a0a1d4124c708c22c0d36"
+    }
+  ],
+  "views": [
+    "vw_active_plot_task_assignments",
+    "vw_active_task_updates",
+    "vw_billing_queue",
+    "vw_inspection_queue",
+    "vw_plot_overall_status",
+    "vw_plot_progress",
+    "vw_plot_status_dashboard",
+    "vw_project_progress",
+    "vw_qc_bottlenecks",
+    "vw_sales_intelligence_metrics",
+    "vw_scurve_metrics",
+    "vw_task_material_requests"
+  ]
+}

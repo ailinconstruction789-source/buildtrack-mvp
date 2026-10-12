@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { buildWeeklyProgressIndex, calculateWeeklyProgressAtCutoff, firstBy } from '@/lib/constructionReportsIndex';
 import { 
   X, Download, Printer, Search, CheckCircle2, TrendingUp, 
   TrendingDown, Minus, Clock, FileSpreadsheet, Building2, User, 
@@ -35,66 +36,6 @@ export interface PlotWeeklyMetric {
   rawPlot: any;
 }
 
-/**
- * คำนวณความคืบหน้ารายแปลงย้อนหลัง ณ วันที่กำหนด
- */
-function calculatePlotProgressAtDate(
-  plot: any, 
-  cutoffDate: Date, 
-  plotUpdates: any[], 
-  assignments: any[] = [], 
-  taskTemplates: any[] = [],
-  fallbackCurrent: number
-): number {
-  const plotAssignments = assignments.filter((a: any) => a.plot_id === plot.id && !a.is_excluded);
-  if (plotAssignments.length === 0) {
-    return fallbackCurrent;
-  }
-
-  let totalCost = 0;
-  let totalWeightedProgress = 0;
-  let hasValidData = false;
-
-  plotAssignments.forEach((assign: any) => {
-    const template = taskTemplates.find((t: any) => t.id === assign.task_template_id);
-    if (template && template.is_progress_counted === false) {
-      return;
-    }
-    const cost = Number(template?.cost) || 1;
-    totalCost += cost;
-
-    const taskUpdates = plotUpdates.filter((u: any) => 
-      u.task_template_id === assign.task_template_id
-    );
-
-    const updatesBefore = taskUpdates
-      .filter((u: any) => new Date(u.created_at).getTime() <= cutoffDate.getTime())
-      .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
-    let taskProgressAtCutoff = 0;
-    if (updatesBefore.length > 0) {
-      taskProgressAtCutoff = Number(updatesBefore[0].progress) || 0;
-      hasValidData = true;
-    } else {
-      const updatesAfter = taskUpdates.filter((u: any) => new Date(u.created_at).getTime() > cutoffDate.getTime());
-      if (updatesAfter.length > 0) {
-        taskProgressAtCutoff = 0;
-        hasValidData = true;
-      } else {
-        taskProgressAtCutoff = Number(assign.current_progress) || 0;
-      }
-    }
-
-    totalWeightedProgress += taskProgressAtCutoff * cost;
-  });
-
-  if (!hasValidData || totalCost === 0) {
-    return fallbackCurrent;
-  }
-
-  return totalWeightedProgress / totalCost;
-}
-
 export default function WeeklyProgressReportModal({
   isOpen,
   onClose,
@@ -115,18 +56,21 @@ export default function WeeklyProgressReportModal({
 
   // คำนวณข้อมูลรายแปลงเฉพาะโครงการที่เลือก
   const plotMetrics = useMemo(() => {
-    if (!selectedProject?.name || !plots || plots.length === 0) return [];
+    if (!isOpen || !selectedProject?.name || !plots || plots.length === 0) return [];
 
     // ดึงเฉพาะแปลงในโครงการปัจจุบัน
     const currentProjectPlots = plots.filter((p: any) => p.project_name === selectedProject.name);
+    if (currentProjectPlots.length === 0) return [];
 
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     sevenDaysAgo.setHours(23, 59, 59, 999);
+    const historyIndex = buildWeeklyProgressIndex(assignments || [], taskTemplates || [], allUpdatesRecord || [], sevenDaysAgo.getTime());
+    const houseTypesById = firstBy(houseTypes, (house: any) => String(house.id));
 
     const metrics: PlotWeeklyMetric[] = currentProjectPlots.map((plot: any) => {
-      const plotName = plot.plot_name || plot.id;
-      const houseTypeObj = houseTypes.find((h: any) => String(h.id) === String(plot.house_type_id));
+      const plotName = String(plot.plot_name || plot.id);
+      const houseTypeObj = houseTypesById.get(String(plot.house_type_id));
       const houseTypeName = plot.house_types?.type_name || houseTypeObj?.type_name || houseTypeObj?.name || plot.house_type || '-';
       const foremanName = plot.foreman || '-';
 
@@ -149,21 +93,20 @@ export default function WeeklyProgressReportModal({
         : Math.max(0, Math.min(100, Math.round(Number(statusInfo?.planned ?? 0))));
 
       // ข้อมูลการอัปเดตย้อนหลัง 7 วัน
-      const plotUpdates = (allUpdatesRecord || []).filter((u: any) => u.plot_id === plot.id);
-      const updatesLast7Days = plotUpdates.filter((u: any) => new Date(u.created_at).getTime() > sevenDaysAgo.getTime());
+      const hasRecentUpdates = historyIndex.plotsWithRecentUpdates.has(plot.id);
 
       let lastWeekProgress = currentActual;
 
       if (isCompleted) {
-        if (updatesLast7Days.length > 0) {
-          lastWeekProgress = calculatePlotProgressAtDate(plot, sevenDaysAgo, plotUpdates, assignments, taskTemplates, currentActual);
+        if (hasRecentUpdates) {
+          lastWeekProgress = calculateWeeklyProgressAtCutoff(plot.id, historyIndex, currentActual);
         } else {
           lastWeekProgress = 100;
         }
-      } else if (updatesLast7Days.length === 0) {
+      } else if (!hasRecentUpdates) {
         lastWeekProgress = currentActual;
       } else {
-        lastWeekProgress = calculatePlotProgressAtDate(plot, sevenDaysAgo, plotUpdates, assignments, taskTemplates, currentActual);
+        lastWeekProgress = calculateWeeklyProgressAtCutoff(plot.id, historyIndex, currentActual);
       }
 
       lastWeekProgress = Math.max(0, Math.min(currentActual, Math.round(lastWeekProgress)));
@@ -206,7 +149,7 @@ export default function WeeklyProgressReportModal({
     });
 
     return metrics;
-  }, [selectedProject?.name, plots, houseTypes, allUpdatesRecord, assignments, taskTemplates, getPlotOverallStatus]);
+  }, [isOpen, selectedProject?.name, plots, houseTypes, allUpdatesRecord, assignments, taskTemplates, getPlotOverallStatus]);
 
   // สรุปตัวเลขภาพรวม (Summary KPI)
   const summary = useMemo(() => {
@@ -314,9 +257,13 @@ export default function WeeklyProgressReportModal({
     const today = new Date().toISOString().split('T')[0];
     link.setAttribute('href', url);
     link.setAttribute('download', `สรุปความคืบหน้ารายสัปดาห์_${selectedProject?.name || 'โครงการ'}_${today}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    try {
+      document.body.appendChild(link);
+      link.click();
+    } finally {
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
   };
 
   // พิมพ์หน้ารายงาน

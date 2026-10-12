@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   insert: vi.fn(),
+  update: vi.fn(),
   from: vi.fn(),
   loadAvailablePlots: vi.fn()
 }));
@@ -23,6 +24,7 @@ import CentralVisitAppointmentModal from '../CentralVisitAppointmentModal';
 describe('CentralVisitAppointmentModal', () => {
   const customer = {
     id: 'customer-001',
+    leadId: 'customer-001',
     name: 'คุณสมชาย ทดสอบ',
     phone: '0812345678',
     channel: 'Facebook',
@@ -41,9 +43,16 @@ describe('CentralVisitAppointmentModal', () => {
       { id: 'plot-1', plot_name: 'A-01', project_name: 'โครงการ พฤกษา', has_customer: false, sale_status: 'available' },
       { id: 'plot-2', plot_name: 'A-02', project_name: 'โครงการ พฤกษา', has_customer: false, sale_status: 'available' }
     ]);
-    mocks.from.mockImplementation(() => ({
-      insert: mocks.insert.mockResolvedValue({ error: null })
-    }));
+    mocks.update.mockResolvedValue({ data: { id: customer.id }, error: null });
+    mocks.from.mockImplementation((table: string) => {
+      const query = { select: () => query, eq: () => query, is: () => query,
+        update: (payload: unknown) => { mocks.update(payload); return { eq: () => query, is: () => query, select: () => ({ single: () => mocks.update() }) }; },
+        single: async () => ({ data: { ...customer, status: 'Follow Up' }, error: null }),
+        limit: async () => ({ data: [], error: null }),
+        insert: mocks.insert,
+      };
+      return query;
+    });
   });
 
   it('renders modal with customer information pre-filled', async () => {
@@ -99,13 +108,11 @@ describe('CentralVisitAppointmentModal', () => {
 
     await waitFor(() => {
       expect(mocks.from).toHaveBeenCalledWith('leads');
-      expect(mocks.insert).toHaveBeenCalledWith(expect.objectContaining({
-        customer_name: 'คุณสมชาย ทดสอบ',
-        phone: '0812345678',
-        project_name: 'โครงการ โยวัว',
+      expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({
         status: 'Visit',
         auto_status: 'นัดชมโครงการ'
       }));
+      expect(mocks.insert).not.toHaveBeenCalled();
       expect(onSaved).toHaveBeenCalledWith(expect.stringContaining('บันทึกนัดหมายเข้าชมโครงการ โครงการ โยวัว'));
       expect(onClose).toHaveBeenCalled();
     });

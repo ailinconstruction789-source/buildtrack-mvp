@@ -1,4 +1,5 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef, useLayoutEffect } from 'react';
+import { firstBy, groupBy, parseConstructionRiskAlerts } from '@/lib/constructionReportsIndex';
 import { supabase } from '@/lib/supabase';
 import { TrendingUp, AlertTriangle, Target, ShieldAlert, Award, Users, Activity, CloudRain, Clock, CalendarClock, ArrowUpDown } from 'lucide-react';
 import { LineChart, Line, BarChart, Bar, ComposedChart, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
@@ -74,6 +75,40 @@ export default function OwnerAnalyticsDashboard({
   const allUpdatesRecord = useMemo(() => {
     return (rawAllUpdatesRecord || []).filter((u: any) => activePlots.has(u.plot_id));
   }, [rawAllUpdatesRecord, activePlots]);
+
+  const tasksByHouseType = useMemo(() => groupBy(taskTemplates || [], (task: any) => task.house_type_id), [taskTemplates]);
+  const tasksById = useMemo(() => firstBy(taskTemplates || [], (task: any) => String(task.id)), [taskTemplates]);
+  const plotsByForeman = useMemo(() => groupBy(plots || [], (plot: any) => plot.foreman), [plots]);
+  const assignmentsByContractor = useMemo(() => groupBy(assignments || [], (assignment: any) => assignment.contractor_name), [assignments]);
+  const assignmentsByPlot = useMemo(() => groupBy(assignments || [], (assignment: any) => String(assignment.plot_id)), [assignments]);
+  const assignmentsByTask = useMemo(() => firstBy(assignments || [], (assignment: any) =>
+    JSON.stringify([String(assignment.plot_id), String(assignment.task_template_id)])), [assignments]);
+  const updateIndex = useMemo(() => {
+    const byTask = groupBy(allUpdatesRecord, (update: any) => `${update.plot_id}-${update.task_template_id}`);
+    const normalCompletions = new Set<string>();
+    const reworksByPlot = new Map<string, number>();
+    const reworksByTask = new Map<string, number>();
+    for (const update of allUpdatesRecord) {
+      if (update.progress === 100 && !update.is_silent) {
+        normalCompletions.add(JSON.stringify([String(update.plot_id), String(update.task_template_id)]));
+      }
+      if (update.action?.includes('แจ้งแก้ไข')) {
+        const key = String(update.plot_id);
+        reworksByPlot.set(key, (reworksByPlot.get(key) || 0) + 1);
+      }
+      if (update.action && (update.action.includes('แจ้งแก้ไข') || update.action.includes('ไม่อนุมัติ'))) {
+        const key = JSON.stringify([String(update.plot_id), String(update.task_template_id)]);
+        reworksByTask.set(key, (reworksByTask.get(key) || 0) + 1);
+      }
+    }
+    // Own buckets, never the source array; stable sorting preserves the first timestamp tie.
+    for (const bucket of byTask.values()) bucket.sort((a: any, b: any) =>
+      new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    return { byTask, normalCompletions, reworksByPlot, reworksByTask };
+  }, [allUpdatesRecord]);
+  const defectsByPlot = useMemo(() => groupBy(defects || [], (defect: any) => defect.plot_id), [defects]);
+  const defectsByTask = useMemo(() => groupBy(defects || [], (defect: any) =>
+    JSON.stringify([String(defect.plot_id), String(defect.task_id)])), [defects]);
   
   // 1. Real Bottleneck & Handoff Latency Analysis (Focused on active construction plots)
   const bottleneckData = useMemo(() => {
@@ -122,7 +157,7 @@ export default function OwnerAnalyticsDashboard({
 
     return Object.entries(taskWaitTimes)
       .map(([taskId, stat]) => {
-        const task = taskTemplates?.find((t:any) => String(t.id) === String(taskId));
+        const task = tasksById.get(String(taskId));
         const avgWaitDays = stat.waitCount > 0 ? (stat.totalWaitMs / stat.waitCount / (1000 * 60 * 60 * 24)).toFixed(1) : 0;
         return { 
           taskName: task ? task.task_name : 'ไม่ระบุ', 
@@ -133,19 +168,19 @@ export default function OwnerAnalyticsDashboard({
       .filter(t => t.count > 0)
       .sort((a, b) => b.count - a.count || b.avgWaitDays - a.avgWaitDays)
       .slice(0, 5); 
-  }, [allUpdatesRecord, taskTemplates, activeUnderConstructionPlotIds]);
+  }, [allUpdatesRecord, tasksById, activeUnderConstructionPlotIds]);
 
   // 2. Real Team Performance Matrix (Foreman Leaderboard)
   const foremanPerformance = useMemo(() => {
     if (!foremenList) return [];
     return foremenList.map((foreman: any) => {
-      const fPlots = plots?.filter((p: any) => p.foreman === foreman.username) || [];
+      const fPlots = plotsByForeman.get(foreman.username) || [];
       let completedTasks = 0;
       let delayedTasks = 0;
       let totalReworks = 0;
 
       fPlots.forEach((p: any) => {
-        const pTasks = taskTemplates?.filter((t: any) => t.house_type_id === p.house_type_id) || [];
+        const pTasks = tasksByHouseType.get(p.house_type_id) || [];
         
         pTasks.forEach((t: any) => {
            const key = `${p.id}-${t.id}`;
@@ -153,8 +188,7 @@ export default function OwnerAnalyticsDashboard({
            const actual = latestUpdatesMap?.[key];
            
            // ตรวจสอบว่ามีประวัติเสร็จ 100% แบบที่ไม่ใช่ Silent Mode (คีย์ย้อนหลัง) หรือไม่
-           const updatesForTask = allUpdatesRecord?.filter((u: any) => String(u.plot_id) === String(p.id) && String(u.task_template_id) === String(t.id)) || [];
-           const hasNormalCompletion = updatesForTask.some((u: any) => u.progress === 100 && !u.is_silent);
+           const hasNormalCompletion = updateIndex.normalCompletions.has(JSON.stringify([String(p.id), String(t.id)]));
            
            if (actual && actual.progress === 100 && hasNormalCompletion) {
              completedTasks++;
@@ -167,16 +201,13 @@ export default function OwnerAnalyticsDashboard({
         });
       });
 
-      if (allUpdatesRecord) {
-        allUpdatesRecord.forEach((upd: any) => {
-          if (upd.action && upd.action.includes('แจ้งแก้ไข') && fPlots.some((p:any) => String(p.id) === String(upd.plot_id))) {
-            totalReworks++;
-          }
-        });
-      }
+      const foremanPlotIds = new Set(fPlots.map((plot: any) => String(plot.id)));
+      for (const id of foremanPlotIds) totalReworks += updateIndex.reworksByPlot.get(id) || 0;
 
       const onTimeRate = completedTasks > 0 ? Math.round(((completedTasks - delayedTasks) / completedTasks) * 100) : -1;
-      const defectCount = defects?.filter((d: any) => fPlots.some((p: any) => p.id === d.plot_id)).length || 0;
+      const strictPlotIds = new Set(fPlots.map((plot: any) => plot.id));
+      let defectCount = 0;
+      for (const id of strictPlotIds) defectCount += defectsByPlot.get(id)?.length || 0;
       
       let riskLevel = 'Low';
       if (onTimeRate !== -1) {
@@ -196,7 +227,7 @@ export default function OwnerAnalyticsDashboard({
         riskLevel
       };
     }).sort((a: any, b: any) => b.onTimeRate - a.onTimeRate || b.completedTasks - a.completedTasks || a.totalReworks - b.totalReworks);
-  }, [foremenList, plots, taskTemplates, schedules, latestUpdatesMap, allUpdatesRecord, defects]);
+  }, [foremenList, plotsByForeman, tasksByHouseType, schedules, latestUpdatesMap, updateIndex, defectsByPlot]);
 
   // 3. Real EVM S-Curve Forecasting (Line Chart)
   const sCurveData = useMemo(() => {
@@ -374,7 +405,7 @@ export default function OwnerAnalyticsDashboard({
     if (!contractors || !assignments) return [];
     
     return contractors.map((c: any) => {
-      const cAssignments = assignments.filter((a: any) => a.contractor_name === c.name);
+      const cAssignments = assignmentsByContractor.get(c.name) || [];
       let delayedTasks = 0;
       let totalAllocatedTasks = 0;
       let completedTasksCount = 0;
@@ -384,16 +415,6 @@ export default function OwnerAnalyticsDashboard({
       let defectCount = 0;
 
       const nowTime = Date.now();
-
-      // Pre-group updates for performance
-      const updatesByKey: Record<string, any[]> = {};
-      if (allUpdatesRecord) {
-        allUpdatesRecord.forEach((upd: any) => {
-          const key = `${upd.plot_id}-${upd.task_template_id}`;
-          if (!updatesByKey[key]) updatesByKey[key] = [];
-          updatesByKey[key].push(upd);
-        });
-      }
 
       cAssignments.forEach((a: any) => {
         totalAllocatedTasks++;
@@ -409,11 +430,10 @@ export default function OwnerAnalyticsDashboard({
             : 0;
 
         if (plannedDurationDays > 0) {
-          const taskUpdates = updatesByKey[key] || [];
+          const taskUpdates = updateIndex.byTask.get(key) || [];
           
           if (taskUpdates.length > 0) {
-            // Sort ascending to find the first recorded update
-            taskUpdates.sort((u1, u2) => new Date(u1.created_at).getTime() - new Date(u2.created_at).getTime());
+            // The shared history index is already in ascending order.
             const actualStart = new Date(taskUpdates[0].created_at).getTime();
 
             if (actual && actual.progress === 100) {
@@ -435,18 +455,12 @@ export default function OwnerAnalyticsDashboard({
         }
       });
 
-      if (allUpdatesRecord) {
-        allUpdatesRecord.forEach((upd: any) => {
-          if (upd.action && (upd.action.includes('แจ้งแก้ไข') || upd.action.includes('ไม่อนุมัติ'))) {
-             const isThisContractor = cAssignments.some((a:any) => String(a.plot_id) === String(upd.plot_id) && String(a.task_template_id) === String(upd.task_template_id));
-             if (isThisContractor) totalReworks++;
-          }
-        });
+      const assignedTaskKeys = new Set(cAssignments.map((assignment: any) =>
+        JSON.stringify([String(assignment.plot_id), String(assignment.task_template_id)])));
+      for (const key of assignedTaskKeys) {
+        totalReworks += updateIndex.reworksByTask.get(key) || 0;
+        defectCount += defectsByTask.get(key)?.length || 0;
       }
-
-      defectCount = defects?.filter((d: any) => {
-         return cAssignments.some((a:any) => String(a.plot_id) === String(d.plot_id) && String(a.task_template_id) === String(d.task_id));
-      }).length || 0;
 
       // 🌟 Bayesian Average Scoring (Only for contractors with completed tasks) 🌟
       const rawOnTimeRate = completedTasksCount > 0 ? ((completedTasksCount - delayedCompletedTasks) / completedTasksCount) * 100 : -1;
@@ -509,7 +523,7 @@ export default function OwnerAnalyticsDashboard({
         // Tie-breaker 2: Fewer reworks is better
         return a.totalReworks - b.totalReworks;
     });
-  }, [contractors, assignments, schedules, latestUpdatesMap, allUpdatesRecord, defects]);
+  }, [contractors, assignments, assignmentsByContractor, schedules, latestUpdatesMap, updateIndex, defectsByTask]);
 
   // Helper to format timestamps to Thai Buddhist Era (พ.ศ.)
   const formatThaiDate = (val: any) => {
@@ -531,7 +545,7 @@ export default function OwnerAnalyticsDashboard({
     const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
     activeUnderConstructionPlots.forEach((p: any) => {
-       const pTasks = taskTemplates.filter((t: any) => t.house_type_id === p.house_type_id);
+       const pTasks = tasksByHouseType.get(p.house_type_id) || [];
        
        pTasks.forEach((t: any) => {
           const key = `${p.id}-${t.id}`;
@@ -544,7 +558,7 @@ export default function OwnerAnalyticsDashboard({
              // If task is not 100% finished, and it's overdue by > 7 days
              if ((!actual || actual.progress < 100) && (nowTime - pEnd > SEVEN_DAYS_MS)) {
                 // Find contractor
-                const assign = assignments?.find((a:any) => String(a.plot_id) === String(p.id) && String(a.task_template_id) === String(t.id));
+                const assign = assignmentsByTask.get(JSON.stringify([String(p.id), String(t.id)]));
                 const delayDays = Math.floor((nowTime - pEnd) / (1000 * 60 * 60 * 24));
                 
                 overdueList.push({
@@ -560,7 +574,7 @@ export default function OwnerAnalyticsDashboard({
     });
     
     return overdueList.sort((a, b) => b.delayDays - a.delayDays).slice(0, 3);
-  }, [activeUnderConstructionPlots, taskTemplates, schedules, latestUpdatesMap, assignments]);
+  }, [activeUnderConstructionPlots, taskTemplates, tasksByHouseType, schedules, latestUpdatesMap, assignmentsByTask]);
 
   // 4.5 Predictive Delay Analysis (Local AI Engine - Active Construction Plots Only)
   const predictiveAlerts = useMemo(() => {
@@ -571,7 +585,7 @@ export default function OwnerAnalyticsDashboard({
     const MS_PER_DAY = 24 * 60 * 60 * 1000;
     
     activeUnderConstructionPlots.forEach((p: any) => {
-       const pTasks = taskTemplates.filter((t: any) => t.house_type_id === p.house_type_id);
+       const pTasks = tasksByHouseType.get(p.house_type_id) || [];
        let minPlannedStart = 0;
        let maxPlannedEnd = 0;
        let totalProgress = 0;
@@ -622,7 +636,7 @@ export default function OwnerAnalyticsDashboard({
        const plannedVelocity = 100 / totalPlannedDays; // % per day planned
        
        // Find contractor for this plot
-       const plotAssignments = assignments?.filter((a: any) => String(a.plot_id) === String(p.id)) || [];
+       const plotAssignments = assignmentsByPlot.get(String(p.id)) || [];
        const mainContractor = plotAssignments[0]?.contractor_name || 'ผู้รับเหมาหลัก';
        const contractorStat = contractorPerformance.find((c: any) => c.name === mainContractor);
        
@@ -706,7 +720,7 @@ export default function OwnerAnalyticsDashboard({
     });
     
     return alerts;
-  }, [activeUnderConstructionPlots, taskTemplates, schedules, latestUpdatesMap, contractorPerformance, assignments]);
+  }, [activeUnderConstructionPlots, taskTemplates, tasksByHouseType, schedules, latestUpdatesMap, contractorPerformance, assignmentsByPlot]);
 
   // Sorting state for plot predictive alerts (Default: 'plot_asc' as requested)
   const [plotSortBy, setPlotSortBy] = useState<'plot_asc' | 'delay_desc' | 'progress_asc' | 'risk_severity'>('plot_asc');
@@ -740,7 +754,7 @@ export default function OwnerAnalyticsDashboard({
     let indoorTasksCount = 0;
     
     activeUnderConstructionPlots.forEach((p: any) => {
-      const pTasks = taskTemplates?.filter((t: any) => t.house_type_id === p.house_type_id) || [];
+      const pTasks = tasksByHouseType.get(p.house_type_id) || [];
       pTasks.forEach((t: any) => {
         const key = `${p.id}-${t.id}`;
         const actual = latestUpdatesMap[key];
@@ -756,7 +770,7 @@ export default function OwnerAnalyticsDashboard({
     });
 
     return { outdoorTasksCount, indoorTasksCount };
-  }, [activeUnderConstructionPlots, taskTemplates, latestUpdatesMap]);
+  }, [activeUnderConstructionPlots, tasksByHouseType, latestUpdatesMap]);
 
   // Contractor capacity & workload on active construction plots
   const contractorWorkloadStats = useMemo(() => {
@@ -794,11 +808,35 @@ export default function OwnerAnalyticsDashboard({
   const [aiAnalysisError, setAiAnalysisError] = useState<string | null>(null);
 
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const aiContextRef = useRef<{ active: boolean; controller: AbortController | null }>({ active: false, controller: null });
+
+  useLayoutEffect(() => {
+    const context = { active: true, controller: null as AbortController | null };
+    aiContextRef.current = context;
+    setIsAnalyzingAI(false);
+    return () => {
+      context.active = false;
+      context.controller?.abort();
+    };
+  }, [selectedProjectId, bottleneckData, sCurveData, contractorPerformance, weatherInfo, activeUnderConstructionPlots.length]);
+
+  const startAIRequest = () => {
+    const context = aiContextRef.current;
+    context.controller?.abort();
+    const controller = new AbortController();
+    context.controller = controller;
+    return {
+      signal: controller.signal,
+      abort: () => controller.abort(),
+      isCurrent: () => context.active && context.controller === controller && !controller.signal.aborted
+    };
+  };
 
   useEffect(() => {
-    let isMounted = true;
+    const request = startAIRequest();
     
     const fetchNewAIAnalysis = async () => {
+      if (!request.isCurrent()) return;
       setIsAnalyzingAI(true);
       setAiAnalysisError(null);
       try {
@@ -813,6 +851,7 @@ export default function OwnerAnalyticsDashboard({
 
         const res = await fetch('/api/ai-risk-analysis', {
           method: 'POST',
+          signal: request.signal,
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             bottleneckData,
@@ -831,24 +870,26 @@ export default function OwnerAnalyticsDashboard({
           })
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Failed to analyze');
+        if (!request.isCurrent()) return;
+        if (!res.ok) throw new Error(data?.error || 'Failed to analyze');
         
-        const newAlerts = Array.isArray(data) ? data : [];
+        const newAlerts = parseConstructionRiskAlerts(data);
         
-        if (isMounted) {
+        if (request.isCurrent()) {
           setAiAlerts(newAlerts);
           setLastUpdated(new Date());
         }
 
         // Save to Supabase (fire and forget)
-        supabase.from('ai_risk_reports').insert([{ report_data: newAlerts }]).then(({error}) => {
-           if (error) console.error("Failed to cache AI report:", error);
+        supabase.from('ai_risk_reports').insert([{ report_data: newAlerts }]).abortSignal(request.signal).then(({error}) => {
+           if (error && request.isCurrent()) console.error("Failed to cache AI report:", error);
         });
       } catch (err: any) {
+        if (!request.isCurrent()) return;
         console.error(err);
-        if (isMounted) setAiAnalysisError(err.message);
+        setAiAnalysisError(err.message);
       } finally {
-        if (isMounted) setIsAnalyzingAI(false);
+        if (request.isCurrent()) setIsAnalyzingAI(false);
       }
     };
 
@@ -859,8 +900,10 @@ export default function OwnerAnalyticsDashboard({
           .from('ai_risk_reports')
           .select('*')
           .order('created_at', { ascending: false })
-          .limit(1);
+          .limit(1)
+          .abortSignal(request.signal);
 
+        if (!request.isCurrent()) return;
         if (fetchErr) throw fetchErr;
 
         let needsNewAnalysis = false;
@@ -872,8 +915,8 @@ export default function OwnerAnalyticsDashboard({
           
           if (reportAgeMs < oneHourMs) {
             // Cache is valid
-            if (isMounted) {
-              setAiAlerts(Array.isArray(report.report_data) ? report.report_data : []);
+            if (request.isCurrent()) {
+              setAiAlerts(parseConstructionRiskAlerts(report.report_data));
               setLastUpdated(new Date(report.created_at));
             }
           } else {
@@ -888,8 +931,9 @@ export default function OwnerAnalyticsDashboard({
           await fetchNewAIAnalysis();
         }
       } catch (err: any) {
+        if (!request.isCurrent()) return;
         console.error(err);
-        if (isMounted) setAiAnalysisError(err.message);
+        setAiAnalysisError(err.message);
       }
     };
     
@@ -898,10 +942,12 @@ export default function OwnerAnalyticsDashboard({
       checkAndFetchAI();
     }
 
-    return () => { isMounted = false; };
-  }, [bottleneckData, sCurveData, contractorPerformance, weatherInfo, activeUnderConstructionPlots.length]);
+    return request.abort;
+  }, [selectedProjectId, bottleneckData, sCurveData, contractorPerformance, weatherInfo, activeUnderConstructionPlots.length]);
 
   const handleForceRefreshAI = async () => {
+    const request = startAIRequest();
+    if (!request.isCurrent()) return;
     setIsAnalyzingAI(true);
     setAiAnalysisError(null);
     try {
@@ -916,6 +962,7 @@ export default function OwnerAnalyticsDashboard({
 
       const res = await fetch('/api/ai-risk-analysis', {
         method: 'POST',
+        signal: request.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           bottleneckData,
@@ -934,19 +981,22 @@ export default function OwnerAnalyticsDashboard({
         })
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to analyze');
+      if (!request.isCurrent()) return;
+      if (!res.ok) throw new Error(data?.error || 'Failed to analyze');
       
-      const newAlerts = Array.isArray(data) ? data : [];
+      const newAlerts = parseConstructionRiskAlerts(data);
       setAiAlerts(newAlerts);
       setLastUpdated(new Date());
 
       // Save to Supabase
-      await supabase.from('ai_risk_reports').insert([{ report_data: newAlerts }]);
+      const { error } = await supabase.from('ai_risk_reports').insert([{ report_data: newAlerts }]).abortSignal(request.signal);
+      if (error) throw error;
     } catch (err: any) {
+      if (!request.isCurrent()) return;
       console.error(err);
       setAiAnalysisError(err.message);
     } finally {
-      setIsAnalyzingAI(false);
+      if (request.isCurrent()) setIsAnalyzingAI(false);
     }
   };
 

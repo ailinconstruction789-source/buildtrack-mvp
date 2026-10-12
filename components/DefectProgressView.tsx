@@ -1,9 +1,10 @@
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { 
   AlertCircle, AlertTriangle, ArrowLeft, Camera, CheckCircle, Clock, Loader2, Printer, Send, ShieldAlert, Trash2, X
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { appendConstructionPreviewFiles } from '@/lib/constructionPreviewFiles';
 
 interface DefectProgressViewProps {
   view: string;
@@ -61,22 +62,50 @@ const DefectProgressView = function DefectProgressView(props: DefectProgressView
   // 📸 ขยายขีดจำกัดให้อัปโหลดได้สูงสุด 20 รูปสำหรับทุกตำแหน่งเท่ากัน
   const maxImages = 20;
 
+  const selectionKey = JSON.stringify([selectedDefect?.id, selectedPlot?.id, loggedInUser?.id, loggedInUser?.authUserId, loggedInUser?.username, currentUserRole]);
+  const successfulSelection = useRef<string | null>(null);
+  const [historyState, setHistoryState] = useState<{ key: string; status: 'loading' | 'ready' | 'error'; hasData: boolean }>({ key: selectionKey, status: 'loading', hasData: false });
+  const [historyRetry, setHistoryRetry] = useState(0);
+  const historyReady = historyState.key === selectionKey && historyState.status === 'ready';
+  const hasCurrentHistory = historyState.key === selectionKey && historyState.hasData;
+
   useEffect(() => {
-    if (view === 'defect-progress' && selectedDefect && selectedPlot) {
-      supabase.from('defect_updates').select('*')
-        .eq('defect_id', selectedDefect.id)
-        
-        .order('created_at', { ascending: true })
-        .then(({ data }) => {
-          setUpdates(data || []);
-          setProgressValue(data?.length ? data[data.length - 1].progress : 0);
-        });
+    if (view !== 'defect-progress' || !selectedDefect || !selectedPlot || !loggedInUser) {
+      successfulSelection.current = null;
+      setHistoryState({ key: selectionKey, status: 'loading', hasData: false });
+      return;
     }
-  }, [view, selectedDefect?.id, selectedPlot?.id, setUpdates, setProgressValue]);
+    let cancelled = false;
+    const controller = new AbortController();
+    setHistoryState({ key: selectionKey, status: 'loading', hasData: successfulSelection.current === selectionKey });
+    if (successfulSelection.current !== selectionKey) {
+      successfulSelection.current = null;
+      setUpdates([]);
+      setProgressValue(0);
+    }
+    async function loadHistory() {
+      try {
+        const { data, error } = await supabase.from('defect_updates').select('*')
+          .eq('defect_id', selectedDefect.id)
+          .order('created_at', { ascending: true })
+          .abortSignal(controller.signal);
+        if (cancelled) return;
+        if (error) throw error;
+        successfulSelection.current = selectionKey;
+        setUpdates(data || []);
+        setProgressValue(data?.length ? data[data.length - 1].progress : 0);
+        setHistoryState({ key: selectionKey, status: 'ready', hasData: true });
+      } catch {
+        if (!cancelled) setHistoryState({ key: selectionKey, status: 'error', hasData: successfulSelection.current === selectionKey });
+      }
+    }
+    void loadHistory();
+    return () => { cancelled = true; controller.abort(); };
+  }, [view, selectionKey, historyRetry, setUpdates, setProgressValue]);
 
   return (
     <>
-{view === 'defect-progress' && selectedDefect && (
+{view === 'defect-progress' && selectedDefect && selectedPlot && (
                    <div className="animate-in slide-in-from-right duration-300">
                        {/* 🌟 Header Section 🌟 */}
                        <div className="bg-white rounded-2xl sm:rounded-[2.5rem] shadow-2xl border border-black/5 overflow-hidden flex flex-col h-[75vh] sm:h-[800px] relative border-b-8 border-b-blue-600">
@@ -97,12 +126,12 @@ const DefectProgressView = function DefectProgressView(props: DefectProgressView
                                 </div>
                                
                                <div className="flex items-center gap-4">
-                                 {isTaskCompleted && !isMobileLayout && (
+                                 {historyReady && isTaskCompleted && !isMobileLayout && (
                                     <button onClick={handleOpenExportModal} className="bg-white/20 hover:bg-white/30 text-white font-bold py-2 px-4 rounded-xl flex items-center gap-2 transition-colors text-sm border border-white/20">
                                       <Printer size={16}/> ส่งออกรูปตั้งเบิก
                                     </button>
                                  )}
-                                 <div className={`${isMobileLayout ? 'text-3xl' : 'text-5xl sm:text-6xl'} font-bold text-blue-400 italic tracking-tighter`}>{isTaskCompleted ? <CheckCircle size={isMobileLayout?32:48} className="text-green-400 inline-block"/> : `${progressValue}%`}</div>
+                                 <div className={`${isMobileLayout ? 'text-3xl' : 'text-5xl sm:text-6xl'} font-bold text-blue-400 italic tracking-tighter`}>{!hasCurrentHistory ? '—' : isTaskCompleted ? <CheckCircle size={isMobileLayout?32:48} className="text-green-400 inline-block"/> : `${progressValue}%`}</div>
                                  {/* 🌟 ปุ่ม Punch List / Defect แยกหน้าต่างแบบมีรูปภาพ */}
                                  {false && (
                                     <button 
@@ -120,7 +149,7 @@ const DefectProgressView = function DefectProgressView(props: DefectProgressView
                                     </button>
                                  )}
                                  {/* ⏪ ปุ่ม Admin: ย้อนสถานะงาน (Rollback) */}
-                                 {isAdmin && updates.length > 0 && handleAdminUndoLatest && (
+                                 {historyReady && isAdmin && updates.length > 0 && handleAdminUndoLatest && (
                                     <button 
                                        onClick={() => handleAdminUndoLatest(selectedDefect.id, selectedPlot.id)}
                                        className={`bg-orange-500 hover:bg-orange-600 text-white font-bold flex items-center gap-1.5 shadow-md border border-orange-400 transition-all ${isMobileLayout ? 'ml-2 px-2.5 py-2 text-[10px] rounded-lg' : 'ml-3 px-4 py-3 text-sm rounded-xl'}`}
@@ -129,7 +158,7 @@ const DefectProgressView = function DefectProgressView(props: DefectProgressView
                                        <span className="inline sm:hidden">Undo ล่าสุด</span>
                                     </button>
                                  )}
-                                 {isAdmin && progressValue > 0 && handleAdminResetToZero && (
+                                 {historyReady && isAdmin && progressValue > 0 && handleAdminResetToZero && (
                                     <button 
                                        onClick={() => handleAdminResetToZero(selectedDefect.id, selectedPlot.id)}
                                        className={`bg-rose-500 hover:bg-rose-600 text-white font-bold flex items-center gap-1.5 shadow-md border border-rose-400 transition-all ${isMobileLayout ? 'ml-2 px-2.5 py-2 text-[10px] rounded-lg' : 'ml-2 px-4 py-3 text-sm rounded-xl'}`}
@@ -141,7 +170,7 @@ const DefectProgressView = function DefectProgressView(props: DefectProgressView
                                </div>
                            </header>
 
-                           {isTaskCompleted && isMobileLayout && (
+                           {historyReady && isTaskCompleted && isMobileLayout && (
                               <div className="bg-slate-700 p-2 flex justify-center">
                                  <button onClick={handleOpenExportModal} className="bg-white/10 hover:bg-white/20 text-white font-bold py-1.5 px-4 rounded-lg flex items-center gap-2 transition-colors text-xs border border-white/20 w-full justify-center">
                                    <Printer size={14}/> ส่งออกรูปถ่ายตั้งเบิก
@@ -150,7 +179,7 @@ const DefectProgressView = function DefectProgressView(props: DefectProgressView
                            )}
 
                            <main className={`flex-1 overflow-y-auto ${isMobileLayout ? 'p-3 pb-32 space-y-3' : 'p-4 sm:px-8 sm:pt-8 sm:pb-[280px] space-y-4 sm:space-y-6'} bg-slate-50/50`}>
-                                 {updates.map((update: any) => {
+                                 {(hasCurrentHistory ? updates : []).map((update: any) => {
                                    const authorName = (update.created_by || update.user_name || 'ช่าง').trim();
                                    const isQC = authorName === 'QC' || update.role === 'QC' || (typeof update.action === 'string' && update.action.includes('QC'));
                                    const isQCPass = isQC && ((typeof update.action === 'string' && (update.action.includes('อนุมัติ') || update.action.includes('ผ่าน'))) || update.progress === 100);
@@ -165,7 +194,7 @@ const DefectProgressView = function DefectProgressView(props: DefectProgressView
                                      <div className={`flex-1 bg-white ${isMobileLayout ? 'p-3 rounded-2xl' : 'p-5 sm:p-6 rounded-[1.5rem] sm:rounded-[2rem]'} border ${isQCPass ? 'border-emerald-200 bg-emerald-50/20' : isQCFail ? 'border-rose-200 bg-rose-50/20' : 'border-black/5'} shadow-sm relative pr-8`}>
                                          
                                          {/* 🗑️ ปุ่มลบรายงาน (สิทธิ์: เฉพาะ Admin เท่านั้น) และงานนั้นต้องยังไม่จบ 100% */}
-                                         {isAdmin && !isTaskCompleted && (
+                                         {historyReady && isAdmin && !isTaskCompleted && (
                                             <button
                                                onClick={() => handleDeleteDefectUpdate(update.id, selectedDefect.id, selectedPlot.id)}
                                                className="absolute top-3 right-3 text-slate-400 hover:text-rose-500 p-1.5 hover:bg-rose-50 rounded-xl transition-all hover:scale-105"
@@ -215,6 +244,12 @@ const DefectProgressView = function DefectProgressView(props: DefectProgressView
                            
                            {/* 🏡 🌟 Chat Input 🌟 */}
                            <footer className={`absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur-xl border-t border-black/5 ${isMobileLayout ? 'p-3' : 'p-4 sm:p-6'} shadow-[0_-10px_20px_rgba(0,0,0,0.05)] z-20`}>
+                               {!historyReady && (
+                                 <div role={historyState.key === selectionKey && historyState.status === 'error' ? 'alert' : 'status'} className="mb-2 flex items-center justify-center gap-2 text-xs font-bold text-slate-600">
+                                   {historyState.key === selectionKey && historyState.status === 'error' ? <>โหลดประวัติไม่สำเร็จ กรุณาลองอีกครั้ง <button onClick={() => setHistoryRetry(value => value + 1)} className="rounded-lg bg-blue-50 px-3 py-2 text-blue-700">ลองใหม่</button></> : <><Loader2 size={16} className="animate-spin" /> กำลังโหลดประวัติงาน</>}
+                                 </div>
+                               )}
+                               <fieldset disabled={!historyReady} className="m-0 min-w-0 border-0 p-0">
                                 {selectedFiles.length > 0 && (
                                     <div className="flex flex-col mb-2 sm:mb-3">
                                         <div className="flex items-center justify-between text-[10px] sm:text-xs text-slate-500 font-bold mb-1 px-1">
@@ -242,12 +277,12 @@ const DefectProgressView = function DefectProgressView(props: DefectProgressView
                                  isPendingSE ? (
                                    <div className={`flex flex-col ${isMobileLayout ? 'gap-2' : 'gap-3 sm:gap-4'}`}>
                                      <div className={`flex ${isMobileLayout ? 'gap-1.5' : 'gap-2 sm:gap-3'} items-center`}>
-                                         <label className={`text-slate-400 hover:text-blue-600 ${isMobileLayout ? 'p-2 rounded-lg' : 'p-2 sm:p-4 rounded-xl sm:rounded-[1.5rem]'} bg-[#f5f5f7] cursor-pointer shadow-sm active:scale-90 transition-transform flex flex-col items-center justify-center`} title="รูปผลงาน"><Camera size={isMobileLayout ? 18 : 24} /><span className="text-[8px] font-bold mt-0.5">ผลงาน</span><input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { const files = Array.from(e.target.files || []).map(f => ({ file: f, previewUrl: URL.createObjectURL(f) })); setSelectedFiles([...selectedFiles, ...files].slice(0, maxImages)); }} /></label>
+                                         <label className={`text-slate-400 hover:text-blue-600 ${isMobileLayout ? 'p-2 rounded-lg' : 'p-2 sm:p-4 rounded-xl sm:rounded-[1.5rem]'} bg-[#f5f5f7] cursor-pointer shadow-sm active:scale-90 transition-transform flex flex-col items-center justify-center`} title="รูปผลงาน"><Camera size={isMobileLayout ? 18 : 24} /><span className="text-[8px] font-bold mt-0.5">ผลงาน</span><input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { setSelectedFiles(appendConstructionPreviewFiles(selectedFiles, Array.from(e.target.files || []), maxImages)); }} /></label>
                                          <input type="text" value={inputText} onChange={(e) => setInputText(e.target.value)} placeholder="ระบุความคิดเห็น..." className={`flex-1 bg-[#f5f5f7] ${isMobileLayout ? 'rounded-lg px-3 py-2.5 text-[10px]' : 'rounded-xl sm:rounded-[1.5rem] px-4 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm'} font-bold outline-none focus:border-blue-500`} />
                                      </div>
                                      <div className={`flex ${isMobileLayout ? 'gap-1.5' : 'gap-2 sm:gap-4'}`}>
-                                       <button onClick={() => handleReviewAction(false)} disabled={isSending} className={`flex-1 bg-red-50 text-red-600 ${isMobileLayout ? 'py-2 rounded-lg text-[9px]' : 'py-3 sm:py-4 rounded-xl sm:rounded-[1.5rem] text-[10px] sm:text-sm'} font-bold border border-red-200 uppercase tracking-widest hover:bg-red-100 flex justify-center items-center gap-1.5 disabled:opacity-50`}>{isSending ? <Loader2 className="animate-spin" size={14}/> : 'ไม่อนุมัติ (แก้ 95%)'}</button>
-                                       <button onClick={() => handleReviewAction(true)} disabled={isSending} className={`flex-1 bg-blue-600 text-white ${isMobileLayout ? 'py-2 rounded-lg text-[9px]' : 'py-3 sm:py-4 rounded-xl sm:rounded-[1.5rem] text-[10px] sm:text-sm'} font-bold uppercase tracking-widest hover:bg-blue-700 flex justify-center items-center gap-1.5 disabled:opacity-50`}>{isSending ? <Loader2 className="animate-spin" size={14}/> : 'ตรวจสอบผ่าน'}</button>
+                                       <button onClick={() => historyReady && handleReviewAction(false)} disabled={isSending || !historyReady} className={`flex-1 bg-red-50 text-red-600 ${isMobileLayout ? 'py-2 rounded-lg text-[9px]' : 'py-3 sm:py-4 rounded-xl sm:rounded-[1.5rem] text-[10px] sm:text-sm'} font-bold border border-red-200 uppercase tracking-widest hover:bg-red-100 flex justify-center items-center gap-1.5 disabled:opacity-50`}>{isSending ? <Loader2 className="animate-spin" size={14}/> : 'ไม่อนุมัติ (แก้ 95%)'}</button>
+                                       <button onClick={() => historyReady && handleReviewAction(true)} disabled={isSending || !historyReady} className={`flex-1 bg-blue-600 text-white ${isMobileLayout ? 'py-2 rounded-lg text-[9px]' : 'py-3 sm:py-4 rounded-xl sm:rounded-[1.5rem] text-[10px] sm:text-sm'} font-bold uppercase tracking-widest hover:bg-blue-700 flex justify-center items-center gap-1.5 disabled:opacity-50`}>{isSending ? <Loader2 className="animate-spin" size={14}/> : 'ตรวจสอบผ่าน'}</button>
                                      </div>
                                    </div>
                                  ) : ( <div className={`bg-[#f5f5f7] text-slate-400 py-3 sm:py-4 rounded-xl sm:rounded-[1.5rem] font-bold text-center uppercase tracking-widest border border-black/5 ${isMobileLayout ? 'text-[9px]' : 'text-xs sm:text-sm'}`}>รอโฟร์แมน 100% หรือ รอ QC ตรวจ</div> )
@@ -255,12 +290,12 @@ const DefectProgressView = function DefectProgressView(props: DefectProgressView
                                  isPendingQC ? (
                                    <div className={`flex flex-col ${isMobileLayout ? 'gap-2' : 'gap-3 sm:gap-4'}`}>
                                      <div className={`flex ${isMobileLayout ? 'gap-1.5' : 'gap-2 sm:gap-3'} items-center`}>
-                                         <label className={`text-slate-400 hover:text-purple-600 ${isMobileLayout ? 'p-2 rounded-lg' : 'p-2 sm:p-4 rounded-xl sm:rounded-[1.5rem]'} bg-[#f5f5f7] cursor-pointer shadow-sm active:scale-90 transition-transform flex flex-col items-center justify-center`} title="รูปผลงาน"><Camera size={isMobileLayout ? 18 : 24} /><span className="text-[8px] font-bold mt-0.5">ผลงาน</span><input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { const files = Array.from(e.target.files || []).map(f => ({ file: f, previewUrl: URL.createObjectURL(f) })); setSelectedFiles([...selectedFiles, ...files].slice(0, maxImages)); }} /></label>
+                                         <label className={`text-slate-400 hover:text-purple-600 ${isMobileLayout ? 'p-2 rounded-lg' : 'p-2 sm:p-4 rounded-xl sm:rounded-[1.5rem]'} bg-[#f5f5f7] cursor-pointer shadow-sm active:scale-90 transition-transform flex flex-col items-center justify-center`} title="รูปผลงาน"><Camera size={isMobileLayout ? 18 : 24} /><span className="text-[8px] font-bold mt-0.5">ผลงาน</span><input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { setSelectedFiles(appendConstructionPreviewFiles(selectedFiles, Array.from(e.target.files || []), maxImages)); }} /></label>
                                          <input type="text" value={inputText} onChange={(e) => setInputText(e.target.value)} placeholder="ระบุความคิดเห็น..." className={`flex-1 bg-[#f5f5f7] ${isMobileLayout ? 'rounded-lg px-3 py-2.5 text-[10px]' : 'rounded-xl sm:rounded-[1.5rem] px-4 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm'} font-bold outline-none focus:border-purple-500`} />
                                      </div>
                                      <div className={`flex ${isMobileLayout ? 'gap-1.5' : 'gap-2 sm:gap-4'}`}>
-                                       <button onClick={() => handleReviewAction(false)} disabled={isSending} className={`flex-1 bg-red-50 text-red-600 ${isMobileLayout ? 'py-2 rounded-lg text-[9px]' : 'py-3 sm:py-4 rounded-xl sm:rounded-[1.5rem] text-[10px] sm:text-sm'} font-bold border border-red-200 uppercase tracking-widest hover:bg-red-100 flex justify-center items-center gap-1.5 disabled:opacity-50`}>{isSending ? <Loader2 className="animate-spin" size={14}/> : 'ไม่อนุมัติ (แก้ 95%)'}</button>
-                                       <button onClick={() => handleReviewAction(true)} disabled={isSending} className={`flex-1 bg-purple-600 text-white ${isMobileLayout ? 'py-2 rounded-lg text-[9px]' : 'py-3 sm:py-4 rounded-xl sm:rounded-[1.5rem] text-[10px] sm:text-sm'} font-bold uppercase tracking-widest hover:bg-purple-700 flex justify-center items-center gap-1.5 disabled:opacity-50`}>{isSending ? <Loader2 className="animate-spin" size={14}/> : 'QC ผ่าน (Complete)'}</button>
+                                       <button onClick={() => historyReady && handleReviewAction(false)} disabled={isSending || !historyReady} className={`flex-1 bg-red-50 text-red-600 ${isMobileLayout ? 'py-2 rounded-lg text-[9px]' : 'py-3 sm:py-4 rounded-xl sm:rounded-[1.5rem] text-[10px] sm:text-sm'} font-bold border border-red-200 uppercase tracking-widest hover:bg-red-100 flex justify-center items-center gap-1.5 disabled:opacity-50`}>{isSending ? <Loader2 className="animate-spin" size={14}/> : 'ไม่อนุมัติ (แก้ 95%)'}</button>
+                                       <button onClick={() => historyReady && handleReviewAction(true)} disabled={isSending || !historyReady} className={`flex-1 bg-purple-600 text-white ${isMobileLayout ? 'py-2 rounded-lg text-[9px]' : 'py-3 sm:py-4 rounded-xl sm:rounded-[1.5rem] text-[10px] sm:text-sm'} font-bold uppercase tracking-widest hover:bg-purple-700 flex justify-center items-center gap-1.5 disabled:opacity-50`}>{isSending ? <Loader2 className="animate-spin" size={14}/> : 'QC ผ่าน (Complete)'}</button>
                                      </div>
                                    </div>
                                  ) : ( <div className={`bg-[#f5f5f7] text-slate-400 py-3 sm:py-4 rounded-xl sm:rounded-[1.5rem] font-bold text-center uppercase tracking-widest border border-black/5 ${isMobileLayout ? 'text-[9px]' : 'text-xs sm:text-sm'}`}>รองานผ่าน Site Engineer ก่อน</div> )
@@ -277,13 +312,14 @@ const DefectProgressView = function DefectProgressView(props: DefectProgressView
                                            <span className={`font-bold text-blue-600 text-right italic ${isMobileLayout ? 'text-sm w-10' : 'text-xl sm:text-2xl w-16 sm:w-20'}`}>{progressValue}%</span>
                                        </div>
                                        <div className={`flex items-center ${isMobileLayout ? 'gap-1.5' : 'gap-2 sm:gap-3'}`}>
-                                           <label className={`text-slate-400 hover:text-blue-600 ${isMobileLayout ? 'p-2 rounded-lg' : 'p-3 sm:p-4 rounded-xl sm:rounded-[1.5rem]'} bg-[#f5f5f7] cursor-pointer shadow-sm active:scale-90 transition-transform flex flex-col items-center justify-center`} title="รูปผลงาน"><Camera size={isMobileLayout ? 18 : 24} /><span className="text-[8px] font-bold mt-0.5">ผลงาน</span><input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { const files = Array.from(e.target.files || []).map(f => ({ file: f, previewUrl: URL.createObjectURL(f) })); setSelectedFiles([...selectedFiles, ...files].slice(0, maxImages)); }} /></label>
-                                           <input type="text" value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendPost()} placeholder="อธิบายงาน..." className={`flex-1 bg-[#f5f5f7] ${isMobileLayout ? 'rounded-lg px-3 py-2 text-[10px]' : 'rounded-xl sm:rounded-[1.5rem] px-5 sm:px-6 py-3 sm:py-4 text-sm'} font-bold outline-none border-2 border-transparent focus:border-blue-500 shadow-inner`} />
-                                           <button onClick={handleSendPost} disabled={isSending} className={`${isMobileLayout ? 'p-2 rounded-lg' : 'p-3 sm:p-4 rounded-xl sm:rounded-[1.5rem]'} text-white shadow-md disabled:opacity-50 ${progressValue === 100 ? 'bg-orange-500 hover:bg-orange-600' : 'bg-blue-600 hover:bg-blue-700'}`}>{isSending ? <Loader2 className="animate-spin" size={isMobileLayout ? 18 : 24}/> : <Send size={isMobileLayout ? 18 : 24}/>}</button>
+                                           <label className={`text-slate-400 hover:text-blue-600 ${isMobileLayout ? 'p-2 rounded-lg' : 'p-3 sm:p-4 rounded-xl sm:rounded-[1.5rem]'} bg-[#f5f5f7] cursor-pointer shadow-sm active:scale-90 transition-transform flex flex-col items-center justify-center`} title="รูปผลงาน"><Camera size={isMobileLayout ? 18 : 24} /><span className="text-[8px] font-bold mt-0.5">ผลงาน</span><input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { setSelectedFiles(appendConstructionPreviewFiles(selectedFiles, Array.from(e.target.files || []), maxImages)); }} /></label>
+                                           <input type="text" value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={(e) => historyReady && e.key === 'Enter' && handleSendPost()} placeholder="อธิบายงาน..." className={`flex-1 bg-[#f5f5f7] ${isMobileLayout ? 'rounded-lg px-3 py-2 text-[10px]' : 'rounded-xl sm:rounded-[1.5rem] px-5 sm:px-6 py-3 sm:py-4 text-sm'} font-bold outline-none border-2 border-transparent focus:border-blue-500 shadow-inner`} />
+                                           <button onClick={() => historyReady && handleSendPost()} disabled={isSending || !historyReady} className={`${isMobileLayout ? 'p-2 rounded-lg' : 'p-3 sm:p-4 rounded-xl sm:rounded-[1.5rem]'} text-white shadow-md disabled:opacity-50 ${progressValue === 100 ? 'bg-orange-500 hover:bg-orange-600' : 'bg-blue-600 hover:bg-blue-700'}`}>{isSending ? <Loader2 className="animate-spin" size={isMobileLayout ? 18 : 24}/> : <Send size={isMobileLayout ? 18 : 24}/>}</button>
                                        </div>
                                    </div>
                                  )
                                )}
+                               </fieldset>
                            </footer>
                        </div>
                    </div>

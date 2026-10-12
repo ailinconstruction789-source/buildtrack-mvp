@@ -26,6 +26,7 @@ import {
   RentalPaymentRecord, 
   RENTAL_PROGRAM_DETAILS 
 } from '@/types/sales';
+import SalesOverlay from './SalesOverlay';
 
 interface TenantPortalModalProps {
   isOpen: boolean;
@@ -64,7 +65,7 @@ export default function TenantPortalModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[350] flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto animate-fade-in">
+    <SalesOverlay className="fixed inset-0 z-[350] flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto animate-fade-in">
       <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden my-auto flex flex-col max-h-[92vh]">
         
         {/* Top Bar */}
@@ -257,6 +258,6 @@ export default function TenantPortalModal({
         </div>
 
       </div>
-    </div>
+    </SalesOverlay>
   );
 }

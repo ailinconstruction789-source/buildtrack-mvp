@@ -9,16 +9,16 @@ import type { LeadWorkScope, LeadWorkSnapshot } from '@/lib/sales/leadWorkReadCo
 import { displayBangkokTime, isLeadWorkOverdue } from '@/lib/sales/leadWorkDates';
 import LeadOperations from './LeadOperations';
 
-interface Props { scope: LeadWorkScope; api?: LeadWorkApi; lifecycleEnabled?: boolean; lifecycleApi?: LeadLifecycleApi }
+interface Props { scope: LeadWorkScope; api?: LeadWorkApi; lifecycleEnabled?: boolean; lifecycleApi?: LeadLifecycleApi; rentalsEnabled?: boolean }
 const channelLabels: Record<string, string> = { phone: 'โทรศัพท์', chat: 'แชท', email: 'อีเมล', in_person: 'พบด้วยตนเอง', other: 'อื่น ๆ' };
 const resultLabels: Record<string, string> = { contact_success: 'ติดต่อสำเร็จ', no_answer: 'ไม่รับสาย / ไม่ตอบ (ไม่ใช่ติดต่อสำเร็จ)', customer_requested_later: 'ลูกค้าขอให้ติดต่อภายหลัง', other: 'อื่น ๆ' };
 
-export default function LeadWorkView({ scope, api = leadWorkApi, lifecycleEnabled = false, lifecycleApi = leadLifecycleApi }: Props) {
+export default function LeadWorkView({ scope, api = leadWorkApi, lifecycleEnabled = false, lifecycleApi = leadLifecycleApi, rentalsEnabled = false }: Props) {
     // A route scope switch starts a separate workspace; late reads cannot fill it.
-    return <LeadWorkWorkspace key={`${scope.customerId}:${scope.interestId ?? 'central'}`} scope={scope} api={api} lifecycleEnabled={lifecycleEnabled} lifecycleApi={lifecycleApi} />;
+    return <LeadWorkWorkspace key={`${scope.customerId}:${scope.interestId ?? 'central'}`} scope={scope} api={api} lifecycleEnabled={lifecycleEnabled} lifecycleApi={lifecycleApi} rentalsEnabled={rentalsEnabled} />;
 }
 
-function LeadWorkWorkspace({ scope, api, lifecycleEnabled, lifecycleApi }: { scope: LeadWorkScope; api: LeadWorkApi; lifecycleEnabled: boolean; lifecycleApi: LeadLifecycleApi }) {
+function LeadWorkWorkspace({ scope, api, lifecycleEnabled, lifecycleApi, rentalsEnabled }: { scope: LeadWorkScope; api: LeadWorkApi; lifecycleEnabled: boolean; lifecycleApi: LeadLifecycleApi; rentalsEnabled: boolean }) {
     const [snapshot, setSnapshot] = useState<LeadWorkSnapshot | null>(null);
     const [context, setContext] = useState<LeadLifecycleContext | null>(null);
     const [readVersion, setReadVersion] = useState(0);
@@ -96,6 +96,9 @@ function LeadWorkWorkspace({ scope, api, lifecycleEnabled, lifecycleApi }: { sco
                         <div><dt className="text-slate-500">ผู้ดูแลงานนี้</dt><dd className="mt-1 font-semibold text-slate-800">{snapshot.owner.displayName ?? snapshot.owner.userId}{snapshot.owner.active ? '' : ' (ไม่พร้อมรับงาน)'}</dd></div>
                         <div><dt className="text-slate-500">วันที่เป็น Lead</dt><dd className="mt-1 text-slate-800">{displayBangkokTime(snapshot.customer.leadCreatedAt)}</dd></div>
                     </dl>
+                    {rentalsEnabled && snapshot.projectName && !locked && !loading && <Link
+                        href={`/sales-crm/rentals?${new URLSearchParams({ customerId: snapshot.customer.id, projectName: snapshot.projectName })}`}
+                        prefetch={false} className="mt-4 inline-block text-sm font-semibold text-blue-700 underline">สัญญาเช่าและประวัติของโครงการนี้ →</Link>}
                 </section>
                 <section className={`rounded-2xl border p-5 sm:p-6 ${current && isLeadWorkOverdue(current.dueAt, snapshot.asOf) ? 'border-amber-300 bg-amber-50' : 'border-slate-200 bg-white'}`}>
                     <h2 className="font-bold text-slate-900">งานถัดไปปัจจุบัน</h2>

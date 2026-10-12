@@ -4,7 +4,7 @@ const mock = vi.hoisted(() => ({ createClient: vi.fn(), getUser: vi.fn(), rpc: v
 vi.mock('@supabase/supabase-js', () => ({ createClient: mock.createClient }));
 import * as route from '@/app/api/sales-crm/post-booking/route';
 import { postBookingEnabled } from '../postBookingServer';
-import { pbid, pbInput, pbResult, pbSnapshot, pbTransfer } from './postBookingFixtures';
+import { pbid, pbInput, pbResult, pbSnapshot, pbTransfer, pbHandover } from './postBookingFixtures';
 const flags = ['SALES_CRM_V2_ENABLED', 'SALES_CRM_LEAD_WORK_ENABLED', 'SALES_CRM_LIFECYCLE_ENABLED', 'SALES_CRM_BOOKING_ENABLED', 'SALES_CRM_POST_BOOKING_ENABLED'];
 const get = (query = `?saleId=${pbid(1)}`, token = true) => new Request(`https://test.invalid/${query}`, { headers: token ? { authorization: 'Bearer fake-token' } : {} });
 const post = (body: unknown = pbInput(), headers: Record<string, string> = {}) => new Request('https://test.invalid/', {
@@ -12,7 +12,7 @@ const post = (body: unknown = pbInput(), headers: Record<string, string> = {}) =
 function configure(role = 'sales', overrides: Record<string, unknown> = {}) {
   const snapshot = pbSnapshot(); snapshot.actor.role = role as never; if (role === 'owner') snapshot.sale.canEdit = false;
   mock.rpc.mockImplementation(async name => overrides[name] ?? { data: name === 'crm_v2_role' ? role
-    : name === 'crm_v2_post_booking_capabilities' ? { enabled: true, contract_version: 'post_booking_v2' }
+    : name === 'crm_v2_post_booking_capabilities' ? { enabled: true, contract_version: 'post_booking_v3' }
       : name === 'crm_v2_post_booking_command' ? pbResult() : snapshot, error: null });
 }
 beforeEach(() => {
@@ -55,7 +55,7 @@ describe('post-booking server boundary', () => {
   it.each(['sb_secret_forbidden', `x.${Buffer.from(JSON.stringify({ role: 'service_role' })).toString('base64url')}.x`])('refuses privileged key %s', async key => {
     vi.stubEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', key); await error(await route.POST(post()), 503, 'SETUP_REQUIRED'); expect(mock.createClient).not.toHaveBeenCalled();
   });
-  it.each([{ enabled: false, contract_version: 'post_booking_v2' }, { enabled: true, contract_version: 'post_booking_v1' }, { enabled: true, contract_version: 'wrong' }, null])('requires exact SQL readiness %j', async data => {
+  it.each([{ enabled: false, contract_version: 'post_booking_v3' }, { enabled: true, contract_version: 'post_booking_v1' }, { enabled: true, contract_version: 'post_booking_v2' }, { enabled: true, contract_version: 'wrong' }, null])('requires exact SQL readiness %j', async data => {
     configure('sales', { crm_v2_post_booking_capabilities: { data } }); await error(await route.POST(post()), 503, 'SETUP_REQUIRED');
   });
   it.each([{ nextStage: 'transferred' }, { nextStage: 'handover' }, { role: 'admin' }, { occurredAt: 'now' }])('blocks unsafe command shape before constructing client %j', async patch => {
@@ -95,4 +95,14 @@ describe('post-booking server boundary', () => {
     ['unknown', 'private customer', 503, 'UNKNOWN_RESULT']] as const)('sanitizes RPC %s %s', async (code, message, status, result) => {
     configure('sales', { crm_v2_post_booking_command: { error: { code, message } } }); await error(await route.POST(post()), status, result);
   });
+});
+
+
+it('brokers a handover day without a native Lead, fake transfer date or timestamp', async () => {
+  const input = pbHandover(), { requestId, ...payload } = input;
+  configure('sales', { crm_v2_post_booking_command: { data: pbResult(input) } });
+  const response = await route.POST(post(input)); expect(response.status).toBe(201);
+  expect((await response.json()).data.handoverDate).toBe(input.handoverDate);
+  expect(mock.rpc).toHaveBeenLastCalledWith('crm_v2_post_booking_command', { p_request_id: requestId, p_payload: payload });
+  expect(payload).not.toHaveProperty('leadId'); expect(payload).not.toHaveProperty('occurredAt'); expect(payload).not.toHaveProperty('transferDate');
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Key, 
   XCircle, 
@@ -27,8 +27,12 @@ import {
   RENTAL_PROGRAM_DETAILS 
 } from '@/types/sales';
 import { calculateConversionCredit } from '@/lib/rentalHelper';
+import SalesOverlay from './SalesOverlay';
+import { extendRentalLeaseEnd, rentalLifecycleActions } from '@/lib/sales/rentalLifecycle';
+import { canEditSalesRole } from '@/lib/sales/leadStage';
 
 interface RentalActionModalProps {
+  contractId?: string | null;
   isOpen: boolean;
   onClose: () => void;
   lead?: Lead | null;
@@ -38,6 +42,7 @@ interface RentalActionModalProps {
 }
 
 export default function RentalActionModal({
+  contractId,
   isOpen,
   onClose,
   lead,
@@ -49,6 +54,11 @@ export default function RentalActionModal({
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const actionProgress = useRef<{ kind: string; completed: number; steps: (() => Promise<void>)[]; message: string } | null>(null);
+  const busy = useRef(false);
+  const scope = `${isOpen}:${contractId || lead?.active_rental_contract_id || ''}:${lead?.id || ''}:${plot?.id || ''}:${user?.id || user?.username || ''}:${user?.role || ''}`;
+  const currentScope = useRef(scope);
+  currentScope.current = scope;
 
   // Active Contract Data
   const [activeContract, setActiveContract] = useState<RentalContract | null>(null);
@@ -71,64 +81,48 @@ export default function RentalActionModal({
   const [newMonthlyRent, setNewMonthlyRent] = useState<string>('');
   const [renewalNotes, setRenewalNotes] = useState<string>('');
 
-  // Fetch latest active rental contract for this lead / plot
+  // Read only the requested contract; a missing row never authorizes synthetic writes.
   useEffect(() => {
+    actionProgress.current = null;
+    busy.current = false;
+    setSubmitting(false);
+    setActiveContract(null);
+    setErrorMsg(null);
     if (!isOpen) return;
-    let isCancelled = false;
+    let cancelled = false;
     const fetchContract = async () => {
       setLoading(true);
       try {
-        let query = supabase.from('rental_contracts').select('*').eq('status', 'Active');
-        if (lead?.id) {
-          query = query.eq('lead_id', lead.id);
-        } else if (plot?.id) {
-          query = query.eq('plot_id', plot.id);
+        const exactId = contractId || lead?.active_rental_contract_id;
+        if (!exactId && !lead?.id && !plot?.id) throw new Error('กรุณาระบุสัญญา ลูกค้า หรือแปลง');
+        let query = supabase.from('rental_contracts').select('*');
+        if (exactId) query = query.eq('id', exactId);
+        else {
+          query = query.in('status', ['Active', 'Renewed']);
+          query = lead?.id ? query.eq('lead_id', lead.id) : query.eq('plot_id', plot.id);
         }
-
         const { data, error } = await query.order('created_at', { ascending: false }).limit(1);
         if (error) throw error;
-        
-        if (!isCancelled && data && data.length > 0) {
-          const c = data[0] as RentalContract;
-          setActiveContract(c);
-          setNewMonthlyRent(c.monthly_rent?.toString() || '15000');
-        } else if (!isCancelled) {
-          // Fallback constructed contract from Lead/Plot if direct row not found
-          const fallbackProgram = (lead?.rental_program || plot?.rental_program || 'program_a') as RentalProgramType;
-          const fallbackContract: RentalContract = {
-            id: lead?.active_rental_contract_id || 'virtual-contract',
-            lead_id: lead?.id || null,
-            project_name: lead?.project_name || plot?.project_name || 'ไอลิน สันทราย 2',
-            plot_id: lead?.interested_plot_id || plot?.id || '',
-            plot_name: lead?.interested_plot_name || plot?.plot_name || plot?.id || '',
-            tenant_name: lead?.customer_name || plot?.current_tenant_name || 'ผู้เช่า',
-            tenant_phone: lead?.phone || plot?.current_tenant_phone || null,
-            agent_name: lead?.agent_name || user?.username || 'ทีมขาย',
-            program_type: fallbackProgram,
-            monthly_rent: lead?.rental_monthly_rent || plot?.monthly_rent || 15000,
-            security_deposit: lead?.rental_deposit || plot?.security_deposit || 30000,
-            advance_rent: lead?.rental_monthly_rent || plot?.monthly_rent || 15000,
-            savings_per_month: lead?.rental_savings_per_month || (fallbackProgram === 'program_b' ? 5000 : 0),
-            accumulated_savings: lead?.rental_accumulated_savings || 0,
-            base_price: lead?.rental_base_price || plot?.base_price || plot?.price || 2990000,
-            lease_duration_months: 12,
-            lease_start_date: lead?.rental_start_date || plot?.lease_start_date || new Date().toISOString().split('T')[0],
-            lease_end_date: lead?.rental_end_date || plot?.lease_end_date || new Date().toISOString().split('T')[0],
-            status: 'Active',
-            created_at: new Date().toISOString()
-          };
-          setActiveContract(fallbackContract);
-          setNewMonthlyRent(fallbackContract.monthly_rent.toString());
+        const contract = data?.[0] as RentalContract | undefined;
+        if (!contract || !['Active', 'Renewed'].includes(contract.status)) {
+          throw new Error('ไม่พบสัญญาเช่าที่ดำเนินการได้ สัญญาอาจสิ้นสุดแล้ว');
         }
-      } catch (err) {
-        console.error('Error fetching rental contract for action modal:', err);
+        if ((lead?.id && contract.lead_id !== lead.id) || (plot?.id && contract.plot_id !== plot.id)) {
+          throw new Error('สัญญาไม่ตรงกับลูกค้าหรือแปลงที่เลือก');
+        }
+        if (!cancelled) {
+          setActiveContract(contract);
+          setNewMonthlyRent(String(contract.monthly_rent || 15000));
+        }
+      } catch (error) {
+        if (!cancelled) setErrorMsg(error instanceof Error ? error.message : 'โหลดสัญญาเช่าไม่สำเร็จ');
       } finally {
-        if (!isCancelled) setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
-    fetchContract();
-    return () => { isCancelled = true; };
-  }, [isOpen, lead, plot]);
+    void fetchContract();
+    return () => { cancelled = true; };
+  }, [scope]);
 
   // Conversion Credit Calculations
   const conversionInfo = useMemo(() => {
@@ -160,210 +154,141 @@ export default function RentalActionModal({
     ? RENTAL_PROGRAM_DETAILS[activeContract.program_type] 
     : RENTAL_PROGRAM_DETAILS.program_a;
 
-  // --- Handlers ---
+  // Keep completed steps within this open form. Retrying a partial save resumes
+  // remaining steps instead of renewing twice or inserting another sales record.
+  const updateRow = async (table: string, id: string, payload: Record<string, unknown>, expectedStatus?: string) => {
+    let query = supabase.from(table).update(payload).eq('id', id);
+    if (expectedStatus) query = query.eq('status', expectedStatus);
+    const { data, error } = await query.select('id').single();
+    if (error) throw error;
+    if (!data?.id) throw new Error('ไม่พบรายการที่แก้ไขได้ กรุณาโหลดข้อมูลใหม่');
+  };
+  const runAction = async (kind: string, steps: (() => Promise<void>)[], message: string) => {
+    if (busy.current || loading || !activeContract) return;
+    if ((user?.role != null && !canEditSalesRole(user.role)) || !rentalLifecycleActions(activeContract.status).includes(kind as 'renew' | 'convert_to_buy' | 'move_out')) {
+      setErrorMsg('บัญชีหรือสถานะสัญญานี้ไม่สามารถดำเนินการได้'); return;
+    }
+    if (actionProgress.current && actionProgress.current.kind !== kind) {
+      setErrorMsg('รายการก่อนหน้าบันทึกบางส่วนแล้ว กรุณาดำเนินการรายการเดิมให้ครบ');
+      return;
+    }
+    const requestScope = currentScope.current;
+    busy.current = true;
+    setSubmitting(true);
+    setErrorMsg(null);
+    const progress = actionProgress.current || { kind, completed: 0, steps, message };
+    actionProgress.current = progress;
+    try {
+      while (progress.completed < progress.steps.length) {
+        if (requestScope !== currentScope.current) return;
+        await progress.steps[progress.completed]();
+        progress.completed++;
+      }
+      if (requestScope !== currentScope.current) return;
+      actionProgress.current = null;
+      onSaved?.();
+      onClose();
+      alert(progress.message);
+    } catch (error) {
+      if (requestScope === currentScope.current) {
+        const detail = error instanceof Error ? error.message : (error as { message?: string })?.message || 'บันทึกไม่สำเร็จ';
+        if (progress.completed === 0) actionProgress.current = null;
+        setErrorMsg(progress.completed > 0
+          ? 'บันทึกบางส่วนแล้ว แต่ยังไม่ครบ: ' + detail + ' กดรายการเดิมอีกครั้งเพื่อบันทึกส่วนที่เหลือ'
+          : detail);
+      }
+    } finally {
+      if (requestScope === currentScope.current) {
+        busy.current = false;
+        setSubmitting(false);
+      }
+    }
+  };
 
-  // 1. Convert to Buy
   const handleConvertToBuy = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSubmitting(true);
-    setErrorMsg(null);
-    try {
-      if (!activeContract) throw new Error('ไม่พบข้อมูลสัญญาเช่า');
-      const now = new Date().toISOString();
-      const plotId = activeContract.plot_id;
-      const finalPrice = parseFloat(customPurchasePrice) || conversionInfo?.finalPurchasePrice || 0;
-      const bookingCredit = parseFloat(appliedBookingCredit) || 0;
-
-      // 1. Update Rental Contract to ConvertedToBuy
-      if (activeContract.id && activeContract.id !== 'virtual-contract') {
-        await supabase
-          .from('rental_contracts')
-          .update({
-            status: 'ConvertedToBuy',
-            conversion_date: purchaseDate,
-            notes: `เปลี่ยนจากเช่าเป็นซื้อเมื่อ ${purchaseDate} (หักเครดิต/เงินสะสม ${bookingCredit.toLocaleString()} บาท)`
-          })
-          .eq('id', activeContract.id);
-      }
-
-      // 2. Update Plot to Reserved
-      await supabase
-        .from('plots')
-        .update({
-          sale_status: 'Reserved',
-          has_customer: true,
-          current_tenant_name: null,
-          rental_program: null,
-          highlight_note: `จองซื้อ (เปลี่ยนจากเช่า ${programMeta.name})`
-        })
-        .eq('id', plotId);
-
-      // 3. Update or Insert into Sales / Leads
-      const leadId = activeContract.lead_id || lead?.id;
-      if (leadId) {
-        await supabase
-          .from('leads')
-          .update({
-            deal_type: 'buy',
-            crm_status: 'Booked — จองแล้ว',
-            booking_date: purchaseDate,
-            booking_amount: bookingCredit,
-            notes: `${lead?.notes || ''}\n[เปลี่ยนจากเช่าเป็นซื้อ ${purchaseDate}]: ยอดหักสะสม ${bookingCredit.toLocaleString()} บ. ราคาขายสุทธิ ${finalPrice.toLocaleString()} บ.`.trim(),
-            rental_status: 'ConvertedToBuy'
-          })
-          .eq('id', leadId);
-
-        // Also create/update Sales record for CRM pipeline & commission reporting
-        try {
-          await supabase.from('sales').insert([{
-            lead_id: leadId,
-            plot_id: plotId,
-            contract_status: 'Reserved',
-            crm_stage: 'booked',
-            sale_price: finalPrice,
-            booked_at: `${purchaseDate}T12:00:00Z`,
-            created_at: now
-          }]);
-        } catch (salesErr) {
-          console.warn('Could not insert to sales table (optional fallback):', salesErr);
-        }
-      }
-
-      if (onSaved) onSaved();
-      onClose();
-      alert(`🎉 เปลี่ยนสถานะสำเร็จ! คุณ ${activeContract.tenant_name} เปลี่ยนเป็นผู้จองซื้อแปลง ${activeContract.plot_name || activeContract.plot_id} เรียบร้อยแล้ว`);
-    } catch (err: any) {
-      console.error('Error converting rental to buy:', err);
-      setErrorMsg(err.message || 'เกิดข้อผิดพลาดในการเปลี่ยนเป็นซื้อ');
-    } finally {
-      setSubmitting(false);
+    if (!activeContract) return;
+    const c = activeContract;
+    if (!c.lead_id) { setErrorMsg('ต้องเชื่อมสัญญาเช่ากับ Lead ก่อนเปลี่ยนเป็นซื้อ เพื่อเก็บประวัติลูกค้าคนเดิม'); return; }
+    const finalPrice = parseFloat(customPurchasePrice) || conversionInfo?.finalPurchasePrice || 0;
+    const bookingCredit = parseFloat(appliedBookingCredit) || 0;
+    const steps = [
+      () => updateRow('rental_contracts', c.id, {
+        status: 'ConvertedToBuy', conversion_date: purchaseDate,
+        notes: 'เปลี่ยนจากเช่าเป็นซื้อเมื่อ ' + purchaseDate + ' (หักเครดิต/เงินสะสม ' + bookingCredit.toLocaleString() + ' บาท)'
+      }, c.status),
+      () => updateRow('plots', c.plot_id, {
+        sale_status: 'Reserved', has_customer: true, current_tenant_name: null,
+        rental_program: null, highlight_note: 'จองซื้อ (เปลี่ยนจากเช่า ' + programMeta.name + ')'
+      })
+    ];
+    if (c.lead_id) {
+      steps.push(() => updateRow('leads', c.lead_id!, {
+        deal_type: 'buy', status: 'Booked', crm_status: 'Booked — จองแล้ว',
+        booking_date: purchaseDate, booking_amount: bookingCredit,
+        notes: ((lead?.notes || '') + '\n[เปลี่ยนจากเช่าเป็นซื้อ ' + purchaseDate + ']: ยอดหักสะสม ' + bookingCredit.toLocaleString() + ' บ. ราคาขายสุทธิ ' + finalPrice.toLocaleString() + ' บ.').trim(),
+        rental_status: 'ConvertedToBuy'
+      }));
+      steps.push(async () => {
+        const { data, error } = await supabase.from('sales').insert([{
+          lead_id: c.lead_id, plot_id: c.plot_id, contract_status: 'Reserved',
+          crm_stage: 'booked', sale_price: finalPrice, booked_at: purchaseDate + 'T12:00:00Z',
+          created_at: new Date().toISOString()
+        }]).select('id').single();
+        if (error) throw error;
+        if (!data?.id) throw new Error('บันทึกรายการขายไม่สำเร็จ');
+      });
     }
+    await runAction('convert_to_buy', steps, '🎉 เปลี่ยนสถานะสำเร็จ! คุณ ' + c.tenant_name + ' เปลี่ยนเป็นผู้จองซื้อแปลง ' + (c.plot_name || c.plot_id) + ' เรียบร้อยแล้ว');
   };
 
-  // 2. Move Out
   const handleMoveOut = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSubmitting(true);
-    setErrorMsg(null);
-    try {
-      if (!activeContract) throw new Error('ไม่พบข้อมูลสัญญาเช่า');
-      const plotId = activeContract.plot_id;
-
-      // 1. Update Contract to MovedOut
-      if (activeContract.id && activeContract.id !== 'virtual-contract') {
-        await supabase
-          .from('rental_contracts')
-          .update({
-            status: 'MovedOut',
-            move_out_date: moveOutDate,
-            deposit_refunded: moveOutRefund,
-            notes: `ย้ายออกเมื่อ ${moveOutDate} (คืนเงินประกันสุทธิ ${moveOutRefund.toLocaleString()} บาท) ${moveOutNotes}`.trim()
-          })
-          .eq('id', activeContract.id);
-      }
-
-      // 2. Release Plot back to Available
-      await supabase
-        .from('plots')
-        .update({
-          sale_status: 'Available',
-          has_customer: false,
-          current_tenant_name: null,
-          current_tenant_phone: null,
-          rental_program: null,
-          monthly_rent: null,
-          security_deposit: null,
-          lease_start_date: null,
-          lease_end_date: null,
-          highlight_note: null
-        })
-        .eq('id', plotId);
-
-      // 3. Update Lead CRM Status
-      const leadId = activeContract.lead_id || lead?.id;
-      if (leadId) {
-        await supabase
-          .from('leads')
-          .update({
-            crm_status: 'Lease Ended / Moved Out — สิ้นสุดสัญญาเช่า (ย้ายออก)',
-            rental_status: 'MovedOut',
-            notes: `${lead?.notes || ''}\n[สิ้นสุดสัญญาเช่า ย้ายออก ${moveOutDate}]: คืนเงินประกัน ${moveOutRefund.toLocaleString()} บ.`.trim()
-          })
-          .eq('id', leadId);
-      }
-
-      if (onSaved) onSaved();
-      onClose();
-      alert(`📦 สิ้นสุดสัญญาเรียบร้อย! ปลดแปลง ${activeContract.plot_name || activeContract.plot_id} กลับมาเป็นแปลงว่างพร้อมขาย/เช่าแล้ว`);
-    } catch (err: any) {
-      console.error('Error processing move-out:', err);
-      setErrorMsg(err.message || 'เกิดข้อผิดพลาดในการบันทึกย้ายออก');
-    } finally {
-      setSubmitting(false);
-    }
+    if (!activeContract) return;
+    const c = activeContract;
+    const steps = [
+      () => updateRow('rental_contracts', c.id, {
+        status: 'MovedOut', move_out_date: moveOutDate, deposit_refunded: moveOutRefund,
+        notes: ('ย้ายออกเมื่อ ' + moveOutDate + ' (คืนเงินประกันสุทธิ ' + moveOutRefund.toLocaleString() + ' บาท) ' + moveOutNotes).trim()
+      }, c.status),
+      () => updateRow('plots', c.plot_id, {
+        sale_status: 'Available', has_customer: false, current_tenant_name: null,
+        current_tenant_phone: null, rental_program: null, monthly_rent: null,
+        security_deposit: null, lease_start_date: null, lease_end_date: null, highlight_note: null
+      })
+    ];
+    if (c.lead_id) steps.push(() => updateRow('leads', c.lead_id!, {
+      status: 'MovedOut', crm_status: 'Lease Ended / Moved Out — สิ้นสุดสัญญาเช่า (ย้ายออก)', rental_status: 'MovedOut',
+      notes: ((lead?.notes || '') + '\n[สิ้นสุดสัญญาเช่า ย้ายออก ' + moveOutDate + ']: คืนเงินประกัน ' + moveOutRefund.toLocaleString() + ' บ.').trim()
+    }));
+    await runAction('move_out', steps, '📦 สิ้นสุดสัญญาเรียบร้อย! ปลดแปลง ' + (c.plot_name || c.plot_id) + ' กลับมาเป็นแปลงว่างพร้อมขาย/เช่าแล้ว');
   };
 
-  // 3. Renew Lease
   const handleRenewLease = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSubmitting(true);
-    setErrorMsg(null);
-    try {
-      if (!activeContract) throw new Error('ไม่พบข้อมูลสัญญาเช่า');
-      const currentEnd = new Date(activeContract.lease_end_date || new Date());
-      currentEnd.setMonth(currentEnd.getMonth() + renewalMonths);
-      const newEndDate = currentEnd.toISOString().split('T')[0];
-      const rentNum = parseFloat(newMonthlyRent) || activeContract.monthly_rent;
-
-      // 1. Update Contract
-      if (activeContract.id && activeContract.id !== 'virtual-contract') {
-        await supabase
-          .from('rental_contracts')
-          .update({
-            status: 'Renewed',
-            lease_duration_months: (activeContract.lease_duration_months || 12) + renewalMonths,
-            lease_end_date: newEndDate,
-            monthly_rent: rentNum,
-            notes: `${activeContract.notes || ''}\n[ต่อสัญญาเช่า +${renewalMonths} เดือน]: สิ้นสุดใหม่ ${newEndDate}`.trim()
-          })
-          .eq('id', activeContract.id);
-      }
-
-      // 2. Update Plot
-      await supabase
-        .from('plots')
-        .update({
-          monthly_rent: rentNum,
-          lease_end_date: newEndDate
-        })
-        .eq('id', activeContract.plot_id);
-
-      // 3. Update Lead
-      const leadId = activeContract.lead_id || lead?.id;
-      if (leadId) {
-        await supabase
-          .from('leads')
-          .update({
-            rental_end_date: newEndDate,
-            rental_monthly_rent: rentNum,
-            notes: `${lead?.notes || ''}\n[ต่อสัญญาเช่า +${renewalMonths} เดือน]: สิ้นสุดใหม่ ${newEndDate}`.trim()
-          })
-          .eq('id', leadId);
-      }
-
-      if (onSaved) onSaved();
-      onClose();
-      alert(`📝 ต่อสัญญาเช่าสำเร็จ! ขยายเวลาสัญญาถึงวันที่ ${newEndDate}`);
-    } catch (err: any) {
-      console.error('Error renewing lease:', err);
-      setErrorMsg(err.message || 'เกิดข้อผิดพลาดในการต่อสัญญา');
-    } finally {
-      setSubmitting(false);
-    }
+    if (!activeContract) return;
+    const c = activeContract;
+    let newEndDate: string;
+    try { newEndDate = extendRentalLeaseEnd(c.lease_end_date, renewalMonths); }
+    catch (error) { setErrorMsg(error instanceof Error ? error.message : 'วันที่สิ้นสุดสัญญาไม่ถูกต้อง'); return; }
+    const rentNum = parseFloat(newMonthlyRent) || c.monthly_rent;
+    const steps = [
+      () => updateRow('rental_contracts', c.id, {
+        status: 'Renewed', lease_duration_months: (c.lease_duration_months || 12) + renewalMonths,
+        lease_end_date: newEndDate, monthly_rent: rentNum,
+        notes: ((c.notes || '') + '\n[ต่อสัญญาเช่า +' + renewalMonths + ' เดือน]: สิ้นสุดใหม่ ' + newEndDate).trim()
+      }, c.status),
+      () => updateRow('plots', c.plot_id, { monthly_rent: rentNum, lease_end_date: newEndDate })
+    ];
+    if (c.lead_id) steps.push(() => updateRow('leads', c.lead_id!, {
+      rental_status: 'Renewed', rental_end_date: newEndDate, rental_monthly_rent: rentNum,
+      notes: ((lead?.notes || '') + '\n[ต่อสัญญาเช่า +' + renewalMonths + ' เดือน]: สิ้นสุดใหม่ ' + newEndDate).trim()
+    }));
+    await runAction('renew', steps, '📝 ต่อสัญญาเช่าสำเร็จ! ขยายเวลาสัญญาถึงวันที่ ' + newEndDate);
   };
 
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto animate-fade-in">
+    <SalesOverlay className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto animate-fade-in">
       <div className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden my-auto flex flex-col max-h-[90vh]">
         
         {/* Header */}
@@ -399,6 +324,7 @@ export default function RentalActionModal({
         <div className="flex border-b border-slate-200 bg-slate-50 px-6 pt-3 gap-2 shrink-0">
           <button
             type="button"
+            disabled={submitting || (actionProgress.current?.completed || 0) > 0}
             onClick={() => setActiveTab('convert_to_buy')}
             className={`pb-3 px-3 font-bold text-xs flex items-center gap-1.5 transition-all border-b-2 cursor-pointer ${
               activeTab === 'convert_to_buy'
@@ -411,6 +337,7 @@ export default function RentalActionModal({
 
           <button
             type="button"
+            disabled={submitting || (actionProgress.current?.completed || 0) > 0}
             onClick={() => setActiveTab('renew')}
             className={`pb-3 px-3 font-bold text-xs flex items-center gap-1.5 transition-all border-b-2 cursor-pointer ${
               activeTab === 'renew'
@@ -423,6 +350,7 @@ export default function RentalActionModal({
 
           <button
             type="button"
+            disabled={submitting || (actionProgress.current?.completed || 0) > 0}
             onClick={() => setActiveTab('move_out')}
             className={`pb-3 px-3 font-bold text-xs flex items-center gap-1.5 transition-all border-b-2 cursor-pointer ${
               activeTab === 'move_out'
@@ -435,6 +363,7 @@ export default function RentalActionModal({
         </div>
 
         <div className="p-5 sm:p-6 text-xs overflow-y-auto flex-1 dark-scrollbar">
+          {loading && <p role="status" className="mb-4 text-slate-500">กำลังโหลดสัญญาเช่า...</p>}
           {errorMsg && (
             <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl flex items-center gap-2 font-medium">
               <AlertCircle size={16} className="shrink-0" />
@@ -494,6 +423,7 @@ export default function RentalActionModal({
                 <div>
                   <label className="block text-slate-700 font-bold mb-1">วันที่ตัดสินใจซื้อ *</label>
                   <input
+                    disabled={submitting || (actionProgress.current?.completed || 0) > 0}
                     type="date"
                     required
                     value={purchaseDate}
@@ -505,6 +435,7 @@ export default function RentalActionModal({
                 <div>
                   <label className="block text-slate-700 font-bold mb-1">เซลส์ผู้ปิดการขาย (Closing Agent)</label>
                   <input
+                    disabled={submitting || (actionProgress.current?.completed || 0) > 0}
                     type="text"
                     value={closingAgent}
                     onChange={e => setClosingAgent(e.target.value)}
@@ -515,6 +446,7 @@ export default function RentalActionModal({
                 <div>
                   <label className="block text-slate-700 font-bold mb-1">ยอดเงินจอง/เงินสะสมที่นำมาหัก (บาท)</label>
                   <input
+                    disabled={submitting || (actionProgress.current?.completed || 0) > 0}
                     type="number"
                     min="0"
                     value={appliedBookingCredit}
@@ -526,6 +458,7 @@ export default function RentalActionModal({
                 <div>
                   <label className="block text-slate-700 font-bold mb-1">ราคาขายสุทธิหลังหักส่วนลด (บาท)</label>
                   <input
+                    disabled={submitting || (actionProgress.current?.completed || 0) > 0}
                     type="number"
                     min="0"
                     value={customPurchasePrice}
@@ -545,7 +478,7 @@ export default function RentalActionModal({
                 </button>
                 <button
                   type="submit"
-                  disabled={submitting}
+                  disabled={submitting || loading || !activeContract}
                   className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-md shadow-emerald-600/20 cursor-pointer flex items-center gap-2 transition-all disabled:opacity-50"
                 >
                   <FileCheck size={15} />
@@ -571,6 +504,7 @@ export default function RentalActionModal({
                 <div>
                   <label className="block text-slate-700 font-bold mb-1">ขยายระยะเวลาสัญญา (เดือน)</label>
                   <select
+                    disabled={submitting || (actionProgress.current?.completed || 0) > 0}
                     value={renewalMonths}
                     onChange={e => setRenewalMonths(parseInt(e.target.value) || 12)}
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 focus:outline-none"
@@ -584,6 +518,7 @@ export default function RentalActionModal({
                 <div>
                   <label className="block text-slate-700 font-bold mb-1">ค่าเช่าต่อเดือนใหม่ (บาท)</label>
                   <input
+                    disabled={submitting || (actionProgress.current?.completed || 0) > 0}
                     type="number"
                     min="0"
                     step="500"
@@ -597,6 +532,7 @@ export default function RentalActionModal({
               <div>
                 <label className="block text-slate-700 font-bold mb-1">หมายเหตุการต่อสัญญา</label>
                 <textarea
+                    disabled={submitting || (actionProgress.current?.completed || 0) > 0}
                   rows={2}
                   value={renewalNotes}
                   onChange={e => setRenewalNotes(e.target.value)}
@@ -615,7 +551,7 @@ export default function RentalActionModal({
                 </button>
                 <button
                   type="submit"
-                  disabled={submitting}
+                  disabled={submitting || loading || !activeContract}
                   className="px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-md shadow-blue-600/20 cursor-pointer flex items-center gap-2 transition-all disabled:opacity-50"
                 >
                   <RefreshCw size={15} />
@@ -644,6 +580,7 @@ export default function RentalActionModal({
                 <div>
                   <label className="block text-slate-700 font-bold mb-1">วันที่ย้ายออก *</label>
                   <input
+                    disabled={submitting || (actionProgress.current?.completed || 0) > 0}
                     type="date"
                     required
                     value={moveOutDate}
@@ -655,6 +592,7 @@ export default function RentalActionModal({
                 <div>
                   <label className="block text-slate-700 font-bold mb-1">หักค่าน้ำ / ค่าไฟค้างชำระ (บาท)</label>
                   <input
+                    disabled={submitting || (actionProgress.current?.completed || 0) > 0}
                     type="number"
                     min="0"
                     value={utilityDeduction}
@@ -666,6 +604,7 @@ export default function RentalActionModal({
                 <div>
                   <label className="block text-slate-700 font-bold mb-1">หักค่าความเสียหาย/ซ่อมแซม (บาท)</label>
                   <input
+                    disabled={submitting || (actionProgress.current?.completed || 0) > 0}
                     type="number"
                     min="0"
                     value={damageDeduction}
@@ -677,6 +616,7 @@ export default function RentalActionModal({
                 <div>
                   <label className="block text-slate-700 font-bold mb-1">หักค่าทำความสะอาด (บาท)</label>
                   <input
+                    disabled={submitting || (actionProgress.current?.completed || 0) > 0}
                     type="number"
                     min="0"
                     value={cleaningDeduction}
@@ -700,6 +640,7 @@ export default function RentalActionModal({
               <div>
                 <label className="block text-slate-700 font-bold mb-1">หมายเหตุการย้ายออก / ตรวจรับบ้าน</label>
                 <textarea
+                    disabled={submitting || (actionProgress.current?.completed || 0) > 0}
                   rows={2}
                   value={moveOutNotes}
                   onChange={e => setMoveOutNotes(e.target.value)}
@@ -718,7 +659,7 @@ export default function RentalActionModal({
                 </button>
                 <button
                   type="submit"
-                  disabled={submitting}
+                  disabled={submitting || loading || !activeContract}
                   className="px-6 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold shadow-md shadow-rose-600/20 cursor-pointer flex items-center gap-2 transition-all disabled:opacity-50"
                 >
                   <LogOut size={15} />
@@ -730,6 +671,6 @@ export default function RentalActionModal({
 
         </div>
       </div>
-    </div>
+    </SalesOverlay>
   );
 }

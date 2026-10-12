@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { postBookingApi, PostBookingApiError, type PostBookingApi } from '@/lib/sales/postBookingClient';
 import { displayTransferDate, postBookingTargets, type PostBookingInput, type PostBookingSnapshot } from '@/lib/sales/postBookingContracts';
 import { clearPostBookingPending, readPostBookingPending, writePostBookingPending, PostBookingPendingError } from '@/lib/sales/postBookingPending';
+import { displayBookingHistoryDate } from '@/lib/sales/importedBookingHistory';
 import { displayBangkokTime } from '@/lib/sales/leadWorkDates';
 import type { SaleStage } from '@/lib/sales/workflow';
 import { bookingButtonClass } from './BookingForm';
@@ -111,14 +112,14 @@ function PostBookingSession({ saleId, api = postBookingApi }: Props) {
 
   return <main className="mx-auto max-w-6xl space-y-5 p-4 sm:p-8">
     <header className="flex flex-wrap justify-between gap-3"><div><h1 className="text-2xl font-bold">งานหลังจอง</h1>
-      <p className="mt-1 text-sm text-slate-600">ลูกค้าจาก Lead ส่วนกลาง · ประวัติแยกตามรอบจอง · เก็บทุกรอบยื่นกู้และเหตุผล</p></div>
+      <p className="mt-1 text-sm text-slate-600">ลูกค้าใหม่และลูกค้าเดิม · ประวัติแยกตามดีลและรอบจอง · เก็บทุกรอบยื่นกู้และเหตุผล</p></div>
       {!locked ? <nav aria-label="ไปยังส่วนงานขาย" className="flex flex-wrap gap-4 text-blue-700 underline">
         <Link href="/sales-crm" prefetch={false}>Lead ส่วนกลาง</Link>
         <Link href={snapshot ? `/sales-crm/projects?projectName=${encodeURIComponent(snapshot.sale.projectName)}` : '/sales-crm/projects'} prefetch={false}>ลูกค้าจองในโครงการ</Link>
         {snapshot && <Link href={`/sales-crm/bookings?customerId=${snapshot.sale.customerId}`} prefetch={false}>ประวัติจอง / ยกเลิกจอง</Link>}
       </nav> : <p className="text-sm text-slate-600">ตรวจผลคำขอค้างก่อนออกจากหน้านี้</p>}
     </header>
-    <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">บันทึกได้ถึงยืนยันโอนจริง โดยใช้วันโอนจริงและเหตุผล ไม่ต้องแนบไฟล์หรืออ้างอิงเอกสาร ยังไม่เปิดส่งมอบ ส่วนรายละเอียดหลักฐานของงานอื่นเป็นข้อความที่ผู้บันทึกระบุ ไม่ใช่การตรวจยืนยันเอกสารจากธนาคาร</p>
+    <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">บันทึกได้ถึงรับมอบบ้าน โดยใช้วันที่จริงและเหตุผล วันที่เดิมที่ไม่มีบันทึกจะคงเป็นไม่ทราบ ส่วนรายละเอียดหลักฐานของงานอื่นเป็นข้อความที่ผู้บันทึกระบุ ไม่ใช่การตรวจยืนยันเอกสารจากธนาคาร</p>
     {notice && <p role="status" className="rounded-lg bg-emerald-50 p-3 text-emerald-800">{notice}</p>}
     {(error || storageError) && <p role="alert" className="rounded-lg bg-rose-50 p-3 text-rose-800">{storageError || error}</p>}
     {pending && <section aria-label="คำขอหลังจองค้าง" className="space-y-2 rounded-xl border border-amber-300 bg-amber-50 p-4">
@@ -137,13 +138,14 @@ function PostBookingSession({ saleId, api = postBookingApi }: Props) {
         <div className="flex flex-wrap justify-between gap-3"><h2 className="text-xl font-bold">{snapshot.sale.customerName}</h2><strong className="text-blue-800">{postBookingStageLabels[snapshot.sale.stage]}</strong></div>
         <p>{snapshot.sale.projectName} · แปลง {snapshot.sale.plotId ?? 'ไม่ทราบ'}</p>
         <dl className="grid gap-3 text-sm sm:grid-cols-4"><div><dt>การชำระ</dt><dd>{snapshot.sale.paymentMethod === 'cash' ? 'เงินสด' : snapshot.sale.paymentMethod === 'mortgage' ? 'กู้ธนาคาร' : 'ไม่ทราบ'}</dd></div>
-          <div><dt>วันที่จอง</dt><dd>{displayBangkokTime(snapshot.sale.bookedAt)}</dd></div><div><dt>วันที่ทำสัญญา</dt><dd>{displayBangkokTime(snapshot.sale.contractedAt)}</dd></div>
-          <div><dt>วันโอนจริง</dt><dd>{displayTransferDate(snapshot.sale.transferDate)}</dd></div></dl>
+          <div><dt>วันที่จอง</dt><dd>{displayBookingHistoryDate(snapshot.sale.bookedAt, snapshot.sale.importedHistory?.bookedDate)}</dd></div><div><dt>วันที่ทำสัญญา</dt><dd>{displayBangkokTime(snapshot.sale.contractedAt)}</dd></div>
+          <div><dt>วันโอนจริง</dt><dd>{displayTransferDate(snapshot.sale.transferDate ?? snapshot.sale.importedHistory?.transferredDate ?? null)}</dd></div></dl>
         <p className="break-all text-xs text-slate-500">รหัสลูกค้า {snapshot.sale.customerId} · รหัสจอง {snapshot.sale.id} · ผู้รับผิดชอบ {snapshot.sale.ownerUserId}</p>
         {snapshot.actor.role === 'owner' ? <p>Owner ดูข้อมูลได้อย่างเดียว</p> : !mayEdit && <p>ดูประวัติได้ แต่บัญชีหรือสถานะนี้ยังไม่เปิดให้บันทึกต่อในหน้านี้</p>}
-        {snapshot.sale.paymentMethod === null && <p className="text-amber-800">ข้อมูลเก่าไม่ทราบวิธีชำระ อ่านได้อย่างเดียว กรุณาให้ Admin ตรวจสอบหลักฐานก่อนใช้งานขั้นถัดไป</p>}
+        {snapshot.sale.paymentMethod === null && !['transferred', 'handover'].includes(snapshot.sale.stage) && <p className="text-amber-800">ข้อมูลเก่าไม่ทราบวิธีชำระ อ่านได้อย่างเดียว กรุณาให้ Admin ตรวจสอบหลักฐานก่อนใช้งานขั้นถัดไป</p>}
+        <p className="text-sm">วันรับมอบจริง: {snapshot.sale.handoverDate === null ? 'ไม่ทราบ' : displayTransferDate(snapshot.sale.handoverDate)}</p>
         <div className="flex flex-wrap gap-3">{targets.map(value => <button key={value} className={bookingButtonClass} disabled={locked}
-          onClick={() => { setTarget(value); setError(''); }}>{value === 'transferred' ? 'ยืนยันโอนจริง' : `บันทึก${postBookingStageLabels[value]}`}</button>)}
+          onClick={() => { setTarget(value); setError(''); }}>{value === 'handover' ? 'ยืนยันรับมอบบ้าน' : value === 'transferred' ? 'ยืนยันโอนจริง' : `บันทึก${postBookingStageLabels[value]}`}</button>)}
           <button className={bookingButtonClass} disabled={locked} onClick={() => { setTarget(null); setRevision(value => value + 1); }}>โหลดประวัติล่าสุด</button></div>
       </section>
       {target && targets.includes(target) && <PostBookingForm key={`${key}:${target}`} snapshot={snapshot} target={target} disabled={locked} onSubmit={input => void save(input)} onClose={() => setTarget(null)} />}
@@ -165,7 +167,7 @@ function PostBookingSession({ saleId, api = postBookingApi }: Props) {
         {!snapshot.events.length && <p>ไม่มีเหตุการณ์หลังจองในหน้านี้</p>}
         {snapshot.events.map(event => <article key={event.id} aria-label={`เหตุการณ์ ${event.id}`} className="space-y-2 rounded-lg border p-4">
           <h3 className="font-bold">{postBookingStageLabels[event.fromStage]} → {postBookingStageLabels[event.toStage]}</h3>
-          {event.command === 'confirm_transfer' ? <p className="text-sm">วันโอนจริง: {displayTransferDate(event.transferDate)}</p>
+          {event.command === 'confirm_handover' ? <p className="text-sm">วันรับมอบจริง: {displayTransferDate(event.handoverDate)}</p> : event.command === 'confirm_transfer' ? <p className="text-sm">วันโอนจริง: {displayTransferDate(event.transferDate)}</p>
             : <p className="text-sm">เกิดเหตุการณ์: {displayBangkokTime(event.occurredAt)}</p>}
           <p className="text-sm">บันทึกเข้าระบบ: {displayBangkokTime(event.recordedAt)}</p>
           <p>เหตุผล: {event.reason}</p>{event.evidenceNote !== null && <p>หลักฐานที่ผู้บันทึกอ้างอิง: {event.evidenceNote}</p>}

@@ -2,23 +2,26 @@ import { bookingRecord, bookingUuid } from './bookingContracts';
 import { parseEvidenceTimestamp } from './leadEvidence';
 import { SALE_STAGES, type CrmRole, type SaleStage } from './workflow';
 import { assertImportedBookingRow, parseImportedBookingHistory, type ImportedBookingHistory } from './importedBookingHistory';
+import { parseSourceMembershipMetadata, parseWorkspaceDay, parseWorkspaceHistoryMetadata, type SourceMembershipMetadata, type WorkspaceHistoryMetadata } from './workspaceReadContracts';
 
 export const PROJECT_SALES_CONTRACT_VERSION = 'project_sales_v1';
 export const PROJECT_SALES_TABS = ['booked', 'transferred', 'cancelled', 'all'] as const;
 export type ProjectSalesTab = typeof PROJECT_SALES_TABS[number];
 export interface ProjectSalesScope { projectName: string | null; tab: ProjectSalesTab; query: string; page: number }
-export interface ProjectSaleRow {
+export interface ProjectSaleRow extends WorkspaceHistoryMetadata {
   saleId: string; customerId: string; customerName: string; phone: string | null; interestId: string;
   projectName: string; ownerUserId: string; ownerName: string; plotId: string | null; plotName: string | null;
   stage: SaleStage; bookingRound: number | null; previousSaleId: string | null; bookedAt: string | null; cancelledAt: string | null;
   cancellationReason: string | null; listPrice: number | null; discountAmount: number | null; salePrice: number | null;
   depositAmount: number | null; paymentMethod: 'cash' | 'mortgage' | null;
+  bankName?: string | null; expectedTransferDate?: string | null; leadId?: string | null;
   importedHistory?: ImportedBookingHistory;
   historyEvidence?: { sourceRow: number; bookedDate: string | null; cancelledDate: string | null; transferredDate: string | null; held: boolean };
 }
 export interface ProjectSalesSnapshot extends ProjectSalesScope {
   actor: { userId: string; role: CrmRole }; projects: { name: string }[]; hasMore: boolean; rows: ProjectSaleRow[];
   prepared?: { batchId: string; snapshotDate: string; pendingUnlinkedHistories: number };
+  sourceMembership?: SourceMembershipMetadata;
 }
 export class ProjectSalesInputError extends Error {
   constructor() { super('ข้อมูลโครงการหรือตัวกรองไม่ถูกต้อง กรุณาเลือกใหม่'); this.name = 'ProjectSalesInputError'; }
@@ -91,6 +94,7 @@ function day(value: unknown): string | null {
 }
 function parseSnapshot(value: unknown, scope: ProjectSalesScope, allowPrepared: boolean): ProjectSalesSnapshot {
   const raw = bookingRecord(value), actor = bookingRecord(raw.actor);
+  const sourceMembership = parseSourceMembershipMetadata(raw.sourceMembership);
   let prepared: ProjectSalesSnapshot['prepared'];
   if (allowPrepared) {
     const info = bookingRecord(raw.prepared), snapshotDate = day(info.snapshotDate);
@@ -123,7 +127,13 @@ function parseSnapshot(value: unknown, scope: ProjectSalesScope, allowPrepared: 
       historyEvidence = { sourceRow: evidence.sourceRow as number, bookedDate: day(evidence.bookedDate),
         cancelledDate: day(evidence.cancelledDate), transferredDate: day(evidence.transferredDate), held: evidence.held };
     } else if (item.historyEvidence !== undefined) return invalid();
-    return { saleId: bookingUuid(item.saleId), customerId: bookingUuid(item.customerId), customerName: string(item.customerName),
+    if (sourceMembership && !['bankName', 'expectedTransferDate', 'leadId', 'sourceKind', 'visitHistoryDate'].every(key => Object.hasOwn(item, key))) return invalid();
+    const effectiveDetails = item.bankName === undefined && item.expectedTransferDate === undefined && item.leadId === undefined ? {} : {
+      bankName: item.bankName === undefined ? null : item.bankName === null ? null : line(item.bankName),
+      expectedTransferDate: item.expectedTransferDate === undefined ? null : parseWorkspaceDay(item.expectedTransferDate),
+      leadId: item.leadId === undefined || item.leadId === null ? null : bookingUuid(item.leadId),
+    };
+    return { ...effectiveDetails, ...parseWorkspaceHistoryMetadata(item), saleId: bookingUuid(item.saleId), customerId: bookingUuid(item.customerId), customerName: string(item.customerName),
       phone: nullableString(item.phone), interestId: bookingUuid(item.interestId), projectName: string(item.projectName),
       ownerUserId: bookingUuid(item.ownerUserId), ownerName: string(item.ownerName), plotId: nullableString(item.plotId), plotName: nullableString(item.plotName),
       stage, bookingRound: item.bookingRound as number | null, previousSaleId: item.previousSaleId === null ? null : bookingUuid(item.previousSaleId),
@@ -135,5 +145,6 @@ function parseSnapshot(value: unknown, scope: ProjectSalesScope, allowPrepared: 
   if (new Set(rows.map(row => row.saleId)).size !== rows.length || (raw.hasMore && rows.length !== 50)
     || (scope.projectName === null && (rows.length !== 0 || raw.hasMore))) return invalid();
   return { ...scope, actor: { userId: bookingUuid(actor.userId), role: actor.role as CrmRole }, projects, rows, hasMore: raw.hasMore,
+    ...(sourceMembership ? { sourceMembership } : {}),
     ...(prepared ? { prepared } : {}) };
 }

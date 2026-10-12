@@ -7,15 +7,16 @@ import type { ProjectInterestInput, ProjectInterestResult, ProjectInterestsSnaps
 import { clearProjectInterestsPending, readProjectInterestsPending, writeProjectInterestsPending, ProjectInterestsPendingError } from '@/lib/sales/projectInterestsPending';
 import ProjectInterestForm from './ProjectInterestForm';
 import { bookingButtonClass } from './BookingForm';
+import HistoricalCustomerEvidence from './HistoricalCustomerEvidence';
 
-interface Props { customerId: string; visitsEnabled?: boolean; api?: ProjectInterestsApi }
+interface Props { customerId: string; visitsEnabled?: boolean; rentalsEnabled?: boolean; historyEnabled?: boolean; api?: ProjectInterestsApi }
 interface Pending { actor: string; input: ProjectInterestInput; uncertain: boolean }
 const statuses: Record<string, string> = { new: 'ใหม่', contacted: 'ติดต่อแล้ว', considering: 'กำลังพิจารณา', follow_up: 'ติดตามต่อ', nurture: 'ดูแลระยะยาว', lost: 'Lost — ปิดความสนใจ' };
 const workLink = (customer: string, interest: string) => `/sales-crm/${customer}?${new URLSearchParams({ interestId: interest })}`;
 const visitLink = (customer: string, interest: string) => `/sales-crm/visits?${new URLSearchParams({ customerId: customer, interestId: interest })}`;
 
 export default function ProjectInterestsWorkspace(props: Props) { return <ProjectInterestsSession key={props.customerId} {...props} />; }
-function ProjectInterestsSession({ customerId, visitsEnabled = false, api = projectInterestsApi }: Props) {
+function ProjectInterestsSession({ customerId, visitsEnabled = false, rentalsEnabled = false, historyEnabled = false, api = projectInterestsApi }: Props) {
   const [page, setPage] = useState(0), [revision, setRevision] = useState(0);
   const [loaded, setLoaded] = useState<{ key: string; api?: ProjectInterestsApi; snapshot?: ProjectInterestsSnapshot; error?: string }>({ key: '' });
   const [pending, setPending] = useState<Pending | null>(null), [saved, setSaved] = useState<ProjectInterestResult | null>(null);
@@ -140,6 +141,7 @@ function ProjectInterestsSession({ customerId, visitsEnabled = false, api = proj
         <p className="text-sm text-slate-600">การเพิ่มโครงการไม่เปลี่ยนวันเริ่มเป็น Lead เจ้าของ Lead ส่วนกลาง หรืองาน SLA เดิม และยังไม่ใช่การจอง</p>
         {!mayAdd && <p className="rounded-lg bg-slate-100 p-3 text-sm">{snapshot.actor.role === 'owner' ? 'Owner ดูข้อมูลได้อย่างเดียว' : snapshot.customer.intakeStatus === 'lost' ? 'Lead นี้ปิดแล้ว ดูประวัติได้แต่ยังเพิ่มโครงการไม่ได้' : 'เฉพาะเจ้าของ Lead ส่วนกลางหรือ Admin ที่เพิ่มโครงการได้'}</p>}
       </section>
+      {historyEnabled && <HistoricalCustomerEvidence customerId={snapshot.customer.id} expectedActorId={snapshot.actor.userId} />}
       {mayAdd && <ProjectInterestForm key={key} snapshot={snapshot} disabled={locked} onSubmit={input => void save(input)} />}
       <section aria-label="โครงการที่สนใจทั้งหมด" className="space-y-3 rounded-xl border bg-white p-5"><h2 className="text-lg font-bold">โครงการที่มีอยู่แล้ว</h2>
         <p className="text-sm text-slate-600">หน้า {page + 1} · ไม่เกิน 50 รายการต่อหน้า · รวม Lost ไว้เป็นประวัติ ไม่เพิ่มซ้ำหรือเปิดใหม่จากหน้านี้</p>
@@ -148,7 +150,9 @@ function ProjectInterestsSession({ customerId, visitsEnabled = false, api = proj
           <div className="flex flex-wrap justify-between gap-2"><h3 className="font-bold">{interest.projectName}</h3><span className={interest.status === 'lost' ? 'text-rose-700' : 'text-blue-800'}>{statuses[interest.status] ?? interest.status}</span></div>
           <p className="text-sm">แปลงที่เล็ง: {interest.plotId ?? 'ยังไม่ระบุ'}</p><p className="break-all text-xs text-slate-500">ผู้ดูแลโครงการนี้ {interest.ownerUserId}</p>
           {!locked && <div className="flex flex-wrap gap-4"><Link href={workLink(customerId, interest.id)} prefetch={false} className="text-sm text-blue-700 underline">งานติดตาม / ประวัติ {interest.projectName}</Link>
-            {visitsEnabled && <Link href={visitLink(customerId, interest.id)} prefetch={false} className="text-sm text-blue-700 underline">นัดหมาย / เข้าชม {interest.projectName}</Link>}</div>}
+            {visitsEnabled && <Link href={visitLink(customerId, interest.id)} prefetch={false} className="text-sm text-blue-700 underline">นัดหมาย / เข้าชม {interest.projectName}</Link>}
+            {rentalsEnabled && <Link href={`/sales-crm/rentals?${new URLSearchParams({ customerId, projectName: interest.projectName })}`} prefetch={false}
+              className="text-sm text-blue-700 underline">สัญญาเช่า / ประวัติ {interest.projectName}</Link>}</div>}
         </article>)}
         <div className="flex flex-wrap gap-3"><button className={bookingButtonClass} disabled={locked || page === 0} onClick={() => changePage(page - 1)}>โครงการก่อนหน้า</button>
           <button className={bookingButtonClass} disabled={locked || !snapshot.hasMore} onClick={() => changePage(page + 1)}>โครงการถัดไป</button>

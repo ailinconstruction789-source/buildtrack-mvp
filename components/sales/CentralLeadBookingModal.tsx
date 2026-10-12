@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   X, Tag, Building2, Home, User, Phone, 
   Calendar, CreditCard, DollarSign, FileText, 
@@ -9,9 +9,12 @@ import {
   Gift, Trash2, CheckSquare, Square, Percent, Sliders
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { selectSalesStaffName } from '@/lib/sales/salesStaff';
 import { loadAvailablePlots } from '@/lib/sales/plotAvailabilityClient';
 import type { InterestedPlot } from '@/lib/sales/plotAvailability';
 import LeadPicker from './LeadPicker';
+import SalesOverlay from './SalesOverlay';
+import { canStartSalesDeal, type LeadStageInput } from '@/lib/sales/leadStage';
 
 // 🏠 Master Freebies Catalog Grouped by Categories
 const MASTER_FREEBIES_CATALOG = [
@@ -69,7 +72,7 @@ const MASTER_FREEBIES_CATALOG = [
 interface Props {
   isOpen: boolean;
   onClose: () => void;
-  customer?: {
+  customer?: ({
     id?: string;
     name?: string;
     customer_name?: string;
@@ -85,7 +88,7 @@ interface Props {
     project_name?: string | null;
     interested_plot_name?: string | null;
     interested_plot_id?: string | null;
-  } | null;
+  } & LeadStageInput) | null;
   initialInterest?: {
     id?: string;
     projectName?: string;
@@ -94,7 +97,7 @@ interface Props {
   } | null;
   projects: string[];
   salesOwners: { userId: string; displayName: string }[];
-  currentUser?: { userId?: string; displayName?: string; username?: string; name?: string } | null;
+  currentUser?: { id?: string; userId?: string; displayName?: string; username?: string; name?: string } | null;
   onSaved?: (notice: string) => void;
   onSwitchToRental?: () => void;
 }
@@ -145,6 +148,18 @@ export default function CentralLeadBookingModal({
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const saveCheckpoint = useRef<{
+    fingerprint: string; leadId: string | null; promotionsDeleted: boolean;
+    promotionsSaved: boolean; activitySaved: boolean; plotSaved: boolean;
+    saleId: string | null; saleSaved: boolean; saleAttempted: boolean;
+    summary: string | null; occurredAt: string | null;
+  } | null>(null);
+
+  const bookingContextKey = JSON.stringify([
+    initialCustomer?.id || null,
+    currentUser?.userId || currentUser?.id || currentUser?.username || null,
+  ]);
+  const initializedContext = useRef<string | null>(null);
 
   // Handle lead selection
   const handleLeadSelect = (chosenLead: any | null) => {
@@ -155,15 +170,24 @@ export default function CentralLeadBookingModal({
         setPlotId(chosenLead.interested_plot_name || chosenLead.interested_plot_id);
       }
       // Default closer is the logged in user (ID ที่กำลังใช้งานระบบอยู่)
-      const defaultUser = currentUser?.displayName || currentUser?.username || currentUser?.name || salesOwners[0]?.displayName || 'ทีมขาย';
+      const defaultUser = selectSalesStaffName(salesOwners, [currentUser?.displayName, currentUser?.username, currentUser?.name]);
       setAgentName(defaultUser);
-      setOwnerSource('current_user');
+      setOwnerSource(defaultUser && [currentUser?.displayName, currentUser?.username, currentUser?.name].includes(defaultUser) ? 'current_user' : 'manual');
       setIsNewCustomerMode(false);
     }
   };
 
   // Default contract date in 7 days & sync customer
   useEffect(() => {
+    if (!isOpen) {
+      initializedContext.current = null;
+      return;
+    }
+    // Parent refreshes can recreate these objects on focus. Initialize only a new
+    // opening/customer/account, so a refresh cannot erase an unsubmitted draft.
+    if (initializedContext.current === bookingContextKey) return;
+    initializedContext.current = bookingContextKey;
+    saveCheckpoint.current = null;
     if (isOpen) {
       setErrorMsg('');
       const cust = initialCustomer || null;
@@ -186,14 +210,15 @@ export default function CentralLeadBookingModal({
       setContractDueDate(`${yyyy}-${mm}-${dd}`);
 
       // Default closer is always the logged in user (ID ปัจจุบันที่กำลังบันทึก)
-      const defaultUser = currentUser?.displayName || currentUser?.username || currentUser?.name || salesOwners[0]?.displayName || 'ทีมขาย';
+      const defaultUser = selectSalesStaffName(salesOwners, [currentUser?.displayName, currentUser?.username, currentUser?.name]);
       setAgentName(defaultUser);
-      setOwnerSource('current_user');
+      setOwnerSource(defaultUser && [currentUser?.displayName, currentUser?.username, currentUser?.name].includes(defaultUser) ? 'current_user' : 'manual');
     }
-  }, [isOpen, initialCustomer, initialInterest, projects, salesOwners, currentUser]);
+  }, [isOpen, bookingContextKey, initialCustomer, initialInterest, projects, salesOwners, currentUser]);
 
   // Load available plots when project changes
   useEffect(() => {
+    if (!isOpen) return;
     if (!projectName) {
       setAvailablePlots([]);
       setPlotInfo(null);
@@ -215,16 +240,19 @@ export default function CentralLeadBookingModal({
         }
       });
     return () => { cancelled = true; };
-  }, [projectName]);
+  }, [isOpen, projectName, bookingContextKey]);
 
   // Load Construction Info & Plot Pricing when plotId or projectName changes
   useEffect(() => {
+    if (!isOpen) return;
     if (!plotId || !projectName) {
       setPlotInfo(null);
       return;
     }
 
     let cancelled = false;
+    setPlotInfo(null);
+    setListPrice('');
     setLoadingPlotInfo(true);
 
     const fetchPlotDetails = async () => {
@@ -247,18 +275,23 @@ export default function CentralLeadBookingModal({
             .eq('plot_id', plotData.id)
             .maybeSingle();
 
+          if (cancelled) return;
+
           // Fetch tasks & schedules
           const [tasksRes, schedRes, assignsRes] = await Promise.all([
             supabase.from('task_templates').select('id, task_name').eq('house_type_id', plotData.house_type_id),
-            supabase.from('schedules').select('task_template_id, planned_start, planned_end').eq('plot_id', plotData.id),
+            supabase.from('plot_task_schedules').select('task_template_id, planned_start, planned_end').eq('plot_id', plotData.id),
             supabase.from('plot_task_assignments').select('task_template_id, current_progress').eq('plot_id', plotData.id)
           ]);
+
+          if (cancelled) return;
+          const constructionStatusUnavailable = Boolean(tasksRes.error || schedRes.error || assignsRes.error);
 
           let progress = progressData?.overall_progress ? Number(progressData.overall_progress) : 0;
           let statusInfo = null;
           let activeTask: any = null;
 
-          if (tasksRes.data && tasksRes.data.length > 0) {
+          if (!constructionStatusUnavailable && tasksRes.data && tasksRes.data.length > 0) {
             let totalActual = 0;
             let totalPlanned = 0;
             const today = plotData.sale_status === 'ready_for_sale' && plotData.paused_for_sale_at ? new Date(plotData.paused_for_sale_at).getTime() : Date.now();
@@ -301,7 +334,8 @@ export default function CentralLeadBookingModal({
             ...plotData,
             progress,
             statusInfo,
-            activeTask
+            activeTask,
+            constructionStatusUnavailable
           };
 
           setPlotInfo(combinedPlotInfo);
@@ -317,6 +351,8 @@ export default function CentralLeadBookingModal({
               .from('plot_promotions')
               .select('id, category, item_name, quantity, status')
               .eq('plot_id', plotData.id);
+
+            if (cancelled) return;
 
             if (promosData && promosData.length > 0) {
               setSelectedFreebies(promosData.map((p: any) => ({
@@ -353,7 +389,7 @@ export default function CentralLeadBookingModal({
     fetchPlotDetails();
 
     return () => { cancelled = true; };
-  }, [plotId, projectName]);
+  }, [isOpen, plotId, projectName, bookingContextKey]);
 
   // Freebies Helper Functions
   const toggleFreebie = (category: string, name: string, defaultQty: number = 1) => {
@@ -428,6 +464,16 @@ export default function CentralLeadBookingModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
+    const effectiveCustomer = selectedCustomer || initialCustomer;
+    if (!isNewCustomerMode && effectiveCustomer && !canStartSalesDeal(effectiveCustomer) && !saveCheckpoint.current?.leadId) {
+      setErrorMsg('ลูกค้ารายนี้มีสถานะหลังการจองหรือปิดรายการแล้ว กรุณาใช้อัปเดตสถานะลูกค้าแทนการจองใหม่');
+      return;
+    }
+    if (!salesOwners.some(owner => owner.displayName === agentName)) {
+      setErrorMsg('กรุณาเลือกพนักงานฝ่ายขาย');
+      return;
+    }
     if (!projectName) {
       setErrorMsg('กรุณาเลือกโครงการที่ต้องการจอง');
       return;
@@ -437,7 +483,6 @@ export default function CentralLeadBookingModal({
       return;
     }
 
-    const effectiveCustomer = selectedCustomer || initialCustomer;
     const effectiveName = isNewCustomerMode ? walkInName.trim() : (effectiveCustomer?.name || effectiveCustomer?.customer_name || '');
     const effectivePhone = isNewCustomerMode ? walkInPhone.trim() : (effectiveCustomer?.phone || '');
 
@@ -451,12 +496,34 @@ export default function CentralLeadBookingModal({
       setErrorMsg('กรุณาระบุจำนวนเงินจองให้ถูกต้อง');
       return;
     }
+    // The select label may differ from the actual plot primary key. Never book
+    // or update another project through a broad label-based mutation.
+    const resolvedPlotId = plotInfo?.id;
+    if (!resolvedPlotId || loadingPlotInfo || plotInfo.project_name !== projectName) {
+      setErrorMsg('กรุณารอข้อมูลแปลงที่เลือกโหลดสำเร็จก่อนบันทึกการจอง');
+      return;
+    }
+
+    const fingerprint = JSON.stringify({ customerId: isNewCustomerMode ? null : effectiveCustomer?.id,
+      effectiveName, effectivePhone, projectName, plotId, resolvedPlotId, agentName, listPrice, discount, deposit,
+      promoMode, freebieDiscount, selectedFreebies, paymentMethod, contractDueDate, notes });
+    if (saveCheckpoint.current && saveCheckpoint.current.fingerprint !== fingerprint) {
+      setErrorMsg('บันทึกการจองบางส่วนแล้ว กรุณาคงข้อมูลเดิมแล้วกดบันทึกอีกครั้งเพื่อดำเนินการส่วนที่เหลือ');
+      return;
+    }
+    const checkpoint = saveCheckpoint.current || {
+      fingerprint, leadId: null, promotionsDeleted: false, promotionsSaved: false,
+      activitySaved: false, plotSaved: false, saleId: null, saleSaved: false, saleAttempted: false,
+      summary: null, occurredAt: null
+    };
+    let phase = 'ข้อมูลลูกค้า';
 
     setIsSubmitting(true);
     setErrorMsg('');
 
     try {
-      const now = new Date();
+      const now = new Date(checkpoint.occurredAt || Date.now());
+      checkpoint.occurredAt = now.toISOString();
       const timeBangkokStr = now.toLocaleDateString('th-TH', { 
         day: '2-digit', month: 'short', year: 'numeric', 
         hour: '2-digit', minute: '2-digit' 
@@ -469,7 +536,7 @@ export default function CentralLeadBookingModal({
             : '• โปรโมชั่นของแถม: ไม่ได้รับของแถม')
         : `• โปรโมชั่นของแถม: ไม่รับของแถมทุกรายการ — เปลี่ยนเป็นส่วนลดเงินสด ฿${rawFreebieDiscount.toLocaleString('th-TH')} บาท`;
 
-      const bookingSummary = `[${timeBangkokStr} 🏷️ บันทึกการจอง โดย ${agentName || 'ทีมขาย'}]\n` +
+      const bookingSummary = checkpoint.summary || (`[${timeBangkokStr} 🏷️ บันทึกการจอง โดย ${agentName || 'ทีมขาย'}]\n` +
         `• โครงการ: ${projectName} (แปลง ${plotId})\n` +
         (rawListPrice > 0 ? `• ราคาก่อนส่วนลด: ฿${rawListPrice.toLocaleString('th-TH')} บาท\n` : '') +
         (rawDiscount > 0 ? `• ส่วนลดโปรโมชั่น: ฿${rawDiscount.toLocaleString('th-TH')} บาท\n` : '') +
@@ -479,12 +546,13 @@ export default function CentralLeadBookingModal({
         `• เงินจองที่รับ: ฿${depositNum.toLocaleString('th-TH')} บาท (${paymentMethod === 'mortgage' ? 'กู้ธนาคาร' : 'เงินสด'})\n` +
         (contractDueDate ? `• กำหนดทำสัญญา: ${contractDueDate}\n` : '') +
         `${freebieSummaryText}\n` +
-        (notes.trim() ? `• หมายเหตุ/เงื่อนไขพิเศษ: ${notes.trim()}` : '');
+        (notes.trim() ? `• หมายเหตุ/เงื่อนไขพิเศษ: ${notes.trim()}` : ''));
+      checkpoint.summary = bookingSummary;
 
-      let leadId = effectiveCustomer?.id || null;
+      let leadId = checkpoint.leadId || (isNewCustomerMode ? null : effectiveCustomer?.id) || null;
 
       // 2. Update existing lead or create new lead in leads table
-      if (leadId) {
+      if (!checkpoint.leadId && leadId) {
         const combinedNotes = effectiveCustomer.notes 
           ? `${bookingSummary}\n\n---\n${effectiveCustomer.notes}` 
           : bookingSummary;
@@ -497,16 +565,19 @@ export default function CentralLeadBookingModal({
             auto_status: `จองแปลง ${plotId} (${projectName})`,
             project_name: projectName,
             interested_plot_name: plotId,
+            interested_plot_id: resolvedPlotId,
+            booking_date: now.toISOString(),
+            booking_amount: depositNum,
             notes: combinedNotes,
-            sales_owner: agentName || 'ทีมขาย',
+            agent_name: agentName || 'ทีมขาย',
             updated_at: now.toISOString()
           })
           .eq('id', leadId);
 
-        if (updateLeadError) {
-          console.warn('Could not update lead table:', updateLeadError);
-        }
-      } else {
+        if (updateLeadError) throw updateLeadError;
+        checkpoint.leadId = leadId;
+        saveCheckpoint.current = checkpoint;
+      } else if (!checkpoint.leadId) {
         // Create new lead in leads table
         const { data: newLeadData, error: createLeadErr } = await supabase
           .from('leads')
@@ -520,7 +591,10 @@ export default function CentralLeadBookingModal({
             crm_status: 'Booked — วางเงินจองแปลงแล้ว',
             auto_status: `จองแปลง ${plotId} (${projectName})`,
             interested_plot_name: plotId,
-            sales_owner: agentName || 'ทีมขาย',
+            interested_plot_id: resolvedPlotId,
+            booking_date: now.toISOString(),
+            booking_amount: depositNum,
+            agent_name: agentName || 'ทีมขาย',
             created_by_agent: agentName || 'ทีมขาย',
             notes: bookingSummary,
             created_at: now.toISOString(),
@@ -529,69 +603,114 @@ export default function CentralLeadBookingModal({
           .select('id')
           .single();
 
-        if (createLeadErr) console.warn('Could not insert new lead:', createLeadErr);
+        if (createLeadErr) throw createLeadErr;
         leadId = newLeadData?.id || null;
+        if (!leadId) throw new Error('ไม่ได้รับรหัสลูกค้าหลังบันทึก');
+        checkpoint.leadId = leadId;
+        saveCheckpoint.current = checkpoint;
+      }
+
+      // Both Lead and Project Map edit this exact native sale after booking.
+      // A fixed attempt ID lets an uncertain reply be recovered without a new sale.
+      if (!checkpoint.saleSaved) {
+        phase = 'รายการขาย';
+        checkpoint.saleId ??= crypto.randomUUID();
+        saveCheckpoint.current = checkpoint;
+        if (checkpoint.saleAttempted) {
+          const { data: existingSale, error: readSaleError } = await supabase.from('sales')
+            .select('id, lead_id, plot_id').eq('id', checkpoint.saleId).maybeSingle();
+          if (readSaleError) throw readSaleError;
+          if (existingSale) {
+            if (existingSale.id !== checkpoint.saleId || existingSale.lead_id !== leadId || existingSale.plot_id !== resolvedPlotId) {
+              throw new Error('รหัสรายการขายไม่ตรงกับลูกค้าหรือแปลงที่เลือก กรุณาตรวจสอบก่อนทำต่อ');
+            }
+            checkpoint.saleSaved = true;
+          }
+        }
+        if (!checkpoint.saleSaved) {
+          checkpoint.saleAttempted = true;
+          const { data: newSale, error: saleError } = await supabase.from('sales').insert([{
+            id: checkpoint.saleId,
+            lead_id: leadId,
+            plot_id: resolvedPlotId,
+            contract_status: 'Reserved',
+            crm_stage: 'booked',
+            payment_method: paymentMethod,
+            list_price: rawListPrice,
+            discount_amount: totalDiscount,
+            sale_price: netSellingPrice,
+            booking_amount: depositNum,
+            bank_name: paymentMethod === 'cash' ? 'ซื้อเงินสด' : null,
+            booked_at: now.toISOString(),
+            created_at: now.toISOString(),
+            updated_at: now.toISOString(),
+          }]).select('id').single();
+          if (saleError) throw saleError;
+          if (newSale?.id !== checkpoint.saleId) throw new Error('ไม่ได้รับรหัสรายการขายที่ตรงกันหลังบันทึก');
+          checkpoint.saleSaved = true;
+        }
       }
 
       // 3. Sync plot_promotions table
-      const resolvedPlotId = plotInfo?.id || plotId;
-      if (resolvedPlotId) {
-        try {
-          // Remove existing promotions for this plot
-          await supabase
+      if (resolvedPlotId && !checkpoint.promotionsSaved) {
+        phase = 'รายการของแถม';
+        // Remove existing promotions for this plot
+        if (!checkpoint.promotionsDeleted) {
+          const { error } = await supabase
             .from('plot_promotions')
             .delete()
             .or(`plot_id.eq.${resolvedPlotId},plot_id.eq.${plotId}`);
-
-          // If promoMode === 'freebies', insert selected freebies with status 'pending'
-          if (promoMode === 'freebies' && selectedFreebies.length > 0) {
-            const promoRows = selectedFreebies.map(f => ({
-              plot_id: resolvedPlotId,
-              category: f.category || 'ทั่วไป',
-              item_name: f.item_name,
-              quantity: f.quantity || 1,
-              status: 'pending',
-              created_at: now.toISOString(),
-              updated_at: now.toISOString()
-            }));
-            await supabase.from('plot_promotions').insert(promoRows);
-          }
-        } catch (promoSyncErr) {
-          console.warn('Could not sync plot_promotions:', promoSyncErr);
+          if (error) throw error;
+          checkpoint.promotionsDeleted = true;
         }
+
+        // If promoMode === 'freebies', insert selected freebies with status 'pending'
+        if (promoMode === 'freebies' && selectedFreebies.length > 0) {
+          const promoRows = selectedFreebies.map(f => ({
+            plot_id: resolvedPlotId,
+            category: f.category || 'ทั่วไป',
+            item_name: f.item_name,
+            quantity: f.quantity || 1,
+            status: 'pending',
+            created_at: now.toISOString(),
+            updated_at: now.toISOString()
+          }));
+          const { error } = await supabase.from('plot_promotions').insert(promoRows);
+          if (error) throw error;
+        }
+        checkpoint.promotionsSaved = true;
       }
 
-      // 4. Try to record into lead_activities
-      if (leadId) {
-        try {
-          await supabase
-            .from('lead_activities')
-            .insert([{
-              customer_id: leadId,
-              activity_type: 'note',
-              result: 'contact_success',
-              occurred_at: now.toISOString(),
-              note: bookingSummary,
-              next_follow_up_at: contractDueDate ? `${contractDueDate}T10:00:00+07:00` : null
-            }]);
-        } catch (err) {
-          console.warn('Could not insert booking to lead_activities (non-blocking):', err);
-        }
+      // 4. Record into lead_activities once this form acknowledges the write
+      if (leadId && !checkpoint.activitySaved) {
+        phase = 'ประวัติการจอง';
+        const { error } = await supabase
+          .from('lead_activities')
+          .insert([{
+            customer_id: leadId,
+            activity_type: 'note',
+            result: 'contact_success',
+            occurred_at: now.toISOString(),
+            note: bookingSummary,
+            next_follow_up_at: contractDueDate ? `${contractDueDate}T10:00:00+07:00` : null
+          }]);
+        if (error) throw error;
+        checkpoint.activitySaved = true;
       }
 
       // 5. Try to update plot status in plots table
-      try {
-        await supabase
+      if (!checkpoint.plotSaved) {
+        phase = 'สถานะแปลง';
+        const { error } = await supabase
           .from('plots')
           .update({ 
             sale_status: 'Reserved',
-            status: 'Booked',
             has_customer: true,
             highlight_note: `จอง: ${effectiveName}`
           })
-          .or(`id.eq.${plotId},plot_name.eq.${plotId},id.eq.${projectName}-${plotId}`);
-      } catch (err) {
-        // Non-blocking
+          .eq('id', resolvedPlotId);
+        if (error) throw error;
+        checkpoint.plotSaved = true;
       }
 
       const successNotice = `บันทึกการจองแปลง "${plotId}" (${projectName}) ให้ "${effectiveName}" สำเร็จแล้ว! (ราคาขายสุทธิ: ฿${netSellingPrice.toLocaleString('th-TH')} บาท, เงินจอง: ฿${depositNum.toLocaleString('th-TH')} บาท)`;
@@ -599,7 +718,10 @@ export default function CentralLeadBookingModal({
       onClose();
     } catch (err: any) {
       console.error('Error saving booking:', err);
-      setErrorMsg(err.message || 'เกิดข้อผิดพลาดในการบันทึกการจอง');
+      const detail = err.message || 'เกิดข้อผิดพลาดในการบันทึกการจอง';
+      setErrorMsg(checkpoint.leadId
+        ? `บันทึกการจองบางส่วนแล้ว แต่${phase}ไม่สำเร็จ: ${detail} กรุณากดบันทึกอีกครั้งโดยคงข้อมูลเดิม (ไม่สร้างลูกค้าหรือประวัติที่บันทึกแล้วซ้ำ)`
+        : `บันทึก${phase}ไม่สำเร็จ: ${detail}`);
     } finally {
       setIsSubmitting(false);
     }
@@ -611,7 +733,7 @@ export default function CentralLeadBookingModal({
 
   return (
     <>
-      <div className="fixed inset-0 z-[300] flex items-center justify-center p-3 sm:p-6 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-200">
+      <SalesOverlay className="fixed inset-0 z-[300] flex items-center justify-center p-3 sm:p-6 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-200">
         <div 
           className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[88vh] my-auto animate-in zoom-in-95 duration-200"
           role="dialog"
@@ -668,7 +790,7 @@ export default function CentralLeadBookingModal({
           {/* Modal Form Body */}
           <form id="booking-form" onSubmit={handleSubmit} className="p-6 overflow-y-auto flex-1 space-y-4">
             {errorMsg && (
-              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 font-medium flex items-start gap-2 animate-in fade-in">
+              <div role="alert" className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 font-medium flex items-start gap-2 animate-in fade-in">
                 <AlertCircle size={16} className="text-rose-500 shrink-0 mt-0.5" />
                 <span>{errorMsg}</span>
               </div>
@@ -688,9 +810,9 @@ export default function CentralLeadBookingModal({
                     setSelectedCustomer(null);
                     setWalkInName('');
                     setWalkInPhone('');
-                    const defaultUser = currentUser?.displayName || currentUser?.username || currentUser?.name || salesOwners[0]?.displayName || 'ทีมขาย';
+                    const defaultUser = selectSalesStaffName(salesOwners, [currentUser?.displayName, currentUser?.username, currentUser?.name]);
                     setAgentName(defaultUser);
-                    setOwnerSource('current_user');
+                    setOwnerSource(defaultUser && [currentUser?.displayName, currentUser?.username, currentUser?.name].includes(defaultUser) ? 'current_user' : 'manual');
                   }
                 }}
                 label="เลือกลูกค้าผู้จองจาก Lead CRM"
@@ -803,6 +925,12 @@ export default function CentralLeadBookingModal({
                     </span>
                   )}
                 </div>
+
+                {plotInfo.constructionStatusUnavailable && (
+                  <p role="alert" className="mb-3 text-xs font-medium text-amber-800">
+                    ยังตรวจสอบสถานะเทียบแผนไม่ได้ กรุณาเปิดหน้าต่างใหม่เพื่อลองอีกครั้ง
+                  </p>
+                )}
 
                 <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-center">
                   {/* House Picture with Lightbox zoom button */}
@@ -1335,15 +1463,12 @@ export default function CentralLeadBookingModal({
               >
                 {salesOwners.length > 0 ? (
                   <>
-                    {agentName && !salesOwners.some(o => o.displayName === agentName) && (
-                      <option value={agentName}>{agentName}</option>
-                    )}
                     {salesOwners.map(o => (
                       <option key={o.userId} value={o.displayName}>{o.displayName}</option>
                     ))}
                   </>
                 ) : (
-                  <option value={agentName || "ทีมขาย"}>{agentName || "ทีมขาย"}</option>
+                  <option value="" disabled>ไม่พบพนักงานฝ่ายขาย</option>
                 )}
               </select>
               <div className="text-[10px] text-slate-500 font-medium flex items-center justify-between flex-wrap gap-1">
@@ -1401,11 +1526,11 @@ export default function CentralLeadBookingModal({
             </button>
           </div>
         </div>
-      </div>
+      </SalesOverlay>
 
       {/* 🌟 Lightbox Image Zoom Modal */}
       {fullImageUrl && (
-        <div 
+        <SalesOverlay
           className="fixed inset-0 z-[400] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200"
           onClick={() => setFullImageUrl(null)}
         >
@@ -1424,7 +1549,7 @@ export default function CentralLeadBookingModal({
               className="max-h-[85vh] w-auto object-contain rounded-xl shadow-2xl" 
             />
           </div>
-        </div>
+        </SalesOverlay>
       )}
     </>
   );

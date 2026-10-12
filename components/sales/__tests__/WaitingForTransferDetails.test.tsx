@@ -1,6 +1,7 @@
 import React from 'react';
 import { render, screen, cleanup, act } from '@testing-library/react';
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { supabase } from '@/lib/supabase';
 import WaitingForTransferDetails from '../WaitingForTransferDetails';
 
 // Mock Supabase
@@ -19,8 +20,18 @@ vi.mock('@/lib/supabase', () => ({
 }));
 
 afterEach(cleanup);
+beforeEach(() => vi.clearAllMocks());
 
 describe('WaitingForTransferDetails component', () => {
+  it('keeps the current booking forecast unknown despite stale active-sale and plot aliases', async () => {
+    await act(async () => {
+      render(<WaitingForTransferDetails plots={[{ id: 'plot-unknown', plot_name: '1', project_name: 'Project',
+        expected_transfer_date: '2026-10-30', activeSale: { expectedTransferDate: '2026-10-30', stage: 'booked' } }]}
+        validRecords={[{ id: 'sale-current', plot_id: 'plot-unknown', expectedTransfer: null, status: 'Reserved' }]} />);
+    });
+    expect(screen.getByText('คาดการณ์: ยังไม่ระบุ')).toBeInTheDocument();
+    expect(vi.mocked(supabase.from).mock.calls.filter(call => call[0] === 'task_templates')).toHaveLength(1);
+  });
   const samplePlot = {
     id: 'plot-ailin4-26',
     plot_name: '26',

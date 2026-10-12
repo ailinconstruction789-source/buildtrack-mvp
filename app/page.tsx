@@ -1,10 +1,24 @@
 
 'use client';
 import React, { useState, useEffect, useMemo, useCallback, useTransition, useRef } from 'react';
+import SalesOverlay from '@/components/sales/SalesOverlay';
 import dynamic from 'next/dynamic';
 import { supabase } from '@/lib/supabase';
 import { useBuildTrackData } from '@/hooks/useBuildTrackData';
+import { useCommittedRequestScope } from '@/hooks/useCommittedRequestScope';
+import { useConstructionBillingData } from '@/hooks/useConstructionBillingData';
+import { useConstructionPreviewLifetime } from '@/hooks/useConstructionPreviewLifetime';
+import { appendConstructionPreviewFiles } from '@/lib/constructionPreviewFiles';
+import { buildConstructionLiveFeed } from '@/lib/constructionLiveFeed';
+import { useTrustedAccountSession } from '@/hooks/useTrustedAccountSession';
+import { TRUSTED_AUTH_ENABLED, TRUSTED_AUTH_ERROR } from '@/lib/auth/trustedActor';
 import { GUARDED_ACCOUNT_COMMANDS_ENABLED, runGuardedAccountCommand } from '@/lib/auth/accountCommands';
+
+// Enable only with the reviewed actor grants, presence RPC and role mappings.
+// The existing account feature flag alone must not cut over the legacy shell.
+const LEGACY_AUTHORIZATION_CUTOVER_ENABLED = TRUSTED_AUTH_ENABLED
+  && process.env.NEXT_PUBLIC_LEGACY_AUTHORIZATION_CUTOVER_ENABLED === 'true';
+const ROOT_IDLE_MS = 24 * 60 * 60 * 1000;
 
 const LoginScreen = dynamic(() => import('@/components/LoginScreen'));
 const DashboardOverview = dynamic(() => import('@/components/DashboardOverview'));
@@ -166,11 +180,35 @@ export default function ConstructionApp() {
   // 1. STATES
   // ==========================================
   // Extracted: [allUsers,
-  const [loggedInUser, setLoggedInUser] = useState<any>(null);
+  const [legacyLoggedInUser, setLoggedInUser] = useState<any>(null);
+  const [logoutLocked, setLogoutLocked] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const logoutLockedRef = useRef(false);
+  const logoutPendingRef = useRef(false);
+  const legacyAuthEpoch = useRef(0);
+  const trustedSession = useTrustedAccountSession(LEGACY_AUTHORIZATION_CUTOVER_ENABLED, supabase, { idleMs: ROOT_IDLE_MS });
+  const trustedUiUser = useMemo(() => trustedSession.actor ? {
+    username: trustedSession.actor.username,
+    role: trustedSession.actor.role,
+    id: trustedSession.actor.legacyUserId,
+    userId: trustedSession.actor.authUserId,
+    authUserId: trustedSession.actor.authUserId,
+    canManageAccounts: trustedSession.actor.canManageAccounts,
+  } : null, [trustedSession.actor]);
+  const loggedInUser = logoutLocked ? null : LEGACY_AUTHORIZATION_CUTOVER_ENABLED ? trustedUiUser : legacyLoggedInUser;
+  const canManageAccounts = !LEGACY_AUTHORIZATION_CUTOVER_ENABLED || trustedUiUser?.canManageAccounts === true;
   const hasInitialRedirectedRef = useRef(false);
+  const [hasOpenedSalesDashboard, setHasOpenedSalesDashboard] = useState(false);
   const [loginData, setLoginData] = useState({ username: '', pin: '' });
 
   const [selectedProject, setSelectedProject] = useState<any>(null);
+  const [view, setViewInternal] = useState('dashboard');
+  const [loadingView, setLoadingView] = useState<string | null>(null);
+  const activeView = loadingView || view;
+  // Sales opens its own workspace. Construction detail rows are requested when
+  // navigating to a view that consumes them, rather than on that landing screen.
+  const salesWorkspaceOnly = activeView === 'my-sales-workspace';
+  const constructionOverviewOnly = activeView === 'dashboard';
   const {
     loading, setLoading,
     projects, setProjects,
@@ -188,6 +226,8 @@ export default function ConstructionApp() {
     taskDates, setTaskDates,
     allUpdatesRecord, setAllUpdatesRecord,
     fetchAllData,
+    loadSalesStartupData,
+    salesDataRevision,
     fetchPlotDetails,
     fetchOwnerAnalyticsData,
     togglePlotSaleStatus,
@@ -197,13 +237,12 @@ export default function ConstructionApp() {
     materialReceipts, setMaterialReceipts, inspectionQueueView, plotStatuses, plotOverallStatuses, qcSePerformance,
     isAnalyticsLoading,
     isArchiveSyncing,
-    archiveSyncSuccess } = useBuildTrackData(loggedInUser, selectedProject?.name);
+    archiveSyncSuccess } = useBuildTrackData(loggedInUser, selectedProject?.name, salesWorkspaceOnly, constructionOverviewOnly);
 
 
-  const [view, setViewInternal] = useState('dashboard');
-  const [loadingView, setLoadingView] = useState<string | null>(null);
 
   const setView = useCallback((newView: any) => {
+    if (newView === 'sales-dashboard-excel') setHasOpenedSalesDashboard(true);
     if (newView === 'global-feed') {
       setSelectedProject(null);
     }
@@ -221,7 +260,6 @@ export default function ConstructionApp() {
   const [defectReturnView, setDefectReturnView] = useState('dashboard');
   const [activeHouseTab, setActiveHouseTab] = useState('construction');
   const [selectedDefect, setSelectedDefect] = useState<any>(null);
-  const activeView = loadingView || view;
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
   const [selectedPlot, setSelectedPlot] = useState<any>(null);
   const [selectedTask, setSelectedTask] = useState<any>(null);
@@ -301,6 +339,12 @@ export default function ConstructionApp() {
   };
 
   const [updates, setUpdates] = useState<any[]>([]);
+  const actorScopeKey = JSON.stringify([loggedInUser?.id, loggedInUser?.authUserId, loggedInUser?.username, loggedInUser?.role]);
+  const captureActorScope = useCommittedRequestScope(actorScopeKey);
+  const captureTimelineScope = useCommittedRequestScope(JSON.stringify([
+    activeView, selectedPlot?.id, selectedTask?.id, selectedDefect?.id,
+    loggedInUser?.id, loggedInUser?.authUserId, loggedInUser?.username, loggedInUser?.role,
+  ]));
   // Extracted: [allUpdatesRecord, 
   // Extracted: [latestUpdatesMap,
   // Extracted: [taskDates, 
@@ -319,50 +363,7 @@ export default function ConstructionApp() {
   const [weatherInfo, setWeatherInfo] = useState<any>(null);
   const [showWeatherWidget, setShowWeatherWidget] = useState(false);
 
-  // 📝 Billing Queue States
-  const [billingData, setBillingData] = useState<any[]>([]);
-  const [loadingBilling, setLoadingBilling] = useState(false);
-
-  const fetchBillingData = useCallback(async () => {
-    setLoadingBilling(true);
-    try {
-      let allData: any[] = [];
-      let from = 0;
-      const limit = 1000;
-      let hasMore = true;
-
-      while (hasMore) {
-        const { data: chunk, error } = await supabase
-          .from('vw_billing_queue')
-          .select('*')
-          .order('latest_update_created_at', { ascending: false })
-          .range(from, from + limit - 1);
-          
-        if (error) throw error;
-        
-        if (chunk && chunk.length > 0) {
-          allData = [...allData, ...chunk];
-          if (chunk.length < limit) {
-            hasMore = false;
-          } else {
-            from += limit;
-          }
-        } else {
-          hasMore = false;
-        }
-      }
-      setBillingData(allData);
-    } catch (err: any) {
-      console.error('Error fetching billing data:', err);
-    }
-    setLoadingBilling(false);
-  }, []);
-
-  useEffect(() => {
-    if (view === 'billing-queue') {
-      fetchBillingData();
-    }
-  }, [view, fetchBillingData]);
+  const { billingData, loadingBilling, fetchBillingData, setBillingData } = useConstructionBillingData(loggedInUser, view === 'billing-queue');
 
   // 🌟 ฟังก์ชันแปลรหัสสภาพอากาศ (WMO Code) เป็นภาษาไทย + ไอคอน
   const getWeatherDetails = (code: number) => {
@@ -549,6 +550,7 @@ export default function ConstructionApp() {
   const [isSending, setIsSending] = useState(false);
 
   const [selectedFiles, setSelectedFiles] = useState<any[]>([]);
+  useConstructionPreviewLifetime(selectedFiles, actorScopeKey, () => setSelectedFiles([]));
   const [fullImageUrl, setFullImageUrl] = useState<any>(null);
   const [galleryImages, setGalleryImages] = useState<{url: string, label?: string}[]>([]);
   const [galleryIndex, setGalleryIndex] = useState<number>(0);
@@ -590,16 +592,12 @@ export default function ConstructionApp() {
     } else if (view === 'global-feed' && !loadingView && mainScrollRef.current) {
       const savedPos = globalFeedScrollPos.current;
       if (savedPos > 0) {
-        requestAnimationFrame(() => {
-          if (mainScrollRef.current) {
-            mainScrollRef.current.scrollTop = savedPos;
-          }
-        });
-        setTimeout(() => {
-          if (mainScrollRef.current) {
-            mainScrollRef.current.scrollTop = savedPos;
-          }
-        }, 60);
+        const restore = () => {
+          if (mainScrollRef.current) mainScrollRef.current.scrollTop = savedPos;
+        };
+        const frame = requestAnimationFrame(restore);
+        const timer = setTimeout(restore, 60);
+        return () => { cancelAnimationFrame(frame); clearTimeout(timer); };
       }
     }
   }, [view, loadingView]);
@@ -610,105 +608,9 @@ export default function ConstructionApp() {
 
   // 📜 รวมกิจกรรมไซต์งานทั้งหมด (งานก่อสร้างทั่วไป + งานตรวจรับมอบบ้าน Handover)
   const liveFeedItems = useMemo(() => {
-    const items: any[] = [];
-
-    // 1. งานก่อสร้างทั่วไปจาก task_updates
-    (allUpdatesRecord || []).filter((u: any) => !u.is_silent).forEach((u: any) => {
-      const task = taskTemplates.find((t: any) => t.id === u.task_template_id);
-      const isHandoverTask = Boolean(
-        (task?.task_name && task.task_name.includes('ตรวจรับ')) || 
-        (typeof u.action === 'string' && u.action.includes('ตรวจรับ')) ||
-        u.is_handover
-      );
-      items.push({
-        ...u,
-        id: u.id,
-        task_name: task ? task.task_name : (u.action || 'งานก่อสร้าง'),
-        is_handover: isHandoverTask,
-        feed_category: isHandoverTask ? 'handover' : 'construction'
-      });
-    });
-
-    // 2. งานตรวจรับมอบบ้าน: การอัปเดตงานซ่อม/Defect จาก defect_updates
-    (defectUpdates || []).forEach((du: any) => {
-      const defect = (defects || []).find((d: any) => d.id === du.defect_id);
-      if (defect) {
-        const task = taskTemplates.find((t: any) => t.id === (defect.task_template_id || defect.task_id));
-        const contractor = (contractors || []).find((c: any) => String(c.id) === String(defect.contractor_id));
-        const isCompleted = du.progress === 100;
-        items.push({
-          id: `defect-upd-${du.id}`,
-          defect: defect,
-          plot_id: defect.plot_id,
-          task_template_id: defect.task_template_id || defect.task_id,
-          task_name: defect.description || task?.task_name || 'งานแก้ไขตรวจรับมอบบ้าน',
-          user_name: du.created_by || 'ช่างผู้รับเหมา',
-          role: du.created_by && du.created_by.includes('QC') ? 'QC' : (du.created_by && du.created_by.includes('Foreman') ? 'Foreman' : 'ช่างซ่อม/ผู้รับเหมา'),
-          action: isCompleted ? 'แก้ไข Defect เสร็จสิ้น 100%' : `อัปเดตงานแก้ไข Defect (${du.progress}%)`,
-          text_content: du.note || `อัปเดตความคืบหน้า ${du.progress}%`,
-          progress: du.progress || 0,
-          is_completed: isCompleted,
-          image_url: du.image_urls,
-          created_at: du.created_at,
-          is_handover: true,
-          handover_round: defect.inspection_round,
-          handover_cycle: defect.handover_cycle,
-          defect_description: defect.description,
-          contractor_name: contractor ? contractor.name : null,
-          feed_category: 'handover'
-        });
-      }
-    });
-
-    // 3. งานตรวจรับมอบบ้าน: รายการ Defect ที่เปิดตรวจรับในรอบต่างๆ
-    (defects || []).filter((d: any) => d.defect_stage === 'handover').forEach((d: any) => {
-      const task = taskTemplates.find((t: any) => t.id === (d.task_template_id || d.task_id));
-      const contractor = (contractors || []).find((c: any) => String(c.id) === String(d.contractor_id));
-      items.push({
-        id: `defect-init-${d.id}`,
-        defect: d,
-        plot_id: d.plot_id,
-        task_template_id: d.task_template_id || d.task_id,
-        task_name: d.description || task?.task_name || 'แจ้งรายการตรวจรับมอบบ้าน',
-        user_name: d.reported_by || d.reporter_name || 'ผู้ตรวจรับมอบบ้าน',
-        role: 'ตรวจรับมอบบ้าน',
-        action: `บันทึกรายการตรวจรับบ้าน (รอบที่ ${d.inspection_round || 1})`,
-        text_content: d.description || 'พบรายการที่ต้องแก้ไขในการตรวจรับมอบบ้าน',
-        progress: d.progress || 0,
-        is_completed: d.progress === 100,
-        image_url: d.image_url,
-        created_at: d.created_at,
-        is_handover: true,
-        handover_round: d.inspection_round,
-        handover_cycle: d.handover_cycle,
-        contractor_name: contractor ? contractor.name : null,
-        feed_category: 'handover'
-      });
-    });
-
-    // 4. งานตรวจรับมอบบ้าน: แปลงที่อนุมัติผ่านและปิดการตรวจรับมอบบ้านสำเร็จ
-    (plots || []).filter((p: any) => p.handover_status === 'completed' && p.handover_completed_at).forEach((p: any) => {
-      items.push({
-        id: `plot-handover-done-${p.id}`,
-        plot_id: p.id,
-        task_name: 'ตรวจรับมอบบ้านสำเร็จสมบูรณ์',
-        user_name: p.handover_completed_by || 'Admin',
-        role: 'ผู้มีอำนาจอนุมัติ',
-        action: '🏆 อนุมัติผ่านและปิดการตรวจรับมอบบ้าน',
-        text_content: `แปลง ${p.id} ผ่านการตรวจรับมอบบ้านเรียบร้อยแล้วทุกรายการ ส่งมอบบ้านสำเร็จ`,
-        progress: 100,
-        is_completed: true,
-        created_at: p.handover_completed_at,
-        is_handover: true,
-        is_handover_completed: true,
-        handover_round: p.inspection_round,
-        feed_category: 'handover'
-      });
-    });
-
-    // เรียงลำดับจากล่าสุดไปเก่าสุด
-    return items.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-  }, [allUpdatesRecord, defectUpdates, defects, plots, taskTemplates, contractors]);
+    if (view !== 'global-feed') return [];
+    return buildConstructionLiveFeed({ allUpdatesRecord, defectUpdates, defects, plots, taskTemplates, contractors });
+  }, [view, allUpdatesRecord, defectUpdates, defects, plots, taskTemplates, contractors]);
 
   const filteredLiveFeedItems = useMemo(() => {
     if (feedCategoryFilter === 'all') return liveFeedItems;
@@ -760,6 +662,7 @@ export default function ConstructionApp() {
   const [defectModal, setDefectModal] = useState<any>({ isOpen: false, task: null, plotId: '' });
   const [newDefectText, setNewDefectText] = useState('');
   const [defectFiles, setDefectFiles] = useState<any[]>([]);
+  useConstructionPreviewLifetime(defectFiles, actorScopeKey, () => setDefectFiles([]));
   const [isSubmittingDefect, setIsSubmittingDefect] = useState(false);
 
   // ==========================================
@@ -835,13 +738,16 @@ export default function ConstructionApp() {
 
   // 🌟 ระบบจำการล็อกอิน และตรวจจับเวลาหมดอายุ พร้อม Token Auto-Refresh ป้องกันการหลุดการเชื่อมต่อ 🌟
   useEffect(() => {
+    if (LEGACY_AUTHORIZATION_CUTOVER_ENABLED) return;
     // กำหนดเวลา Timeout สำหรับกรณีไม่ได้ใช้งานเลยเป็นเวลา 24 ชั่วโมง (เพื่อความสะดวกของช่างหน้างาน)
     const TIMEOUT_MS = 24 * 60 * 60 * 1000;
     
     // 🛡️ เช็ค Session จาก Supabase Auth โดยตรง
     const checkSession = async () => {
+      const ticket = legacyAuthEpoch.current;
       try {
         const { data: { session }, error } = await supabase.auth.getSession();
+        if (ticket !== legacyAuthEpoch.current || logoutLockedRef.current) return;
         if (error || !session) {
           setLoggedInUser(null);
           localStorage.removeItem('buildtrack_last_active');
@@ -850,6 +756,7 @@ export default function ConstructionApp() {
 
         const lastActive = localStorage.getItem('buildtrack_last_active');
         if (!lastActive || (Date.now() - parseInt(lastActive) < TIMEOUT_MS)) {
+          if (session.user.user_metadata?.role?.toLowerCase() === 'sales') setView('my-sales-workspace');
           setLoggedInUser(session.user.user_metadata);
           localStorage.setItem('buildtrack_last_active', Date.now().toString());
         } else {
@@ -868,8 +775,10 @@ export default function ConstructionApp() {
       if (event === 'SIGNED_OUT') {
         setLoggedInUser(null);
         localStorage.removeItem('buildtrack_last_active');
-      } else if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
+      } else if ((event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') && !logoutLockedRef.current) {
         if (session?.user?.user_metadata) {
+          if (event === 'SIGNED_IN' && !hasInitialRedirectedRef.current
+            && session.user.user_metadata.role?.toLowerCase() === 'sales') setView('my-sales-workspace');
           setLoggedInUser(session.user.user_metadata);
           localStorage.setItem('buildtrack_last_active', Date.now().toString());
         }
@@ -907,6 +816,11 @@ export default function ConstructionApp() {
       clearInterval(interval);
     };
   }, []);
+  useEffect(() => {
+    if (!LEGACY_AUTHORIZATION_CUTOVER_ENABLED || !trustedSession.error) return;
+    setDialogConfig({ isOpen: true, title: 'เข้าสู่ระบบไม่ได้', message: trustedSession.error, type: 'alert', onConfirm: null });
+    trustedSession.dismissError();
+  }, [trustedSession.error, trustedSession.dismissError]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   // loggedInUser fetchAllData extracted
   useEffect(() => { 
@@ -984,6 +898,7 @@ export default function ConstructionApp() {
   }, [fullImageUrl, galleryImages.length]);
   // 🌟 ระบบติดตามสถานะผู้ใช้งาน (Online Tracker)
   useEffect(() => {
+    if (LEGACY_AUTHORIZATION_CUTOVER_ENABLED) return;
     if (!loggedInUser?.username) return;
     
     const updateLastSeen = async () => {
@@ -1008,7 +923,17 @@ export default function ConstructionApp() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   const handleLogin = async () => {
+    if (logoutPendingRef.current || isLoggingIn) return;
+    if (LEGACY_AUTHORIZATION_CUTOVER_ENABLED) {
+      if (!loginData.username || !/^\d{4}$/.test(loginData.pin)) return;
+      const request = trustedSession.login(loginData.username, loginData.pin);
+      logoutLockedRef.current = false;
+      setLogoutLocked(false);
+      await request;
+      return;
+    }
     if (!loginData.username || !loginData.pin) return;
+    const ticket = ++legacyAuthEpoch.current;
     setIsLoggingIn(true);
     try {
       // 🛡️ เข้าสู่ระบบอย่างปลอดภัยผ่าน Supabase Auth
@@ -1016,6 +941,7 @@ export default function ConstructionApp() {
       const password = `${loginData.pin}BT!`;
 
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (ticket !== legacyAuthEpoch.current || logoutPendingRef.current) return;
       
       if (error) {
         setIsLoggingIn(false);
@@ -1024,6 +950,8 @@ export default function ConstructionApp() {
 
       // ดึงข้อมูล User (username, role) ที่เก็บไว้ใน metadata ตอน Migrate
       const userMeta = data.user.user_metadata;
+      logoutLockedRef.current = false;
+      setLogoutLocked(false);
       setLoggedInUser(userMeta);
       localStorage.setItem('buildtrack_last_active', Date.now().toString());
       if (typeof window !== 'undefined') {
@@ -1333,9 +1261,14 @@ export default function ConstructionApp() {
     }
   };
   const handleLogout = () => {
+    if (logoutPendingRef.current) return;
     showConfirm('ยืนยันการออกจากระบบ', 'คุณแน่ใจหรือไม่ว่าต้องการออกจากระบบ?', async () => {
-      // 🛡️ ออกจากระบบผ่าน Supabase Auth
-      await supabase.auth.signOut();
+      if (logoutPendingRef.current) return;
+      logoutPendingRef.current = true;
+      logoutLockedRef.current = true;
+      legacyAuthEpoch.current++;
+      setLogoutLocked(true);
+      setIsLoggingOut(true);
       
       // 🌟 ล้างความจำในเบราว์เซอร์ทิ้ง
       localStorage.removeItem('buildtrack_last_active');
@@ -1353,6 +1286,20 @@ export default function ConstructionApp() {
       setIsMobilePreview(false);
 
       closeDialog(); // ปิดหน้าต่างยืนยัน
+      // Hide account data immediately; do not wait for the remote sign-out response.
+      // Keep the existing logout scope and prevent a new login racing this request.
+      try {
+        if (LEGACY_AUTHORIZATION_CUTOVER_ENABLED) await trustedSession.logout();
+        else {
+          const { error } = await supabase.auth.signOut();
+          if (error) throw error;
+        }
+      } catch {
+        showAlert('ออกจากระบบยังไม่สำเร็จ', 'ข้อมูลบัญชีถูกซ่อนแล้ว แต่เซิร์ฟเวอร์ยังยืนยันการออกจากระบบไม่ได้ กรุณาลองเข้าสู่ระบบใหม่');
+      } finally {
+        logoutPendingRef.current = false;
+        setIsLoggingOut(false);
+      }
     });
   };
 
@@ -1360,7 +1307,7 @@ export default function ConstructionApp() {
     if (!notif.is_read) { await supabase.from('notifications').update({ is_read: true }).eq('id', notif.id); await fetchAllData(); }
     setShowNotifs(false);
     const pInfo = plots.find(p => p.id === notif.plot_id); const pProject = projects.find(pj => pj.name === pInfo?.project_name); const tInfo = taskTemplates.find(t => t.id === notif.task_template_id);
-    if (pInfo && pProject && tInfo) { setSelectedProject(pProject); setSelectedPlot(pInfo); setSelectedTask(tInfo); setView('task-progress'); supabase.from('task_updates').select('*').eq('task_template_id', tInfo.id).eq('plot_id', pInfo.id).order('created_at', { ascending: true }).then(({ data }) => { setUpdates(data || []); setProgressValue(data?.length ? data[data.length - 1].progress : 0); }); }
+    if (pInfo && pProject && tInfo) { setSelectedProject(pProject); setSelectedPlot(pInfo); setSelectedTask(tInfo); setView('task-progress'); }
   };
 
   const handleSaveAllSchedules = async () => {
@@ -1451,6 +1398,7 @@ export default function ConstructionApp() {
   // 🌟 ADMIN / PROCUREMENT FORMS HANDLERS (ฟังก์ชันกรอกข้อมูลทำงานจริง 100%) 🌟
   // =========================================================================
   const handleAddUser = async () => {
+    if (!canManageAccounts) return showAlert('ยืนยันสิทธิ์', TRUSTED_AUTH_ERROR);
     if (!newUser.name.trim() || allUsers.some(u => u.username === newUser.name.trim())) return showAlert('แจ้งเตือน', 'ระบุชื่อให้ถูกต้องและไม่ซ้ำ');
     setIsSubmitting(true);
     try {
@@ -1473,6 +1421,7 @@ export default function ConstructionApp() {
   };
 
   const handleDeleteUser = (id: any, name: any, role: any) => {
+    if (!canManageAccounts) return showAlert('ยืนยันสิทธิ์', TRUSTED_AUTH_ERROR);
     showConfirm('ยืนยันลบ', `ลบผู้ใช้งาน ${name}?`, async () => {
       try {
         if (GUARDED_ACCOUNT_COMMANDS_ENABLED) {
@@ -1490,6 +1439,7 @@ export default function ConstructionApp() {
   };
 
   const handleEditUsername = async (id: string, oldUsername: string) => {
+    if (!canManageAccounts) return showAlert('ยืนยันสิทธิ์', TRUSTED_AUTH_ERROR);
     const newUsername = window.prompt(`เปลี่ยนชื่อ ID สำหรับ ${oldUsername}:`, oldUsername);
     if (!newUsername || newUsername.trim() === '' || newUsername.trim() === oldUsername) return;
     
@@ -1515,6 +1465,7 @@ export default function ConstructionApp() {
   };
 
   const handleEditPassword = async (id: string, username: string) => {
+    if (!canManageAccounts) return showAlert('ยืนยันสิทธิ์', TRUSTED_AUTH_ERROR);
     const newPin = window.prompt(`ตั้งรหัสผ่านใหม่ (PIN 4 หลัก) สำหรับ ${username}:`);
     if (!newPin) return;
     if (!/^\d{4}$/.test(newPin)) return showAlert('แจ้งเตือน', 'รหัสผ่านต้องเป็นตัวเลข 4 หลักเท่านั้น');
@@ -1807,6 +1758,7 @@ export default function ConstructionApp() {
     }
 
     setIsSubmitting(true);
+    let plotsMarkedReady = false;
     try {
       const projPlots = plots.filter((p: any) => p.project_name === selectedProject.name);
       if (projPlots.length === 0) {
@@ -1819,27 +1771,32 @@ export default function ConstructionApp() {
         sale_status: 'ready_for_sale'
       }).eq('project_name', selectedProject.name);
       if (plotError) throw plotError;
-      
-      const plotIds = projPlots.map((p: any) => p.id);
-      await supabase.from('assignments').update({ status: 'completed' }).in('plot_id', plotIds);
+      plotsMarkedReady = true;
 
-      // 2. Call RPC to mark tasks as 100% silently (Process in chunks of 5 to avoid overloading)
+      // The RPC inserts silent task_updates; their trigger updates plot_task_assignments.
+      // Await every request in a batch before reporting failure or starting the next five.
       for (let i = 0; i < projPlots.length; i += 5) {
         const chunk = projPlots.slice(i, i + 5);
-        await Promise.all(chunk.map(async (p: any) => {
-          await supabase.rpc('bulk_mark_plot_completed', {
+        const results = await Promise.allSettled(chunk.map(async (p: any) => {
+          const { error } = await supabase.rpc('bulk_mark_plot_completed', {
             p_plot_id: p.id,
             p_username: loggedInUser.username,
             p_role: loggedInUser.role
           });
+          if (error) throw error;
         }));
+        const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+        if (failure) throw failure.reason;
       }
 
       showToast('อัปเดตข้อมูลโครงการเก่าสำเร็จ', 'success');
       await fetchAllData();
     } catch (e: any) {
       console.error(e);
-      showAlert('ข้อผิดพลาด', e.message || 'เกิดข้อผิดพลาดในการทำรายการ');
+      const message = e.message || 'เกิดข้อผิดพลาดในการทำรายการ';
+      showAlert('ข้อผิดพลาด', plotsMarkedReady
+        ? `${message}\nบางรายการอาจอัปเดตไปแล้ว กรุณาตรวจสอบข้อมูลก่อนลองใหม่`
+        : message);
     } finally {
       setIsSubmitting(false);
     }
@@ -2173,6 +2130,7 @@ export default function ConstructionApp() {
   };
 
   const handleSendPost = async () => {
+    const isCurrentTimeline = captureTimelineScope();
     const isAbsent = !isWorkerPresent;
     const postContent = inputText.trim() || (isAbsent ? 'ไม่มีช่างเข้างาน' : '');
     if ((!postContent && selectedFiles.length === 0) || isSending) return;
@@ -2216,12 +2174,15 @@ export default function ConstructionApp() {
       if (error) throw error;
 
       // 🌟 ดึงประวัติงานสดๆ ทันที เพื่ออัปเดต chat view ให้ผู้ใช้เห็นว่าส่งแล้ว (Instant UI Feedback)
-      const { data } = await supabase.from('task_updates').select('*').eq('task_template_id', selectedTask.id).eq('plot_id', selectedPlot.id).order('created_at', { ascending: true });
-      selectedFiles.forEach(f => { if (f?.previewUrl) URL.revokeObjectURL(f.previewUrl); });
-      setUpdates(data || []); 
-      setInputText(''); 
-      setSelectedFiles([]);
-      setIsWorkerPresent(true);
+      const { data, error: historyError } = await supabase.from('task_updates').select('*').eq('task_template_id', selectedTask.id).eq('plot_id', selectedPlot.id).order('created_at', { ascending: true });
+      if (historyError) throw historyError;
+      if (isCurrentTimeline()) {
+        selectedFiles.forEach(f => { if (f?.previewUrl) URL.revokeObjectURL(f.previewUrl); });
+        setUpdates(data || []);
+        setInputText('');
+        setSelectedFiles([]);
+        setIsWorkerPresent(true);
+      }
       
       // 🌟 โหลดข้อมูลภาพรวมเบื้องหลัง (Background refresh) โดยไม่ใช้ await เพื่อไม่ให้แชทกระตุก
       // ให้ Database Trigger เป็นคนจัดการ update plot_task_assignments อัตโนมัติ (Single Source of Truth)
@@ -2239,6 +2200,7 @@ export default function ConstructionApp() {
 
   // 🌟 ฟังก์ชันส่งการอัปเดตงานซ่อมแซม (Defect)
   const handleSendDefectPost = async () => {
+    const isCurrentTimeline = captureTimelineScope();
     if (isSending || !selectedDefect) return;
     setIsSending(true);
     try {
@@ -2273,11 +2235,14 @@ export default function ConstructionApp() {
       
       if (defectErr) throw defectErr;
 
-      const { data } = await supabase.from('defect_updates').select('*').eq('defect_id', selectedDefect.id).order('created_at', { ascending: true });
-      selectedFiles.forEach(f => { if (f?.previewUrl) URL.revokeObjectURL(f.previewUrl); });
-      setUpdates(data || []); 
-      setInputText(''); 
-      setSelectedFiles([]);
+      const { data, error: historyError } = await supabase.from('defect_updates').select('*').eq('defect_id', selectedDefect.id).order('created_at', { ascending: true });
+      if (historyError) throw historyError;
+      if (isCurrentTimeline()) {
+        selectedFiles.forEach(f => { if (f?.previewUrl) URL.revokeObjectURL(f.previewUrl); });
+        setUpdates(data || []);
+        setInputText('');
+        setSelectedFiles([]);
+      }
       
       fetchAllData();
       if (imageUrls.length > 0) {
@@ -2293,6 +2258,7 @@ export default function ConstructionApp() {
 
   // 🗑️ ฟังก์ชันลบประวัติการรายงานงานซ่อม (Recall Defect Post)
   const handleDeleteDefectUpdate = async (updateId: any, defectId: any, plotId: any) => {
+    const isCurrentTimeline = captureTimelineScope();
     showConfirm(
       'ยืนยันการลบรายงาน ⚠️',
       'คุณแน่ใจหรือไม่ว่าต้องการลบประวัติรายงานชิ้นนี้? ระบบจะทำการคำนวณเปอร์เซ็นต์ความคืบหน้าย้อนกลับไปยังครั้งก่อนหน้าให้อัตโนมัติครับ',
@@ -2302,14 +2268,17 @@ export default function ConstructionApp() {
           const { error } = await supabase.from('defect_updates').delete().eq('id', updateId);
           if (error) throw error;
 
-          const { data } = await supabase.from('defect_updates')
+          const { data, error: historyError } = await supabase.from('defect_updates')
             .select('*')
             .eq('defect_id', defectId)
             .order('created_at', { ascending: true });
 
-          setUpdates(data || []);
+          if (historyError) throw historyError;
           const newProgress = data?.length ? data[data.length - 1].progress : 0;
-          setProgressValue(newProgress);
+          if (isCurrentTimeline()) {
+            setUpdates(data || []);
+            setProgressValue(newProgress);
+          }
           
           // Update overall defect status
           await supabase.from('defects').update({ 
@@ -2331,6 +2300,7 @@ export default function ConstructionApp() {
 
   // 🗑️ ฟังก์ชันลบประวัติการรายงานงาน (Recall Post)
   const handleDeleteUpdate = async (updateId: any, taskTemplateId: any, plotId: any) => {
+    const isCurrentTimeline = captureTimelineScope();
     showConfirm(
       'ยืนยันการลบรายงาน ⚠️',
       'คุณแน่ใจหรือไม่ว่าต้องการลบประวัติรายงานชิ้นนี้? ระบบจะทำการคำนวณเปอร์เซ็นต์ความคืบหน้าย้อนกลับไปยังครั้งก่อนหน้าให้อัตโนมัติครับ',
@@ -2342,16 +2312,19 @@ export default function ConstructionApp() {
           if (error) throw error;
 
           // 2. ดึงประวัติแชทที่เหลือในงวดงานนี้กลับมาโชว์ทันที (Instant UI Feedback)
-          const { data } = await supabase.from('task_updates')
+          const { data, error: historyError } = await supabase.from('task_updates')
             .select('*')
             .eq('task_template_id', taskTemplateId)
             .eq('plot_id', plotId)
             .order('created_at', { ascending: true });
 
-          setUpdates(data || []);
+          if (historyError) throw historyError;
           // คำนวณค่า progress ปัจจุบันใหม่จากแถวสุดท้ายที่เหลืออยู่ (ถ้าไม่เหลือเลยให้เป็น 0)
           const newProgress = data?.length ? data[data.length - 1].progress : 0;
-          setProgressValue(newProgress);
+          if (isCurrentTimeline()) {
+            setUpdates(data || []);
+            setProgressValue(newProgress);
+          }
           
           // 2.5: Database Trigger จะจัดการ plot_task_assignments อัตโนมัติเมื่อมีการลบแชท
 
@@ -2368,6 +2341,7 @@ export default function ConstructionApp() {
     );
   };
   const handleReviewAction = async (isApproved: any) => {
+    const isCurrentTimeline = captureTimelineScope();
     setIsSending(true); const finalP = isApproved ? 100 : 95; const roleLabel = currentUserRole === 'Site Engineer' ? 'Site Engineer' : 'QC'; const actionLabel = isApproved ? `${roleLabel} อนุมัติ` : `${roleLabel} แจ้งแก้ไข`;
     try {
       let imageUrls: any[] = [];
@@ -2404,9 +2378,12 @@ export default function ConstructionApp() {
       fetchAllData();
 
       // 🌟 ดึงประวัติงานสดๆ เพื่ออัปเดต chat view ทันที
-      const { data } = await supabase.from('task_updates').select('*').eq('task_template_id', selectedTask.id).eq('plot_id', selectedPlot.id).order('created_at', { ascending: true });
-      selectedFiles.forEach(f => { if (f?.previewUrl) URL.revokeObjectURL(f.previewUrl); });
-      setUpdates(data || []); setProgressValue(finalP); setInputText(''); setSelectedFiles([]);
+      const { data, error: historyError } = await supabase.from('task_updates').select('*').eq('task_template_id', selectedTask.id).eq('plot_id', selectedPlot.id).order('created_at', { ascending: true });
+      if (historyError) throw historyError;
+      if (isCurrentTimeline()) {
+        selectedFiles.forEach(f => { if (f?.previewUrl) URL.revokeObjectURL(f.previewUrl); });
+        setUpdates(data || []); setProgressValue(finalP); setInputText(''); setSelectedFiles([]);
+      }
       
       if (imageUrls.length > 0) {
         setGlobalUploadState({ isUploading: false, isSuccess: true, message: 'อัปโหลดรูปภาพเสร็จสิ้น!' });
@@ -2419,6 +2396,7 @@ export default function ConstructionApp() {
   };
 
   const handleAdminUndoLatest = async (taskTemplateId: string, plotId: string) => {
+    const isCurrentTimeline = captureTimelineScope();
     showConfirm(
       'แอดมิน: ยืนยันการย้อนสถานะล่าสุด ⚠️',
       'คุณแน่ใจหรือไม่ว่าต้องการ "ลบประวัติการอัปเดตล่าสุด" ของงานนี้? ระบบจะย้อนสถานะกลับไปยังประวัติก่อนหน้า (Undo)',
@@ -2426,12 +2404,13 @@ export default function ConstructionApp() {
         setIsSending(true);
         try {
           // 1. Fetch current updates sorted by latest first
-          const { data: currentUpdates } = await supabase.from('task_updates')
+          const { data: currentUpdates, error: currentHistoryError } = await supabase.from('task_updates')
             .select('*')
             .eq('task_template_id', taskTemplateId)
             .eq('plot_id', plotId)
             .order('created_at', { ascending: false });
 
+          if (currentHistoryError) throw currentHistoryError;
           if (!currentUpdates || currentUpdates.length === 0) {
             showAlert('ข้อผิดพลาด', 'ไม่พบประวัติการอัปเดตให้ย้อนกลับ');
             setIsSending(false);
@@ -2451,14 +2430,17 @@ export default function ConstructionApp() {
           // 3. Database Trigger จะจัดการ plot_task_assignments อัตโนมัติเมื่อมีการลบ row ใน task_updates
 
           // 4. Refresh updates for UI
-          const { data: newUpdatesData } = await supabase.from('task_updates')
+          const { data: newUpdatesData, error: historyError } = await supabase.from('task_updates')
             .select('*')
             .eq('task_template_id', taskTemplateId)
             .eq('plot_id', plotId)
             .order('created_at', { ascending: true });
           
-          setUpdates(newUpdatesData || []);
-          setProgressValue(previousUpdate ? previousUpdate.progress : 0);
+          if (historyError) throw historyError;
+          if (isCurrentTimeline()) {
+            setUpdates(newUpdatesData || []);
+            setProgressValue(previousUpdate ? previousUpdate.progress : 0);
+          }
 
           fetchAllData();
           
@@ -2472,6 +2454,7 @@ export default function ConstructionApp() {
   };
 
   const handleAdminResetToZero = async (taskTemplateId: string, plotId: string) => {
+    const isCurrentTimeline = captureTimelineScope();
     showConfirm(
       'แอดมิน: ยืนยันการย้อนสถานะกลับเป็น 0% ⚠️',
       'คุณแน่ใจหรือไม่ว่าต้องการย้อนสถานะงานนี้กลับไปเริ่มต้นใหม่ที่ 0% ? ระบบจะเคลียร์วันที่เสร็จสิ้นและลบความคืบหน้าทั้งหมด',
@@ -2492,14 +2475,17 @@ export default function ConstructionApp() {
 
           // 2. Database Trigger จะจัดการเคลียร์ Date และ Progress เป็น 0 ให้เองอัตโนมัติ
 
-          const { data } = await supabase.from('task_updates')
+          const { data, error: historyError } = await supabase.from('task_updates')
             .select('*')
             .eq('task_template_id', taskTemplateId)
             .eq('plot_id', plotId)
             .order('created_at', { ascending: true });
           
-          setUpdates(data || []);
-          setProgressValue(0);
+          if (historyError) throw historyError;
+          if (isCurrentTimeline()) {
+            setUpdates(data || []);
+            setProgressValue(0);
+          }
 
           fetchAllData();
           
@@ -2513,17 +2499,19 @@ export default function ConstructionApp() {
   };
 
   const handleDefectAdminUndoLatest = async (defectId: string) => {
+    const isCurrentTimeline = captureTimelineScope();
     showConfirm(
       'แอดมิน: ยืนยันการย้อนสถานะล่าสุด ⚠️',
       'คุณแน่ใจหรือไม่ว่าต้องการ "ลบประวัติการอัปเดตล่าสุด" ของรายการแจ้งซ่อมนี้? ระบบจะย้อนสถานะกลับไปยังประวัติก่อนหน้า (Undo)',
       async () => {
         setIsSending(true);
         try {
-          const { data: currentUpdates } = await supabase.from('defect_updates')
+          const { data: currentUpdates, error: currentHistoryError } = await supabase.from('defect_updates')
             .select('*')
             .eq('defect_id', defectId)
             .order('created_at', { ascending: false });
 
+          if (currentHistoryError) throw currentHistoryError;
           if (!currentUpdates || currentUpdates.length === 0) {
             showAlert('ข้อผิดพลาด', 'ไม่พบประวัติการอัปเดตให้ย้อนกลับ');
             setIsSending(false);
@@ -2546,13 +2534,16 @@ export default function ConstructionApp() {
             ...(newProgress !== 100 ? { actual_end: null } : {})
           }).eq('id', defectId);
 
-          const { data: newUpdatesData } = await supabase.from('defect_updates')
+          const { data: newUpdatesData, error: historyError } = await supabase.from('defect_updates')
             .select('*')
             .eq('defect_id', defectId)
             .order('created_at', { ascending: true });
           
-          setUpdates(newUpdatesData || []);
-          setProgressValue(newProgress);
+          if (historyError) throw historyError;
+          if (isCurrentTimeline()) {
+            setUpdates(newUpdatesData || []);
+            setProgressValue(newProgress);
+          }
           fetchAllData();
           showAlert('สำเร็จ ✨', 'ย้อนสถานะกลับไปยังประวัติก่อนหน้าเรียบร้อยแล้ว');
         } catch (e: any) {
@@ -2564,6 +2555,7 @@ export default function ConstructionApp() {
   };
 
   const handleDefectAdminResetToZero = async (defectId: string) => {
+    const isCurrentTimeline = captureTimelineScope();
     showConfirm(
       'แอดมิน: ยืนยันการย้อนสถานะกลับเป็น 0% ⚠️',
       'คุณแน่ใจหรือไม่ว่าต้องการย้อนสถานะงานนี้กลับไปเริ่มต้นใหม่ที่ 0% ? ระบบจะเคลียร์วันที่เสร็จสิ้นและลบความคืบหน้าทั้งหมด',
@@ -2584,13 +2576,16 @@ export default function ConstructionApp() {
             actual_end: null
           }).eq('id', defectId);
 
-          const { data } = await supabase.from('defect_updates')
+          const { data, error: historyError } = await supabase.from('defect_updates')
             .select('*')
             .eq('defect_id', defectId)
             .order('created_at', { ascending: true });
           
-          setUpdates(data || []);
-          setProgressValue(0);
+          if (historyError) throw historyError;
+          if (isCurrentTimeline()) {
+            setUpdates(data || []);
+            setProgressValue(0);
+          }
           fetchAllData();
           showAlert('สำเร็จ ✨', 'ย้อนสถานะเป็น 0% เรียบร้อยแล้ว');
         } catch (e: any) {
@@ -2960,13 +2955,16 @@ export default function ConstructionApp() {
       <LoginScreen
         loginData={loginData}
         setLoginData={setLoginData}
-        isLoggingIn={isLoggingIn}
+        isLoggingIn={LEGACY_AUTHORIZATION_CUTOVER_ENABLED ? trustedSession.isLoggingIn : isLoggingIn}
+        isLoggingOut={isLoggingOut}
         handleLogin={handleLogin}
         dialogConfig={dialogConfig}
         closeDialog={closeDialog}
       />
     );
   }
+
+  const ShellOverlay = (isSales || view.startsWith('sales-') || view === 'my-sales-workspace' || view === 'central-leads' || view.startsWith('rental-')) ? SalesOverlay : 'div';
 
   // 🌟 Derived state for Presentation Modal
   const presentationPlots = plots.filter((p: any) => p.project_name === selectedProject?.name);
@@ -3304,7 +3302,7 @@ export default function ConstructionApp() {
 
         {/* 🌟 หน้าต่างซูมรูปภาพ (ตั้ง z-index ให้สูงสุดระดับ 999999 เพื่อไม่ให้โดน Pop-up อื่นบัง) */}
         {(fullImageUrl || galleryImages.length > 0) && (
-          <div className="fixed inset-0 z-[999999] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 cursor-zoom-out" onClick={() => { setFullImageUrl(null); setGalleryImages([]); }}>
+          <ShellOverlay className="fixed inset-0 z-[999999] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 cursor-zoom-out" onClick={() => { setFullImageUrl(null); setGalleryImages([]); }}>
             <button className="absolute top-6 right-6 text-white hover:text-rose-500 transition-colors bg-white/10 p-3 rounded-full backdrop-blur-md" onClick={() => { setFullImageUrl(null); setGalleryImages([]); }}><X size={28} /></button>
             
             {galleryImages.length > 0 && (
@@ -3334,11 +3332,11 @@ export default function ConstructionApp() {
                  </div>
                )}
             </div>
-          </div>
+          </ShellOverlay>
         )}
 
         {dialogConfig.isOpen && (
-          <div className="fixed inset-0 z-[600] bg-black/40 backdrop-blur-xl flex items-center justify-center p-4 transition-all"><div className="bg-white rounded-[2rem] shadow-2xl min-w-[320px] max-w-sm w-full p-6 text-center space-y-4"><div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-2 ${dialogConfig.type === 'confirm' ? 'bg-rose-100 text-rose-600' : 'bg-blue-100 text-blue-600'}`}><AlertTriangle size={32} /></div><h3 className="text-xl font-black">{dialogConfig.title}</h3><p className="text-slate-500 font-medium">{dialogConfig.message}</p><div className="flex gap-3 w-full mt-4">{dialogConfig.type === 'confirm' ? (<><button onClick={closeDialog} className="flex-1 bg-slate-100 text-slate-600 font-bold py-3.5 rounded-xl hover:bg-slate-200">ยกเลิก</button><button onClick={dialogConfig.onConfirm || undefined} disabled={isSubmitting} className="flex-1 bg-rose-600 text-white font-bold py-3.5 rounded-xl hover:bg-rose-700 disabled:opacity-70 flex items-center justify-center gap-2">{isSubmitting ? <Loader2 size={18} className="animate-spin" /> : 'ยืนยัน'}</button></>) : (<button onClick={closeDialog} className="w-full bg-slate-800 text-white font-bold py-3.5 rounded-xl">รับทราบ</button>)}</div></div></div>
+          <ShellOverlay className="fixed inset-0 z-[600] bg-black/40 backdrop-blur-xl flex items-center justify-center p-4 transition-all"><div className="bg-white rounded-[2rem] shadow-2xl min-w-[320px] max-w-sm w-full p-6 text-center space-y-4"><div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-2 ${dialogConfig.type === 'confirm' ? 'bg-rose-100 text-rose-600' : 'bg-blue-100 text-blue-600'}`}><AlertTriangle size={32} /></div><h3 className="text-xl font-black">{dialogConfig.title}</h3><p className="text-slate-500 font-medium">{dialogConfig.message}</p><div className="flex gap-3 w-full mt-4">{dialogConfig.type === 'confirm' ? (<><button onClick={closeDialog} className="flex-1 bg-slate-100 text-slate-600 font-bold py-3.5 rounded-xl hover:bg-slate-200">ยกเลิก</button><button onClick={dialogConfig.onConfirm || undefined} disabled={isSubmitting} className="flex-1 bg-rose-600 text-white font-bold py-3.5 rounded-xl hover:bg-rose-700 disabled:opacity-70 flex items-center justify-center gap-2">{isSubmitting ? <Loader2 size={18} className="animate-spin" /> : 'ยืนยัน'}</button></>) : (<button onClick={closeDialog} className="w-full bg-slate-800 text-white font-bold py-3.5 rounded-xl">รับทราบ</button>)}</div></div></ShellOverlay>
         )}
 
 
@@ -4887,24 +4885,9 @@ export default function ConstructionApp() {
               )}
 
 
-              {/* 📊 View: Sales Dashboard Excel (Keep-Alive Cache - Instant 0s Transitions) */}
-              <div className={view === 'sales-dashboard-excel' ? 'block h-full' : 'hidden'}>
-                <SalesDashboardExcelStyle
-                  project={selectedProject} 
-                  onViewDefects={(plot: any) => {
-                    const foundProj = projects.find((p: any) => p.name === plot.project_name || p.project_name === plot.project_name);
-                    if (foundProj) setSelectedProject(foundProj);
-                    setSelectedPlot(plot);
-                    setActiveHouseTab('handover');
-                    setHouseReturnView('sales-dashboard-excel');
-                    setView('house-detail');
-                  }}
-                />
-              </div>
-
               {/* 📊 View: Sales Kanban / Workspace */}
               {view === 'sales-dashboard' && (
-                <SalesKanban
+                <SalesWorkspaceEntry
                   project={selectedProject}
                   projects={projects}
                   plots={plots}
@@ -4955,6 +4938,8 @@ export default function ConstructionApp() {
               {view === 'my-sales-workspace' && (
                 <div className="w-full h-full">
                   <MySalesWorkspace
+                    key={JSON.stringify([loggedInUser?.username, loggedInUser?.role])}
+                    loadStartupData={loadSalesStartupData}
                     currentUser={loggedInUser}
                     projects={projects}
                     plots={plots}
@@ -5160,6 +5145,7 @@ export default function ConstructionApp() {
               {/* 📋 LEVEL 3: House Detail */}
               {view === 'house-detail' && selectedPlot && (
                 <HouseDetailView
+                  key={actorScopeKey}
                   setSelectedDefect={setSelectedDefect} setDefectReturnView={setDefectReturnView}
                   loading={loading}
                   view={view} setView={setView} selectedPlot={selectedPlot} selectedProject={selectedProject}
@@ -5175,6 +5161,8 @@ export default function ConstructionApp() {
                   setTaskReturnView={setTaskReturnView}
                   setAssignModal={setAssignModal} simulatedStatus={simulatedStatus} editingHouseType={editingHouseType}
                   currentUserRole={currentUserRole}
+                  currentUserId={loggedInUser?.id} currentAuthUserId={loggedInUser?.authUserId}
+                  captureActorScope={captureActorScope}
                   totalChartDays={totalChartDays} timeMarkers={timeMarkers} todayTs={todayTs}
                   chartStart={chartStart} chartEnd={chartEnd} getChartLeft={getChartLeft} getChartWidth={getChartWidth}
                   assignments={assignments} taskDates={taskDates} setUpdates={setUpdates} setProgressValue={setProgressValue}
@@ -5244,6 +5232,7 @@ export default function ConstructionApp() {
               {view === 'billing-queue' && (isAdmin || isProcurement || isOwner) && (
                 <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
                   <BillingQueueView
+                    key={actorScopeKey}
                     billingData={billingData}
                     setBillingData={setBillingData}
                     loading={loadingBilling}
@@ -5260,6 +5249,7 @@ export default function ConstructionApp() {
               {/* 🏢 View: Procurement Dashboard */}
               {view === 'procurement-dashboard' && (isAdmin || isProcurement || isOwner) && (
                 <ProcurementDashboard
+                  loggedInUser={loggedInUser}
                   projects={projects}
                   plots={plots}
                   taskTemplates={taskTemplates}
@@ -5312,6 +5302,7 @@ export default function ConstructionApp() {
                 <div className="animate-in slide-in-from-bottom duration-300 mx-auto mt-4 sm:mt-8 px-4 sm:px-0">
                   <button onClick={() => { setView('dashboard'); setSelectedProject(null); }} className="mb-4 sm:mb-6 text-xs sm:text-base font-bold text-blue-600 flex items-center gap-1.5">← {isMobileLayout ? 'BACK' : 'BACK TO DASHBOARD'}</button>
                   <MaterialStoreDashboard 
+                    captureActorScope={captureActorScope}
                     view={view}
                     materialRequests={materialRequests}
                     plots={plots}
@@ -5326,7 +5317,7 @@ export default function ConstructionApp() {
               )}
 
               {/* 🌟 2. ADMIN FORMS: USERS 🌟 */}
-              {view === 'admin-users' && isAdmin && (
+              {view === 'admin-users' && isAdmin && canManageAccounts && (
                 <AdminUsersView
                   setView={setView}
                   setSelectedProject={setSelectedProject}
@@ -5441,6 +5432,26 @@ export default function ConstructionApp() {
               )}
               </>
               )}
+
+              {/* Load on first visit, then retain filters through navigation. */}
+              <div className={!loadingView && view === 'sales-dashboard-excel' ? 'block h-full' : 'hidden'}>
+                {(hasOpenedSalesDashboard || view === 'sales-dashboard-excel') && (
+                <SalesDashboardExcelStyle
+                  key={JSON.stringify([loggedInUser?.username, loggedInUser?.role])}
+                  dataRevision={salesDataRevision}
+                  isActive={!loadingView && view === 'sales-dashboard-excel'}
+                  project={selectedProject}
+                  onViewDefects={(plot: any) => {
+                    const foundProj = projects.find((p: any) => p.name === plot.project_name || p.project_name === plot.project_name);
+                    if (foundProj) setSelectedProject(foundProj);
+                    setSelectedPlot(plot);
+                    setActiveHouseTab('handover');
+                    setHouseReturnView('sales-dashboard-excel');
+                    setView('house-detail');
+                  }}
+                />
+                )}
+              </div>
 
             </div>
           </main>
@@ -5706,7 +5717,7 @@ export default function ConstructionApp() {
                 <div className="flex items-center gap-2">
                   <label className="text-slate-400 hover:text-rose-600 p-2.5 sm:p-3 rounded-xl bg-slate-100 cursor-pointer shadow-sm active:scale-90 transition-transform">
                     <Camera size={isMobileLayout ? 20 : 22} />
-                    <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { const files = Array.from(e.target.files || []).map(f => ({ file: f, previewUrl: URL.createObjectURL(f) })); setDefectFiles([...defectFiles, ...files].slice(0, 20)); }} />
+                    <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { setDefectFiles(appendConstructionPreviewFiles(defectFiles, Array.from(e.target.files || []), 20)); }} />
                   </label>
                   <input
                     type="text" value={newDefectText} onChange={(e) => setNewDefectText(e.target.value)}

@@ -1,4 +1,5 @@
 import type { CrmRole } from './workflow';
+import { parseSourceMembershipMetadata, parseWorkspaceHistoryMetadata, type SourceMembershipMetadata, type WorkspaceHistoryMetadata } from './workspaceReadContracts';
 
 export type { CrmRole } from './workflow';
 
@@ -7,7 +8,7 @@ export const CENTRAL_SEARCH_CONTRACT_VERSION = 'central_search_v1';
 export const CENTRAL_PAGE_SIZE = 50;
 export const CENTRAL_MAX_BODY_BYTES = 16 * 1024;
 
-export interface CentralInterest {
+export interface CentralInterest extends WorkspaceHistoryMetadata {
     id: string;
     projectName: string;
     ownerUserId: string;
@@ -17,10 +18,13 @@ export interface CentralInterest {
 }
 
 export interface CentralSnapshot {
+    sourceMembership?: SourceMembershipMetadata;
     actor: { userId: string; role: CrmRole };
     projects: { name: string }[];
     salesOwners: { userId: string; displayName: string }[];
     customers: {
+        sourceKind?: 'reviewed_import' | 'native';
+        visitHistoryDate?: string | null;
         id: string;
         name: string;
         /** Imported historical records may have no evidenced phone; live intake still requires one. */
@@ -185,6 +189,7 @@ export function parseCentralSearchQuery(url: string): { page: number; filters: C
 export function parseCentralSearchSnapshot(value: unknown, filters: CentralSearchFilters, page: number,
     actor?: CentralSnapshot['actor']): CentralSearchSnapshot {
     const data = record(value); const identity = record(data.actor); const scope = record(data.search);
+    const sourceMembership = parseSourceMembershipMetadata(data.sourceMembership);
     const uuid = (value: unknown) => { if (!isCentralUuid(value)) throw new CentralInputError(); return value; };
     const text = (value: unknown) => { if (typeof value !== 'string') throw new CentralInputError(); return value; };
     const nullable = (value: unknown) => value === null ? null : text(value);
@@ -202,12 +207,14 @@ export function parseCentralSearchSnapshot(value: unknown, filters: CentralSearc
     });
     const customers = list(data.customers).map(item => {
         const row = record(item);
-        return { id: uuid(row.id), name: text(row.name), phone: nullable(row.phone), channel: nullable(row.channel),
+        if (sourceMembership && !['sourceKind', 'visitHistoryDate'].every(key => Object.hasOwn(row, key))) throw new CentralInputError();
+        return { ...parseWorkspaceHistoryMetadata(row), id: uuid(row.id), name: text(row.name), phone: nullable(row.phone), channel: nullable(row.channel),
             notes: nullable(row.notes), ownerUserId: uuid(row.ownerUserId), leadCreatedAt: nullable(row.leadCreatedAt),
             intakeStatus: text(row.intakeStatus), interests: list(row.interests).map((item): CentralInterest => {
                 const interest = record(item); const workspaceState = interest.workspaceState;
                 if (workspaceState !== 'central_interest' && workspaceState !== 'project_active') throw new CentralInputError();
-                return { id: uuid(interest.id), projectName: text(interest.projectName), ownerUserId: uuid(interest.ownerUserId),
+                if (sourceMembership && !['sourceKind', 'visitHistoryDate'].every(key => Object.hasOwn(interest, key))) throw new CentralInputError();
+                return { ...parseWorkspaceHistoryMetadata(interest), id: uuid(interest.id), projectName: text(interest.projectName), ownerUserId: uuid(interest.ownerUserId),
                     workspaceState, engagementStatus: text(interest.engagementStatus), plotId: nullable(interest.plotId) };
             }) };
     });
@@ -216,6 +223,7 @@ export function parseCentralSearchSnapshot(value: unknown, filters: CentralSearc
         || channels.length > 200 || new Set(channels).size !== channels.length
         || channels.some(c => !c || [...c].length > 80) || (data.hasMore && customers.length !== CENTRAL_PAGE_SIZE)) throw new CentralInputError();
     return { actor: { userId: identity.userId, role: role as CrmRole }, page, hasMore: data.hasMore, customers,
+        ...(sourceMembership ? { sourceMembership } : {}),
         projects: list(data.projects).map(item => ({ name: text(record(item).name) })), salesOwners: owners(data.salesOwners),
         search: { contractVersion: CENTRAL_SEARCH_CONTRACT_VERSION, filters: receivedFilters,
             projects: list(scope.projects).map(text), owners: owners(scope.owners), channels, hasMoreChannels: scope.hasMoreChannels } };

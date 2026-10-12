@@ -1,16 +1,38 @@
 "use client";
+import { customerExpectedTransferDay } from '@/lib/sales/customerBusinessDate';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
+import { fetchSalesWithoutLimit } from '@/lib/sales/fetchWithoutLimit';
 import { Loader2, Calendar, TrendingUp, Users, BarChart, ChevronDown, ChevronUp, Search, Building2 } from 'lucide-react';
 import WaitingForTransferDetails from './WaitingForTransferDetails';
 import { ComposedChart, Bar, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, LabelList } from 'recharts';
+import SalesOverlay from './SalesOverlay';
+import { excelReportApi } from '@/lib/sales/excelReportClient';
+import { useSalesWorkspaceMode } from './SalesWorkspaceModeProvider';
 
-export default function SalesDashboardExcelStyle({ project, onViewDefects }: { project?: any; onViewDefects?: (plot: any) => void }) {
+const getTodayDateStr = () => {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+export default function SalesDashboardExcelStyle({ project, onViewDefects, isActive = true, dataRevision = 0 }: { project?: { name?: string | null } | null; onViewDefects?: (plot: any) => void; isActive?: boolean; dataRevision?: number }) {
+  const projectName = project?.name ?? null;
+  const workspaceMode = useSalesWorkspaceMode();
+  const canonicalData = workspaceMode === 'central';
+  const [identityRevision, setIdentityRevision] = useState(0);
+  const mountedRef = useRef(false);
+  const activeRef = useRef(false);
+  const requestRef = useRef<{ projectName: string | null; revision: number; mode: string; loadedAt: number | null; failed: boolean } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [retryRevision, setRetryRevision] = useState(0);
   const [data, setData] = useState<any>({ plots: [], sales: [], fallbackSales: [], leads: [], projects: [], houseTypes: [], evidence: [] });
   
-  const [selectedDateStr, setSelectedDateStr] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [selectedDateStr, setSelectedDateStr] = useState<string>(getTodayDateStr);
   const [userSelectedDate, setUserSelectedDate] = useState(false);
   const selectedYear = selectedDateStr.split('-')[0];
   const selectedMonth = selectedDateStr.split('-')[1];
@@ -24,8 +46,22 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects }: { p
   }, [selectedYear]);
 
   useEffect(() => {
-    if (project?.name) setSelectedProjectFilter(project.name);
-  }, [project]);
+    if (projectName) setSelectedProjectFilter(projectName);
+  }, [projectName]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!canonicalData) return;
+    return excelReportApi.watchIdentity(() => {
+      requestRef.current = null;
+      setData({ plots: [], sales: [], fallbackSales: [], leads: [], projects: [], houseTypes: [], evidence: [] });
+      setIdentityRevision(value => value + 1);
+    });
+  }, [canonicalData]);
 
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
   const [showTotalBreakdown, setShowTotalBreakdown] = useState(false);
@@ -43,13 +79,57 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects }: { p
   const fmtM = (val: number) => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(val);
 
   useEffect(() => {
-    let isMounted = true;
+    const wasActive = activeRef.current;
+    activeRef.current = isActive;
+    if (!isActive) return;
+    // Retain filter state and share pending loads across hide/show transitions.
+    // Reopening a completed report refreshes its metrics without resetting
+    // filters. A still-pending load is shared through navigation/Strict Mode.
+    const previousRequest = requestRef.current;
+    if (previousRequest && previousRequest.projectName === projectName && previousRequest.mode === workspaceMode && !previousRequest.failed
+      && previousRequest.revision === dataRevision
+      && (wasActive || previousRequest.loadedAt === null)
+      && (previousRequest.loadedAt === null || Date.now() - previousRequest.loadedAt < 30_000)) return;
+    const request = { projectName, revision: dataRevision, mode: workspaceMode, loadedAt: null as number | null, failed: false };
+    requestRef.current = request;
+    const isCurrentRequest = () => mountedRef.current && requestRef.current === request;
     const fetchAllData = async () => {
       setLoading(true);
+      setLoadError(false);
       try {
-        const { data: pData } = await supabase.from('plots').select('*, house_types(type_name, is_infrastructure)');
-        const { data: hTypeData } = await supabase.from('house_types').select('*');
-        const { data: projList } = await supabase.from('projects').select('name, is_closed').order('name');
+        if (workspaceMode === 'blocked') throw new Error('ระบบลูกค้ายังไม่พร้อมใช้งาน');
+        if (canonicalData) {
+          const catalog = async <T,>(query: PromiseLike<{ data: T | null; error: unknown }>): Promise<T> => {
+            const result = await query;
+            if (result.error || result.data === null) throw new Error('โหลดรายการโครงการไม่ครบ');
+            return result.data;
+          };
+          const [report, plots, houseTypes, projects] = await Promise.all([
+            excelReportApi.read(projectName),
+            fetchSalesWithoutLimit('plots', { select: '*, house_types(type_name, is_infrastructure)', orderBy: 'id', ascending: true }),
+            catalog(supabase.from('house_types').select('*')),
+            catalog(supabase.from('projects').select('name, is_closed').order('name'))
+          ]);
+          if (!isCurrentRequest()) return;
+          const sales = report.projects.flatMap(project => {
+            const forecasts = new Map(project.evidence.forecasts.map(row => [row.saleId, row.expectedTransferDate]));
+            return project.map.salePages.flatMap(page => page.rows).map(sale => ({ ...sale,
+              sourceKind: 'crm_sale', expectedTransferDate: forecasts.has(sale.saleId)
+                ? forecasts.get(sale.saleId) : sale.expectedTransferDate ?? null }));
+          });
+          if (new Set(sales.map(sale => sale.saleId)).size !== sales.length) throw new Error('รายการจองซ้ำ');
+          request.loadedAt = Date.now();
+          setData({ plots, sales, fallbackSales: [], leads: [], projects, houseTypes,
+            evidence: report.projects.map(project => project.evidence), canonical: true });
+          return;
+        }
+        const [pData, hTypeData, projList, lData] = await Promise.all([
+          fetchSalesWithoutLimit('plots', { select: '*, house_types(type_name, is_infrastructure)', orderBy: 'id', ascending: true }),
+          supabase.from('house_types').select('*').then(r => r.data || []),
+          supabase.from('projects').select('name, is_closed').order('name').then(r => r.data || []),
+          fetchSalesWithoutLimit('leads', { orderBy: 'created_at', ascending: false })
+        ]);
+        if (!isCurrentRequest()) return;
         
         let allSalesRows: any[] = [];
         const projectNames = (projList || []).map((p: any) => p.name).filter((n: string) => n && n !== 'ลูกค้าทั่วไป');
@@ -59,7 +139,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects }: { p
           const rows: any[] = [];
           let page = 0;
           let hasMore = true;
-          while (hasMore && page < 5) {
+          while (hasMore && page < 5 && isCurrentRequest()) {
             const { data: res, error } = await supabase.rpc('crm_v2_project_sales', {
               p_project_name: name,
               p_tab: 'all',
@@ -92,19 +172,46 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects }: { p
           Promise.all(salesPromises),
           Promise.all(evidencePromises)
         ]);
+        if (!isCurrentRequest()) return;
         allSalesRows = rpcResults.flat();
         const allEvidence = evidenceResults.filter(Boolean);
 
         // Fallback: If RPC returned 0 rows (e.g. unauthenticated or role missing), query sales table directly
         let fallbackSales: any[] = [];
         if (allSalesRows.length === 0) {
-          const { data: directSales } = await supabase.from('sales').select('*');
-          if (directSales) fallbackSales = directSales;
+          const directSales = await fetchSalesWithoutLimit('sales', { select: '*', orderBy: 'created_at', ascending: false });
+          fallbackSales = directSales || [];
+          if (directSales && directSales.length > 0) {
+            allSalesRows = directSales.map((s: any) => {
+              const matchedPlot = (pData || []).find((p: any) => p.id === s.plot_id || p.plot_name === s.plot_id);
+              const matchedLead = (lData || []).find((l: any) => l.id === s.lead_id);
+              const stageRaw = (s.contract_status || s.crm_stage || s.status || '').toLowerCase();
+
+              return {
+                saleId: s.id,
+                customerId: s.lead_id || s.customer_id || s.customerId,
+                customerName: s.customer_name || s.customerName || matchedLead?.customer_name || matchedPlot?.customer_name,
+                phone: s.phone || matchedLead?.phone || '',
+                plotId: s.plot_id || matchedPlot?.id,
+                plotName: matchedPlot?.plot_name || s.plot_id,
+                projectName: s.project_name || matchedPlot?.project_name || 'ไม่ระบุโครงการ',
+                stage: stageRaw === 'transferred' ? 'transferred'
+                  : stageRaw === 'contracted' ? 'contracted'
+                  : stageRaw === 'cancelled' ? 'cancelled'
+                  : 'booked',
+                bookedAt: s.booked_at || s.created_at,
+                transferredAt: s.transferred_at,
+                cancelledAt: s.cancelled_at,
+                ownerName: s.agent_name || s.owner_name || matchedLead?.agent_name,
+                salePrice: s.sale_price || matchedPlot?.selling_price,
+                expectedTransferDate: customerExpectedTransferDay(s)
+              };
+            });
+          }
         }
 
-        const { data: lData } = await supabase.from('leads').select('*');
-
-        if (isMounted) {
+        if (isCurrentRequest()) {
+          request.loadedAt = Date.now();
           setData({
             plots: pData || [],
             sales: allSalesRows,
@@ -114,54 +221,28 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects }: { p
             houseTypes: hTypeData || [],
             evidence: allEvidence
           });
-
-          // If user hasn't picked a date, and current month has 0 transactions/visits,
-          // default to the latest date that has activity so they see active monthly figures immediately!
-          if (!userSelectedDate) {
-            let latestDate: string | null = null;
-            allSalesRows.forEach((s: any) => {
-              const d = s.bookedAt?.split('T')[0] || s.transferredAt?.split('T')[0] || s.importedHistory?.bookedDate;
-              if (d && (!latestDate || d > latestDate)) latestDate = d;
-            });
-            allEvidence.forEach((ev: any) => {
-              (ev.legacyVisits || []).concat(ev.completedVisits || []).forEach((v: any) => {
-                if (v.visitDate && (!latestDate || v.visitDate > latestDate)) latestDate = v.visitDate;
-              });
-            });
-
-            if (latestDate) {
-              const currentPrefix = new Date().toISOString().slice(0, 7);
-              const hasCurrentMonthActivity = allSalesRows.some((s: any) => {
-                const d = s.bookedAt?.split('T')[0] || s.transferredAt?.split('T')[0] || s.importedHistory?.bookedDate;
-                return d?.startsWith(currentPrefix);
-              }) || allEvidence.some((ev: any) => {
-                return (ev.legacyVisits || []).concat(ev.completedVisits || []).some((v: any) => v.visitDate?.startsWith(currentPrefix));
-              });
-
-              if (!hasCurrentMonthActivity) {
-                setSelectedDateStr(latestDate);
-              }
-            }
-          }
         }
 
       } catch (err) {
+        if (isCurrentRequest()) {
+          request.failed = true;
+          setLoadError(true);
+        }
         console.error("Dashboard error:", err);
       } finally {
-        if (isMounted) setLoading(false);
+        if (isCurrentRequest()) setLoading(false);
       }
     };
 
     fetchAllData();
-    return () => { isMounted = false; };
-  }, [project]);
+  }, [isActive, projectName, dataRevision, retryRevision, canonicalData, workspaceMode, identityRevision]);
 
   const metrics = useMemo(() => {
     if (!data.plots.length) return null;
 
     const targetDate = new Date(selectedDateStr);
     const targetMonthPrefix = `${selectedYear}-${selectedMonth.padStart(2, '0')}`;
-    const activeProjectName = selectedProjectFilter || project?.name || null;
+    const activeProjectName = selectedProjectFilter || projectName;
 
     // Filter plots by project if specified
     const activePlots = activeProjectName 
@@ -208,7 +289,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects }: { p
     const filteredVisits = activeProjectName 
       ? allVisits.filter(v => v.projectName === activeProjectName)
       : allVisits;
-    const hasRealVisits = allVisits.length > 0;
+    const hasRealVisits = data.canonical || allVisits.length > 0;
 
     // Build unified records from sales (RPC or fallback)
     let records: any[] = [];
@@ -216,7 +297,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects }: { p
     if (data.sales && data.sales.length > 0) {
       records = data.sales.map((s: any) => {
         const matchingPlot = data.plots.find((p: any) => p.id === s.plotId || (p.plot_name === s.plotName && p.project_name === s.projectName));
-        const salePrice = s.salePrice ? Number(s.salePrice) : Number(matchingPlot?.selling_price || 0);
+        const salePrice = data.canonical ? s.salePrice : s.salePrice ? Number(s.salePrice) : Number(matchingPlot?.selling_price || 0);
         const bookDate = s.importedHistory?.bookedDate || s.bookedAt?.split('T')[0] || null;
         const transferDate = ['transferred', 'handover'].includes(s.stage) 
           ? (s.importedHistory?.transferredDate || s.transferredAt?.split('T')[0] || null) 
@@ -225,7 +306,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects }: { p
           ? (s.importedHistory?.cancelledDate || s.cancelledAt?.split('T')[0] || null) 
           : null;
         const customerLeadDate = s.customerId ? leadDates.get(s.customerId) : null;
-        const createdDate = customerLeadDate || bookDate || s.created_at?.split('T')[0] || '2025-01-01';
+        const createdDate = data.canonical ? customerLeadDate ?? null : customerLeadDate || bookDate || s.created_at?.split('T')[0] || '2025-01-01';
         const tdPrice = s.saleId ? tdPriceMap.get(s.saleId) : null;
 
         const status = s.stage === 'cancelled' ? 'Cancelled' 
@@ -254,7 +335,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects }: { p
           transferDate,
           cancelDate,
           createdDate,
-          expectedTransfer: s.expectedTransferDate || s.expected_transfer_date || matchingPlot?.expected_transfer_date || null,
+          expectedTransfer: customerExpectedTransferDay(s),
           plot: matchingPlot || { id: s.plotId, plot_name: s.plotName, project_name: s.projectName, selling_price: salePrice },
           sale: { ...s, tdPrice: tdPrice ?? s.tdPrice }
         };
@@ -282,7 +363,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects }: { p
           transferDate: s.transferred_at?.split('T')[0] || null,
           cancelDate: s.cancelled_at?.split('T')[0] || null,
           createdDate: s.created_at?.split('T')[0] || '2025-01-01',
-          expectedTransfer: s.expected_transfer_date || s.expectedTransferDate || matchingPlot?.expected_transfer_date || null,
+          expectedTransfer: customerExpectedTransferDay(s),
           plot: matchingPlot,
           sale: s
         };
@@ -293,6 +374,12 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects }: { p
     const filteredRecords = activeProjectName 
       ? records.filter((r: any) => r.plot?.project_name === activeProjectName || r.project_name === activeProjectName)
       : records;
+    const unknownHistory = data.canonical ? {
+      booking: filteredRecords.filter((r: any) => !r.bookDate).length,
+      transfer: filteredRecords.filter((r: any) => ['transferred', 'handover'].includes(r.stage) && !r.transferDate).length,
+      cancellation: filteredRecords.filter((r: any) => r.stage === 'cancelled' && !r.cancelDate).length,
+      price: filteredRecords.filter((r: any) => r.salePrice == null).length,
+    } : null;
 
     const validRecords = filteredRecords.filter((r: any) => (r.createdDate || r.bookDate || '') <= targetDate.toISOString().split('T')[0]);
 
@@ -307,7 +394,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects }: { p
 
     const viewsMonth = hasRealVisits
       ? filteredVisits.filter((v: any) => v.visitDate && v.visitDate.startsWith(targetMonthPrefix) && v.visitDate <= targetDate.toISOString().split('T')[0])
-      : validRecords.filter((r: any) => r.createdDate.startsWith(targetMonthPrefix));
+      : validRecords.filter((r: any) => r.createdDate?.startsWith(targetMonthPrefix));
     const bookedMonth = filteredRecords.filter((r: any) => r.bookDate?.startsWith(targetMonthPrefix));
     const transferMonth = filteredRecords.filter((r: any) => r.transferDate?.startsWith(targetMonthPrefix));
     const cancelMonth = filteredRecords.filter((r: any) => r.cancelDate?.startsWith(targetMonthPrefix));
@@ -374,9 +461,13 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects }: { p
       let appraisal = Number(p.land_appraisal_price || 0);
 
       projectGroups[proj].total++;
+      // A completed imported sale with an unknown day is sold stock, but has no
+      // justified calendar year. Keep it out of both dated totals and vacancies.
+      if (data.canonical && plotSales.some((s: any) => ['transferred', 'handover'].includes(s.stage) && !s.transferDate)
+        && !transferInYear && !transferPrior) return;
 
       if (transferInYear) {
-        price = transferInYear.salePrice ? Number(transferInYear.salePrice) : price;
+        price = data.canonical ? Number(transferInYear.salePrice ?? 0) : transferInYear.salePrice ? Number(transferInYear.salePrice) : price;
         appraisal = transferInYear.sale?.tdPrice || appraisal || price;
         if (appraisal <= 0) appraisal = price;
 
@@ -384,9 +475,9 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects }: { p
         projectGroups[proj].transVal += price;
         projectGroups[proj].transAppraisal += appraisal;
         projectGroups[proj].transferredPlots.push({ ...p, activeSale: transferInYear, price, appraisal });
-      } else if (waitingSale || (!transferPrior && ['booked', 'contracted', 'reserved'].includes((p.sale_status || '').toLowerCase()))) {
+      } else if (waitingSale || (!data.canonical && !transferPrior && ['booked', 'contracted', 'reserved'].includes((p.sale_status || '').toLowerCase()))) {
         const sale = waitingSale || plotSales.find((s: any) => s.stage !== 'cancelled' && s.status !== 'Cancelled');
-        price = sale?.salePrice ? Number(sale.salePrice) : price;
+        price = data.canonical ? Number(sale?.salePrice ?? 0) : sale?.salePrice ? Number(sale.salePrice) : price;
         appraisal = sale?.sale?.tdPrice || appraisal || price;
         if (appraisal <= 0) appraisal = price;
 
@@ -394,9 +485,9 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects }: { p
         projectGroups[proj].waitVal += price;
         projectGroups[proj].waitAppraisal += appraisal;
         projectGroups[proj].waitingPlots.push({ ...p, activeSale: sale, price, appraisal });
-      } else if (transferPrior || (!transferInYear && (p.sale_status || '').toLowerCase() === 'transferred')) {
+      } else if (transferPrior || (!data.canonical && !transferInYear && (p.sale_status || '').toLowerCase() === 'transferred')) {
         const sale = transferPrior || plotSales.find((s: any) => ['transferred', 'handover'].includes((s.stage || s.status || '').toLowerCase()));
-        price = sale?.salePrice ? Number(sale.salePrice) : price;
+        price = data.canonical ? Number(sale?.salePrice ?? 0) : sale?.salePrice ? Number(sale.salePrice) : price;
         appraisal = sale?.sale?.tdPrice || appraisal || price;
         if (appraisal <= 0) appraisal = price;
 
@@ -460,7 +551,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects }: { p
     const unscheduledPlots: any[] = [];
 
     allWaitingPlots.forEach(plot => {
-      const expDate = plot.activeSale?.expectedTransfer || plot.activeSale?.expectedTransferDate || plot.activeSale?.expected_transfer_date || plot.expected_transfer_date;
+      const expDate = customerExpectedTransferDay(plot.activeSale ?? {});
       if (expDate && expDate.startsWith(targetMonthPrefix)) {
         expectingThisMonthPlots.push(plot);
       } else if (expDate && expDate < targetMonthPrefix) {
@@ -544,6 +635,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects }: { p
     });
 
     return {
+      unknownHistory,
       viewsAcc, bookedAcc, cancelAcc, transferAcc,
       viewsMonth, bookedMonth, transferMonth, cancelMonth,
       expectingTransfer: expectingThisMonthPlots,
@@ -574,7 +666,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects }: { p
       cumulativeChartViews,
       rawValidRecords: validRecords
     };
-  }, [data, selectedDateStr, cumulativeYear, selectedProjectFilter, project]);
+  }, [data, selectedDateStr, cumulativeYear, selectedProjectFilter, projectName]);
 
   if (loading) return (
     <div className="flex flex-col items-center justify-center h-full min-h-[400px] gap-3 text-slate-500">
@@ -582,6 +674,11 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects }: { p
       <span className="text-sm font-semibold">กำลังโหลดข้อมูลการขายและแปลงบ้านทั้งหมด…</span>
     </div>
   );
+
+  if (loadError) return <div role="alert" className="m-4 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-xs font-bold text-rose-900">
+    <p>โหลดรายงานไม่สำเร็จ กรุณาลองใหม่</p>
+    <button type="button" onClick={() => setRetryRevision(n => n + 1)} className="mt-2 underline">ลองใหม่</button>
+  </div>;
 
   if (!metrics) return <div className="p-8 text-center text-gray-500">ไม่พบข้อมูลในระบบ</div>;
 
@@ -602,6 +699,13 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects }: { p
   return (
     <div className="bg-[#f8fafc] h-full overflow-y-auto">
       <div className="max-w-7xl mx-auto p-4 md:p-6 lg:p-8 space-y-6">
+        {metrics.unknownHistory && Object.values(metrics.unknownHistory).some(count => count > 0) && (
+          <div role="note" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            ข้อมูลเดิมที่ไม่ทราบ: วันจอง {metrics.unknownHistory.booking}, วันโอน {metrics.unknownHistory.transfer},
+            วันยกเลิก {metrics.unknownHistory.cancellation}, ราคา {metrics.unknownHistory.price} รายการ
+            — รายงานตามวันและยอดเงินรวมใช้เฉพาะค่าที่ทราบ
+          </div>
+        )}
         
         {/* HEADER */}
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -1233,7 +1337,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects }: { p
       </div>
 
       {showTotalBreakdown && (
-        <div className="fixed inset-0 z-[500] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+        <SalesOverlay className="fixed inset-0 z-[500] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50 shrink-0">
               <div>
@@ -1296,7 +1400,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects }: { p
               })}
             </div>
           </div>
-        </div>
+        </SalesOverlay>
       )}
 
     </div>

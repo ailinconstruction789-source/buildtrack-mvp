@@ -13,6 +13,7 @@ import type { InterestedPlot } from '@/lib/sales/plotAvailability';
 import { loadAvailablePlots } from '@/lib/sales/plotAvailabilityClient';
 import AvailablePlotSelect from './AvailablePlotSelect';
 import { CentralPendingError, clearCentralPending, readCentralPending, writeCentralPending } from '@/lib/sales/centralPending';
+import SalesOverlay from './SalesOverlay';
 
 interface Props {
   snapshot: CentralSnapshot;
@@ -714,7 +715,7 @@ function CentralLeadFormSession({ snapshot, save, onSaved, onClose }: Props) {
 
       {/* 🌟 Lightbox Image Zoom Modal */}
       {fullImageUrl && (
-        <div 
+        <SalesOverlay
           className="fixed inset-0 z-[400] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200"
           onClick={() => setFullImageUrl(null)}
         >
@@ -733,7 +734,7 @@ function CentralLeadFormSession({ snapshot, save, onSaved, onClose }: Props) {
               className="max-h-[85vh] w-auto object-contain rounded-xl shadow-2xl" 
             />
           </div>
-        </div>
+        </SalesOverlay>
       )}
     </>
   );

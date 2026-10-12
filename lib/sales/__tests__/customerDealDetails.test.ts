@@ -1,0 +1,17 @@
+import { describe, expect, it } from 'vitest';
+import { customerDealDetails, customerDealSummary } from '../customerDealDetails';
+describe('customer deal history values', () => {
+  it('reads the latest customer-specific price and bank ahead of older booking history', () => {
+    const notes = customerDealSummary(2650000, 'New bank') + '\n\n' + customerDealSummary(2793000, 'Old bank');
+    expect(customerDealDetails(notes)).toEqual({ salePrice: 2650000, bank: 'New bank' });
+  });
+  it('preserves zero and an explicitly cleared bank', () => {
+    expect(customerDealDetails(customerDealSummary(0, '') + '\n' + customerDealSummary(100, 'Old bank'))).toEqual({ salePrice: 0, bank: '' });
+  });
+  it('reads existing booking summary labels without requiring a schema change', () => {
+    expect(customerDealDetails('🏷️ บันทึกการจอง\n• ราคาขายสุทธิ: ฿2,793,000 บาท\n• เงินจองที่รับ: ฿10,000 บาท')).toEqual({ salePrice: 2793000, bank: '' });
+  });
+  it('does not treat deposit, catalogue price or an arbitrary number as a sale price', () => {
+    expect(customerDealDetails('• ราคาก่อนส่วนลด: ฿2,900,000 บาท\n• เงินจองที่รับ: ฿10,000 บาท')).toEqual({ salePrice: null, bank: '' });
+  });
+});

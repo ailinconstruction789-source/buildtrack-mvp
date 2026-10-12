@@ -1,4 +1,5 @@
 "use client";
+import { customerActualTransferDay, customerBusinessDay, customerExpectedTransferDay } from '@/lib/sales/customerBusinessDate';
 
 import React, { useState, useEffect } from 'react';
 import { Search, Plus, Map as MapIcon, Users, ListFilter, Download, ChevronRight, Home, Phone, Calendar, ArrowRight, ArrowLeft, LogOut, UserCheck, User, Key, X, FileText, Clock, CheckCircle, XCircle, Banknote, Building2, FileSignature, Pickaxe, Loader2, TrendingUp, Upload, Trash2, PieChart, Lightbulb, Sun, Moon, AlertTriangle, Sparkles, CreditCard } from 'lucide-react';
@@ -11,15 +12,34 @@ import RentalContractModal from './RentalContractModal';
 import RentalActionModal from './RentalActionModal';
 import RentalPaymentLedgerModal from './RentalPaymentLedgerModal';
 import CentralLeadBookingModal from './CentralLeadBookingModal';
+import SalesDealStatusModal, { type SalesDealEditorModel } from './SalesDealStatusModal';
+import { SALES_BANK_LOGOS as BANK_LOGOS } from '@/lib/sales/banks';
+import { salesDealStageOf } from '@/lib/sales/dealStatus';
+import { customerDealDetails } from '@/lib/sales/customerDealDetails';
+import { crmSaleCustomer, SALES_WITH_CUSTOMER_SELECT } from '@/lib/sales/saleCustomer';
 import LeadPicker from './LeadPicker';
 import { RENTAL_PROGRAM_DETAILS } from '@/types/sales';
 import { deleteCustomerWithCascade } from '@/lib/customerDeletionHelper';
 import { parseExcelRowToLead, downloadLeadTrackerTemplate, ParsedLeadRow } from '@/lib/salesImportHelper';
 import { isSampleHouse, isPlotEligibleForSampleHouse, toggleSampleHouse, fetchTodayInspectionStatus, SampleHouseInspectionStatus } from '@/lib/sales/sampleHouseHelper';
+import { fetchSalesWithoutLimit } from '@/lib/sales/fetchWithoutLimit';
+import { useSalesStaffOptions } from '@/hooks/useSalesStaffOptions';
+import SalesOverlay from './SalesOverlay';
+import { canStartSalesDeal, getLeadStage } from '@/lib/sales/leadStage';
+
+async function checkedResult<T extends { error?: { message?: string } | null }>(query: PromiseLike<T>): Promise<T> {
+  const result = await query;
+  if (result.error) throw new Error(result.error.message || 'บันทึกข้อมูลไม่สำเร็จ');
+  return result;
+}
+
+const canCreateBooking = (lead: any) => !lead || canStartSalesDeal(lead);
 
 const initialLeads: any[] = [];
 
 export const STATUS_CONFIG: Record<string, { label: string, color: string, bg: string, icon: any }> = {
+  'Lost': { label: 'ไม่สนใจ / Lost', color: 'text-slate-600', bg: 'bg-slate-100', icon: XCircle },
+  'legacy_unclassified': { label: 'ข้อมูลเดิม / ยังไม่ระบุขั้นตอน', color: 'text-slate-600', bg: 'bg-slate-100', icon: Users },
   'Visit': { label: 'เยี่ยมชมโครงการ', color: 'text-blue-700', bg: 'bg-blue-50', icon: Users },
   'Negotiation': { label: 'กำลังเจรจา', color: 'text-orange-700', bg: 'bg-orange-50', icon: Search },
   'Reserved': { label: 'จองแล้ว', color: 'text-emerald-700', bg: 'bg-emerald-50', icon: Home },
@@ -28,20 +48,14 @@ export const STATUS_CONFIG: Record<string, { label: string, color: string, bg: s
   'LoanProcessing': { label: 'รอผลสินเชื่อ', color: 'text-indigo-700', bg: 'bg-indigo-50', icon: Clock },
   'Approved': { label: 'อนุมัติแล้ว', color: 'text-blue-700', bg: 'bg-blue-50', icon: CheckCircle },
   'Contracted': { label: 'ทำสัญญา', color: 'text-pink-700', bg: 'bg-pink-50', icon: FileSignature },
+  'TransferPending': { label: 'รอโอน', color: 'text-emerald-700', bg: 'bg-emerald-50', icon: Clock },
+  'LoanRejected': { label: 'สินเชื่อไม่ผ่าน รอยื่นใหม่', color: 'text-orange-700', bg: 'bg-orange-50', icon: AlertTriangle },
   'Transferred': { label: 'โอนกรรมสิทธิ์', color: 'text-violet-700', bg: 'bg-violet-50', icon: UserCheck },
   'Handover': { label: 'รับมอบบ้าน', color: 'text-sky-700', bg: 'bg-sky-50', icon: Key },
   'Cancelled': { label: 'ยกเลิกจอง', color: 'text-red-700', bg: 'bg-red-50', icon: XCircle }
 };
 
-const BANK_LOGOS: Record<string, string> = {
-  'กสิกรไทย': 'https://www.google.com/s2/favicons?domain=kasikornbank.com&sz=128',
-  'ไทยพาณิชย์': 'https://www.google.com/s2/favicons?domain=scb.co.th&sz=128',
-  'กรุงเทพ': 'https://www.google.com/s2/favicons?domain=bangkokbank.com&sz=128',
-  'กรุงไทย': 'https://www.google.com/s2/favicons?domain=krungthai.com&sz=128',
-  'ออมสิน': 'https://www.google.com/s2/favicons?domain=gsb.or.th&sz=128',
-  'ธอส.': 'https://www.google.com/s2/favicons?domain=ghbank.co.th&sz=128',
-  'กรุงศรี': 'https://www.google.com/s2/favicons?domain=krungsri.com&sz=128'
-};
+
 
 const getNextStatuses = (current: string) => {
   switch (current) {
@@ -60,8 +74,8 @@ const getNextStatuses = (current: string) => {
   }
 };
 
-const formatPhoneNumber = (value: string) => {
-  let val = value.replace(/\D/g, '');
+const formatPhoneNumber = (value: string | null | undefined) => {
+  let val = (value ?? '').replace(/\D/g, '');
   if (val.length > 10) val = val.slice(0, 10);
   if (val.length > 6) return `${val.slice(0,3)}-${val.slice(3,6)}-${val.slice(6)}`;
   if (val.length > 3) return `${val.slice(0,3)}-${val.slice(3)}`;
@@ -77,11 +91,11 @@ export const stageToKanbanStatus = (stage: string): string => {
     case 'loan_submitted':
     case 'loan_processing': return 'LoanProcessing';
     case 'loan_approved': return 'Approved';
-    case 'transfer_pending': return 'Approved';
+    case 'transfer_pending': return 'TransferPending';
     case 'transferred': return 'Transferred';
     case 'handover': return 'Handover';
-    case 'cancelled':
-    case 'loan_rejected': return 'Cancelled';
+    case 'loan_rejected': return 'LoanRejected';
+    case 'cancelled': return 'Cancelled';
     default: return 'Reserved';
   }
 };
@@ -94,6 +108,8 @@ export const kanbanStatusToStage = (status: string): string => {
     case 'DocumentPrep': return 'document_prep';
     case 'LoanProcessing': return 'loan_submitted';
     case 'Approved': return 'loan_approved';
+    case 'TransferPending': return 'transfer_pending';
+    case 'LoanRejected': return 'loan_rejected';
     case 'Transferred': return 'transferred';
     case 'Handover': return 'handover';
     case 'Cancelled': return 'cancelled';
@@ -115,6 +131,8 @@ export default function SalesKanban({
   plots?: any[],
   user?: any, 
   initialTab?: string,
+  /** Old imported-cohort callers may still pass this; native workflows always use their original source. */
+  canonicalData?: boolean,
   onBack?: () => void,
   onSelectPlot?: (plot: any) => void
 }) {
@@ -125,8 +143,15 @@ export default function SalesKanban({
   }, [externalProject]);
 
   const project = internalProject;
+  const dataRequest = React.useRef(0);
+  const currentDataScope = React.useRef('');
+  currentDataScope.current = `${user?.id ?? user?.username ?? ''}:${internalProject?.name ?? ''}`;
 
   const [leads, setLeads] = useState(initialLeads);
+  const pendingForecasts = React.useRef(new Set<string>());
+  const [savingForecasts, setSavingForecasts] = useState<string[]>([]);
+  const forecastScope = React.useRef('');
+  forecastScope.current = `${user?.id ?? user?.username ?? ''}:${internalProject?.name ?? ''}`;
   const [rawLeads, setRawLeads] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<'daily_visits' | 'map' | 'booked' | 'transferred' | 'list' | 'pricing'>((initialTab as any) || 'daily_visits');
   const [search, setSearch] = useState('');
@@ -154,7 +179,19 @@ export default function SalesKanban({
   const [showRentalActionModal, setShowRentalActionModal] = useState<{ isOpen: boolean; lead: any | null; plot?: any | null }>({ isOpen: false, lead: null });
   const [showRentalPaymentModal, setShowRentalPaymentModal] = useState<{ isOpen: boolean; plot: any | null; lead: any | null; contractId?: string | null }>({ isOpen: false, plot: null, lead: null });
   const [showBookingModal, setShowBookingModal] = useState<{ isOpen: boolean; lead: any | null; plotId?: string | null }>({ isOpen: false, lead: null });
+  const bookingSalesOwners = useSalesStaffOptions(showBookingModal.isOpen, undefined, String(user?.id ?? user?.username ?? ''));
   const [selectedPlotLead, setSelectedPlotLead] = useState<any | null>(null);
+
+  useEffect(() => {
+    dataRequest.current++;
+    setLeads([]); setRawLeads([]); setProjectAvailability({});
+    setSelectedPlotLead(null);
+    setPanelState({ type: 'default', plotId: '', lead: null });
+    setShowBookingModal({ isOpen: false, lead: null });
+    setShowRentalModal({ isOpen: false, lead: null });
+    setShowRentalActionModal({ isOpen: false, lead: null });
+    setShowRentalPaymentModal({ isOpen: false, plot: null, lead: null });
+  }, [user?.id, user?.username, user?.role]);
 
   // Excel Import State
   const [showImportModal, setShowImportModal] = useState(false);
@@ -164,20 +201,20 @@ export default function SalesKanban({
   // Project Availability State for Selector (Filter only projects with available houses)
   const [projectAvailability, setProjectAvailability] = useState<Record<string, { total: number; vacant: number }>>({});
   const [loadingAvailability, setLoadingAvailability] = useState(false);
-  const [showOnlyAvailable, setShowOnlyAvailable] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [showOnlyAvailable, setShowOnlyAvailable] = useState(false); // Default to false so all projects display immediately
 
   useEffect(() => {
     if (internalProject) return;
     let isCancelled = false;
     const fetchAvailability = async () => {
       setLoadingAvailability(true);
+      setLoadError(null);
       try {
-        const { data: plotsData } = await supabase
-          .from('plots')
-          .select('id, project_name, has_customer, sale_status');
-        const { data: salesData } = await supabase
-          .from('sales')
-          .select('plot_id, contract_status');
+        const [plotsData, salesData] = await Promise.all([
+          fetchSalesWithoutLimit('plots', { select: 'id, project_name, has_customer, sale_status', orderBy: 'id', ascending: true }),
+          fetchSalesWithoutLimit('sales', { select: 'plot_id, contract_status', orderBy: 'id', ascending: true })
+        ]);
 
         if (isCancelled) return;
 
@@ -188,171 +225,148 @@ export default function SalesKanban({
         const counts: Record<string, { total: number; vacant: number }> = {};
         for (const p of plotsData || []) {
           if (!p.project_name) continue;
-          if (!counts[p.project_name]) {
-            counts[p.project_name] = { total: 0, vacant: 0 };
+          const pName = p.project_name.trim();
+          if (!counts[pName]) {
+            counts[pName] = { total: 0, vacant: 0 };
           }
-          counts[p.project_name].total++;
+          counts[pName].total++;
           const isVacant = p.has_customer === false &&
             (!p.sale_status || ['active', 'normal', 'ready_for_sale', 'available', 'vacant', ''].includes(p.sale_status.toLowerCase())) &&
             !occupied.has(p.id);
           if (isVacant) {
-            counts[p.project_name].vacant++;
+            counts[pName].vacant++;
           }
         }
         setProjectAvailability(counts);
       } catch (err) {
         console.error('Error fetching project availability:', err);
+        if (!isCancelled) setLoadError('โหลดจำนวนบ้านว่างไม่สำเร็จ ข้อมูลเดิมที่แสดงอาจไม่ใช่ข้อมูลล่าสุด');
       } finally {
         if (!isCancelled) setLoadingAvailability(false);
       }
     };
     fetchAvailability();
     return () => { isCancelled = true; };
-  }, [internalProject]);
+  }, [internalProject, user?.id, user?.username]);
 
-  // Fetch Leads and Sales Data from Supabase
+  // Fetch Leads and Sales Data from Supabase without 1000-row or RPC limits
   const fetchData = async () => {
     if (!internalProject) return;
     const projName = internalProject.name;
+    const request = ++dataRequest.current;
+    const scope = currentDataScope.current;
+    const isCurrent = () => dataRequest.current === request && currentDataScope.current === scope;
+    setLoadError(null);
     try {
-      // 1. Fetch plots for dropdowns
-      const { data: plotsData } = await supabase.from('plots').select('*').eq('project_name', projName);
+      // 1. Parallel fetch plots, leads, and sales for this project without limit
+      const [plotsData, nativeLeads, salesResult] = await Promise.all([
+        fetchSalesWithoutLimit('plots', { filterCol: 'project_name', filterVal: projName, select: '*', orderBy: 'id', ascending: true }),
+        fetchSalesWithoutLimit('leads', { filterCol: 'project_name', filterVal: projName, select: '*', orderBy: 'created_at', ascending: false }),
+        fetchSalesWithoutLimit('sales', { select: SALES_WITH_CUSTOMER_SELECT, orderBy: 'created_at', ascending: false })
+      ]);
+
+      if (!isCurrent()) return;
+      const leadsData = nativeLeads;
+      const allSales = salesResult;
       if (plotsData) {
-        setProjectPlots(plotsData.map(p => p.id));
+        setProjectPlots(plotsData.map((p: any) => p.id));
         setProjectPlotsData(plotsData);
       }
 
-      // 2. Fetch sales from crm_v2_project_sales RPC
-      const salesRows: any[] = [];
-      let page = 0;
-      let hasMore = true;
-      while (hasMore && page < 10) {
-        const { data: res, error } = await supabase.rpc('crm_v2_project_sales', {
-          p_project_name: projName,
-          p_tab: 'all',
-          p_query: '',
-          p_page: page
-        });
-        if (error) break;
-        if (res?.rows) salesRows.push(...res.rows);
-        hasMore = Boolean(res?.hasMore);
-        page++;
-      }
+      const projectPlotIds = new Set((plotsData || []).map((p: any) => p.id));
+      const projectSales = (allSales || []).filter((s: any) =>
+        projectPlotIds.has(s.plot_id) ||
+        s.plots?.project_name === projName
+      );
 
-      // 3. Fallback to direct sales table if RPC returns 0
-      let fallbackSales: any[] = [];
-      if (salesRows.length === 0 && plotsData && plotsData.length > 0) {
-        const plotIds = plotsData.map((p: any) => p.id);
-        const { data: directSales } = await supabase.from('sales').select('*').in('plot_id', plotIds.slice(0, 100));
-        if (directSales) fallbackSales = directSales;
-      }
+      // 2. Format sales into Kanban lead structure
+      let formattedLeads: any[] = projectSales.map((s: any) => {
+        const matchingPlot = plotsData?.find((p: any) => p.id === s.plot_id || p.plot_name === s.plots?.plot_name);
+        const matchingLead = s.lead_id ? leadsData?.find((l: any) => l.id === s.lead_id) : undefined;
+        const crmCustomer = crmSaleCustomer(s);
+        const stage = salesDealStageOf(s);
+        const kanbanStatus = stageToKanbanStatus(stage);
+        const bookDate = customerBusinessDay(s.booked_at) || customerBusinessDay(s.imported_history?.bookedDate || s.importedHistory?.bookedDate) || customerBusinessDay(matchingLead?.booking_date) || '';
+        const transferDate = customerBusinessDay(s.transferred_at) || customerBusinessDay(s.crm_transfer_date || s.imported_history?.transferredDate || s.importedHistory?.transferredDate) || customerBusinessDay(matchingLead?.transferred_date);
+        const cancelDate = customerBusinessDay(s.cancelled_at) || customerBusinessDay(s.imported_history?.cancelledDate || s.importedHistory?.cancelledDate);
+        const visitDate = customerBusinessDay(matchingLead?.actual_visit_date) || '';
 
-      // 4. Fetch leads from leads table
-      const { data: leadsData } = await supabase.from('leads').select('*').eq('project_name', projName);
+        return {
+          id: s.id,
+          saleId: s.id,
+          leadId: s.lead_id || null,
+          crmStage: s.crm_stage,
+          project_name: projName,
+          name: matchingLead?.customer_name || crmCustomer?.name || (!s.project_interest_id ? s.customer_name || s.customerName : '') || 'ลูกค้าไม่ระบุชื่อ',
+          phone: matchingLead?.phone || crmCustomer?.phone || (!s.project_interest_id ? s.phone : '') || '',
+          occupation: matchingLead?.occupation || '',
+          interest: projName,
+          status: kanbanStatus,
+          plot: s.plot_id || matchingPlot?.id || null,
+          plotName: s.plots?.plot_name || matchingPlot?.plot_name || s.plot_id || null,
+          bank: s.bank_name || '',
+          cancelReason: s.cancellation_reason || '',
+          landOfficePrice: s.land_office_price?.toString() || '',
+          salePrice: Number(s.sale_price ?? matchingPlot?.selling_price ?? 0),
+          expectedTransferDate: customerExpectedTransferDay(s),
+          visitDate,
+          bookingDate: bookDate,
+          transferredDate: transferDate,
+          cancelledDate: cancelDate,
+          agentName: matchingLead?.agent_name || matchingLead?.sales_owner || s.agent_name || '',
+          source: matchingLead?.source || matchingLead?.channel || 'Walk-in',
+          bankStatus: s.bank_status || 'Pending',
+          stage,
+          history: [
+            ...(bookDate ? [{ status: 'Reserved', timestamp: bookDate, note: s.agent_name || '' }] : []),
+            ...(transferDate ? [{ status: 'Transferred', timestamp: transferDate, note: s.agent_name || '' }] : []),
+            ...(cancelDate ? [{ status: 'Cancelled', timestamp: cancelDate, note: s.cancellation_reason || '' }] : [])
+          ]
+        };
+      });
 
-      // 5. Format sales from CRM V2 into Kanban lead structure
-      let formattedLeads: any[] = [];
-
-      if (salesRows.length > 0) {
-        formattedLeads = salesRows.map((s: any) => {
-          const kanbanStatus = stageToKanbanStatus(s.stage);
-          const bookDate = s.importedHistory?.bookedDate || s.bookedAt?.split('T')[0] || '';
-          const transferDate = s.importedHistory?.transferredDate || s.transferredAt?.split('T')[0] || null;
-          const cancelDate = s.importedHistory?.cancelledDate || s.cancelledAt?.split('T')[0] || null;
-          const visitDate = bookDate || s.created_at?.split('T')[0] || '';
-          const matchingPlot = plotsData?.find((p: any) => p.id === s.plotId || p.plot_name === s.plotName);
-          
-          return {
-            id: s.saleId,
-            saleId: s.saleId,
-            name: s.customerName || 'ลูกค้าไม่ระบุชื่อ',
-            phone: s.phone || '',
-            occupation: '',
-            interest: projName,
-            status: kanbanStatus,
-            plot: s.plotId || matchingPlot?.id || null,
-            plotName: s.plotName || matchingPlot?.plot_name || s.plotId || null,
-            bank: s.bankName || '',
-            cancelReason: s.cancellationReason || '',
-            landOfficePrice: '',
-            salePrice: s.salePrice ? Number(s.salePrice) : Number(matchingPlot?.selling_price || 0),
-            expectedTransferDate: s.expectedTransferDate || s.expected_transfer_date || matchingPlot?.expected_transfer_date || null,
-            visitDate,
-            bookingDate: bookDate,
-            transferredDate: transferDate,
-            cancelledDate: cancelDate,
-            agentName: s.ownerName || '',
-            source: 'Walk-in',
-            bankStatus: 'Pending',
-            stage: s.stage,
-            importedHistory: s.importedHistory,
-            history: [
-              ...(bookDate ? [{ status: 'Reserved', timestamp: bookDate, note: s.ownerName }] : []),
-              ...(transferDate ? [{ status: 'Transferred', timestamp: transferDate, note: s.ownerName }] : []),
-              ...(cancelDate ? [{ status: 'Cancelled', timestamp: cancelDate, note: s.cancellationReason }] : [])
-            ]
-          };
-        });
-      } else if (fallbackSales.length > 0) {
-        formattedLeads = fallbackSales.map((s: any) => {
-          const matchingPlot = plotsData?.find((p: any) => p.id === s.plot_id);
-          const matchingLead = leadsData?.find((l: any) => l.id === s.lead_id);
-          const status = s.contract_status === 'Cancelled' ? 'Cancelled'
-            : s.contract_status === 'Transferred' ? 'Transferred'
-            : 'Reserved';
-          return {
-            id: s.id,
-            saleId: s.id,
-            name: matchingLead?.customer_name || 'ลูกค้าไม่ระบุชื่อ',
-            phone: matchingLead?.phone || '',
-            occupation: matchingLead?.occupation || '',
-            interest: projName,
-            status,
-            plot: s.plot_id || null,
-            plotName: matchingPlot?.plot_name || s.plot_id || null,
-            bank: s.bank_name || '',
-            cancelReason: s.cancellation_reason || '',
-            landOfficePrice: s.land_office_price?.toString() || '',
-            salePrice: s.sale_price ? Number(s.sale_price) : Number(matchingPlot?.selling_price || 0),
-            expectedTransferDate: s.expected_transfer_date || matchingPlot?.expected_transfer_date || null,
-            visitDate: s.created_at?.split('T')[0] || '',
-            bookingDate: s.booked_at?.split('T')[0] || s.created_at?.split('T')[0] || '',
-            transferredDate: s.transferred_at?.split('T')[0] || null,
-            cancelledDate: s.cancelled_at?.split('T')[0] || null,
-            agentName: matchingLead?.agent_name || '',
-            source: matchingLead?.source || 'Walk-in',
-            bankStatus: s.bank_status || 'Pending',
-            stage: s.contract_status,
-            history: []
-          };
-        });
-      }
-
-      // Also append any prospective leads from leads table that don't have sales
+      // 3. Append prospective leads from leads table that don't have sales
       if (leadsData && leadsData.length > 0) {
-        const existingNames = new Set(formattedLeads.map(l => l.name));
+        const existingLeadIds = new Set(formattedLeads.map(l => l.leadId).filter(Boolean));
         leadsData.forEach((l: any) => {
-          if (!existingNames.has(l.customer_name)) {
+          if (l.id && !existingLeadIds.has(l.id)) {
+            const matchingPlot = plotsData?.find((p: any) =>
+              p.id === l.interested_plot_id ||
+              p.plot_name === l.interested_plot_name ||
+              p.id === `${projName}-${l.interested_plot_name}`
+            );
+            const bookDate = l.booking_date ? l.booking_date.split('T')[0] : '';
+            const transferDate = l.transferred_date ? l.transferred_date.split('T')[0] : null;
+            const visitDate = l.actual_visit_date?.split('T')[0] || '';
+
             formattedLeads.push({
               id: l.id,
+              leadId: l.id, saleId: null, sourceKind: 'lead', project_name: projName,
+              crm_status: l.crm_status,
               name: l.customer_name,
               phone: l.phone || '',
               occupation: l.occupation || '',
               interest: l.interest || projName,
-              status: l.status || 'Visit',
-              plot: null,
-              plotName: null,
-              bank: '',
-              cancelReason: '',
+              status: getLeadStage(l) === 'booked' && !STATUS_CONFIG[l.status]
+                ? 'Reserved'
+                : (l.status || (transferDate ? 'Transferred' : (bookDate ? 'Reserved' : 'Visit'))),
+              plot: l.interested_plot_id || matchingPlot?.id || null,
+              plotName: l.interested_plot_name || matchingPlot?.plot_name || l.interested_plot_id || null,
+              bank: customerDealDetails(l.notes).bank,
+              cancelReason: l.lost_reason || '',
               landOfficePrice: '',
-              salePrice: 0,
+              salePrice: customerDealDetails(l.notes).salePrice ?? (matchingPlot?.selling_price ? Number(matchingPlot.selling_price) : 0),
               expectedTransferDate: null,
-              visitDate: l.created_at?.split('T')[0] || '',
-              bookingDate: null,
-              agentName: l.agent_name || '',
-              source: l.source || 'Walk-in',
+              visitDate: visitDate,
+              bookingDate: bookDate,
+              transferredDate: transferDate,
+              agentName: l.agent_name || l.sales_owner || l.created_by_agent || '',
+              source: l.source || l.channel || 'Walk-in',
               bankStatus: 'Pending',
-              history: []
+              history: [
+                ...(bookDate ? [{ status: 'Reserved', timestamp: bookDate, note: l.agent_name || '' }] : []),
+                ...(transferDate ? [{ status: 'Transferred', timestamp: transferDate, note: l.agent_name || '' }] : [])
+              ]
             });
           }
         });
@@ -361,13 +375,16 @@ export default function SalesKanban({
       setLeads(formattedLeads);
       setRawLeads([...formattedLeads, ...(leadsData || [])]);
     } catch(e) {
-      console.error('Error fetching sales data:', e);
+      console.error('Error fetching sales data in SalesKanban:', e);
+      if (!isCurrent()) return;
+      setLoadError('โหลดข้อมูลการขายไม่สำเร็จ ข้อมูลเดิมที่แสดงอาจไม่ใช่ข้อมูลล่าสุด กรุณาลองใหม่');
     }
   };
 
   useEffect(() => {
     fetchData();
-  }, [internalProject?.name]);
+    return () => { dataRequest.current++; };
+  }, [internalProject?.name, user?.id, user?.username]);
 
   useEffect(() => {
     if (!panelState.plotId) {
@@ -580,123 +597,6 @@ export default function SalesKanban({
     setEditCustomerForm({ name: lead.name, phone: lead.phone, occupation: lead.occupation || '', status: lead.status, plot: lead.plot || '', salePrice: lead.salePrice?.toString() || '', bank: lead.bank || '', cancelReason: lead.cancelReason || '', landOfficePrice: lead.landOfficePrice || '', transactionDate: new Date().toISOString().split('T')[0], agentName: lead.agentName || '', note: '' });
   };
 
-  const handleSaveBooking = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSubmitting(true);
-    try {
-      const formData = new FormData(e.target as HTMLFormElement);
-      const projName = internalProject?.name || project?.name || 'ไอลิน6';
-      const name = (formData.get('name') as string)?.trim() || 'ลูกค้าไม่ระบุชื่อ';
-      const phoneInput = (formData.get('phone') as string) || '';
-      const cleanPhone = phoneInput.replace(/[^0-9]/g, '') || '0800000000';
-      const occupation = (formData.get('occupation') as string)?.trim() || '';
-      const salePriceInput = formData.get('salePrice') as string;
-      const parsedSalePrice = salePriceInput ? Number(salePriceInput.replace(/[^0-9.-]+/g,"")) : 0;
-      const txDateStr = formData.get('transactionDate') as string;
-      const txDate = txDateStr ? new Date(`${txDateStr}T12:00:00Z`).toISOString() : new Date().toISOString();
-
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData?.session?.access_token;
-      const actorId = sessionData?.session?.user?.id;
-
-      // 1. Attempt CRM V2 booking endpoint
-      let bookingSuccess = false;
-      if (token) {
-        try {
-          const res = await fetch('/api/sales-crm/bookings', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`
-            },
-            body: JSON.stringify({
-              requestId: crypto.randomUUID(),
-              command: 'book',
-              reason: 'จองแปลงจากระบบ Kanban',
-              customerId: null,
-              newCustomer: {
-                name,
-                phone: cleanPhone,
-                channel: 'walk_in',
-                notes: occupation ? `อาชีพ: ${occupation}` : '',
-                assignedSalesUserId: null,
-              },
-              projectName: projName,
-              expectedInterestRevision: null,
-              plotId: panelState.plotId,
-              paymentMethod: 'mortgage',
-              bookingRoute: 'without_visit',
-              visitId: null,
-              listPriceSatang: Math.round(parsedSalePrice * 100),
-              discountSatang: 0,
-              depositSatang: 0,
-              previousSaleId: null,
-            })
-          });
-
-          if (res.ok) {
-            bookingSuccess = true;
-          } else {
-            const errJson = await res.json().catch(() => null);
-            // If admin requires assignedSalesUserId, retry with actorId
-            if (errJson?.error?.code === 'INVALID_INPUT' && actorId) {
-              const retryRes = await fetch('/api/sales-crm/bookings', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({
-                  requestId: crypto.randomUUID(),
-                  command: 'book',
-                  reason: 'จองแปลงจากระบบ Kanban',
-                  customerId: null,
-                  newCustomer: {
-                    name,
-                    phone: cleanPhone,
-                    channel: 'walk_in',
-                    notes: occupation ? `อาชีพ: ${occupation}` : '',
-                    assignedSalesUserId: actorId,
-                  },
-                  projectName: projName,
-                  expectedInterestRevision: null,
-                  plotId: panelState.plotId,
-                  paymentMethod: 'mortgage',
-                  bookingRoute: 'without_visit',
-                  visitId: null,
-                  listPriceSatang: Math.round(parsedSalePrice * 100),
-                  discountSatang: 0,
-                  depositSatang: 0,
-                  previousSaleId: null,
-                })
-              });
-              if (retryRes.ok) bookingSuccess = true;
-            }
-          }
-        } catch (apiErr) {
-          console.warn("API booking error, falling back to direct CRM V2 table write:", apiErr);
-        }
-      }
-
-      // 2. Direct database insert fallback into CRM V2 sales table
-      if (!bookingSuccess) {
-        await supabase.from('sales').insert([{
-          plot_id: panelState.plotId,
-          contract_status: 'Reserved',
-          crm_stage: 'booked',
-          sale_price: parsedSalePrice,
-          booked_at: txDate,
-          created_at: txDate
-        }]);
-      }
-
-      await fetchData();
-      setPanelState({ type: 'default', plotId: '', lead: null });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
   const handleSaveNewCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
@@ -705,7 +605,7 @@ export default function SalesKanban({
       const projName = internalProject?.name || project?.name || 'ไอลิน6';
       const name = (formData.get('name') as string)?.trim() || 'ลูกค้าไม่ระบุชื่อ';
       const phoneInput = (formData.get('phone') as string) || '';
-      const cleanPhone = phoneInput.replace(/[^0-9]/g, '') || '0800000000';
+      const cleanPhone = phoneInput.replace(/[^0-9]/g, '');
       const occupation = (formData.get('occupation') as string)?.trim() || '';
       
       const interestPrimary = formData.get('interest') as string;
@@ -723,61 +623,30 @@ export default function SalesKanban({
 
       const notesText = [occupation ? `อาชีพ: ${occupation}` : '', finalInterest !== 'Any' ? `สนใจ: ${finalInterest}` : ''].filter(Boolean).join(' | ');
 
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData?.session?.access_token;
-      const actorId = sessionData?.session?.user?.id;
-
-      // Call CRM V2 central endpoint
-      let centralSuccess = false;
-      if (token) {
-        try {
-          const res = await fetch('/api/sales-crm/central', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`
-            },
-            body: JSON.stringify({
-              requestId: crypto.randomUUID(),
-              name,
-              phone: cleanPhone,
-              channel: 'walk_in',
-              notes: notesText,
-              interests: [{ projectName: projName, plotId: null }],
-            })
-          });
-
-          if (res.ok) {
-            centralSuccess = true;
-          } else {
-            const errJson = await res.json().catch(() => null);
-            if (errJson?.error?.code === 'SALES_OWNER_REQUIRED' && actorId) {
-              const retryRes = await fetch('/api/sales-crm/central', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({
-                  requestId: crypto.randomUUID(),
-                  name,
-                  phone: cleanPhone,
-                  channel: 'walk_in',
-                  notes: notesText,
-                  interests: [{ projectName: projName, plotId: null }],
-                  assignedSalesUserId: actorId,
-                })
-              });
-              if (retryRes.ok) centralSuccess = true;
-            }
-          }
-        } catch (apiErr) {
-          console.warn("API central error:", apiErr);
-        }
-      }
-
+      const now = new Date().toISOString();
+      const owner = user?.displayName || user?.username || 'ทีมขาย';
+      const { data, error } = await supabase.from('leads').insert([{
+        customer_name: name,
+        phone: cleanPhone || null,
+        occupation: occupation || null,
+        project_name: projName,
+        interest: finalInterest,
+        channel: 'Walk in',
+        source: 'Walk in',
+        status: 'New',
+        crm_status: 'Follow-up — อยู่ระหว่างติดตาม',
+        agent_name: owner,
+        created_by_agent: owner,
+        notes: notesText,
+        created_at: now,
+        updated_at: now,
+      }]).select('id').single();
+      if (error) throw error;
+      if (!data?.id) throw new Error('ไม่ได้รับรหัสลูกค้าหลังบันทึก');
       await fetchData();
       setPanelState({ type: 'default', plotId: '', lead: null });
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'บันทึกลูกค้าไม่สำเร็จ');
     } finally {
       setIsSubmitting(false);
     }
@@ -833,15 +702,15 @@ export default function SalesKanban({
 
       // 1. Update sales record if saleId exists
       if (saleId) {
-        await supabase.from('sales').update(salePayload).eq('id', saleId);
+        await checkedResult(supabase.from('sales').update(salePayload).eq('id', saleId));
       }
 
       // 2. Also check if there is an existing sale by lead_id
-      const { data: existingSale } = await supabase.from('sales').select('id').eq('lead_id', leadId).maybeSingle();
+      const { data: existingSale } = await checkedResult(supabase.from('sales').select('id').eq('lead_id', leadId).maybeSingle());
       if (existingSale && existingSale.id !== saleId) {
-        await supabase.from('sales').update(salePayload).eq('id', existingSale.id);
+        await checkedResult(supabase.from('sales').update(salePayload).eq('id', existingSale.id));
       } else if (isNewBooking && !saleId) {
-        await supabase.from('sales').insert([{ plot_id: panelState.plotId, ...salePayload }]);
+        await checkedResult(supabase.from('sales').insert([{ plot_id: panelState.plotId, ...salePayload }]));
       }
 
       if (oldStatus !== newStatus || editCustomerForm.bank !== panelState.lead.bank || editCustomerForm.note) {
@@ -862,29 +731,31 @@ export default function SalesKanban({
         
         const finalNote = noteParts.join(' | ');
 
-        await supabase.from('status_history').insert([{
+        await checkedResult(supabase.from('status_history').insert([{
           entity_type: 'lead',
           entity_id: leadId,
           old_status: oldStatus,
           new_status: newStatus,
           changed_by: (user?.username || 'Unknown') + (finalNote ? ` (${finalNote})` : ''),
           created_at: txDate
-        }]);
+        }]));
       }
 
       await fetchData();
       setPanelState({ type: 'default', plotId: '', lead: null });
+    } catch (err) {
+      alert(`บันทึกข้อมูลลูกค้ายังไม่ครบ บางส่วนอาจบันทึกแล้ว: ${err instanceof Error ? err.message : 'กรุณาลองใหม่'}`);
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const filteredLeads = sortLeadsByPlot(leads.filter(l => {
-    if (search && !l.name.toLowerCase().includes(search.toLowerCase()) && !l.phone.includes(search) && (!l.plot || !l.plot.toLowerCase().includes(search.toLowerCase()))) return false;
+    if (search && !(l.name ?? '').toLowerCase().includes(search.toLowerCase()) && !(l.phone ?? '').includes(search) && (!l.plot || !l.plot.toLowerCase().includes(search.toLowerCase()))) return false;
     return true;
   }));
 
-  const bookedLeads = sortLeadsByPlot(leads.filter(l => ['Reserved', 'Contracted', 'DownPayment', 'DocumentPrep', 'LoanProcessing', 'Approved'].includes(l.status)));
+  const bookedLeads = sortLeadsByPlot(leads.filter(l => ['Reserved', 'Contracted', 'DownPayment', 'DocumentPrep', 'LoanProcessing', 'LoanRejected', 'Approved', 'TransferPending'].includes(l.status)));
   const transferredLeads = sortLeadsByPlot(leads.filter(l => ['Transferred', 'Handover'].includes(l.status)));
 
   // Count today's scheduled visits
@@ -903,36 +774,38 @@ export default function SalesKanban({
   }, [rawLeads]);
 
   const handleUpdateTransferDate = async (leadId: string, newDate: string) => {
-    // Optimistic UI update
-    setLeads(prev => prev.map(l => l.id === leadId ? { ...l, expectedTransferDate: newDate } : l));
-    
-    // Save to database
     const targetLead = leads.find(l => l.id === leadId);
-    const saleId = targetLead?.saleId || leadId;
-    const plotId = targetLead?.plot;
+    const saleId = targetLead?.saleId;
+    if (!saleId || pendingForecasts.current.has(saleId)) return;
+    const day = customerBusinessDay(newDate);
+    if (newDate && !day) return;
+    const scope = forecastScope.current;
+    pendingForecasts.current.add(saleId);
+    setSavingForecasts([...pendingForecasts.current]);
 
     try {
-      if (saleId) {
-        await supabase
-          .from('sales')
-          .update({ expected_transfer_date: newDate || null })
-          .eq('id', saleId);
+      const result = await checkedResult(supabase
+        .from('sales')
+        .update({ expected_transfer_date: day })
+        .eq('id', saleId)
+        .select('id,expected_transfer_date')
+        .single());
+      const saved = result.data;
+      if (!saved || saved.id !== saleId || customerExpectedTransferDay(saved) !== day) {
+        throw new Error('ไม่พบวันคาดโอนที่บันทึกได้ในรายการจองนี้');
       }
-      if (leadId && leadId !== saleId) {
-        await supabase
-          .from('sales')
-          .update({ expected_transfer_date: newDate || null })
-          .eq('lead_id', leadId);
-      }
-      if (plotId) {
-        await supabase
-          .from('plots')
-          .update({ expected_transfer_date: newDate || null })
-          .eq('id', plotId);
+      if (forecastScope.current === scope) {
+        setLeads(prev => prev.map(l => l.saleId === saleId
+          ? { ...l, expectedTransferDate: day } : l));
       }
     } catch (err) {
       console.error("Failed to update transfer date", err);
-      fetchData(); // Revert on error
+      if (forecastScope.current === scope) {
+        alert(`บันทึกวันคาดโอนไม่สำเร็จ: ${err instanceof Error ? err.message : 'กรุณาลองใหม่'}`);
+      }
+    } finally {
+      pendingForecasts.current.delete(saleId);
+      setSavingForecasts([...pendingForecasts.current]);
     }
   };
 
@@ -974,16 +847,21 @@ export default function SalesKanban({
           const parsed = parseExcelRowToLead(rowObj, i + 2, defaultProj, defaultAg);
           if (parsed) {
             if (parsed.interested_plot_name && allPlotsData) {
-              const normalizedPlotStr = parsed.interested_plot_name.replace(/\s+/g, '').toLowerCase();
-              const projPrefix = parsed.project_name.replace(/\s+/g, '').toLowerCase();
+              const rawPlotStr = parsed.interested_plot_name.trim();
+              const cleanPlotName = rawPlotStr.replace(/^(AL\d+|YR|K\d+พิเศษ|K\d+)-?/i, '').replace(/^0+/, '').trim();
               const matched = allPlotsData.find(p => {
-                const pName = (p.plot_name || '').replace(/\s+/g, '').toLowerCase();
-                const pProj = (p.project_name || '').toLowerCase();
-                if (pProj !== parsed.project_name.toLowerCase()) return false;
-                return pName === normalizedPlotStr || 
-                       `${projPrefix}-${pName}` === normalizedPlotStr || 
-                       `${projPrefix}${pName}` === normalizedPlotStr ||
-                       pName === normalizedPlotStr.replace(new RegExp(`^${projPrefix}-?`), '');
+                const pProj = (p.project_name || '').toLowerCase().replace(/\s+/g, '');
+                const targetProj = (parsed.project_name || '').toLowerCase().replace(/\s+/g, '');
+                if (pProj !== targetProj) return false;
+
+                const pIdClean = (p.id || '').replace(/^(ไอลิน\s*\d+|โยริว|กานต์รวี\s*\d+)-?/i, '').replace(/^0+/, '').trim();
+                const pNameClean = (p.plot_name || '').replace(/^0+/, '').trim();
+
+                return p.id === rawPlotStr ||
+                       p.plot_name === rawPlotStr ||
+                       pNameClean === cleanPlotName ||
+                       pIdClean === cleanPlotName ||
+                       p.id === `${parsed.project_name}-${cleanPlotName}`;
               });
               if (matched) {
                 parsed.matched_plot_id = matched.id;
@@ -1069,7 +947,7 @@ export default function SalesKanban({
       let insertedCount = 0;
 
       // Fetch all leads to match across all projects
-      const { data: allLeadsData } = await supabase.from('leads').select('id, customer_name, phone, project_name, status, agent_name, created_at');
+      const { data: allLeadsData } = await checkedResult(supabase.from('leads').select('id, customer_name, phone, project_name, status, agent_name, created_at'));
 
       for (const row of importData) {
         const existingLead = allLeadsData?.find(l => 
@@ -1113,41 +991,39 @@ export default function SalesKanban({
 
         if (existingLead) {
           // UPDATE EXISTING LEAD
-          await supabase.from('leads').update(leadPayload).eq('id', existingLead.id);
+          await checkedResult(supabase.from('leads').update(leadPayload).eq('id', existingLead.id));
           currentLeadId = existingLead.id;
 
           if (row.legacy_status !== existingLead.status) {
-            await supabase.from('status_history').insert([{
+            await checkedResult(supabase.from('status_history').insert([{
               entity_type: 'lead',
               entity_id: existingLead.id,
               old_status: existingLead.status,
               new_status: row.legacy_status,
               changed_by: (user?.username || 'Unknown') + ' (System Import Update)',
               created_at: row.transferred_date || row.booking_date || new Date().toISOString()
-            }]);
+            }]));
           }
           updatedCount++;
         } else {
           // INSERT NEW LEAD
-          const { data: newLeadsData, error: newLeadsError } = await supabase.from('leads').insert([{
+          const { data: newLeadsData, error: newLeadsError } = await checkedResult(supabase.from('leads').insert([{
             ...leadPayload,
             created_at: row.lead_date || new Date().toISOString()
-          }]).select();
+          }]).select());
           
-          if (newLeadsError) {
-            console.error("Insert Lead Error Detailed:", newLeadsError);
-            continue;
-          }
+          if (newLeadsError) throw new Error(newLeadsError.message);
+          if (!newLeadsData?.length) throw new Error('เพิ่มลูกค้าแล้วแต่ยืนยันรหัสรายการไม่ได้');
 
           if (newLeadsData && newLeadsData.length > 0) {
             currentLeadId = newLeadsData[0].id;
-            await supabase.from('status_history').insert([{
+            await checkedResult(supabase.from('status_history').insert([{
               entity_type: 'lead',
               entity_id: currentLeadId,
               new_status: row.legacy_status,
               changed_by: (user?.username || 'Unknown') + ' (System Import)',
               created_at: row.transferred_date || row.booking_date || row.lead_date || new Date().toISOString()
-            }]);
+            }]));
             insertedCount++;
           }
         }
@@ -1157,7 +1033,7 @@ export default function SalesKanban({
           const contractStatus = row.transferred_date || row.crm_status.includes('โอน') ? 'Transferred' : (row.crm_status.includes('สัญญา') ? 'Contracted' : 'Reserved');
           const salePrice = row.sale_price || row.booking_amount || 0;
 
-          const { data: existingSale } = await supabase.from('sales').select('id').eq('lead_id', currentLeadId).maybeSingle();
+          const { data: existingSale } = await checkedResult(supabase.from('sales').select('id').eq('lead_id', currentLeadId).maybeSingle());
 
           const salePayload = {
             plot_id: row.matched_plot_id || null,
@@ -1169,21 +1045,21 @@ export default function SalesKanban({
           };
 
           if (existingSale) {
-            await supabase.from('sales').update(salePayload).eq('id', existingSale.id);
+            await checkedResult(supabase.from('sales').update(salePayload).eq('id', existingSale.id));
           } else {
-            await supabase.from('sales').insert([{
+            await checkedResult(supabase.from('sales').insert([{
               lead_id: currentLeadId,
               ...salePayload,
               bank_status: row.loan_approved_date ? 'Approved' : (row.loan_submission_date ? 'Pre-approved' : 'Pending'),
               created_at: row.booking_date || row.lead_date || new Date().toISOString()
-            }]);
+            }]));
           }
 
           if (row.matched_plot_id) {
-            await supabase.from('plots').update({
+            await checkedResult(supabase.from('plots').update({
               has_customer: true,
               sale_status: row.transferred_date ? 'transferred' : 'sold'
-            }).eq('id', row.matched_plot_id);
+            }).eq('id', row.matched_plot_id));
           }
         }
       }
@@ -1194,7 +1070,7 @@ export default function SalesKanban({
       alert(`นำเข้าข้อมูลสำเร็จ: อัปเดตข้อมูลเดิม ${updatedCount} รายการ, เพิ่มข้อมูลใหม่ ${insertedCount} รายการ`);
     } catch (err) {
       console.error("Error importing data:", err);
-      alert("เกิดข้อผิดพลาดในการนำเข้าข้อมูล โปรดลองอีกครั้ง");
+      alert("นำเข้าข้อมูลยังไม่ครบ บางรายการอาจบันทึกแล้ว กรุณาตรวจรายการก่อนนำเข้าซ้ำ");
     } finally {
       setIsImporting(false);
     }
@@ -1205,16 +1081,16 @@ export default function SalesKanban({
       try {
         const projName = project?.name || 'ไอลิน6';
         // Find all leads for this project
-        const { data: leadsData } = await supabase.from('leads').select('id').eq('project_name', projName);
+        const { data: leadsData } = await checkedResult(supabase.from('leads').select('id').eq('project_name', projName));
         
         if (leadsData && leadsData.length > 0) {
           const leadIds = leadsData.map(l => l.id);
           
           // Delete status_history for these leads manually
-          await supabase.from('status_history').delete().in('entity_id', leadIds);
+          await checkedResult(supabase.from('status_history').delete().in('entity_id', leadIds));
           
           // Delete leads (sales will cascade automatically)
-          const { error } = await supabase.from('leads').delete().eq('project_name', projName);
+          const { error } = await checkedResult(supabase.from('leads').delete().eq('project_name', projName));
           if (error) throw error;
         }
 
@@ -1256,6 +1132,7 @@ export default function SalesKanban({
 
     return (
       <div className="h-screen overflow-y-auto bg-[#f5f5f7] p-4 sm:p-8 w-full custom-scrollbar">
+        {loadError && <p role="alert" className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-xs font-bold text-rose-900">{loadError}</p>}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
           <div className="flex items-center gap-4">
             {onBack && (
@@ -1404,6 +1281,10 @@ export default function SalesKanban({
 
   return (
     <div className="h-screen overflow-hidden bg-[#f8fafc] font-sans flex flex-col">
+      {loadError && <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-xs font-bold text-rose-900 flex items-center justify-between gap-2">
+        <span>{loadError}</span>
+        <button type="button" onClick={fetchData} className="shrink-0 underline">ลองใหม่</button>
+      </div>}
       {/* Header */}
       <header className="bg-white border-b border-gray-200 px-4 md:px-8 py-4 md:py-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 sm:gap-0 z-10 shrink-0">
         <div className="flex items-center gap-4">
@@ -1576,7 +1457,7 @@ export default function SalesKanban({
                             <td className="px-6 py-4">
                               <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${STATUS_CONFIG[lead.status]?.bg} ${STATUS_CONFIG[lead.status]?.color}`}>
                                 <StatusIcon size={12} />
-                                {STATUS_CONFIG[lead.status]?.label}
+                                {STATUS_CONFIG[lead.status]?.label || lead.status}
                               </div>
                             </td>
                             <td className="px-6 py-4">
@@ -1609,7 +1490,7 @@ export default function SalesKanban({
                               </div>
                             </td>
                             <td className="px-6 py-4">
-                              <button onClick={() => handleEditLeadClick(lead)} className="text-[#0f172a] font-semibold text-sm hover:text-[#d4af37] transition-colors flex items-center gap-1 opacity-0 group-hover:opacity-100">
+                              <button onClick={() => handleEditLeadClick(lead)} className="text-[#0f172a] font-semibold text-sm hover:text-[#d4af37] transition-colors flex items-center gap-1 opacity-100 group-focus-within:opacity-100 focus:opacity-100">
                                 Edit Profile <ArrowRight size={14} />
                               </button>
                             </td>
@@ -1694,6 +1575,7 @@ export default function SalesKanban({
                               <input 
                                 type="date"
                                 value={lead.expectedTransferDate || ''}
+                                disabled={!lead.saleId || savingForecasts.includes(lead.saleId)}
                                 onChange={(e) => handleUpdateTransferDate(lead.id, e.target.value)}
                                 className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm font-semibold text-slate-700 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 bg-white shadow-sm"
                               />
@@ -1734,9 +1616,7 @@ export default function SalesKanban({
                         const statusCfg = STATUS_CONFIG[lead.status] || STATUS_CONFIG['Visit'];
                         const StatusIcon = statusCfg.icon;
                         const plotName = projectPlotsData.find(p => p.id === lead.plot)?.plot_name || lead.plot;
-                        // Try to find the transfer date from history, fallback to expected transfer date
-                        const transferHistory = lead.history?.find((h: any) => h.status === 'Transferred');
-                        const transferredDate = transferHistory?.timestamp?.split('T')[0] || lead.expectedTransferDate || '-';
+                        const transferredDate = customerActualTransferDay(lead) || '-';
                         
                         return (
                           <tr key={lead.id} className="hover:bg-slate-50 transition-colors group cursor-pointer" onClick={() => handleEditLeadClick(lead)}>
@@ -2147,14 +2027,16 @@ export default function SalesKanban({
                     <div className="grid grid-cols-2 gap-2 pt-1">
                       <button
                         type="button"
+                        disabled={!canCreateBooking(selectedPlotLead)}
                         onClick={() => {
+                          if (!canCreateBooking(selectedPlotLead)) return;
                           setShowBookingModal({
                             isOpen: true,
                             lead: selectedPlotLead,
                             plotId: panelState.plotId
                           });
                         }}
-                        className="w-full bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 text-white font-bold py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-sm shadow-orange-500/20 cursor-pointer transition-all"
+                        className="w-full bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 text-white font-bold py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-sm shadow-orange-500/20 cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <span>⚡ บันทึกการจอง</span>
                         {selectedPlotLead && <span className="truncate max-w-[70px]">({selectedPlotLead.customer_name})</span>}
@@ -2182,7 +2064,7 @@ export default function SalesKanban({
                     const plotName = projectPlotsData.find(d => d.id === panelState.plotId)?.plot_name || panelState.plotId;
                     const interestedLeads = rawLeads.filter(l => 
                       (l.interested_plot_name === plotName || l.interested_plot_id === panelState.plotId) &&
-                      !l.crm_status?.includes('Booked') && !l.crm_status?.includes('Transferred') && !l.crm_status?.includes('Lost')
+                      canCreateBooking(l)
                     );
 
                     return (
@@ -2211,15 +2093,11 @@ export default function SalesKanban({
                                   <button
                                     type="button"
                                     onClick={() => {
-                                      setShowBookingModal({
-                                        isOpen: true,
-                                        lead: lead,
-                                        plotId: panelState.plotId
-                                      });
+                                      setSelectedPlotLead(lead);
                                     }}
                                     className="bg-orange-600 hover:bg-orange-700 text-white font-bold text-[11px] px-2.5 py-1.5 rounded-lg shadow-sm flex items-center gap-1 cursor-pointer transition-colors"
                                   >
-                                    ⚡ จอง
+                                    เลือกลูกค้ารายนี้
                                   </button>
                                   <button
                                     type="button"
@@ -2275,7 +2153,7 @@ export default function SalesKanban({
                     <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
                       <Users className="text-blue-600" /> ลูกค้าเยี่ยมชมใหม่
                     </h3>
-                    <button onClick={() => setPanelState({ type: 'default', plotId: '', lead: null })} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
+                    <button disabled={isSubmitting} onClick={() => setPanelState({ type: 'default', plotId: '', lead: null })} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
                   </div>
                   <form onSubmit={handleSaveNewCustomer} className="space-y-5 flex-1" autoComplete="off">
                     <div>
@@ -2342,7 +2220,40 @@ export default function SalesKanban({
                 </div>
               )}
 
-              {panelState.type === 'customer' && panelState.lead && (
+              {panelState.type === 'customer' && panelState.lead && (() => {
+                // Keep the right-hand form; only its data/save binding shares the Lead editor.
+                const panelForm = editCustomerForm;
+                const updatePanelForm = setEditCustomerForm;
+                const submitPanelForm = handleUpdateCustomer;
+                const panelSubmitting = isSubmitting;
+                const panelStatuses = getNextStatuses;
+                const renderPanel = (editor?: SalesDealEditorModel) => {
+                  const editCustomerForm = editor ? { ...panelForm, name: editor.draft.name, phone: editor.draft.phone,
+                    occupation: editor.draft.occupation, agentName: editor.draft.agentName || '',
+                    salePrice: editor.draft.price, landOfficePrice: editor.draft.landOfficePrice || '',
+                    bank: editor.draft.bank, status: stageToKanbanStatus(editor.target),
+                    cancelReason: editor.reason, transactionDate: editor.eventDate, note: editor.note } : panelForm;
+                  const setEditCustomerForm = (form: typeof panelForm) => {
+                    if (!editor) { updatePanelForm(form); return; }
+                    // Changing the plot is outside this customer/status save command.
+                    if (form.plot !== panelForm.plot) { updatePanelForm(form); return; }
+                    editor.setDraft({ ...editor.draft, name: form.name, phone: form.phone, occupation: form.occupation,
+                      agentName: form.agentName, price: form.salePrice, landOfficePrice: form.landOfficePrice,
+                      bank: form.bank, method: form.bank === editor.draft.bank ? editor.draft.method : form.bank === 'ซื้อเงินสด' ? 'cash' : 'mortgage' });
+                    editor.setTarget(kanbanStatusToStage(form.status)); editor.setReason(form.cancelReason);
+                    editor.setEventDate(form.transactionDate); editor.setNote(form.note);
+                  };
+                  const handleUpdateCustomer = async (event: React.FormEvent) => {
+                    if (!editor) { await submitPanelForm(event); return; }
+                    event.preventDefault();
+                    if (editCustomerForm.plot !== (panelState.lead.plot || '')) {
+                      alert('การบันทึกข้อมูลลูกค้าไม่ย้ายแปลง กรุณาเลือกแปลงปัจจุบันก่อนบันทึก'); return;
+                    }
+                    await editor.save({ confirmedBySubmit: true });
+                  };
+                  const isSubmitting = editor ? editor.busy : panelSubmitting;
+                  const getNextStatuses = editor ? () => editor.choices.map(stageToKanbanStatus) : panelStatuses;
+                  return (
                 <div className="flex flex-col h-full animate-in fade-in duration-300">
                   <div className="flex justify-between items-center mb-6">
                     <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
@@ -2351,6 +2262,8 @@ export default function SalesKanban({
                     <button onClick={() => setPanelState({ type: 'default', plotId: '', lead: null })} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
                   </div>
                   
+                  {editor?.loading && <p role="status" className="text-xs text-slate-500">กำลังโหลดข้อมูลล่าสุด…</p>}
+                  {editor?.error && <p role="alert" className="text-sm text-red-700">{editor.error}</p>}
                   <form onSubmit={handleUpdateCustomer} className="space-y-4 flex-1" autoComplete="off">
                     <div className="flex flex-col items-center p-4 bg-slate-50 border border-slate-100 rounded-2xl text-center mb-2">
                       <div className="w-14 h-14 bg-white rounded-full shadow-sm flex items-center justify-center text-2xl font-bold text-[#0f172a] mb-3">
@@ -2365,7 +2278,8 @@ export default function SalesKanban({
                       <input 
                         type="text" 
                         autoComplete="off"
-                        value={editCustomerForm.name} 
+                        aria-label="ชื่อลูกค้า" disabled={Boolean(editor && (editor.locked || !editor.resolved?.leadId))}
+                          value={editCustomerForm.name} 
                         onChange={e => setEditCustomerForm({...editCustomerForm, name: e.target.value})}
                         className="w-full border border-slate-200 rounded-xl px-4 py-2 focus:outline-none focus:border-[#d4af37] text-sm font-bold text-[#0f172a]" 
                         required 
@@ -2377,7 +2291,8 @@ export default function SalesKanban({
                       </label>
                       <input 
                         type="date" 
-                        value={editCustomerForm.transactionDate} 
+                        aria-label="วันที่ทำรายการ" disabled={editor?.locked}
+                          value={editCustomerForm.transactionDate} 
                         onChange={e => setEditCustomerForm({...editCustomerForm, transactionDate: e.target.value})}
                         className={`w-full border rounded-xl px-4 py-2 focus:outline-none focus:border-[#d4af37] text-sm text-gray-700 ${['Transferred', 'Handover'].includes(editCustomerForm.status) ? 'border-blue-300 bg-blue-50/30' : 'border-slate-200'}`} 
                       />
@@ -2388,6 +2303,7 @@ export default function SalesKanban({
                         <input 
                           type="tel" 
                           autoComplete="off"
+                          aria-label="เบอร์โทรศัพท์" disabled={Boolean(editor && (editor.locked || !editor.resolved?.leadId))}
                           value={editCustomerForm.phone} 
                           onChange={e => setEditCustomerForm({...editCustomerForm, phone: formatPhoneNumber(e.target.value)})}
                           className="w-full border border-slate-200 rounded-xl px-4 py-2 focus:outline-none focus:border-[#d4af37] text-sm" 
@@ -2399,6 +2315,7 @@ export default function SalesKanban({
                         <input 
                           type="text" 
                           autoComplete="off"
+                          aria-label="อาชีพ" disabled={Boolean(editor && (editor.locked || !editor.resolved?.leadId))}
                           value={editCustomerForm.occupation} 
                           onChange={e => setEditCustomerForm({...editCustomerForm, occupation: e.target.value})}
                           className="w-full border border-slate-200 rounded-xl px-4 py-2 focus:outline-none focus:border-[#d4af37] text-sm" 
@@ -2409,6 +2326,7 @@ export default function SalesKanban({
                         <input 
                           type="text" 
                           autoComplete="off"
+                          aria-label="พนักงานขาย" disabled={Boolean(editor && (editor.locked || !editor.resolved?.leadId))}
                           value={editCustomerForm.agentName} 
                           onChange={e => setEditCustomerForm({...editCustomerForm, agentName: e.target.value})}
                           className="w-full border border-slate-200 rounded-xl px-4 py-2 focus:outline-none focus:border-[#d4af37] text-sm" 
@@ -2427,6 +2345,8 @@ export default function SalesKanban({
                           return (
                             <button 
                               key={s} 
+                              aria-pressed={isSelected}
+                              disabled={editor?.locked}
                               type="button"
                               onClick={() => setEditCustomerForm({...editCustomerForm, status: s})}
                               className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold border transition-all ${isSelected ? 'bg-[#0f172a] text-white border-[#0f172a] shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400 hover:bg-slate-50'}`}
@@ -2447,7 +2367,8 @@ export default function SalesKanban({
                             )}
                             <select 
                               className={`w-full border border-slate-200 rounded-xl py-2.5 focus:outline-none focus:border-cyan-500 font-medium text-slate-700 bg-cyan-50 text-sm appearance-none ${editCustomerForm.bank && editCustomerForm.bank !== 'ซื้อเงินสด' ? 'pl-11 pr-4' : 'px-4'}`}
-                              value={editCustomerForm.bank}
+                              aria-label="ธนาคาร" disabled={editor?.locked}
+                          value={editCustomerForm.bank}
                               onChange={e => setEditCustomerForm({...editCustomerForm, bank: e.target.value})}
                               required
                             >
@@ -2468,7 +2389,8 @@ export default function SalesKanban({
                             <input 
                               type="number"
                               className="w-full border border-emerald-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-emerald-500 font-medium text-slate-700 bg-emerald-50 text-sm"
-                              value={editCustomerForm.salePrice || ''}
+                              aria-label="ราคาขายสุทธิ" disabled={editor?.locked}
+                          value={editCustomerForm.salePrice || ''}
                               onChange={e => setEditCustomerForm({...editCustomerForm, salePrice: e.target.value})}
                               placeholder="เช่น 3500000"
                             />
@@ -2479,7 +2401,8 @@ export default function SalesKanban({
                               <input 
                                 type="number"
                                 className="w-full border border-blue-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-blue-500 font-medium text-slate-700 bg-blue-50 text-sm"
-                                value={editCustomerForm.landOfficePrice || ''}
+                                aria-label="ราคาประเมิน" disabled={editor?.locked}
+                          value={editCustomerForm.landOfficePrice || ''}
                                 onChange={e => setEditCustomerForm({...editCustomerForm, landOfficePrice: e.target.value})}
                                 placeholder="เช่น 3500000"
                                 required
@@ -2489,12 +2412,13 @@ export default function SalesKanban({
                         </div>
                       )}
 
-                      {editCustomerForm.status === 'Cancelled' && (
+                      {['Cancelled', 'LoanRejected'].includes(editCustomerForm.status) && (
                         <div className="mb-3 animate-in slide-in-from-top-2 duration-200">
-                          <label className="block text-xs font-semibold text-red-700 mb-1">เหตุผลที่ยกเลิกจอง</label>
+                          <label className="block text-xs font-semibold text-red-700 mb-1">{editCustomerForm.status === 'Cancelled' ? 'เหตุผลที่ยกเลิกจอง' : 'เหตุผลที่สินเชื่อไม่ผ่าน'}</label>
                           <textarea 
                             className="w-full border border-red-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-red-500 font-medium text-slate-700 bg-red-50 text-sm min-h-[80px]"
-                            value={editCustomerForm.cancelReason}
+                            aria-label="เหตุผล" disabled={editor?.locked}
+                          value={editCustomerForm.cancelReason}
                             onChange={e => setEditCustomerForm({...editCustomerForm, cancelReason: e.target.value})}
                             placeholder="ระบุเหตุผล..."
                             required
@@ -2507,7 +2431,8 @@ export default function SalesKanban({
                           <label className="block text-xs font-semibold text-slate-700 mb-1">หมายเหตุเพิ่มเติม (ถ้ามี)</label>
                           <textarea 
                             className="w-full border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-slate-500 text-slate-700 bg-white text-sm min-h-[60px]"
-                            value={editCustomerForm.note || ''}
+                            aria-label="หมายเหตุสถานะ" disabled={editor?.locked}
+                          value={editCustomerForm.note || ''}
                             onChange={e => setEditCustomerForm({...editCustomerForm, note: e.target.value})}
                             placeholder="ระบุหมายเหตุเพิ่มเติม (ไม่บังคับ)"
                           />
@@ -2519,7 +2444,8 @@ export default function SalesKanban({
                           <label className="block text-xs font-semibold text-emerald-700 mb-1">แปลงที่จอง (เลือกได้เฉพาะแปลงว่าง)</label>
                           <select 
                             className="w-full border border-emerald-300 rounded-xl px-4 py-2.5 focus:outline-none focus:border-emerald-500 font-bold text-emerald-800 bg-emerald-50 text-sm"
-                            value={editCustomerForm.plot}
+                            aria-label="แปลงที่จอง" disabled={editor?.locked}
+                          value={editCustomerForm.plot}
                             onChange={e => setEditCustomerForm({...editCustomerForm, plot: e.target.value})}
                             required
                           >
@@ -2535,14 +2461,14 @@ export default function SalesKanban({
                     </div>
                     
                     <div className="pt-2 flex flex-col gap-2">
-                      <button type="submit" disabled={isSubmitting} className={`w-full text-white font-bold py-3 rounded-xl transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 ${editCustomerForm.status === 'Cancelled' ? 'bg-red-600 hover:bg-red-700' : 'bg-[#0f172a] hover:bg-[#1e293b]'}`}>
+                      <button type="submit" disabled={editor ? !editor.canSave : isSubmitting} className={`w-full text-white font-bold py-3 rounded-xl transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 ${editCustomerForm.status === 'Cancelled' ? 'bg-red-600 hover:bg-red-700' : 'bg-[#0f172a] hover:bg-[#1e293b]'}`}>
                         {isSubmitting ? <><Loader2 className="animate-spin" size={18} /> กำลังบันทึก...</> : 'บันทึกการเปลี่ยนแปลง'}
                       </button>
-                      <button type="button" onClick={() => setPanelState({ type: 'default', plotId: '', lead: null })} className="w-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold py-3 rounded-xl transition-colors">
+                      <button type="button" disabled={isSubmitting} onClick={() => setPanelState({ type: 'default', plotId: '', lead: null })} className="w-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold py-3 rounded-xl transition-colors">
                         ปิดหน้าต่าง
                       </button>
                       {user?.role === 'Admin' && (
-                        <button type="button" onClick={() => handleDeleteCustomer(panelState.lead.id)} className="w-full bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 hover:text-red-700 font-bold py-3 rounded-xl transition-colors mt-2 flex items-center justify-center gap-2">
+                        <button type="button" disabled={isSubmitting || Boolean(editor && !editor.resolved?.leadId)} onClick={() => handleDeleteCustomer(editor?.resolved?.leadId || panelState.lead.id)} className="w-full bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 hover:text-red-700 font-bold py-3 rounded-xl transition-colors mt-2 flex items-center justify-center gap-2">
                           <Trash2 size={18} /> ลบข้อมูลลูกค้า
                         </button>
                       )}
@@ -2587,7 +2513,20 @@ export default function SalesKanban({
                     </div>
                   )}
                 </div>
-              )}
+                  );
+                };
+                return ['booked', 'transferred'].includes(getLeadStage(panelState.lead)) ? <SalesDealStatusModal
+                  lead={panelState.lead} currentUser={user}
+                  onClose={() => setPanelState({ type: 'default', plotId: '', lead: null })}
+                  onSaved={async notice => {
+                    const savedScope = currentDataScope.current;
+                    setPanelState({ type: 'default', plotId: '', lead: null });
+                    await fetchData();
+                    if (currentDataScope.current === savedScope) alert(notice);
+                  }}
+                  renderEditor={renderPanel}
+                /> : renderPanel();
+              })()}
             </div>
           </div>
         )}
@@ -2596,7 +2535,7 @@ export default function SalesKanban({
 
       {/* 🌟 Full Screen Image Modal 🌟 */}
       {fullImageUrl && (
-        <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 sm:p-8 animate-in fade-in duration-200" onClick={() => setFullImageUrl(null)}>
+        <SalesOverlay className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 sm:p-8 animate-in fade-in duration-200" onClick={() => setFullImageUrl(null)}>
           <button 
             className="absolute top-4 right-4 sm:top-6 sm:right-6 bg-white/10 hover:bg-white/20 text-white rounded-full p-2 transition-colors cursor-pointer border border-white/10"
             onClick={(e) => { e.stopPropagation(); setFullImageUrl(null); }}
@@ -2609,11 +2548,11 @@ export default function SalesKanban({
             className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl animate-in zoom-in-95 duration-200" 
             onClick={(e) => e.stopPropagation()}
           />
-        </div>
+        </SalesOverlay>
       )}
       {/* 🌟 Excel Import Modal 🌟 */}
       {showImportModal && (
-        <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <SalesOverlay className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col animate-in fade-in zoom-in duration-200">
             <div className="flex items-center justify-between p-6 border-b border-gray-100">
               <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
@@ -2749,7 +2688,7 @@ export default function SalesKanban({
               </button>
             </div>
           </div>
-        </div>
+        </SalesOverlay>
       )}
 
       {/* Daily House Inspection SOP Modal */}
@@ -2782,14 +2721,19 @@ export default function SalesKanban({
             phone: showBookingModal.lead.phone,
             channel: showBookingModal.lead.channel,
             salesOwner: showBookingModal.lead.sales_owner || showBookingModal.lead.agent_name,
-            notes: showBookingModal.lead.notes
+            notes: showBookingModal.lead.notes,
+            status: showBookingModal.lead.status,
+            crm_status: showBookingModal.lead.crm_status,
+            booking_date: showBookingModal.lead.booking_date,
+            transferred_date: showBookingModal.lead.transferred_date
           } : null}
           initialInterest={{
             projectName: project?.name,
             plotId: showBookingModal.plotId || panelState.plotId
           }}
           projects={projects?.map(p => p.name) || [project?.name || 'ไอลิน6']}
-          salesOwners={[]}
+          salesOwners={bookingSalesOwners}
+          currentUser={user}
           onSaved={async () => {
             await fetchData();
             setPanelState({ type: 'default', plotId: '', lead: null });

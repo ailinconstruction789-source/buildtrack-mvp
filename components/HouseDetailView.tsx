@@ -9,6 +9,7 @@ import HouseHandoverView from './HouseHandoverView';
 import ReceiptUploadModal from './ReceiptUploadModal';
 import MeterPhotoConfirmationModal from './MeterPhotoConfirmationModal';
 import MeterStatusBadges from './MeterStatusBadges';
+import { buildHouseTaskIndex } from '@/lib/houseTaskIndex';
 
 interface HouseDetailViewProps {
   view: string;
@@ -39,6 +40,9 @@ interface HouseDetailViewProps {
   setTaskReturnView: (v: string) => void;
   setAssignModal: (o: any) => void;
   currentUserRole: string;
+  currentUserId?: string | number;
+  currentAuthUserId?: string;
+  captureActorScope?: () => () => boolean;
   totalChartDays: number;
   timeMarkers: any[];
   todayTs: number;
@@ -105,6 +109,8 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
   } = props;
 
   const currentPlotStatus = selectedPlot ? getPlotOverallStatus(selectedPlot.id) : null;
+  const houseTaskIndex = React.useMemo(() => buildHouseTaskIndex(selectedPlot?.id, assignments, allUpdatesRecord),
+    [selectedPlot?.id, assignments, allUpdatesRecord]);
 
   const [requestMaterialNote, setRequestMaterialNote] = React.useState('');
   const [requestMaterialTask, setRequestMaterialTask] = React.useState<any>(null);
@@ -307,7 +313,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
             onClose={() => setReceiptUploadTask(null)}
             onSuccess={(newReceipt) => {
               if (setMaterialReceipts) {
-                setMaterialReceipts([newReceipt, ...(materialReceipts || [])]);
+                setMaterialReceipts((previous: any[]) => [newReceipt, ...previous.filter(receipt => receipt.id !== newReceipt.id)]);
               }
               showToast ? showToast('อัปโหลดรูปรับของเรียบร้อย', 'success') : alert('อัปโหลดรูปรับของเรียบร้อย');
             }}
@@ -318,6 +324,9 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
             requestStatus={currentRequest?.status || ''}
             currentUserRole={currentUserRole}
             currentUserName={currentUserRole}
+            currentUserId={props.currentUserId}
+            currentAuthUserId={props.currentAuthUserId}
+            captureActorScope={props.captureActorScope}
           />
         );
       })()}
@@ -852,12 +861,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                                 if (tProgress === 100) return false;
                             }
                             if (hideExcludedTasks) {
-                                const assignment = assignments.find(a => a.task_template_id === t.id && a.plot_id === selectedPlot.id);
-                                const isGlobalExcluded = selectedPlot?.house_types?.type_name ? t.excluded_house_types?.includes(selectedPlot.house_types.type_name) : false;
-                                if (assignment?.is_excluded === true || isGlobalExcluded) return false;
-                            }
-                            if (hideExcludedTasks) {
-                                const assignment = assignments.find(a => a.task_template_id === t.id && a.plot_id === selectedPlot.id);
+                                const assignment = houseTaskIndex.assignmentByTask.get(t.id);
                                 const isGlobalExcluded = selectedPlot?.house_types?.type_name ? t.excluded_house_types?.includes(selectedPlot.house_types.type_name) : false;
                                 if (assignment?.is_excluded === true || isGlobalExcluded) return false;
                             }
@@ -865,7 +869,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                           }).map((task) => {
                             const key             = `${selectedPlot.id}-${task.id}`;
                                     const isUpdatedToday = latestUpdatesMap[key]?.updated_at && new Date(latestUpdatesMap[key].updated_at).toDateString() === new Date().toDateString();
-                                    const assignment      = assignments.find(a => a.task_template_id === task.id && a.plot_id === selectedPlot.id);
+                                    const assignment      = houseTaskIndex.assignmentByTask.get(task.id);
 
                             // ✅ Fixed: was schedulePlan[task.id] / actualDates[task.id]
                             const plan  = schedules[key]  || {};
@@ -877,9 +881,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                             
                             // Find the first time it reached 100% in the current streak
                             let first100DateInStreak = null;
-                            const tUpdates = allUpdatesRecord
-                                .filter((u: any) => u.plot_id === selectedPlot.id && u.task_template_id === task.id)
-                                .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+                            const tUpdates = houseTaskIndex.updatesByTask.get(task.id) || [];
                             
                             for (let i = tUpdates.length - 1; i >= 0; i--) {
                                 if (tUpdates[i].progress < 100) break;

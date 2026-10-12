@@ -8,13 +8,21 @@ import {
   CalendarDays, Check, AlertTriangle, Building, Tag, ExternalLink
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { fetchSalesWithoutLimit } from '@/lib/sales/fetchWithoutLimit';
 import { Lead, CRMStatus } from '@/types/sales';
 import HouseVisitChecklistModal from './HouseVisitChecklistModal';
 import CustomerVoicesModal from './CustomerVoicesModal';
 import DailyHouseInspectionModal from './DailyHouseInspectionModal';
 import { isSampleHouse, fetchTodayInspectionStatus, fetchTodayInspectionMap, SampleHouseInspectionStatus } from '@/lib/sales/sampleHouseHelper';
+import SalesOverlay from './SalesOverlay';
+import { preserveLeadDealStage } from '@/lib/sales/leadStage';
+import { centralApi } from '@/lib/sales/centralClient';
+import { EMPTY_CENTRAL_SEARCH } from '@/lib/sales/centralContracts';
+import { useSalesWorkspaceMode } from './SalesWorkspaceModeProvider';
 
 interface DailyVisitsScheduleViewProps {
+  /** Supplied native cohort is authoritative even when empty after cutover. */
+  canonicalData?: boolean;
   leads?: Lead[];
   plots?: any[];
   projects?: any[];
@@ -26,6 +34,7 @@ interface DailyVisitsScheduleViewProps {
 }
 
 export default function DailyVisitsScheduleView({
+  canonicalData: suppliedCanonicalData,
   leads = [],
   plots = [],
   projects = [],
@@ -35,36 +44,93 @@ export default function DailyVisitsScheduleView({
   onSelectPlotForBooking,
   onBack
 }: DailyVisitsScheduleViewProps) {
+  const workspaceMode = useSalesWorkspaceMode();
+  const canonicalData = suppliedCanonicalData ?? workspaceMode === 'central';
+  const authoritativeNativeLeads = suppliedCanonicalData === true;
+  const requestEpoch = React.useRef(0);
+  const [refreshRevision, setRefreshRevision] = useState(0);
+  const [excludedLegacyIds, setExcludedLegacyIds] = useState<string[] | null>(null);
   const [fetchedLeads, setFetchedLeads] = useState<Lead[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [fetchedProjects, setFetchedProjects] = useState<any[]>([]);
   const [search, setSearch] = useState('');
   const [filterProject, setFilterProject] = useState<string>(selectedProjectName || 'all');
   const [filterAgent, setFilterAgent] = useState<string>('all');
+  const [filterYear, setFilterYear] = useState<string>(() => new Date().getFullYear().toString());
   const [activeTabSection, setActiveTabSection] = useState<'all' | 'today' | 'upcoming' | 'overdue' | 'completed'>('all');
 
   useEffect(() => {
-    if (leads.length === 0) {
-      supabase.from('leads').select('*').order('created_at', { ascending: false }).then(({ data }) => {
-        if (data) setFetchedLeads(data as Lead[]);
+    let cancelled = false;
+    const epoch = ++requestEpoch.current;
+    const current = () => !cancelled && requestEpoch.current === epoch;
+    setLoadError(null);
+    if (workspaceMode === 'blocked' && suppliedCanonicalData !== false) {
+      setFetchedLeads([]); setExcludedLegacyIds(null);
+      setLoadError('ระบบลูกค้ายังไม่พร้อมใช้งาน กรุณาให้ Admin ตรวจการเปิดระบบ');
+      return;
+    }
+    if (canonicalData && !authoritativeNativeLeads) {
+      Promise.all([
+        centralApi.read(0, { ...EMPTY_CENTRAL_SEARCH }),
+        fetchSalesWithoutLimit<Lead>('leads', { orderBy: 'created_at', ascending: false })
+      ]).then(([snapshot, native]) => {
+        if (!current()) return;
+        const scope = snapshot.sourceMembership;
+        if (!scope?.active || !scope.revisionId || !Array.isArray(scope.originalLegacyLeadIds)) throw new Error('ไม่พบขอบเขตลูกค้าที่เปลี่ยนระบบ');
+        setExcludedLegacyIds(scope.originalLegacyLeadIds);
+        setFetchedLeads(native);
+      }).catch(() => {
+        if (current()) setLoadError('โหลดรายการนัดหมายไม่สำเร็จ ข้อมูลเดิมที่แสดงอาจไม่ใช่ข้อมูลล่าสุด กรุณาลองใหม่');
+      });
+    } else if (!canonicalData && leads.length === 0) {
+      fetchSalesWithoutLimit<Lead>('leads', { orderBy: 'created_at', ascending: false }).then((data) => {
+        if (!cancelled) setFetchedLeads(data);
+      }).catch(() => {
+        if (!cancelled) setLoadError('โหลดรายการนัดหมายไม่สำเร็จ ข้อมูลเดิมที่แสดงอาจไม่ใช่ข้อมูลล่าสุด กรุณาลองใหม่');
       });
     }
     if (projects.length === 0) {
       supabase.from('projects').select('*').then(({ data }) => {
-        if (data) setFetchedProjects(data);
+        if (!cancelled && data) setFetchedProjects(data);
       });
     }
-  }, [leads.length, projects.length]);
+    return () => { cancelled = true; };
+  }, [leads.length, projects.length, canonicalData, authoritativeNativeLeads, workspaceMode, user?.id, refreshRevision]);
 
-  const effectiveLeads = leads.length > 0 ? leads : fetchedLeads;
+  const effectiveLeads = useMemo(() => {
+    if (canonicalData && !authoritativeNativeLeads && excludedLegacyIds === null) return [];
+    const excluded = new Set(excludedLegacyIds ?? []);
+    return (authoritativeNativeLeads || !canonicalData && leads.length > 0 ? leads : fetchedLeads)
+      .filter(lead => !excluded.has(lead.id) && !['crm_customer', 'crm_sale'].includes((lead as Lead & { sourceKind?: string }).sourceKind ?? ''));
+  }, [leads, fetchedLeads, canonicalData, authoritativeNativeLeads, excludedLegacyIds]);
   const effectiveProjects = projects.length > 0 ? projects : fetchedProjects;
 
   // Modals state
-  const [showChecklistModal, setShowChecklistModal] = useState<{ isOpen: boolean; lead: Lead | null }>({ isOpen: false, lead: null });
+  const [showChecklistModal, setShowChecklistModal] = useState<{ isOpen: boolean; lead: Lead | null; initialStage?: 'stage_a' | 'stage_c' }>({ isOpen: false, lead: null });
   const [showDailyInspectionModal, setShowDailyInspectionModal] = useState(false);
   const [showSurveyModal, setShowSurveyModal] = useState<{ isOpen: boolean; lead: Lead | null }>({ isOpen: false, lead: null });
   const [showRescheduleModal, setShowRescheduleModal] = useState<{ isOpen: boolean; lead: Lead | null }>({ isOpen: false, lead: null });
   const [newDateInput, setNewDateInput] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  useEffect(() => {
+    if (!canonicalData) return;
+    if (!authoritativeNativeLeads) { setFetchedLeads([]); setExcludedLegacyIds(null); }
+    setShowChecklistModal({ isOpen: false, lead: null });
+    setShowSurveyModal({ isOpen: false, lead: null });
+    setShowRescheduleModal({ isOpen: false, lead: null });
+    setNewDateInput('');
+  }, [canonicalData, authoritativeNativeLeads, user?.id]);
+
+  useEffect(() => {
+    if (!canonicalData || authoritativeNativeLeads) return;
+    return centralApi.watchIdentity?.(() => {
+      requestEpoch.current++;
+      setFetchedLeads([]); setExcludedLegacyIds(null);
+      setShowChecklistModal({ isOpen: false, lead: null }); setShowSurveyModal({ isOpen: false, lead: null });
+      setShowRescheduleModal({ isOpen: false, lead: null });
+      setRefreshRevision(value => value + 1);
+    });
+  }, [canonicalData, authoritativeNativeLeads]);
 
   // Sample House Inspection State
   const [sampleHouseInspection, setSampleHouseInspection] = useState<SampleHouseInspectionStatus>({
@@ -86,8 +152,15 @@ export default function DailyVisitsScheduleView({
 
   const handleTriggerRefresh = () => {
     refreshInspections();
-    supabase.from('leads').select('*').order('created_at', { ascending: false }).then(({ data }) => {
-      if (data) setFetchedLeads(data as Lead[]);
+    setLoadError(null);
+    if (canonicalData) {
+      if (!authoritativeNativeLeads) setRefreshRevision(value => value + 1);
+      onRefresh?.(); return;
+    }
+    fetchSalesWithoutLimit<Lead>('leads', { orderBy: 'created_at', ascending: false }).then((data) => {
+      setFetchedLeads(data);
+    }).catch(() => {
+      setLoadError('โหลดรายการนัดหมายไม่สำเร็จ ข้อมูลเดิมที่แสดงอาจไม่ใช่ข้อมูลล่าสุด กรุณาลองใหม่');
     });
     if (onRefresh) onRefresh();
   };
@@ -141,6 +214,17 @@ export default function DailyVisitsScheduleView({
       // Agent filter
       if (filterAgent !== 'all' && (l.agent_name !== filterAgent && l.created_by_agent !== filterAgent)) return false;
 
+      // Year filter
+      if (filterYear !== 'all') {
+        const visitDateStr = l.actual_visit_date || l.appointment_date || l.lead_date || l.created_at;
+        if (visitDateStr) {
+          const d = new Date(visitDateStr);
+          if (!isNaN(d.getTime()) && d.getFullYear().toString() !== filterYear) {
+            return false;
+          }
+        }
+      }
+
       // Search
       if (search) {
         const q = search.toLowerCase();
@@ -154,7 +238,7 @@ export default function DailyVisitsScheduleView({
 
       return true;
     });
-  }, [effectiveLeads, filterProject, filterAgent, search]);
+  }, [effectiveLeads, filterProject, filterAgent, filterYear, search]);
 
   // Categorize Leads into 4 Groups
   const { todayLeads, upcomingLeads, overdueLeads, completedLeads } = useMemo(() => {
@@ -203,10 +287,11 @@ export default function DailyVisitsScheduleView({
     if (!showRescheduleModal.lead || !newDateInput) return;
     setIsSubmitting(true);
     try {
-      await supabase.from('leads').update({
+      const { error } = await supabase.from('leads').update(preserveLeadDealStage(showRescheduleModal.lead, {
         appointment_date: new Date(`${newDateInput}T10:00:00Z`).toISOString(),
         crm_status: 'Follow-up — อยู่ระหว่างติดตาม'
-      }).eq('id', showRescheduleModal.lead.id);
+      })).eq('id', showRescheduleModal.lead.id);
+      if (error) throw error;
 
       setShowRescheduleModal({ isOpen: false, lead: null });
       setNewDateInput('');
@@ -225,11 +310,12 @@ export default function DailyVisitsScheduleView({
     setIsSubmitting(true);
     try {
       const now = new Date().toISOString();
-      await supabase.from('leads').update({
+      const { error } = await supabase.from('leads').update(preserveLeadDealStage(lead, {
         actual_visit_date: now,
         auto_status: 'เข้าชมแล้ว',
         crm_status: 'Considering — กำลังพิจารณา / เปรียบเทียบ'
-      }).eq('id', lead.id);
+      })).eq('id', lead.id);
+      if (error) throw error;
 
       handleTriggerRefresh();
     } catch (err) {
@@ -242,6 +328,10 @@ export default function DailyVisitsScheduleView({
 
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
+      {loadError && <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-xs font-bold text-rose-900 flex items-center justify-between gap-2">
+        <span>{loadError}</span>
+        <button type="button" onClick={handleTriggerRefresh} className="shrink-0 underline">ลองใหม่</button>
+      </div>}
       
       {/* 🚀 Header & Overview Bar */}
       <div className="bg-white p-5 sm:p-6 rounded-3xl shadow-sm border border-slate-200/80 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
@@ -344,11 +434,10 @@ export default function DailyVisitsScheduleView({
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         {/* Card 1: Today */}
         <div 
-          onClick={() => setActiveTabSection('today')}
-          className={`p-4 rounded-2xl border transition-all cursor-pointer ${
+          className={`p-4 rounded-2xl border transition-all ${
             activeTabSection === 'today' 
               ? 'bg-rose-50 border-rose-300 shadow-md ring-2 ring-rose-500/20' 
-              : 'bg-white border-slate-200/80 hover:border-rose-300 hover:bg-rose-50/40'
+              : 'bg-white border-slate-200/80 '
           }`}
         >
           <div className="flex items-center justify-between">
@@ -369,11 +458,10 @@ export default function DailyVisitsScheduleView({
 
         {/* Card 2: Upcoming */}
         <div 
-          onClick={() => setActiveTabSection('upcoming')}
-          className={`p-4 rounded-2xl border transition-all cursor-pointer ${
+          className={`p-4 rounded-2xl border transition-all ${
             activeTabSection === 'upcoming' 
               ? 'bg-amber-50 border-amber-300 shadow-md ring-2 ring-amber-500/20' 
-              : 'bg-white border-slate-200/80 hover:border-amber-300 hover:bg-amber-50/40'
+              : 'bg-white border-slate-200/80 '
           }`}
         >
           <div className="flex items-center justify-between">
@@ -387,17 +475,16 @@ export default function DailyVisitsScheduleView({
             <span className="text-xs font-semibold text-amber-600">ท่าน</span>
           </div>
           <p className="text-[11px] text-amber-600/80 mt-1 font-medium">
-            นัดหมายใน 7-14 วันข้างหน้า
+            นัดหมายหลังวันนี้
           </p>
         </div>
 
         {/* Card 3: Overdue */}
         <div 
-          onClick={() => setActiveTabSection('overdue')}
-          className={`p-4 rounded-2xl border transition-all cursor-pointer ${
+          className={`p-4 rounded-2xl border transition-all ${
             activeTabSection === 'overdue' 
               ? 'bg-orange-50 border-orange-300 shadow-md ring-2 ring-orange-500/20' 
-              : 'bg-white border-slate-200/80 hover:border-orange-300 hover:bg-orange-50/40'
+              : 'bg-white border-slate-200/80 '
           }`}
         >
           <div className="flex items-center justify-between">
@@ -417,11 +504,10 @@ export default function DailyVisitsScheduleView({
 
         {/* Card 4: Completed */}
         <div 
-          onClick={() => setActiveTabSection('completed')}
-          className={`p-4 rounded-2xl border transition-all cursor-pointer ${
+          className={`p-4 rounded-2xl border transition-all ${
             activeTabSection === 'completed' 
               ? 'bg-emerald-50 border-emerald-300 shadow-md ring-2 ring-emerald-500/20' 
-              : 'bg-white border-slate-200/80 hover:border-emerald-300 hover:bg-emerald-50/40'
+              : 'bg-white border-slate-200/80'
           }`}
         >
           <div className="flex items-center justify-between">
@@ -435,7 +521,7 @@ export default function DailyVisitsScheduleView({
             <span className="text-xs font-semibold text-emerald-600">ท่าน</span>
           </div>
           <p className="text-[11px] text-emerald-600/80 mt-1 font-medium">
-            อยู่ระหว่างพิจารณา / รอทำสัญญา
+            บันทึกการเข้าชมแล้ว
           </p>
         </div>
       </div>
@@ -463,6 +549,17 @@ export default function DailyVisitsScheduleView({
             {effectiveProjects.map((p: any) => (
               <option key={p.id || p.name} value={p.name}>{p.name}</option>
             ))}
+          </select>
+
+          <select
+            value={filterYear}
+            onChange={e => setFilterYear(e.target.value)}
+            className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="2026">📅 ปี 2026 (ปีปัจจุบัน)</option>
+            <option value="2025">📅 ปี 2025</option>
+            <option value="2024">📅 ปี 2024</option>
+            <option value="all">🌐 ทุกปี (ทั้งหมด)</option>
           </select>
 
           <select
@@ -843,7 +940,7 @@ export default function DailyVisitsScheduleView({
 
                   <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
                     <button
-                      onClick={() => setShowChecklistModal({ isOpen: true, lead: l })}
+                      onClick={() => setShowChecklistModal({ isOpen: true, lead: l, initialStage: 'stage_c' })}
                       className="text-[11px] font-bold text-purple-700 bg-purple-50 hover:bg-purple-100 px-2.5 py-1.5 rounded-lg border border-purple-200 flex items-center gap-1 cursor-pointer"
                     >
                       <Sparkles size={12} /> สรุปผลการขาย (Stage C)
@@ -866,7 +963,7 @@ export default function DailyVisitsScheduleView({
 
       {/* 📅 Modal: Quick Reschedule */}
       {showRescheduleModal.isOpen && showRescheduleModal.lead && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in">
+        <SalesOverlay className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in">
           <div className="bg-white rounded-3xl max-w-sm w-full shadow-2xl p-6 space-y-4 border border-slate-200">
             <h3 className="font-black text-base text-slate-800 flex items-center gap-2">
               <Calendar size={18} className="text-blue-600" />
@@ -904,7 +1001,7 @@ export default function DailyVisitsScheduleView({
               </button>
             </div>
           </div>
-        </div>
+        </SalesOverlay>
       )}
 
       {/* 🗣️ Customer Voices Modal */}
@@ -922,14 +1019,14 @@ export default function DailyVisitsScheduleView({
       {/* 🏡 SOP House & Sales Visit Checklist Modal (Stage A ➡️ B ➡️ C) */}
       {showChecklistModal.isOpen && (
         <HouseVisitChecklistModal
-          isOpen={showChecklistModal.isOpen}
+          isOpen={showChecklistModal.isOpen && !showSurveyModal.isOpen}
+          initialStage={showChecklistModal.initialStage}
           onClose={() => setShowChecklistModal({ isOpen: false, lead: null })}
           lead={showChecklistModal.lead}
           projectName={showChecklistModal.lead?.project_name || (filterProject !== 'all' ? filterProject : 'ไอลิน 6')}
           user={user}
           plots={plots}
           onOpenSurvey={(lead) => {
-            setShowChecklistModal({ isOpen: false, lead: null });
             setShowSurveyModal({ isOpen: true, lead });
           }}
           onSaved={handleTriggerRefresh}

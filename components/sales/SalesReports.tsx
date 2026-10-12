@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { customerActualTransferDay } from '@/lib/sales/customerBusinessDate';
 import { Calendar, Home, TrendingUp, DollarSign, CalendarDays, Users, Lightbulb, Target, MapIcon, Flame, ClipboardCheck, AlertTriangle } from 'lucide-react';
 import { STATUS_CONFIG } from './SalesKanban';
 import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
@@ -49,8 +50,7 @@ export default function SalesReports({ leads, projectName, viewType = 'reports' 
     
     // Group by YYYY-MM
     const grouped = transferredLeads.reduce((acc, lead) => {
-      const transferHistory = lead.history?.find((h: any) => h.status === 'Transferred');
-      const transferDateStr = transferHistory?.timestamp?.split('T')[0] || lead.expectedTransferDate;
+      const transferDateStr = customerActualTransferDay(lead);
       const date = transferDateStr ? new Date(transferDateStr) : null;
       const yearMonth = date ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}` : 'Unknown';
       
@@ -190,8 +190,7 @@ export default function SalesReports({ leads, projectName, viewType = 'reports' 
         stats.transferredCount += 1;
         
         // Transferred this month?
-        const transferHistory = lead.history?.find((h: any) => h.status === 'Transferred');
-        const transferDate = transferHistory?.timestamp?.split('T')[0] || lead.expectedTransferDate || '';
+        const transferDate = customerActualTransferDay(lead) || '';
         if (transferDate.startsWith(currentMonthPrefix)) {
           stats.transfersThisMonth += 1;
         }

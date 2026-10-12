@@ -4,7 +4,17 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { salesData } = body;
+    let { salesData } = body;
+    
+    // OPTIMIZATION: Trim massive arrays inside salesData to prevent token limits
+    if (salesData && typeof salesData === 'object') {
+      if (Array.isArray(salesData.topFastestSellingPlots)) {
+        salesData.topFastestSellingPlots = salesData.topFastestSellingPlots.slice(0, 10);
+      }
+      if (Array.isArray(salesData.projectPredictions)) {
+        salesData.projectPredictions = salesData.projectPredictions.slice(0, 5);
+      }
+    }
 
     const apiKey = process.env.GEMINI_API_KEY;
     

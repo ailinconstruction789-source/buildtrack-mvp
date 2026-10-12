@@ -1,5 +1,7 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useCommittedRequestScope } from '@/hooks/useCommittedRequestScope';
+import { indexFirstBy } from '@/lib/constructionMapIndex';
 import { 
   Package, Truck, CheckCircle, Clock, 
   Search, Filter, AlertTriangle, Building, 
@@ -17,6 +19,7 @@ interface MaterialStoreDashboardProps {
   setMaterialRequests?: any;
   materialReceipts?: any[];
   setMaterialReceipts?: any;
+  captureActorScope?: () => () => boolean;
 }
 
 export default function MaterialStoreDashboard({
@@ -28,7 +31,8 @@ export default function MaterialStoreDashboard({
   loggedInUser,
   setMaterialRequests,
   materialReceipts,
-  setMaterialReceipts
+  setMaterialReceipts,
+  captureActorScope
 }: MaterialStoreDashboardProps) {
   const [filterStatus, setFilterStatus] = useState<string>('requested');
   const [searchQuery, setSearchQuery] = useState('');
@@ -39,10 +43,24 @@ export default function MaterialStoreDashboard({
   const [viewHistoryTask, setViewHistoryTask] = useState<any>(null);
   const [prPromptTask, setPrPromptTask] = useState<string | null>(null);
   const [prNumberInput, setPrNumberInput] = useState('');
+  const storeScopeKey = JSON.stringify([view, loggedInUser?.id, loggedInUser?.authUserId, loggedInUser?.username, loggedInUser?.role]);
+  const captureStoreScope = useCommittedRequestScope(storeScopeKey);
+  useEffect(() => {
+    setIsProcessing(null);
+    setReceiptUploadTask(null);
+    setViewHistoryTask(null);
+    setViewImageModalUrl(null);
+    setPrPromptTask(null);
+    setPrNumberInput('');
+  }, [storeScopeKey]);
+  const plotById = useMemo(() => indexFirstBy(plots, (plot: any) => plot.id), [plots]);
+  const taskById = useMemo(() => indexFirstBy(taskTemplates, (task: any) => task.id), [taskTemplates]);
+  const projectByName = useMemo(() => indexFirstBy(projects, (project: any) => project.name), [projects]);
 
   // handleUploadReceipt is now handled by ReceiptUploadModal
 
   const handleCompleteReceipt = async (req: any) => {
+    const isCurrentStore = captureStoreScope();
     if (!window.confirm('ยืนยันว่าได้รับของครบถ้วนแล้ว?')) return;
     setIsProcessing(req.id);
     try {
@@ -56,6 +74,7 @@ export default function MaterialStoreDashboard({
         .eq('id', req.id);
         
       if (dbError) throw dbError;
+      if (!isCurrentStore()) return;
 
       if (setMaterialRequests) {
         setMaterialRequests((prev: any) => 
@@ -64,18 +83,18 @@ export default function MaterialStoreDashboard({
       }
       alert('ยืนยันการรับของครบถ้วนสำเร็จ!');
     } catch (error: any) {
-      alert('เกิดข้อผิดพลาด: ' + (error.message || JSON.stringify(error)));
+      if (isCurrentStore()) alert('เกิดข้อผิดพลาด: ' + (error.message || JSON.stringify(error)));
     } finally {
-      setIsProcessing(null);
+      if (isCurrentStore()) setIsProcessing(current => current === req.id ? null : current);
     }
   };
 
   // Group and format requests
   const enrichedRequests = useMemo(() => {
     return materialRequests.map(req => {
-      const plot = plots.find(p => p.id === req.plot_id);
-      const task = taskTemplates.find(t => t.id === req.task_template_id);
-      const project = plot ? projects.find(p => p.name === plot.project_name) : null;
+      const plot = plotById.get(req.plot_id);
+      const task = taskById.get(req.task_template_id);
+      const project = plot ? projectByName.get(plot.project_name) : null;
       
       return {
         ...req,
@@ -84,7 +103,7 @@ export default function MaterialStoreDashboard({
         project
       };
     }).sort((a, b) => new Date(b.requested_at).getTime() - new Date(a.requested_at).getTime());
-  }, [materialRequests, plots, taskTemplates, projects]);
+  }, [materialRequests, plotById, taskById, projectByName]);
 
   const filteredRequests = useMemo(() => {
     return enrichedRequests.filter(req => {
@@ -111,6 +130,7 @@ export default function MaterialStoreDashboard({
   }, [enrichedRequests]);
 
   const executeStatusUpdate = async (reqId: string, newStatus: string, prNumber: string | null = null) => {
+    const isCurrentStore = captureStoreScope();
     setIsProcessing(reqId);
     try {
       const updatePayload: any = {
@@ -129,6 +149,7 @@ export default function MaterialStoreDashboard({
         .eq('id', reqId);
         
       if (error) throw error;
+      if (!isCurrentStore()) return;
       
       // Optimistic update
       if (setMaterialRequests) {
@@ -140,9 +161,9 @@ export default function MaterialStoreDashboard({
       }
     } catch (err: any) {
       console.error('Error updating material request:', err);
-      alert('เกิดข้อผิดพลาด: ' + err.message);
+      if (isCurrentStore()) alert('เกิดข้อผิดพลาด: ' + err.message);
     } finally {
-      setIsProcessing(null);
+      if (isCurrentStore()) setIsProcessing(current => current === reqId ? null : current);
     }
   };
 
@@ -379,7 +400,7 @@ export default function MaterialStoreDashboard({
           onClose={() => setReceiptUploadTask(null)}
           onSuccess={(newReceipt) => {
             if (setMaterialReceipts) {
-              setMaterialReceipts([newReceipt, ...(materialReceipts || [])]);
+              setMaterialReceipts((previous: any[]) => [newReceipt, ...(previous || []).filter(receipt => receipt.id !== newReceipt.id)]);
             }
             alert('บันทึกรูปรับของเรียบร้อยแล้ว');
           }}
@@ -390,6 +411,9 @@ export default function MaterialStoreDashboard({
           requestStatus={receiptUploadTask.status}
           currentUserRole={loggedInUser?.role || 'Store'}
           currentUserName={loggedInUser?.username || 'Store'}
+          currentUserId={loggedInUser?.id}
+          currentAuthUserId={loggedInUser?.authUserId}
+          captureActorScope={captureActorScope}
         />
       )}
 

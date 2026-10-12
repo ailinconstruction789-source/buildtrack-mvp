@@ -1,3 +1,5 @@
+import { normalizeProjectName } from './salesNames';
+export { normalizeProjectName, normalizeSalesOwner } from './salesNames';
 import * as XLSX from 'xlsx';
 import { Lead, CRMStatus, LostReason, MarketingChannel } from '@/types/sales';
 
@@ -46,7 +48,7 @@ export function parseDateValue(dateStr: any): string | null {
   if (/^\d+(\.\d+)?$/.test(str)) {
     const serial = parseFloat(str);
     const utcDays = Math.floor(serial - 25569);
-    const utcValue = utcDays * 86400; 
+    const utcValue = utcDays * 86400;
     const dateInfo = new Date(utcValue * 1000);
     if (!isNaN(dateInfo.getTime())) {
       return new Date(Date.UTC(dateInfo.getFullYear(), dateInfo.getMonth(), dateInfo.getDate(), 5, 0, 0)).toISOString();
@@ -139,6 +141,11 @@ export function mapToCRMStatus(rawCrmStatus?: string, rawLegacyStatus?: string):
 
   const s = check.toLowerCase();
 
+  // Lost / Cancelled (Must check BEFORE booked/reserve to avoid matching 'ยกเลิกจอง' as 'จอง')
+  if (s.includes('lost') || s.includes('cancel') || s.includes('ยกเลิก') || s.includes('ไม่ซื้อ') || s.includes('ไม่จอง') || s.includes('หลุดจอง')) {
+    return 'Lost — ยุติการซื้อ / ไม่จอง';
+  }
+
   // Transferred / Won
   if (s.includes('โอน') || s.includes('won') || s.includes('transferred') || s.includes('handover') || s.includes('รับมอบ')) {
     return 'Transferred / Won — โอนกรรมสิทธิ์สำเร็จ';
@@ -174,11 +181,6 @@ export function mapToCRMStatus(rawCrmStatus?: string, rawLegacyStatus?: string):
     return 'Booking Pending — มีแนวโน้มจอง รอการตัดสินใจ';
   }
 
-  // Lost / Cancelled
-  if (s.includes('lost') || s.includes('cancel') || s.includes('ยกเลิก') || s.includes('ไม่ซื้อ') || s.includes('ไม่จอง') || s.includes('หลุดจอง')) {
-    return 'Lost — ยุติการซื้อ / ไม่จอง';
-  }
-
   // Unreachable
   if (s.includes('ติดต่อไม่ได้') || s.includes('unreach') || s.includes('ไม่รับสาย')) {
     return 'Unreachable — ติดต่อไม่ได้';
@@ -195,7 +197,7 @@ export function mapToCRMStatus(rawCrmStatus?: string, rawLegacyStatus?: string):
   }
 
   // Considering / Visit
-  if (s.includes('พิจารณา') || s.includes('เปรียบเทียบ') || s.includes('consider') || s.includes('เยี่ยมชม') || s.includes('visit') || s.includes('negotiation') || s.includes('เจรจา')) {
+  if (s.includes('พิจารณา') || s.includes('เปรียบเทียบ') || s.includes('consider') || s.includes('เยี่ยมชม') || s.includes('เยียมชม') || s.includes('visit') || s.includes('negotiation') || s.includes('เจรจา')) {
     return 'Considering — กำลังพิจารณา / เปรียบเทียบ';
   }
 
@@ -211,7 +213,7 @@ export function mapCRMStatusToLegacyStatus(crmStatus: string): string {
   if (crmStatus.includes('จองแล้ว')) return 'Reserved';
   if (crmStatus.includes('สินเชื่อผ่าน')) return 'Approved';
   if (crmStatus.includes('Pre-Approve')) return 'LoanProcessing';
-  if (crmStatus.includes('Lost') || crmStatus.includes('ยุติ')) return 'Cancelled';
+  if (crmStatus.includes('Lost') || crmStatus.includes('ยุติ') || crmStatus.includes('ยกเลิก')) return 'Cancelled';
   return 'Visit';
 }
 
@@ -234,9 +236,11 @@ export interface ParsedLeadRow {
   booking_amount: number | null;
   sale_price: number | null;
   land_office_price: number | null;
+  expected_transfer_date?: string | null;
   loan_submission_date: string | null;
   loan_approved_date: string | null;
   transferred_date: string | null;
+  cancelled_date?: string | null;
   lost_reason: string | null;
   lost_reason_detail: string | null;
   crm_status: CRMStatus;
@@ -248,40 +252,41 @@ export interface ParsedLeadRow {
 }
 
 /**
- * Flexible Row Parser supporting both Thai (22 cols) and English (legacy 14 cols)
+ * Flexible Row Parser supporting Thai (22 cols, ข้อมูลลูกค้าล่าสุด) and English (legacy 14 cols)
  */
 export function parseExcelRowToLead(
-  row: Record<string, any>, 
-  rowNum: number, 
-  defaultProject: string = 'ไอลิน 6', 
+  row: Record<string, any>,
+  rowNum: number,
+  defaultProject: string = 'ไอลิน6',
   defaultAgent: string = 'ส่วนกลาง'
 ): ParsedLeadRow | null {
   // Find key helper (case-insensitive & trimmed)
   const getVal = (...keys: string[]) => {
     for (const k of keys) {
-      if (row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== '') {
+      if (row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== '' && String(row[k]).trim() !== '-') {
         return row[k];
       }
-      const matchedKey = Object.keys(row).find(rk => rk.trim().toLowerCase() === k.toLowerCase());
-      if (matchedKey && row[matchedKey] !== undefined && row[matchedKey] !== null && String(row[matchedKey]).trim() !== '') {
+      const matchedKey = Object.keys(row).find(rk => rk.trim().toLowerCase() === k.trim().toLowerCase());
+      if (matchedKey && row[matchedKey] !== undefined && row[matchedKey] !== null && String(row[matchedKey]).trim() !== '' && String(row[matchedKey]).trim() !== '-') {
         return row[matchedKey];
       }
     }
     return '';
   };
 
-  const customerName = String(getVal('ชื่อลูกค้า', 'ชื่อ', 'Customer Name', 'Customer', 'Name', 'ชื่อ-สกุล', 'ชื่อ - สกุล')).trim();
-  if (!customerName) return null; // Mandatory
+  const customerName = String(getVal('ชื่อลูกค้า', 'ชื่อ-นามสกุล', 'ชื่อ-สกุล', 'ชื่อ - สกุล', 'ชื่อ', 'Customer Name', 'Customer', 'Name')).trim();
+  if (!customerName || customerName === '-' || customerName === 'undefined') return null; // Mandatory
 
-  const phone = String(getVal('เบอร์โทร', 'เบอร์', 'Phone', 'Tel', 'เบอร์โทรศัพท์', 'เบอร์ติดต่อ', 'Mobile')).trim();
-  let projectName = String(getVal('โครงการ', 'Project Name', 'Project', 'ชื่อโครงการ')).trim() || defaultProject;
+  const phone = String(getVal('เบอร์โทร', 'เบอร์', 'Phone', 'Tel', 'เบอร์โทรศัพท์', 'เบอร์ติดต่อ', 'Mobile')).trim() || '-';
+  const rawProject = String(getVal('โครงการ', 'Project Name', 'Project', 'ชื่อโครงการ')).trim();
+  const projectName = normalizeProjectName(rawProject, defaultProject);
   const channel = normalizeChannel(String(getVal('ช่องทาง', 'Channel', 'Source', 'ที่มา', 'แหล่งที่มา')));
-  const agentName = String(getVal('เซลล์', 'Sales Agent', 'Agent', 'ผู้ดูแล', 'พนักงานขาย')).trim() || defaultAgent;
+  const agentName = String(getVal('เซลล์', 'พนักงานขาย', 'Sales Agent', 'Agent', 'ผู้ดูแล')).trim() || defaultAgent;
 
   // Dates
   const now = new Date().toISOString();
   const rawLeadDate = getVal('วันที่ Lead เข้า', 'Lead Date', 'วันที่เข้า', 'Lead In Date', 'Created Date', 'วันที่สร้าง');
-  const rawVisitDate = getVal('เข้าชมจริง (วันที่)', 'Actual Visit Date', 'Visit Date', 'วันที่เข้าชม', 'วันที่เยี่ยมชม');
+  const rawVisitDate = getVal('วันที่เยี่ยมชม', 'เข้าชมจริง (วันที่)', 'Actual Visit Date', 'Visit Date', 'วันที่เข้าชม', 'วันที่เยี่ยมชม');
   const leadDate = parseDateValue(rawLeadDate) || parseDateValue(rawVisitDate) || now;
 
   const contactedDate = parseDateValue(getVal('ติดต่อได้ (วันที่)', 'Contacted Date', 'วันที่ติดต่อได้', 'วันที่ติดต่อ')) || leadDate;
@@ -294,18 +299,20 @@ export function parseExcelRowToLead(
   const lastFollowUpDate = parseDateValue(getVal('Follow-up ล่าสุด', 'Last Follow-up Date', 'ติดตามล่าสุด'));
 
   // Plot & Booking
-  const plotName = String(getVal('แปลงที่เล็ง/จอง', 'แปลง', 'Plot', 'Interested Plot', 'แปลงบ้าน', 'รหัสแปลง')).trim();
-  const bookingDate = parseDateValue(getVal('จอง (วันที่)', 'Booking Date', 'วันจอง', 'วันที่จอง'));
-  const rawAmount = getVal('มูลค่าจอง (บาท)', 'Booking Amount', 'เงินจอง', 'Sale Price', 'ราคาขาย', 'ราคา');
+  const rawPlot = String(getVal('แปลง', 'รหัสแปลง', 'แปลงที่เล็ง/จอง', 'Plot', 'Interested Plot', 'แปลงบ้าน')).trim();
+  const plotName = rawPlot && rawPlot !== '-' ? rawPlot.replace(/^(AL\d+|YR|K\d+พิเศษ|K\d+)-?/i, '').replace(/^0+/, '') : '';
+  const bookingDate = parseDateValue(getVal('วันที่จอง', 'จอง (วันที่)', 'Booking Date', 'วันจอง', 'วันที่เข้ามาจอง'));
+  const rawAmount = getVal(' ราคาซื้อขาย ', 'ราคาซื้อขาย', 'มูลค่าจอง (บาท)', 'Booking Amount', 'เงินจอง', 'Sale Price', 'ราคาขาย', 'ราคา');
   const salePrice = parseMoneyValue(rawAmount);
   const bookingAmount = bookingDate ? (parseMoneyValue(getVal('มูลค่าจอง (บาท)', 'Booking Amount', 'เงินจอง')) || (salePrice ? Math.min(salePrice, 50000) : 10000)) : null;
-  const landPrice = parseMoneyValue(getVal('ราคาประเมิน', 'Land Price', 'Land Office Price', 'ราคาที่ดิน'));
+  const landPrice = parseMoneyValue(getVal(' ราคาทด 13 ', 'ราคาทด 13', 'ราคาประเมิน', 'Land Price', 'Land Office Price', 'ราคาที่ดิน'));
 
   // Finance & Transfer
   const loanSubmissionDate = parseDateValue(getVal('ยื่นกู้ (วันที่)', 'Loan Submission Date', 'วันยื่นกู้'));
   const loanApprovedDate = parseDateValue(getVal('อนุมัติ (วันที่)', 'Loan Approved Date', 'วันอนุมัติ'));
-  const transferredDate = parseDateValue(getVal('โอน (วันที่)', 'Transfer Date', 'Transferred Date', 'วันโอน', 'วันที่โอน'));
-  const cancelDate = parseDateValue(getVal('Cancel Date', 'Cancel Date', 'วันที่ยกเลิก'));
+  const transferredDate = parseDateValue(getVal('วันที่โอน', 'วันที่โอน_1', 'โอน (วันที่)', 'Transfer Date', 'Transferred Date', 'วันโอน'));
+  const cancelDate = parseDateValue(getVal('วันที่ยกเลิก', 'Cancel Date', 'วันที่ยกเลิกจอง'));
+  const expectedTransferDate = parseDateValue(getVal('คาดโอนเดือน', 'วันที่คาดว่าจะโอน', 'ปีคาดโอน', 'Expected Transfer Date'));
 
   // Lost Reason
   const rawLostReason = String(getVal('Lost Reason (เลือก)', 'Lost Reason', 'สาเหตุที่ไม่ซื้อ', 'เหตุผลที่ไม่ซื้อ')).trim();
@@ -316,23 +323,29 @@ export function parseExcelRowToLead(
   }
 
   // CRM Status
-  const rawCrm = String(getVal('CRM Status (เลือก)', 'CRM Status', 'สถานะ CRM', 'CRM')).trim();
+  const rawCrm = String(getVal('โอนเเล้ว', 'CRM Status (เลือก)', 'CRM Status', 'สถานะ CRM', 'CRM')).trim();
   const rawStatus = String(getVal('Status', 'สถานะ', 'สถานะการขาย')).trim();
-  const crmStatus = mapToCRMStatus(rawCrm, rawStatus || (transferredDate ? 'Transferred' : bookingDate ? 'Reserved' : 'Visit'));
+  const crmStatus = mapToCRMStatus(rawCrm, rawStatus || (cancelDate ? 'Lost' : transferredDate ? 'Transferred' : bookingDate ? 'Reserved' : 'Visit'));
   const legacyStatus = mapCRMStatusToLegacyStatus(crmStatus);
 
   // Auto Status text for badges
   let autoStatus = 'Lead เข้า';
-  if (transferredDate || crmStatus.includes('โอน')) autoStatus = 'โอนแล้ว';
+  if (cancelDate || crmStatus.includes('ยกเลิก') || crmStatus.includes('Lost')) autoStatus = 'ยกเลิกจอง';
+  else if (transferredDate || crmStatus.includes('โอน')) autoStatus = 'โอนแล้ว';
   else if (loanApprovedDate || crmStatus.includes('สินเชื่อผ่าน')) autoStatus = 'สินเชื่อผ่าน';
   else if (loanSubmissionDate || crmStatus.includes('Pre-Approve')) autoStatus = 'ยื่นกู้แล้ว';
-  else if (bookingDate || crmStatus.includes('จองแล้ว')) autoStatus = 'จองแล้ว';
+  else if (bookingDate || crmStatus.includes('จอง')) autoStatus = 'จองแล้ว';
   else if (actualVisitDate) autoStatus = 'เข้าชมแล้ว';
   else if (appointmentDate) autoStatus = 'นัดชมแล้ว';
   else if (contactedDate) autoStatus = 'ติดต่อได้';
 
-  const notes = String(getVal('หมายเหตุ', 'Notes', 'Remark', 'Note', 'บันทึก')).trim();
-  const occupation = String(getVal('อาชีพ', 'Occupation')).trim();
+  const rawNotes = String(getVal('หมายเหตุสินเชื่อ', 'หมายเหตุ', 'Notes', 'Remark', 'Note', 'บันทึก')).trim();
+  const rawOccupation = String(getVal('อาชีพ', 'Occupation')).trim();
+  const rawLandSize = String(getVal('ที่ดิน', 'Land Size')).trim();
+  const landNote = rawLandSize && rawLandSize !== '-' ? `ที่ดิน ${rawLandSize} ตร.ว.` : '';
+  const notes = [rawNotes, landNote].filter(Boolean).join(' · ');
+
+  const occupation = rawOccupation && rawOccupation !== '-' ? rawOccupation : '';
   const interest = String(getVal('ความสนใจ', 'Interest', 'แบบบ้าน', 'แบบบ้านที่สนใจ')).trim() || 'Any';
 
   return {
@@ -353,9 +366,11 @@ export function parseExcelRowToLead(
     booking_amount: bookingAmount,
     sale_price: salePrice,
     land_office_price: landPrice,
+    expected_transfer_date: expectedTransferDate,
     loan_submission_date: loanSubmissionDate,
     loan_approved_date: loanApprovedDate,
     transferred_date: transferredDate,
+    cancelled_date: cancelDate,
     lost_reason: lostReason,
     lost_reason_detail: lostReasonDetail,
     crm_status: crmStatus,

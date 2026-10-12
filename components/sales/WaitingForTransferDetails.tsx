@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { customerExpectedTransferDay } from '@/lib/sales/customerBusinessDate';
 import { supabase } from '@/lib/supabase';
 import { CheckCircle2, Circle, Clock, FileText, Home, Save, Calendar, CheckSquare, Award, ShieldCheck, Gift, ChevronRight, Edit3, X, AlertTriangle, Search, Eye, HardHat, Camera, Check, CheckCircle } from 'lucide-react';
+import SalesOverlay from './SalesOverlay';
+import { useSalesWorkspaceMode } from './SalesWorkspaceModeProvider';
+import { transferForecastRecord } from '@/lib/sales/transferForecastRecord';
 
 interface WaitingForTransferDetailsProps {
   plots: any[];
@@ -10,7 +14,10 @@ interface WaitingForTransferDetailsProps {
   onViewDefects?: (plot: any) => void;
 }
 
-export default function WaitingForTransferDetails({ plots, carriedOverPlots = [], unscheduledPlots = [], validRecords, onViewDefects }: WaitingForTransferDetailsProps) {
+const EMPTY_PLOTS: never[] = [];
+
+export default function WaitingForTransferDetails({ plots, carriedOverPlots = EMPTY_PLOTS, unscheduledPlots = EMPTY_PLOTS, validRecords, onViewDefects }: WaitingForTransferDetailsProps) {
+  const canonicalMode = useSalesWorkspaceMode() !== 'legacy';
   // We need to display plots that are currently in "Waiting" status.
   const waitingPlots = plots; // The parent component should pass ONLY the waiting plots.
   const allTargetPlots = [...plots, ...carriedOverPlots, ...unscheduledPlots];
@@ -238,17 +245,14 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = []
     return (
       <div className="grid grid-cols-1 gap-6">
         {[...plotList].sort((a, b) => {
-          const recordsA = validRecords.filter(r => r.plot?.id === a.id || r.plot_id === a.id || (r.plot_name === a.plot_name && r.project_name === a.project_name)).sort((x: any, y: any) => (y.createdDate || '').localeCompare(x.createdDate || ''));
-          const recordsB = validRecords.filter(r => r.plot?.id === b.id || r.plot_id === b.id || (r.plot_name === b.plot_name && r.project_name === b.project_name)).sort((x: any, y: any) => (y.createdDate || '').localeCompare(x.createdDate || ''));
-          const expA = recordsA[0]?.expectedTransfer || a.activeSale?.expectedTransfer || a.activeSale?.expectedTransferDate || a.activeSale?.expected_transfer_date || a.expected_transfer_date || '9999-99-99';
-          const expB = recordsB[0]?.expectedTransfer || b.activeSale?.expectedTransfer || b.activeSale?.expectedTransferDate || b.activeSale?.expected_transfer_date || b.expected_transfer_date || '9999-99-99';
+          const expA = customerExpectedTransferDay(transferForecastRecord(a, validRecords, canonicalMode) ?? {}) ?? '9999-99-99';
+          const expB = customerExpectedTransferDay(transferForecastRecord(b, validRecords, canonicalMode) ?? {}) ?? '9999-99-99';
           return expA.localeCompare(expB);
         }).map((plot) => {
           // Find records for this plot
-          const records = validRecords.filter(r => r.plot?.id === plot.id || r.plot_id === plot.id || (r.plot_name === plot.plot_name && r.project_name === plot.project_name)).sort((a: any, b: any) => (b.createdDate || '').localeCompare(a.createdDate || ''));
-          const currentRecord = records[0] || plot.activeSale;
+          const currentRecord = transferForecastRecord(plot, validRecords, canonicalMode);
           
-          const rawExpected = currentRecord?.expectedTransfer || currentRecord?.expectedTransferDate || currentRecord?.expected_transfer_date || plot.activeSale?.expectedTransfer || plot.activeSale?.expectedTransferDate || plot.activeSale?.expected_transfer_date || plot.expected_transfer_date;
+          const rawExpected = customerExpectedTransferDay(currentRecord ?? {});
           
           const formatThaiDate = (dateStr: string | null | undefined) => {
             if (!dateStr || dateStr === 'ยังไม่ระบุ') return 'ยังไม่ระบุ';
@@ -631,7 +635,7 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = []
 
       {/* 🛠️ Modal for Booking Inspection Dates 1 & 2 */}
       {inspectionModal && inspectionModal.isOpen && (
-        <div className="fixed inset-0 bg-black/70 z-[300] flex items-center justify-center p-4">
+        <SalesOverlay className="fixed inset-0 bg-black/70 z-[300] flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl w-full max-w-lg p-6 shadow-2xl border border-slate-100 animate-fade-in space-y-5 relative">
             <div className="flex justify-between items-start border-b border-slate-100 pb-3">
               <div>
@@ -748,12 +752,12 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = []
               </div>
             </form>
           </div>
-        </div>
+        </SalesOverlay>
       )}
 
       {/* 🔍 MODAL: SALES READ-ONLY DEFECT PUNCHLIST TRACKER */}
       {salesDefectModalPlot && (
-        <div className="fixed inset-0 bg-black/75 z-[300] flex items-center justify-center p-3 sm:p-6">
+        <SalesOverlay className="fixed inset-0 bg-black/75 z-[300] flex items-center justify-center p-3 sm:p-6">
           <div className="bg-white rounded-3xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden animate-fade-in">
             
             {/* Header */}
@@ -970,12 +974,12 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = []
             </div>
 
           </div>
-        </div>
+        </SalesOverlay>
       )}
 
       {/* 🖼️ Image Lightbox Preview Modal */}
       {previewImage && (
-        <div className="fixed inset-0 bg-black/90 z-[400] flex items-center justify-center p-4" onClick={() => setPreviewImage(null)}>
+        <SalesOverlay className="fixed inset-0 bg-black/90 z-[400] flex items-center justify-center p-4" onClick={() => setPreviewImage(null)}>
           <div className="relative max-w-4xl max-h-[90vh]">
             <img src={previewImage} alt="Preview" className="max-w-full max-h-[85vh] rounded-2xl shadow-2xl object-contain" />
             <button
@@ -985,7 +989,7 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = []
               <X size={20} />
             </button>
           </div>
-        </div>
+        </SalesOverlay>
       )}
     </div>
   );

@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { isSampleHouse } from '@/lib/sales/sampleHouseHelper';
+import SalesOverlay from './SalesOverlay';
 
 interface SampleHouseLogsViewProps {
   projects?: any[];
@@ -765,7 +766,7 @@ export default function SampleHouseLogsView({
 
       {/* 🌟 5. Log Detail Modal (Checklist Popup) */}
       {selectedLogDetail && (
-        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 animate-fade-in overflow-y-auto">
+        <SalesOverlay className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 animate-fade-in overflow-y-auto">
           <div className="bg-white rounded-3xl max-w-xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
             
             {/* Modal Header */}
@@ -874,7 +875,7 @@ export default function SampleHouseLogsView({
             </div>
 
           </div>
-        </div>
+        </SalesOverlay>
       )}
 
     </div>

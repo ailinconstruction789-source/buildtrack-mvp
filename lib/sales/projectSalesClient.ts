@@ -27,6 +27,10 @@ export const projectSalesApi: ProjectSalesApi = {
       if (typeof failure.code === 'string' && typeof failure.message === 'string') throw new ProjectSalesApiError(failure.code, failure.message, response.status);
     }
     if (!response.ok || response.status !== 200 || !('data' in envelope) || 'error' in envelope) throw unavailable();
+    const current = await supabase.auth.getSession();
+    if (current.error || !current.data.session || current.data.session.user.id !== actor) {
+      throw new ProjectSalesApiError('UNAUTHENTICATED', 'บัญชีผู้ใช้เปลี่ยนแล้ว กรุณาโหลดรายการใหม่', 401);
+    }
     try {
       const snapshot = parseProjectSalesSnapshot(envelope.data, normalized);
       if (snapshot.actor.userId !== actor) throw unavailable();

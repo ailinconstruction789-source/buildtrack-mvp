@@ -32,15 +32,18 @@ describe('post-booking contracts (not write authorization)', () => {
     { stage: 'transferred' }, { loanAttemptId: pbid(9) }, { saleRevision: pbid(3) }])('binds receipts to exact input %j', patch => {
     expect(() => parsePostBookingResult({ ...pbResult(), ...patch }, pbInput())).toThrow();
   });
-  it('offers final transfer only from pending, no handover/cancel or mortgage shortcut, matching domain rules', () => {
+  it('offers final transfer only from pending, handover after transfer, no cancellation or mortgage shortcut, matching domain rules', () => {
     expect(postBookingTargets('contracted', 'mortgage')).not.toContain('transfer_pending');
-    expect(postBookingTargets('loan_rejected', 'mortgage')).toEqual(['loan_submitted']);
+    expect(postBookingTargets('loan_rejected', 'mortgage')).toEqual(['document_prep']);
     for (const stage of SALE_STAGES) for (const method of ['cash', 'mortgage', null] as const) {
       const targets = postBookingTargets(stage, method);
       if (stage !== 'transfer_pending' || method === null) expect(targets).not.toContain('transferred');
       else expect(targets).toEqual(['transferred']);
-      expect(targets).not.toContain('cancelled'); expect(targets).not.toContain('handover');
-      if (method === null) { expect(targets).toEqual([]); continue; }
+      expect(targets).not.toContain('cancelled');
+      expect(targets.includes('handover')).toBe(stage === 'transferred');
+      if (method === null && stage !== 'transferred') { expect(targets).toEqual([]); continue; }
+      // Native sale records require a payment method; historical nulls are covered by the CRM handover contract tests.
+      if (method === null) continue;
       for (const nextStage of targets) {
         const result = validateSaleTransition({ actor: { userId: pbid(6), role: 'sales', active: true },
           interest: { id: pbid(5), customerId: pbid(2), projectName: 'A', ownerUserId: pbid(6), workspaceState: 'project_active', engagementStatus: 'considering' },
@@ -58,7 +61,7 @@ describe('post-booking contracts (not write authorization)', () => {
     expect(parsePostBookingSnapshot(data, pbScope()).sale.paymentMethod).toBeNull();
   });
   it('rejects actor/ownership editing claims and cross-sale attempt relations', () => {
-    for (const stage of ['cancelled', 'transferred', 'handover'] as SaleStage[]) {
+    for (const stage of ['cancelled', 'handover'] as SaleStage[]) {
       const data = pbSnapshot(); data.sale.stage = stage; expect(() => parsePostBookingSnapshot(data, pbScope())).toThrow();
     }
     const data = pbSnapshot(); data.actor.role = 'owner'; expect(() => parsePostBookingSnapshot(data, pbScope())).toThrow();
@@ -102,7 +105,7 @@ describe('post-booking contracts (not write authorization)', () => {
     expect(parsePostBookingSnapshot(snapshot, pbScope()).sale.transferDate).toBeNull();
     snapshot.sale.transferDate = '2026-09-23';
     snapshot.events = [{ id: pbid(10), command: 'confirm_transfer', fromStage: 'transfer_pending', toStage: 'transferred',
-      occurredAt: null, recordedAt: '2026-09-22T17:00:00Z', actorUserId: pbid(6), reason: 'โอนจริง', evidenceNote: null, loanAttemptId: null, transferDate: '2026-09-23' }];
+      occurredAt: null, recordedAt: '2026-09-22T17:00:00Z', actorUserId: pbid(6), reason: 'โอนจริง', evidenceNote: null, loanAttemptId: null, transferDate: '2026-09-23', handoverDate: null }];
     expect(parsePostBookingSnapshot(snapshot, pbScope())).toEqual(snapshot);
     for (const patch of [{ occurredAt: '2026-09-23T00:00:00+07:00' }, { evidenceNote: 'เลขเอกสาร' }, { transferDate: '2026-09-24' }, { fromStage: 'booked' }]) {
       expect(() => parsePostBookingSnapshot({ ...snapshot, events: [{ ...snapshot.events[0], ...patch }] }, pbScope())).toThrow();

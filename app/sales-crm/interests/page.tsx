@@ -1,8 +1,10 @@
 import Link from 'next/link';
+import { rentalCommandsEnabled } from '@/lib/sales/rentalCommandServer';
 import ProjectInterestsWorkspace from '@/components/sales/ProjectInterestsWorkspace';
 import { parseProjectInterestsPageQuery } from '@/lib/sales/projectInterestsContracts';
 import { projectInterestsEnabled } from '@/lib/sales/projectInterestsServer';
 import { visitsEnabled } from '@/lib/sales/visitsServer';
+import { historicalCustomerEvidenceEnabled } from '@/lib/sales/historicalCustomerEvidenceFlags';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'โครงการที่สนใจของ Lead | BuildTrack' };
@@ -12,5 +14,5 @@ export default async function ProjectInterestsPage({ searchParams }: { searchPar
   let customerId: string;
   try { customerId = parseProjectInterestsPageQuery(await searchParams); }
   catch { return <main className="space-y-4 p-8"><h1>ลิงก์ลูกค้าไม่ถูกต้อง</h1><Link href="/sales-crm" prefetch={false}>เลือก Lead จากส่วนกลางอีกครั้ง</Link></main>; }
-  return <ProjectInterestsWorkspace customerId={customerId} visitsEnabled={visitsEnabled()} />;
+  return <ProjectInterestsWorkspace customerId={customerId} visitsEnabled={visitsEnabled()} rentalsEnabled={rentalCommandsEnabled()} historyEnabled={historicalCustomerEvidenceEnabled()} />;
 }

@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { rentalCommandsEnabled } from '@/lib/sales/rentalCommandServer';
 import { extendedSalesReleaseAllowed } from '@/lib/sales/releaseScope';
 import LeadWorkView from '@/components/sales/LeadWorkView';
 import { parseLeadWorkScopeQuery, type LeadWorkScope } from '@/lib/sales/leadWorkReadContracts';
@@ -35,5 +36,5 @@ export default async function LeadWorkPage({ params, searchParams }: Props) {
     scope = parseLeadWorkScopeQuery(`https://buildtrack.invalid/api/sales-crm/lead-work?${search}`);
   } catch { /* Malformed route data must never reach the browser's read effect. */ }
   if (!scope) return <Unavailable invalid />;
-  return <LeadWorkView scope={scope} lifecycleEnabled={process.env.SALES_CRM_LIFECYCLE_ENABLED === 'true'} />;
+  return <LeadWorkView scope={scope} lifecycleEnabled={process.env.SALES_CRM_LIFECYCLE_ENABLED === 'true'} rentalsEnabled={rentalCommandsEnabled()} />;
 }

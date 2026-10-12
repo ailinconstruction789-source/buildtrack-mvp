@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { readTrustedActor, TRUSTED_AUTH_ERROR, type ActorClient, type ActorSession, type TrustedActor } from '@/lib/auth/trustedActor';
 
@@ -18,9 +18,15 @@ export interface TrustedSessionClient extends ActorClient {
 const ACTIVITY_KEY = 'buildtrack_last_active';
 const IDLE_MS = 60 * 60 * 1000;
 const IDLE_ERROR = 'ไม่ได้ใช้งานเกิน 60 นาที กรุณาเข้าสู่ระบบใหม่';
+export interface TrustedSessionOptions { idleMs?: number }
 
 /** UI session only. Every database operation still needs independent authorization. */
-export function useTrustedAccountSession(enabled: boolean, client: TrustedSessionClient = supabase) {
+export function useTrustedAccountSession(enabled: boolean, client: TrustedSessionClient = supabase, options: TrustedSessionOptions = {}) {
+    const idleMs = options.idleMs ?? IDLE_MS;
+    if (!Number.isSafeInteger(idleMs) || idleMs <= 0) throw new RangeError('idleMs must be a positive safe integer');
+    const idleError = idleMs === IDLE_MS ? IDLE_ERROR
+        : idleMs % (60 * 60 * 1000) === 0 ? `ไม่ได้ใช้งานเกิน ${idleMs / (60 * 60 * 1000)} ชั่วโมง กรุณาเข้าสู่ระบบใหม่`
+        : 'เซสชันหมดอายุเนื่องจากไม่ได้ใช้งาน กรุณาเข้าสู่ระบบใหม่';
     const [state, setState] = useState<{ actor: TrustedActor | null; error: string | null; isLoggingIn: boolean }>({
         actor: null, error: null, isLoggingIn: false,
     });
@@ -28,7 +34,7 @@ export function useTrustedAccountSession(enabled: boolean, client: TrustedSessio
 
     useEffect(() => {
         if (!enabled) return;
-        let active = true, generation = 0, loggingIn = false, refreshing = false, refreshAgain = false;
+        let active = true, generation = 0, loggingIn = false, validatingLogin = false, refreshing = false, refreshAgain = false;
         let actor: TrustedActor | null = null;
         let scheduled: ReturnType<typeof setTimeout> | undefined;
         let lastPresence = 0;
@@ -66,8 +72,8 @@ export function useTrustedAccountSession(enabled: boolean, client: TrustedSessio
                 if (session.error) throw new Error(TRUSTED_AUTH_ERROR);
                 if (!session.data.session) { clear(); return; }
                 const stamp = Number(localStorage.getItem(ACTIVITY_KEY));
-                if (!Number.isFinite(stamp) || stamp <= 0 || stamp > Date.now() || Date.now() - stamp >= IDLE_MS) {
-                    clear(stamp > 0 ? IDLE_ERROR : undefined);
+                if (!Number.isFinite(stamp) || stamp <= 0 || stamp > Date.now() || Date.now() - stamp >= idleMs) {
+                    clear(stamp > 0 ? idleError : undefined);
                     // UI inactivity is NOT a substitute for server session expiry.
                     await client.auth.signOut({ scope: 'local' });
                     return;
@@ -106,9 +112,13 @@ export function useTrustedAccountSession(enabled: boolean, client: TrustedSessio
                 }
                 if (signedIn.error || !signedIn.data.session) throw new Error(TRUSTED_AUTH_ERROR);
                 localStorage.setItem(ACTIVITY_KEY,Date.now().toString());
+                validatingLogin = true;
                 await validate(ticket);
             } catch { if (current(ticket)) clear(TRUSTED_AUTH_ERROR); }
-            finally { loggingIn = false; publish({ isLoggingIn: false }); }
+            finally {
+                loggingIn = false; validatingLogin = false; publish({ isLoggingIn: false });
+                if (active && refreshAgain) { refreshAgain = false; schedule(); }
+            }
         };
         const logout = async () => {
             clear(null);
@@ -121,7 +131,14 @@ export function useTrustedAccountSession(enabled: boolean, client: TrustedSessio
         const subscription = client.auth.onAuthStateChange((event, session) => {
             if (!active) return;
             if (event === 'SIGNED_OUT') { clear(); return; }
-            if (loggingIn) return; // The explicit login path performs its own verified read.
+            if (loggingIn) {
+                // The sign-in event precedes signInWithPassword's result. Once
+                // verification starts, another Auth event invalidates that read.
+                if (validatingLogin && ['INITIAL_SESSION','SIGNED_IN','TOKEN_REFRESHED','USER_UPDATED'].includes(event)) {
+                    generation++; actor = null; publish({ actor: null }); refreshAgain = true;
+                }
+                return;
+            }
             if (['INITIAL_SESSION','SIGNED_IN','TOKEN_REFRESHED','USER_UPDATED'].includes(event)) {
                 generation++;
                 if (actor && actor.authUserId !== session?.user.id) { actor = null; publish({ actor: null }); }
@@ -132,7 +149,7 @@ export function useTrustedAccountSession(enabled: boolean, client: TrustedSessio
             if (!actor) return;
             const stamp = Number(localStorage.getItem(ACTIVITY_KEY));
             const elapsed = Date.now() - stamp;
-            if (stamp > 0 && elapsed >= 30_000 && elapsed < IDLE_MS) localStorage.setItem(ACTIVITY_KEY,Date.now().toString());
+            if (stamp > 0 && elapsed >= 30_000 && elapsed < idleMs) localStorage.setItem(ACTIVITY_KEY,Date.now().toString());
         };
         const visibility = () => { if (document.visibilityState === 'visible') schedule(); };
         for (const name of ['mousemove','keydown','click','touchstart']) window.addEventListener(name,activity);
@@ -148,11 +165,10 @@ export function useTrustedAccountSession(enabled: boolean, client: TrustedSessio
             window.removeEventListener('focus',schedule);
             document.removeEventListener('visibilitychange',visibility);
         };
-    }, [enabled,client]);
+    }, [enabled,client,idleMs,idleError]);
 
-    return { ...state,
-        login: async (username: string,pin: string) => { await controls.current?.login(username,pin); },
-        logout: async () => { await controls.current?.logout(); },
-        dismissError: () => setState(previous => ({ ...previous,error:null })),
-    };
+    const login = useCallback(async (username: string,pin: string) => { await controls.current?.login(username,pin); }, []);
+    const logout = useCallback(async () => { await controls.current?.logout(); }, []);
+    const dismissError = useCallback(() => setState(previous => ({ ...previous,error:null })), []);
+    return { ...state, login, logout, dismissError };
 }

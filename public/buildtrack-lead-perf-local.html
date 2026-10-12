@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="robots" content="noindex,nofollow"><title>BuildTrack — วัดหน้า Lead ในเครื่อง</title>
+<style>html,body{margin:0;height:100%;font:14px system-ui}iframe{display:block;border:0;width:100%;height:100%}#panel{position:fixed;bottom:12px;right:12px;z-index:100000;width:360px;max-width:calc(100vw - 48px);padding:12px;border:1px solid #94a3b8;border-radius:10px;background:#fff;box-shadow:0 2px 16px #0003;color:#0f172a}summary{cursor:pointer;font-weight:700}p{line-height:1.5}textarea{box-sizing:border-box;width:100%;height:220px;font:12px monospace}button{margin-top:8px;padding:8px;cursor:pointer}</style></head>
+<body><iframe id="frame" title="BuildTrack"></iframe><details id="panel" open><summary id="status">กำลังเริ่มวัดหน้า Lead…</summary><p>วัดครั้งเดียวจาก session เดิมบนคอม รอจนลูกค้าแสดงครบ ถ้าเปิดหน้าอื่นให้กลับหน้า Lead ผลจะรวมเวลาที่เลือกหน้าเองด้วย ไม่มีการอ่านรหัสหรือ token ไม่มีการแก้ข้อมูลลูกค้า</p><textarea id="result" readonly aria-label="ผลการวัด"></textarea><button id="copy" type="button">คัดลอกผลการวัด</button><button id="select" type="button">เลือกผลทั้งหมด</button></details>
+<script>
+(() => {
+  'use strict';
+  const frame=document.getElementById('frame'),field=document.getElementById('result'),label=document.getElementById('status');
+  if(!['127.0.0.1','localhost'].includes(location.hostname)){label.textContent='ใช้ได้เฉพาะในเครื่อง';return;}
+  document.getElementById('select').onclick=()=>{field.focus();field.select();};
+  document.getElementById('copy').onclick=async()=>{try{await navigator.clipboard.writeText(field.value);document.getElementById('copy').textContent='คัดลอกแล้ว';}catch{field.focus();field.select();}};
+  frame.addEventListener('load',()=>{
+    const win=frame.contentWindow,doc=frame.contentDocument;if(!win||!doc)return;
+    const p=win.performance,longTasks=[];let longSupported=false,longObserver,done=false,checking=false,firstContent=null;
+    try{p.setResourceTimingBufferSize(2000);}catch{}
+    try{longObserver=new win.PerformanceObserver(list=>{for(const e of list.getEntries())longTasks.push({start:e.startTime,duration:e.duration});});longObserver.observe({type:'longtask',buffered:true});longSupported=true;}catch{}
+    // Read timing metadata only: never intercept fetch, inspect request headers,
+    // read response bodies, cookies, local/session storage, or form values.
+    const resources=()=>p.getEntriesByType('resource');
+    const apiDetails=()=>resources().flatMap(r=>{
+      let u;try{u=new URL(r.name);}catch{return [];}
+      let endpoint;
+      if(u.origin===location.origin&&u.pathname.startsWith('/api/sales-crm/'))endpoint=u.pathname;
+      else if(u.pathname.startsWith('/rest/v1/'))endpoint=u.pathname;
+      else return [];
+      // Endpoint and page number only; do not export project names, search,
+      // personal IDs or any other query values.
+      endpoint=endpoint.replace(/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/gi,':id');
+      const page=u.searchParams.get('page');
+      return [{endpoint,page:page!==null&&/^\d+$/.test(page)?Number(page):null,startMs:Math.round(r.startTime),endMs:Math.round(r.responseEnd),durationMs:Math.round(r.duration),responseStatus:r.responseStatus||null,decodedBytes:r.decodedBodySize||0}];
+    });
+    const visible=e=>e.getClientRects().length>0;
+    const spinners=()=>Array.from(doc.querySelectorAll('.animate-spin')).filter(visible).length;
+    const hasHub=()=>Array.from(doc.querySelectorAll('h1')).some(e=>visible(e)&&e.textContent.includes('My Sales Hub'));
+    const tableRows=()=>Array.from(doc.querySelectorAll('table tbody tr')).filter(visible).length;
+    const emptyVisible=()=>Array.from(doc.querySelectorAll('h3')).some(e=>visible(e)&&e.textContent.includes('ไม่พบข้อมูลลูกค้าตามเงื่อนไข'));
+    const ready=()=>hasHub()&&spinners()===0&&(tableRows()>0||emptyVisible());
+    const limits=['Desktop browser, production Next.js local preview; real existing Supabase data and restored session','Not a cold-cache or actual-phone measurement; no CPU-percent/full-process-RAM claim','Same-origin iframe and passive observers can affect results','Navigation-to-Hub-ready includes any manual navigation; cannot directly compare with shell/core-ready timing','Resource timing cannot report server subphase timings or unfinished network requests; responseStatus may be unsupported'];
+    function snapshot(status){
+      const now=p.now(),api=apiDetails(),central=api.filter(r=>r.endpoint==='/api/sales-crm/central'),sales=api.filter(r=>r.endpoint==='/api/sales-crm/project-sales');
+      const nativeEndpoints=new Set(['/rest/v1/leads','/rest/v1/sales','/rest/v1/plots','/rest/v1/projects','/rest/v1/house_types']);
+      const critical=api.filter(r=>nativeEndpoints.has(r.endpoint)||r.endpoint==='/api/sales-crm/central'||r.endpoint==='/api/sales-crm/project-sales'),byEndpoint={};for(const r of api)byEndpoint[r.endpoint]=(byEndpoint[r.endpoint]||0)+1;
+      const nav=p.getEntriesByType('navigation')[0],lastCritical=Math.max(0,...critical.map(r=>r.endMs));
+      const countPrefix=prefix=>{const b=Array.from(doc.querySelectorAll('button')).find(e=>e.textContent.trim().startsWith(prefix));const match=b?.textContent.match(/\(([\d,]+)\)/);return match?Number(match[1].replaceAll(',','')):null;};
+      return {status,timestamp:new Date().toISOString(),metric:'Iframe navigation until populated My Sales Hub table or valid empty view, no visible spinner, and two animation frames',elapsedMs:Math.round(now),navigationToHubReadyMs:status==='ready'?Math.round(now):null,firstHubContentMs:firstContent,navigation:{type:nav?.type,ttfbMs:Math.round(nav?.responseStart||0),fcpMs:Math.round(p.getEntriesByName('first-contentful-paint')[0]?.startTime||0),loadMs:Math.round(nav?.loadEventEnd||0)},apiRequests:api.length,requestsByEndpoint:byEndpoint,centralRequests:central.length,centralPageSequence:central.map(r=>r.page),centralSpanMs:central.length?Math.max(...central.map(r=>r.endMs))-Math.min(...central.map(r=>r.startMs)):null,projectSalesRequests:sales.length,projectSalesSpanMs:sales.length?Math.max(...sales.map(r=>r.endMs))-Math.min(...sales.map(r=>r.startMs)):null,lastCriticalApiEndMs:lastCritical,readyAfterLastCriticalApiMs:status==='ready'&&lastCritical>0?Math.round(now-lastCritical):null,apiDetails:api,javascriptDecodedBytes:resources().filter(r=>new URL(r.name).pathname.endsWith('.js')).reduce((n,r)=>n+r.decodedBodySize,0),longTasksSupported:longSupported,longTaskCount:longTasks.length,blockingTimeMs:longSupported?Math.round(longTasks.reduce((n,t)=>n+Math.max(0,t.duration-50),0)):null,jsHeapBytes:p.memory?{used:p.memory.usedJSHeapSize,total:p.memory.totalJSHeapSize,limit:p.memory.jsHeapSizeLimit}:null,domElements:doc.querySelectorAll('*').length,tableRows:tableRows(),visibleSpinners:spinners(),hubVisible:hasHub(),validEmptyView:emptyVisible(),teamCustomerCount:countPrefix('ลูกค้าทั้งหมดในทีม'),myCustomerCount:countPrefix('ลูกค้าของฉัน'),viewport:{width:win.innerWidth,height:win.innerHeight},documentWidth:doc.documentElement.scrollWidth,limits};
+    }
+    function show(value){field.value=JSON.stringify(value,null,2);label.textContent=value.status==='ready'?'วัดแล้ว '+(value.navigationToHubReadyMs/1000).toFixed(2)+' วินาที':value.status==='timeout'?'ยังไม่พร้อมภายใน 150 วินาที — คัดลอกผลได้':'กำลังวัด '+Math.floor(value.elapsedMs/1000)+' วินาที / Central '+value.centralRequests+' คำขอ';}
+    function stop(status){if(done)return;done=true;clearInterval(timer);clearTimeout(deadline);observer.disconnect();if(longObserver){for(const e of longObserver.takeRecords())longTasks.push({start:e.startTime,duration:e.duration});longObserver.disconnect();}show(snapshot(status));}
+    function check(){if(done||checking||!ready())return;firstContent??=Math.round(p.now());checking=true;win.requestAnimationFrame(()=>win.requestAnimationFrame(()=>{checking=false;if(!done&&ready())stop('ready');}));}
+    const observer=new win.MutationObserver(check);observer.observe(doc,{childList:true,subtree:true,attributes:true});
+    const timer=setInterval(()=>{if(!done){show(snapshot('measuring'));check();}},500);
+    const deadline=setTimeout(()=>stop('timeout'),150000);show(snapshot('measuring'));check();
+  });
+  frame.src='/';
+})();
+</script></body></html>

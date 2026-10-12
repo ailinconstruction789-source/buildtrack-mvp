@@ -1,4 +1,5 @@
 import React from 'react';
+import SalesOverlay from './sales/SalesOverlay';
 import { AlertTriangle, CheckCircle, Info, HelpCircle, X, Trash2, ShieldAlert } from 'lucide-react';
 
 export interface AppModalConfig {
@@ -16,9 +17,10 @@ export interface AppModalConfig {
 interface AppCustomModalProps {
   config: AppModalConfig | null;
   onClose: () => void;
+  portalToBody?: boolean;
 }
 
-export default function AppCustomModal({ config, onClose }: AppCustomModalProps) {
+export default function AppCustomModal({ config, onClose, portalToBody = false }: AppCustomModalProps) {
   if (!config || !config.isOpen) return null;
 
   const {
@@ -73,9 +75,10 @@ export default function AppCustomModal({ config, onClose }: AppCustomModalProps)
   };
 
   const style = getVariantStyles();
+  const Overlay = portalToBody ? SalesOverlay : 'div';
 
   return (
-    <div className="fixed inset-0 bg-black/70 z-[999999] flex items-center justify-center p-4 overflow-y-auto animate-fade-in backdrop-blur-xs">
+    <Overlay className="fixed inset-0 bg-black/70 z-[999999] flex items-center justify-center p-4 overflow-y-auto animate-fade-in backdrop-blur-xs">
       <div className="bg-white rounded-3xl w-full max-w-sm sm:max-w-md p-6 shadow-2xl border border-slate-100 relative overflow-hidden text-center transform transition-all animate-scale-up">
         
         {/* Top Decorative Color Bar */}
@@ -132,6 +135,6 @@ export default function AppCustomModal({ config, onClose }: AppCustomModalProps)
         </div>
 
       </div>
-    </div>
+    </Overlay>
   );
 }

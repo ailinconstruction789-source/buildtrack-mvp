@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { filterSchedulesByPlot, groupBy } from '@/lib/constructionReportsIndex';
 import { Activity, DollarSign, Wallet, Hammer } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
@@ -33,13 +34,8 @@ export default function ExecutiveAnalytics({
   }, [rawPlots, activePlots]);
 
   const schedules = useMemo(() => {
-    const res: any = {};
-    Object.keys(rawSchedules || {}).forEach(k => {
-      const plotId = k.split('-')[0];
-      if (activePlots.has(plotId)) res[k] = rawSchedules[k];
-    });
-    return res;
-  }, [rawSchedules, activePlots]);
+    return filterSchedulesByPlot(rawSchedules || {}, activePlots, new Set((rawPlots || []).map((plot: any) => plot.id)));
+  }, [rawSchedules, activePlots, rawPlots]);
 
   const latestUpdatesMap = useMemo(() => {
     const res: any = {};
@@ -53,6 +49,8 @@ export default function ExecutiveAnalytics({
   const allUpdatesRecord = useMemo(() => {
     return (rawAllUpdatesRecord || []).filter((u: any) => activePlots.has(u.plot_id));
   }, [rawAllUpdatesRecord, activePlots]);
+
+  const tasksByHouseType = useMemo(() => groupBy(taskTemplates || [], (task: any) => task.house_type_id), [taskTemplates]);
 
   // 💰 1. Financial Analytics
   const financialData = useMemo(() => {
@@ -68,7 +66,7 @@ export default function ExecutiveAnalytics({
         expectedRevenue += Number(p.selling_price || 0);
       }
 
-      const pTasks = taskTemplates.filter((t: any) => t.house_type_id === p.house_type_id);
+      const pTasks = tasksByHouseType.get(p.house_type_id) || [];
       let plotCompletedCost = 0;
 
       pTasks.forEach((t: any) => {
@@ -90,7 +88,7 @@ export default function ExecutiveAnalytics({
     });
 
     return { expectedRevenue, sunkCost, totalConstructionCost, totalPlannedBudget };
-  }, [plots, taskTemplates, latestUpdatesMap]);
+  }, [plots, taskTemplates, tasksByHouseType, latestUpdatesMap]);
 
   const formatCurrency = (val: number) => {
     if (val >= 1000000) return `฿ ${(val / 1000000).toFixed(2)}M`;

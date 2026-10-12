@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { assertLocalDatabaseTarget, assertPlainSql, cleanProcessEnvironment, draftPaths, localConnectionArgs, syntheticDraftBody, verifyClusterIdentity } from './safety.mjs';
+import { assertLocalDatabaseTarget, assertPlainSql, cleanProcessEnvironment, draftPaths, postBookingDraftPaths, customerDealDetailsDraftPath, rentalLifecycleDraftPath, historicalEvidenceDraftPath, unknownHistoricalEvidenceDraftPath, reviewedImportDetailsDraftPath, sourceBoundCreationDraftPath, historicalSaleRevisionDraftPath, importedHistoryProjectionDraftPath, excelEvidenceDraftPath, localConnectionArgs, syntheticDraftBody, verifyClusterIdentity } from './safety.mjs';
 
 describe('isolated runtime safety boundaries (no database execution)', () => {
     const db = 'buildtrack_sales_runtime_ab12';
@@ -62,7 +62,7 @@ describe('isolated runtime safety boundaries (no database execution)', () => {
         { database: 'postgres' }, { marker: null }, { listen: '*' }, { data: resolve('lib') }])('refuses mismatched server %j', change => {
         expect(() => verifyClusterIdentity({ ...actual, ...change }, expected)).toThrow();
     });
-    it.each(draftPaths)('only unwraps known draft in memory, preserving file bytes: %s', path => {
+    it.each([...new Set([...draftPaths, ...postBookingDraftPaths, customerDealDetailsDraftPath, rentalLifecycleDraftPath, historicalEvidenceDraftPath, unknownHistoricalEvidenceDraftPath, reviewedImportDetailsDraftPath, sourceBoundCreationDraftPath, historicalSaleRevisionDraftPath, importedHistoryProjectionDraftPath, excelEvidenceDraftPath])])('only unwraps known draft in memory, preserving file bytes: %s', path => {
         const original = readFileSync(resolve(path), 'utf8');
         const transformed = syntheticDraftBody(path, original);
         expect(transformed).not.toContain("RAISE EXCEPTION 'DESIGN ONLY:");

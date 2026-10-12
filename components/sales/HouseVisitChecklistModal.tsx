@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   X, CheckCircle, Clock, AlertCircle, Home, CheckSquare, 
   Square, ArrowRight, ArrowLeft, Save, User, Calendar, 
@@ -10,6 +10,10 @@ import {
 import { supabase } from '@/lib/supabase';
 import { Lead, CRMStatus } from '@/types/sales';
 import { CRM_STATUS_OPTIONS } from '@/lib/salesImportHelper';
+import SalesOverlay from './SalesOverlay';
+import { canEditSalesRole, getLeadStage, preserveLeadDealStage } from '@/lib/sales/leadStage';
+import { readLeadActivitySnapshot, writeLeadActivitySummary } from '@/lib/sales/leadActivity';
+import { hasDealHistory } from '@/lib/sales/leadLifecycle';
 
 interface HouseVisitChecklistModalProps {
   isOpen: boolean;
@@ -20,6 +24,7 @@ interface HouseVisitChecklistModalProps {
   plots?: any[];
   onOpenSurvey?: (lead: Lead) => void;
   onSaved?: () => void;
+  initialStage?: 'stage_a' | 'stage_b' | 'stage_c';
 }
 
 // Stage A Checklist Items
@@ -74,7 +79,10 @@ const STAGE_C_SHUTDOWN_ITEMS = [
   { id: 'return_golf_cart', label: 'นำรถกอล์ฟคืนจุดจอดและเสียบชาร์จ' },
 ];
 
-export default function HouseVisitChecklistModal({
+export default function HouseVisitChecklistModal(props: HouseVisitChecklistModalProps) {
+  return <ChecklistSession key={JSON.stringify([props.lead?.id, props.user?.id || props.user?.username, props.user?.role])} {...props} />;
+}
+function ChecklistSession({
   isOpen,
   onClose,
   lead,
@@ -82,16 +90,20 @@ export default function HouseVisitChecklistModal({
   user,
   plots = [],
   onOpenSurvey,
-  onSaved
+  onSaved,
+  initialStage = 'stage_a'
 }: HouseVisitChecklistModalProps) {
-  const [currentStage, setCurrentStage] = useState<'stage_a' | 'stage_b' | 'stage_c'>('stage_a');
+  const mounted = useRef(true), writing = useRef(false);
+  const stageACompletedAt = useRef<string | null>(null);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const [currentStage, setCurrentStage] = useState<'stage_a' | 'stage_b' | 'stage_c'>(initialStage);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [checklistId, setChecklistId] = useState<string | null>(null);
 
   // Form States
   const [customerName, setCustomerName] = useState(lead?.customer_name || '');
   const [selectedHousePlot, setSelectedHousePlot] = useState(lead?.interested_plot_name || '');
-  const [agentName, setAgentName] = useState(user?.username || lead?.agent_name || 'Bell');
+  const [agentName, setAgentName] = useState(user?.username || lead?.agent_name || '');
 
   // Stage A state (16 items)
   const [stageAChecklist, setStageAChecklist] = useState<Record<string, boolean>>({});
@@ -117,7 +129,7 @@ export default function HouseVisitChecklistModal({
       setInterestedPlot(lead.interested_plot_name || '');
       if (lead.crm_status) setCrmStatus(lead.crm_status as CRMStatus);
     }
-  }, [lead]);
+  }, [lead?.id]);
 
   if (!isOpen) return null;
 
@@ -155,7 +167,10 @@ export default function HouseVisitChecklistModal({
 
   // Move from Stage A to B
   const handleProceedToStageB = () => {
-    setStageBStartedAt(new Date().toISOString());
+    if (!isStageAComplete) return;
+    const observedAt = new Date().toISOString();
+    stageACompletedAt.current = stageACompletedAt.current || observedAt;
+    setStageBStartedAt(previous => previous || observedAt);
     setCurrentStage('stage_b');
   };
 
@@ -166,8 +181,16 @@ export default function HouseVisitChecklistModal({
 
   // Final Submit Stage C & Auto-Sync to Database
   const handleCompleteChecklist = async () => {
+    if (writing.current || (user?.role != null && !canEditSalesRole(user.role))) return;
+    writing.current = true;
     setIsSubmitting(true);
+    let savedChecklistId = checklistId;
+    let failureMessage = savedChecklistId
+      ? 'อัปเดต Checklist ไม่สำเร็จ ข้อมูลที่บันทึกก่อนหน้ายังอยู่ กรุณาลองอีกครั้ง'
+      : 'บันทึก Checklist ไม่สำเร็จ โปรดลองอีกครั้ง';
     try {
+      const latest = lead?.id ? await readLeadActivitySnapshot(lead) : null;
+      if (!mounted.current) return;
       const now = new Date().toISOString();
 
       // 1. Save Checklist record
@@ -177,10 +200,10 @@ export default function HouseVisitChecklistModal({
         project_name: projectName,
         house_or_plot_name: selectedHousePlot || null,
         agent_name: agentName,
-        stage: 'completed',
+        stage: isStageAComplete && checkedStageCCount === totalStageCItems && stageBStartedAt ? 'completed' : 'stage_c',
         stage_a_checklist: stageAChecklist,
-        stage_a_completed_at: now,
-        stage_b_started_at: stageBStartedAt || now,
+        stage_a_completed_at: stageACompletedAt.current,
+        stage_b_started_at: stageBStartedAt || null,
         stage_b_visit_notes: stageBNotes,
         stage_c_checklist: stageCChecklist,
         customer_feedback: customerFeedback,
@@ -189,52 +212,66 @@ export default function HouseVisitChecklistModal({
         lead_crm_status: crmStatus,
         next_action: nextAction,
         next_follow_up_date: nextFollowUpDate ? new Date(nextFollowUpDate).toISOString() : null,
-        stage_c_completed_at: now,
-        created_at: now,
+        stage_c_completed_at: checkedStageCCount === totalStageCItems ? now : null,
         updated_at: now
       };
 
-      await supabase.from('house_visit_checklists').insert([checklistPayload]);
+      const recordId = savedChecklistId || crypto.randomUUID();
+      const checklistResult = savedChecklistId
+        ? await supabase.from('house_visit_checklists').update(checklistPayload).eq('id', recordId)
+        : await supabase.from('house_visit_checklists').insert([{ ...checklistPayload, created_at: now, id: recordId }]);
+      if (checklistResult.error) throw checklistResult.error;
+      if (!mounted.current) return;
+      savedChecklistId = recordId;
+      setChecklistId(recordId);
+      failureMessage = 'บันทึก Checklist แล้ว แต่อัปเดตข้อมูลลูกค้าไม่สำเร็จ กรุณาลองบันทึกอีกครั้ง (ไม่สร้าง Checklist ซ้ำ)';
 
       // 2. Auto-Sync to public.leads table (if linked to a lead)
-      if (lead?.id) {
+      if (latest) {
         const combinedNotes = [
-          lead.notes || '',
+          latest.lead.notes || '',
           customerFeedback ? `ความเห็นลูกค้า: ${customerFeedback}` : '',
           objections ? `ข้อกังวล: ${objections}` : '',
           nextAction ? `Next Action: ${nextAction}` : ''
         ].filter(Boolean).join(' | ');
 
         const updateLeadPayload: any = {
-          actual_visit_date: now,
+          actual_visit_date: latest.lead.actual_visit_date || now,
           crm_status: crmStatus,
           auto_status: 'เข้าชมแล้ว',
           status: 'Visit',
-          interested_plot_name: interestedPlot || lead.interested_plot_name,
+          interested_plot_name: interestedPlot || latest.lead.interested_plot_name,
           notes: combinedNotes
         };
 
         if (nextFollowUpDate) {
           updateLeadPayload.last_follow_up_date = now;
-          updateLeadPayload.follow_up_count = (lead.follow_up_count || 0) + 1;
+          updateLeadPayload.follow_up_count = Number(latest.lead.follow_up_count || 0) + 1;
         }
 
-        await supabase.from('leads').update(updateLeadPayload).eq('id', lead.id);
+        const patch = preserveLeadDealStage(latest.lead, updateLeadPayload);
+        if (latest.historyExists || hasDealHistory(latest.lead)) { delete patch.status; delete patch.crm_status; delete patch.interested_plot_name; }
+        await writeLeadActivitySummary(latest, patch);
       }
 
-      alert('✅ บันทึก Checklist พาชมบ้านและอัปเดตข้อมูลลูกค้าสำเร็จ!');
+      if (!mounted.current) return;
+      alert(checklistPayload.stage === 'completed'
+        ? '✅ บันทึก Checklist พาชมบ้านและอัปเดตข้อมูลลูกค้าสำเร็จ!'
+        : '✅ บันทึกสรุปหลังชมและข้อมูลลูกค้าแล้ว แต่ Checklist SOP ยังไม่ครบทุกขั้นตอน');
       if (onSaved) onSaved();
       onClose();
     } catch (err) {
+      if (!mounted.current) return;
       console.error('Error completing checklist:', err);
-      alert('บันทึก Checklist ไม่สำเร็จ โปรดลองอีกครั้ง');
+      alert(failureMessage);
     } finally {
-      setIsSubmitting(false);
+      writing.current = false;
+      if (mounted.current) setIsSubmitting(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 animate-fade-in overflow-y-auto">
+    <SalesOverlay className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 animate-fade-in overflow-y-auto">
       <div className="bg-white rounded-3xl max-w-3xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
         
         {/* 🌟 Header & Stepper */}
@@ -255,6 +292,7 @@ export default function HouseVisitChecklistModal({
             </div>
             <button 
               onClick={onClose}
+              aria-label="ปิด SOP พาชมบ้าน"
               className="text-slate-400 hover:text-white p-1.5 rounded-xl hover:bg-slate-800 transition-colors cursor-pointer"
             >
               <X size={20} />
@@ -535,6 +573,7 @@ export default function HouseVisitChecklistModal({
                     <label className="block font-bold text-slate-700 mb-1">📊 อัปเดต CRM Status</label>
                     <select
                       value={crmStatus}
+                      disabled={!!lead && ['booked', 'transferred', 'rented', 'lost', 'loan'].includes(getLeadStage(lead))}
                       onChange={e => setCrmStatus(e.target.value as CRMStatus)}
                       className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 font-bold text-purple-900 focus:ring-2 focus:ring-purple-500 focus:outline-none"
                     >
@@ -600,7 +639,7 @@ export default function HouseVisitChecklistModal({
                 </button>
                 <button
                   type="button"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || (user?.role != null && !canEditSalesRole(user.role))}
                   onClick={handleCompleteChecklist}
                   className="bg-purple-600 hover:bg-purple-700 text-white font-black px-6 py-2.5 rounded-xl text-xs flex items-center gap-2 shadow-lg shadow-purple-600/30 transition-all cursor-pointer disabled:opacity-50"
                 >
@@ -613,6 +652,6 @@ export default function HouseVisitChecklistModal({
 
         </div>
       </div>
-    </div>
+    </SalesOverlay>
   );
 }

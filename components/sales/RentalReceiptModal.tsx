@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { RentalReceiptData, RENTAL_PROGRAM_DETAILS } from '@/types/sales';
 import { formatThaiBahtText } from '@/lib/rentalHelper';
+import SalesOverlay from './SalesOverlay';
 
 interface RentalReceiptModalProps {
   isOpen: boolean;
@@ -67,7 +68,7 @@ ${!isReceipt ? `\n💳 สแกนจ่ายผ่าน PromptPay: ${promptP
   };
 
   return (
-    <div className="fixed inset-0 z-[350] flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto animate-fade-in">
+    <SalesOverlay printable className="fixed inset-0 z-[350] flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto animate-fade-in">
       {/* Print styles */}
       <style dangerouslySetInnerHTML={{ __html: `
         @media print {
@@ -355,6 +356,6 @@ ${!isReceipt ? `\n💳 สแกนจ่ายผ่าน PromptPay: ${promptP
         </div>
 
       </div>
-    </div>
+    </SalesOverlay>
   );
 }

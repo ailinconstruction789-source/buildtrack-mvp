@@ -1,7 +1,12 @@
 import React from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-vi.mock('@/lib/supabase', () => ({ supabase: { auth: { getSession: vi.fn() } } }));
+const directMocks = vi.hoisted(() => ({ from: vi.fn(), read: vi.fn(), session: vi.fn() }));
+vi.mock('@/lib/supabase', () => ({ supabase: { from: directMocks.from, auth: {
+  getSession: directMocks.session,
+  onAuthStateChange: vi.fn(() => ({ data: { subscription: { unsubscribe: vi.fn() } } })),
+} } }));
+vi.mock('@/lib/sales/fetchWithoutLimit', () => ({ fetchSalesWithoutLimit: directMocks.read }));
 vi.mock('@/lib/sales/plotAvailabilityClient', () => ({ loadAvailablePlots: vi.fn().mockResolvedValue([]) }));
 import CentralLeadsView from '../CentralLeadsView';
 import { CentralApiError } from '@/lib/sales/centralClient';
@@ -32,6 +37,29 @@ beforeEach(() => window.sessionStorage.clear());
 afterEach(cleanup);
 
 describe('central lead workspace', () => {
+  it('keeps historical owner filtering while offering only Sales staff for new assignments', async () => {
+    directMocks.read.mockResolvedValue([{ id: 'legacy-1', customer_name: 'Legacy staff customer',
+      agent_name: 'FOREMAN', status: 'Follow Up', project_name: 'โครงการ A' }]);
+    directMocks.session.mockResolvedValue({ data: { session: { user: { id: USER, app_metadata: { role: 'admin' } } } } });
+    directMocks.from.mockImplementation((table: string) => ({ select: () => table === 'users'
+      ? Promise.resolve({ data: [
+          { id: 1, username: 'Sales A', role: 'Sales' },
+          { id: 2, username: 'Sales B', role: 'sale' },
+          { id: 3, username: 'FOREMAN', role: 'Foreman' },
+          { id: 4, username: 'ADMIN', role: 'Admin' },
+        ], error: null })
+      : { order: () => Promise.resolve({ data: [{ name: 'โครงการ A' }], error: null }) },
+    }));
+    render(<CentralLeadsView />);
+    await screen.findByText('Legacy staff customer');
+    expect(screen.getByRole('option', { name: 'FOREMAN' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '+ บันทึก Lead ใหม่' }));
+    const owner = screen.getAllByRole('combobox', { name: /Sales ผู้ดูแล/ })
+      .find(element => (element as HTMLSelectElement).required)!;
+    expect(Array.from((owner as HTMLSelectElement).options).map(option => option.textContent))
+      .toEqual(['เลือก Sales ที่ดูแลลูกค้า', 'Sales A', 'Sales B']);
+  });
+
   it('keeps central intake button and modal operational', async () => {
     render(<CentralLeadsView api={{ read: readSnapshot(), create: vi.fn() }} bookingEnabled projectSalesEnabled reportsEnabled={false} leadWorkEnabled={false} />);
     await screen.findByText('ลูกค้าส่วนกลาง');
@@ -174,16 +202,17 @@ describe('central lead workspace', () => {
     expect(screen.queryByRole('button', { name: /งานส่วนกลางของ/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /ติดตามโครงการ/ })).not.toBeInTheDocument();
   });
-  it('links central and project scopes separately when explicitly enabled, including read-only Owner', async () => {
+  it('keeps Owner customer/project details visible without opening mutating follow-up forms', async () => {
     const api = { read: readSnapshot(snapshot('owner')), create: vi.fn() };
     render(<CentralLeadsView api={api} leadWorkEnabled />);
     await screen.findByRole('table');
     fireEvent.click(screen.getByRole('button', { name: 'ข้อมูลด่วนและจัดการ ลูกค้าส่วนกลาง' }));
-    expect(screen.getByRole('button', { name: 'งานส่วนกลางของ ลูกค้าส่วนกลาง' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'งานส่วนกลางของ ลูกค้าส่วนกลาง' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'ปิดแผงข้อมูล' }));
     fireEvent.click(screen.getByRole('button', { name: 'ข้อมูลด่วนและจัดการ ลูกค้าสนใจสองโครงการ' }));
-    expect(screen.getByRole('button', { name: 'ติดตามโครงการ โครงการ B ของ ลูกค้าสนใจสองโครงการ' }))
-      .toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'ติดตามโครงการ โครงการ B ของ ลูกค้าสนใจสองโครงการ' }))
+      .not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'ปิดแผงข้อมูล' })).toBeInTheDocument();
     expect(api.create).not.toHaveBeenCalled();
   });
   it.each(['FEATURE_DISABLED', 'SETUP_REQUIRED'])('shows a setup state for %s, not an empty list', async code => {

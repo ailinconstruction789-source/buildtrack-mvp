@@ -41,6 +41,26 @@ function form(data = snapshot(), save = vi.fn().mockResolvedValue(saved)) {
 beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
 afterEach(cleanup);
 
+describe('rental navigation from the verified Lead project scope', () => {
+    it.each([false,true])('uses the verified customer and project only when enabled=%s', async enabled => {
+        const data=snapshot({projectName:'โครงการ A & B'});
+        render(<LeadWorkView scope={scope} api={{read:vi.fn().mockResolvedValue(data),save:vi.fn()}} rentalsEnabled={enabled}/>);
+        await screen.findByText('ลูกค้า A');
+        const link=enabled?await screen.findByRole('link',{name:'สัญญาเช่าและประวัติของโครงการนี้ →'}):screen.queryByRole('link',{name:'สัญญาเช่าและประวัติของโครงการนี้ →'});
+        if(enabled) {
+            expect(link).toBeInTheDocument();
+            const query=new URL(link!.getAttribute('href')!,'http://localhost').searchParams;
+            expect(query.get('customerId')).toBe(CUSTOMER);
+            expect(query.get('projectName')).toBe('โครงการ A & B');
+        } else expect(link).not.toBeInTheDocument();
+    });
+    it('does not infer a project for a customer-level Lead scope',async()=>{
+        render(<LeadWorkView scope={scope} api={{read:vi.fn().mockResolvedValue(snapshot()),save:vi.fn()}} rentalsEnabled/>);
+        await screen.findByText('ลูกค้า A');
+        expect(screen.queryByRole('link',{name:'สัญญาเช่าและประวัติของโครงการนี้ →'})).not.toBeInTheDocument();
+    });
+});
+
 describe('lead work form safety', () => {
     it.each([
         { actor: { userId: USER, role: 'owner' as const } },

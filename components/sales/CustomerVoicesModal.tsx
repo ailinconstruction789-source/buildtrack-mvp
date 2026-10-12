@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Star, Save, MessageSquare, Check, User, Heart, Sparkles, Building, Loader2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { CustomerVoice, Lead } from '@/types/sales';
+import SalesOverlay from './SalesOverlay';
 
 interface CustomerVoicesModalProps {
   isOpen: boolean;
@@ -141,9 +142,11 @@ export default function CustomerVoicesModal({
       };
 
       if (form.id) {
-        await supabase.from('customer_voices').update(payload).eq('id', form.id);
+        const { error } = await supabase.from('customer_voices').update(payload).eq('id', form.id);
+        if (error) throw error;
       } else {
-        await supabase.from('customer_voices').insert([payload]);
+        const { error } = await supabase.from('customer_voices').insert([payload]);
+        if (error) throw error;
       }
 
       if (onSaved) onSaved();
@@ -157,7 +160,7 @@ export default function CustomerVoicesModal({
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-fade-in">
+    <SalesOverlay className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-fade-in">
       <div className="bg-white rounded-3xl max-w-4xl w-full shadow-2xl border border-slate-200 flex flex-col max-h-[92vh] overflow-hidden my-auto">
         
         {/* Header */}
@@ -176,7 +179,8 @@ export default function CustomerVoicesModal({
             </div>
           </div>
           <button 
-            onClick={onClose} 
+            onClick={onClose}
+            aria-label="ปิดแบบสอบถาม Customer Voices"
             className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors cursor-pointer"
           >
             <X size={18} />
@@ -476,6 +480,6 @@ export default function CustomerVoicesModal({
         )}
 
       </div>
-    </div>
+    </SalesOverlay>
   );
 }

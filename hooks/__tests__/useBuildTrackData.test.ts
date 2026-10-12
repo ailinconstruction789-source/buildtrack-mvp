@@ -1,4 +1,4 @@
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, Mock } from 'vitest';
 import { useBuildTrackData } from '../useBuildTrackData';
 import { supabase } from '@/lib/supabase';
@@ -102,6 +102,41 @@ describe('useBuildTrackData Hook', () => {
     });
   });
 
+  it('keeps displayed plot customer, sale status, dates and highlight fields with the indexed matcher', async () => {
+    const tables: Record<string, unknown[]> = {
+      plots: [
+        { id: 'P1', plot_name: 'AL6-007', project_name: 'ไอลิน6', house_types: { type_name: 'Type A' } },
+        { id: 'P2', plot_name: 'AL6-008', project_name: 'ไอลิน6', customer_name: 'Existing', highlight_note: 'Keep note' },
+      ],
+      leads: [
+        { id: 'booked', project_name: 'AL6', interested_plot_name: '0007', status: 'Booked', customer_name: 'Booked customer' },
+        { id: 'transferred', project_name: 'AL6', interested_plot_id: 'P1', status: 'Transferred', customer_name: 'Transferred customer', booking_date: '2026-09-01', transferred_date: '2026-10-01' },
+        { id: 'cancelled', project_name: 'AL6', interested_plot_id: 'P2', status: 'Cancelled', customer_name: 'Cancelled customer' },
+      ],
+      vw_plot_progress: [{ plot_id: 'P1', overall_progress: 50 }],
+    };
+    (supabase.from as Mock).mockImplementation((table: string) => {
+      const response = Promise.resolve({ data: tables[table] || [], error: null });
+      return {
+        select: vi.fn().mockReturnThis(), order: vi.fn().mockReturnThis(),
+        or: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(), range: vi.fn().mockReturnThis(),
+        then: response.then.bind(response),
+      };
+    });
+    const { result } = renderHook(() => useBuildTrackData(mockUser));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.plots[0]).toMatchObject({
+      id: 'P1', customer_name: 'Transferred customer', has_customer: true,
+      sale_status: 'transferred', booking_date: '2026-09-01', transferred_date: '2026-10-01',
+      highlight_note: 'ลูกค้า: Transferred customer (โอนแล้ว)', type: 'Type A', progress: 50,
+    });
+    expect(result.current.plots[1]).toMatchObject({
+      id: 'P2', customer_name: 'Existing', has_customer: false,
+      sale_status: 'ready_for_sale', highlight_note: 'Keep note', progress: 0,
+    });
+  });
+
   it('fetchPlotDetails lazily loads specific plot data and updates state atomically', async () => {
     const mockSelect = vi.fn().mockReturnThis();
     const mockOrder = vi.fn().mockReturnThis();
@@ -157,7 +192,7 @@ describe('useBuildTrackData Hook', () => {
       });
       const caller = { username: 'Approved caller', role };
       const { result } = renderHook(() => useBuildTrackData(caller));
-      await act(async () => { await Promise.resolve(); });
+      await waitFor(() => expect(result.current.loading).toBe(false));
       expect(result.current.allUsers).toEqual(staff);
       expect(staffSelect).toHaveBeenCalledExactlyOnceWith('id,username,role,created_at,last_seen_at');
       expect(supabase.from).toHaveBeenCalledWith('projects');

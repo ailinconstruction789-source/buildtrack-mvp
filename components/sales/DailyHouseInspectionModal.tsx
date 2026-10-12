@@ -8,6 +8,7 @@ import {
   History, Check, ListChecks
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import SalesOverlay from './SalesOverlay';
 
 interface DailyHouseInspectionModalProps {
   isOpen: boolean;
@@ -52,7 +53,7 @@ export default function DailyHouseInspectionModal({
 }: DailyHouseInspectionModalProps) {
   const [activeView, setActiveView] = useState<'form' | 'history'>('form');
   const [inspectionType, setInspectionType] = useState<'morning' | 'evening'>('morning');
-  const [inspectorName, setInspectorName] = useState(user?.username || 'Bell');
+  const [inspectorName, setInspectorName] = useState(user?.username || '');
   const [locationName, setLocationName] = useState(initialLocation || (sampleHouses.length > 0 ? `บ้านตัวอย่าง แปลง ${sampleHouses[0]}` : 'บ้านตัวอย่าง / สำนักงานขาย'));
   const [checklist, setChecklist] = useState<Record<string, boolean>>({});
   const [statusCondition, setStatusCondition] = useState<'normal' | 'issue'>('normal');
@@ -72,7 +73,7 @@ export default function DailyHouseInspectionModal({
 
   // Set default inspector name from loggedIn user
   useEffect(() => {
-    if (user?.username) setInspectorName(user.username);
+    setInspectorName(user?.username || '');
   }, [user]);
 
   // Fetch history when tab is opened
@@ -162,7 +163,7 @@ export default function DailyHouseInspectionModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 animate-fade-in overflow-y-auto">
+    <SalesOverlay className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 animate-fade-in overflow-y-auto">
       <div className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
         
         {/* 🌟 Header */}
@@ -534,6 +535,6 @@ export default function DailyHouseInspectionModal({
         )}
 
       </div>
-    </div>
+    </SalesOverlay>
   );
 }

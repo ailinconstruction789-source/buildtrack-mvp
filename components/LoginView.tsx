@@ -13,6 +13,7 @@ export interface LoginViewProps {
   namesError?: string | null;
   onRetryNames?: () => void;
   isLoggingIn?: boolean;
+  isLoggingOut?: boolean;
   handleLogin?: () => void;
 }
 
@@ -26,9 +27,10 @@ export default function LoginView({
   namesError = null,
   onRetryNames,
   isLoggingIn = false,
+  isLoggingOut = false,
   handleLogin
 }: LoginViewProps) {
-  const canSubmit = !namesLoading && !namesError && !isLoggingIn
+  const canSubmit = !namesLoading && !namesError && !isLoggingIn && !isLoggingOut
     && loginNames.some(row => row.username === loginData.username) && /^\d{4}$/.test(loginData.pin);
   const submit = () => { if (canSubmit) handleLogin?.(); };
   return (
@@ -58,7 +60,7 @@ export default function LoginView({
         <div className="space-y-4 sm:space-y-5 relative z-10">
           <div>
              <label htmlFor="username-select" className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1 mb-1 block">Username</label>
-             <select id="username-select" value={loginData.username} disabled={namesLoading || !!namesError || isLoggingIn} onChange={e => setLoginData({...loginData, username: e.target.value})} className="w-full bg-[#f5f5f7] border border-black/5 rounded-2xl px-5 py-4 font-bold outline-none focus:border-blue-500 focus:bg-white transition-colors text-[#1d1d1f] appearance-none disabled:opacity-50">
+             <select id="username-select" value={loginData.username} disabled={namesLoading || !!namesError || isLoggingIn || isLoggingOut} onChange={e => setLoginData({...loginData, username: e.target.value})} className="w-full bg-[#f5f5f7] border border-black/5 rounded-2xl px-5 py-4 font-bold outline-none focus:border-blue-500 focus:bg-white transition-colors text-[#1d1d1f] appearance-none disabled:opacity-50">
                <option value="" disabled>{namesLoading ? 'กำลังโหลดรายชื่อ…' : '-- เลือกชื่อของคุณ --'}</option>
                {loginNames.map(u => <option key={u.username} value={u.username}>{u.username}</option>)}
              </select>
@@ -70,9 +72,9 @@ export default function LoginView({
           </div>
           <div>
              <label htmlFor="pin-input" className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1 mb-1 block">PIN Code</label>
-             <input id="pin-input" type="password" inputMode="numeric" autoComplete="current-password" disabled={isLoggingIn} maxLength={4} value={loginData.pin} onChange={e => setLoginData({...loginData, pin: e.target.value.replace(/[^0-9]/g, '')})} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }} placeholder="••••" className="w-full bg-[#f5f5f7] border border-black/5 rounded-2xl px-5 py-4 font-bold text-center tracking-[1em] outline-none focus:border-blue-500 focus:bg-white transition-colors text-2xl text-[#1d1d1f]" />
+             <input id="pin-input" type="password" inputMode="numeric" autoComplete="current-password" disabled={isLoggingIn || isLoggingOut} maxLength={4} value={loginData.pin} onChange={e => setLoginData({...loginData, pin: e.target.value.replace(/[^0-9]/g, '')})} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }} placeholder="••••" className="w-full bg-[#f5f5f7] border border-black/5 rounded-2xl px-5 py-4 font-bold text-center tracking-[1em] outline-none focus:border-blue-500 focus:bg-white transition-colors text-2xl text-[#1d1d1f]" />
           </div>
-          <button onClick={submit} disabled={!canSubmit} className="w-full bg-slate-900 text-white font-bold py-4 rounded-[2rem] shadow-[0_20px_50px_rgba(0,0,0,0.1)] hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed mt-4">{isLoggingIn ? 'กำลังเข้าสู่ระบบ…' : 'Sign In'}</button>
+          <button onClick={submit} disabled={!canSubmit} className="w-full bg-slate-900 text-white font-bold py-4 rounded-[2rem] shadow-[0_20px_50px_rgba(0,0,0,0.1)] hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed mt-4">{isLoggingOut ? 'กำลังออกจากระบบ…' : isLoggingIn ? 'กำลังเข้าสู่ระบบ…' : 'Sign In'}</button>
         </div>
       </div>
     </div>

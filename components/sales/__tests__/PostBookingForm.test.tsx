@@ -38,7 +38,8 @@ describe('post-booking form', () => {
     submit(); expect(onSubmit).not.toHaveBeenCalled(); expect(screen.getByRole('alert')).toBeInTheDocument();
   });
   it('submits a new loan round with the bank name after a rejected round, without overwriting its ID', () => {
-    const { onSubmit } = form(postBookingSnapshot('loan_rejected'), 'loan_submitted'); fillEvidence();
+    const previous = postBookingSnapshot('loan_rejected');
+    const { onSubmit } = form({ ...previous, sale: { ...previous.sale, stage: 'document_prep' } }, 'loan_submitted'); fillEvidence();
     fireEvent.change(screen.getByLabelText('ชื่อธนาคาร *'), { target: { value: 'ธนาคารใหม่' } }); submit();
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ command: 'submit_loan', bankName: 'ธนาคารใหม่' }));
     expect(onSubmit.mock.calls[0][0]).not.toHaveProperty('loanAttemptId');
@@ -62,7 +63,7 @@ describe('post-booking form', () => {
     ['owner', (snapshot: PostBookingSnapshot) => { snapshot.actor.role = 'owner'; }, 'contracted'],
     ['cannot edit', (snapshot: PostBookingSnapshot) => { snapshot.sale.canEdit = false; }, 'contracted'],
     ['unknown payment', (snapshot: PostBookingSnapshot) => { snapshot.sale.paymentMethod = null; }, 'contracted'],
-    ['unallowed target', () => {}, 'handover'],
+    ['unallowed target', () => {}, 'loan_approved'],
   ] as const)('does not submit for %s even with a synthetic submit event', (_name, mutate, target) => {
     const snapshot = postBookingSnapshot(); mutate(snapshot);
     const { onSubmit } = form(snapshot, target); fillEvidence(); submit(); expect(onSubmit).not.toHaveBeenCalled();

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { 
   User, Phone, MapPin, Calendar, Clock, ChevronRight, X, Sparkles, 
@@ -15,6 +15,12 @@ import CentralLeadFollowUpModal from './CentralLeadFollowUpModal';
 import CentralLeadBookingModal from './CentralLeadBookingModal';
 import RentalContractModal from './RentalContractModal';
 import RentalActionModal from './RentalActionModal';
+import SalesOverlay from './SalesOverlay';
+import { getLeadStage, canStartSalesDeal } from '@/lib/sales/leadStage';
+import SalesDealStatusModal from './SalesDealStatusModal';
+import { isPreBookingLost, nativeLeadId } from '@/lib/sales/leadLifecycle';
+import { readLeadActivitySnapshot, writeLeadActivitySummary } from '@/lib/sales/leadActivity';
+import { salesDealActionLabel } from '@/lib/sales/dealStatus';
 
 interface Props {
   snapshot: CentralSearchSnapshot;
@@ -30,62 +36,20 @@ interface Props {
 const selectClass = 'rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-2xs';
 const columns = ['No.', 'วันที่เป็น Lead', 'ชื่อลูกค้า', 'เบอร์โทร', 'โครงการที่สนใจ', 'ช่องทาง', 'ผู้ดูแล', 'แปลงที่เล็ง', 'สถานะ CRM', 'Follow-up'];
 
-export function getCustomerStageCategory(customer: any): 'active' | 'rented' | 'booked' | 'lost' {
-  const statusLower = (customer.intakeStatus || customer.status || '').toLowerCase();
-  const notesLower = (customer.notes || '').toLowerCase();
-  
-  // 1. Check if Rented
-  if (
-    statusLower.includes('rent') ||
-    statusLower.includes('เช่า') ||
-    notesLower.includes('สัญญาเช่า') ||
-    notesLower.includes('ผู้เช่า')
-  ) {
-    return 'rented';
-  }
-
-  // 2. Check if Booked
-  if (
-    statusLower === 'booked' || 
-    statusLower === 'contracted' || 
-    statusLower === 'reserved' || 
-    statusLower === 'closed_won' ||
-    (customer.notes && customer.notes.includes('🏷️ บันทึกการจอง'))
-  ) {
-    return 'booked';
-  }
-  
-  // 3. Check if Lost / Cold / Inactive
-  if (
-    statusLower === 'lost' || 
-    statusLower === 'nurture' || 
-    statusLower === 'cold' || 
-    statusLower === 'unqualified' || 
-    statusLower === 'dropped' || 
-    statusLower === 'cancelled' ||
-    statusLower === 'closed_lost'
-  ) {
-    return 'lost';
-  }
-  
-  // Also check customer interests
-  if (customer.interests && customer.interests.length > 0) {
-    const hasBookedInterest = customer.interests.some((i: any) => 
-      (i.engagementStatus || '').toLowerCase() === 'booked'
-    );
-    if (hasBookedInterest) return 'booked';
-
-    const allLost = customer.interests.every((i: any) => 
-      ['lost', 'nurture', 'cold', 'unqualified'].includes((i.engagementStatus || '').toLowerCase())
-    );
-    if (allLost && (statusLower === 'lost' || statusLower === 'nurture')) return 'lost';
-  }
-
-  // 4. Default is Active
-  return 'active';
+export function getCustomerStageCategory(customer: any): 'active' | 'rented' | 'booked' | 'lost' | 'transferred' {
+  const stage = getLeadStage(customer);
+  return stage === 'loan' || stage === 'appointment' ? 'active' : stage;
 }
 
-export default function CentralLeadTracker({ snapshot, filters, onFilterChange, onApply, leadWorkEnabled, bookingEnabled = false, visitsEnabled = false, disabled = false }: Props) {
+export default function CentralLeadTracker(props: Props) {
+  return <TrackerSession key={JSON.stringify([props.snapshot.actor.userId, props.snapshot.actor.role])} {...props} />;
+}
+function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEnabled, bookingEnabled = false, visitsEnabled = false, disabled = false }: Props) {
+  const mounted = useRef(true), reactivating = useRef(false), disabledRef = useRef(disabled);
+  disabledRef.current = disabled;
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const canManage = snapshot.actor.role === 'sales' || snapshot.actor.role === 'admin';
+  const [statusTarget, setStatusTarget] = useState<any | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<any | null>(null);
   const [appointmentTarget, setAppointmentTarget] = useState<{ customer: any; interest?: any } | null>(null);
   const [followUpTarget, setFollowUpTarget] = useState<{ customer: any; interest?: any } | null>(null);
@@ -94,13 +58,14 @@ export default function CentralLeadTracker({ snapshot, filters, onFilterChange, 
   const [rentalActionTarget, setRentalActionTarget] = useState<{ customer: any; interest?: any } | null>(null);
   const [appointmentNotice, setAppointmentNotice] = useState('');
   
-  // 🌟 Smart Stage Filter State: 'active' | 'rented' | 'booked' | 'lost' | 'all'
-  const [viewFilter, setViewFilter] = useState<'active' | 'rented' | 'booked' | 'lost' | 'all'>('active');
+  // 🌟 Smart Stage Filter State: 'active' | 'rented' | 'booked' | 'lost' | 'transferred' | 'all'
+  const [viewFilter, setViewFilter] = useState<'active' | 'rented' | 'booked' | 'lost' | 'transferred' | 'all'>('active');
   const [isReactivating, setIsReactivating] = useState(false);
 
   useEffect(() => {
     if (disabled) {
       setSelectedCustomer(null);
+      setStatusTarget(null);
       setAppointmentTarget(null);
       setFollowUpTarget(null);
       setBookingTarget(null);
@@ -115,6 +80,7 @@ export default function CentralLeadTracker({ snapshot, filters, onFilterChange, 
   const activeCount = visible.filter(c => getCustomerStageCategory(c) === 'active').length;
   const rentedCount = visible.filter(c => getCustomerStageCategory(c) === 'rented').length;
   const bookedCount = visible.filter(c => getCustomerStageCategory(c) === 'booked').length;
+  const transferredCount = visible.filter(c => getCustomerStageCategory(c) === 'transferred').length;
   const lostCount = visible.filter(c => getCustomerStageCategory(c) === 'lost').length;
 
   // Filter visible customers by selected stage view
@@ -130,44 +96,54 @@ export default function CentralLeadTracker({ snapshot, filters, onFilterChange, 
 
   // Re-activate cold/lost lead back to active
   const handleReactivate = async (cust: any) => {
+    if (!canManage || disabled || !nativeLeadId(cust) || !isPreBookingLost(cust)) return;
+    if (reactivating.current) return;
+    reactivating.current = true;
     setIsReactivating(true);
     try {
+      const latest = await readLeadActivitySnapshot(cust);
+      if (!mounted.current || disabledRef.current) return;
+      if (!isPreBookingLost(latest.lead) || latest.historyExists) throw new Error('สถานะหรือประวัติลูกค้าเปลี่ยนแล้ว กรุณาโหลดข้อมูลล่าสุด');
       const now = new Date();
       const timeBangkokStr = now.toLocaleDateString('th-TH', { 
         day: '2-digit', month: 'short', year: 'numeric', 
         hour: '2-digit', minute: '2-digit' 
       });
       const reactivateNote = `[${timeBangkokStr} 🔄 ดึงกลับมาติดตามต่อ (Re-activated)]\nเปลี่ยนสถานะกลับเป็น Follow Up เพื่อเริ่มติดตามงานขายใหม่`;
-      const combinedNotes = cust.notes ? `${reactivateNote}\n\n---\n${cust.notes}` : reactivateNote;
+      const combinedNotes = latest.lead.notes ? `${reactivateNote}\n\n---\n${latest.lead.notes}` : reactivateNote;
 
       // Update leads table
-      await supabase
-        .from('leads')
-        .update({
+      await writeLeadActivitySummary(latest, {
           status: 'Follow Up',
+          crm_status: 'Follow Up',
           notes: combinedNotes,
           updated_at: now.toISOString()
-        })
-        .eq('id', cust.id);
+        });
+      if (!mounted.current || disabledRef.current) return;
 
       // Record activity
-      await supabase
+      const { error: activityError } = await supabase
         .from('lead_activities')
         .insert({
-          lead_id: cust.id,
+          customer_id: latest.lead.id,
           activity_type: 'note',
           result: 'contact_success',
           note: reactivateNote,
           occurred_at: now.toISOString()
         });
 
+      if (activityError) throw new Error('ปรับสถานะแล้ว แต่บันทึกประวัติไม่สำเร็จ: ' + activityError.message);
+      if (!mounted.current || disabledRef.current) return;
       setAppointmentNotice(`ดึง "${cust.name}" กลับมาอยู่ในรายการ 🟢 กำลังติดตาม เรียบร้อยแล้ว!`);
       setSelectedCustomer(null);
       onApply(filters);
     } catch (err) {
+      if (!mounted.current) return;
       console.error('Error reactivating lead:', err);
+      setAppointmentNotice(err instanceof Error ? err.message : 'ปรับสถานะไม่สำเร็จ');
     } finally {
-      setIsReactivating(false);
+      reactivating.current = false;
+      if (mounted.current) setIsReactivating(false);
     }
   };
 
@@ -215,6 +191,7 @@ export default function CentralLeadTracker({ snapshot, filters, onFilterChange, 
             🏷️ จองแล้ว ({bookedCount})
           </button>
 
+          <button type="button" onClick={() => setViewFilter('transferred')} className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold cursor-pointer ${viewFilter === 'transferred' ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>🏡 โอนแล้ว ({transferredCount})</button>
           <button
             type="button"
             onClick={() => setViewFilter('lost')}
@@ -350,7 +327,7 @@ export default function CentralLeadTracker({ snapshot, filters, onFilterChange, 
                       ? 'bg-slate-200 text-slate-700 border border-slate-300'
                       : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
                   }`}>
-                    {stage === 'rented' ? '🔑 สัญญาเช่า' : stage === 'booked' ? '🏷️ จองแล้ว' : stage === 'lost' ? '💤 พักติดตาม/ไม่สนใจ' : `🟢 ${trackerStatusLabel(customer.intakeStatus)}`}
+                    {stage === 'transferred' ? '🏡 โอนแล้ว' : stage === 'rented' ? '🔑 สัญญาเช่า' : stage === 'booked' ? '🏷️ จองแล้ว' : stage === 'lost' ? '💤 พักติดตาม/ไม่สนใจ' : `🟢 ${trackerStatusLabel(customer.intakeStatus)}`}
                   </span>
                 </p>
                 {customer.interests.map(interest => <p key={interest.id} className="text-[11px] text-slate-600">{interest.projectName}: <span className="font-semibold text-blue-700">{trackerStatusLabel(interest.engagementStatus)}</span></p>)}
@@ -374,7 +351,7 @@ export default function CentralLeadTracker({ snapshot, filters, onFilterChange, 
 
       {/* 🌟 4. Customer Detail Slide-Over Drawer */}
       {selectedCustomer && (
-        <div className="fixed inset-0 z-[200] overflow-hidden bg-slate-950/60 backdrop-blur-xs flex justify-end animate-in fade-in duration-200">
+        <SalesOverlay className="fixed inset-0 z-[200] overflow-hidden bg-slate-950/60 backdrop-blur-xs flex justify-end animate-in fade-in duration-200">
           <div className="relative w-full max-w-md sm:max-w-lg bg-white h-full shadow-2xl flex flex-col justify-between animate-in slide-in-from-right duration-300">
             {/* Sticky Drawer Header */}
             <div className="sticky top-0 z-10 bg-white/95 backdrop-blur-sm border-b border-slate-100 p-5 sm:p-6 flex items-start justify-between shrink-0">
@@ -423,7 +400,7 @@ export default function CentralLeadTracker({ snapshot, filters, onFilterChange, 
                   {getCustomerStageCategory(selectedCustomer) === 'lost' && '💤 สถานะ: พักการติดตาม / ไม่สนใจ'}
                   {getCustomerStageCategory(selectedCustomer) === 'active' && `🟢 สถานะ: กำลังติดตาม (${trackerStatusLabel(selectedCustomer.intakeStatus)})`}
                 </span>
-                {getCustomerStageCategory(selectedCustomer) === 'lost' && (
+                {canManage && nativeLeadId(selectedCustomer) && isPreBookingLost(selectedCustomer) && (
                   <button
                     type="button"
                     disabled={isReactivating}
@@ -479,7 +456,7 @@ export default function CentralLeadTracker({ snapshot, filters, onFilterChange, 
                           <span>ผู้ดูแล: <strong className="text-slate-800">{ownerName(interest.ownerUserId)}</strong></span>
                         </div>
                         <div className="flex gap-2 pt-1 border-t border-slate-100">
-                          {visitsEnabled && (
+                          {canManage && visitsEnabled && (
                             <button
                               type="button"
                               onClick={() => setAppointmentTarget({ customer: selectedCustomer, interest })}
@@ -489,7 +466,7 @@ export default function CentralLeadTracker({ snapshot, filters, onFilterChange, 
                               📅 นัดเข้าชม
                             </button>
                           )}
-                          {leadWorkEnabled && (
+                          {canManage && leadWorkEnabled && (
                             <button
                               type="button"
                               onClick={() => setFollowUpTarget({ customer: selectedCustomer, interest })}
@@ -518,7 +495,7 @@ export default function CentralLeadTracker({ snapshot, filters, onFilterChange, 
               )}
 
               {/* General follow-up button - when no specific interest cards exist */}
-              {leadWorkEnabled && !selectedCustomer.interests?.length && (
+              {canManage && leadWorkEnabled && !selectedCustomer.interests?.length && (
                 <button
                   type="button"
                   onClick={() => setFollowUpTarget({ customer: selectedCustomer })}
@@ -532,7 +509,7 @@ export default function CentralLeadTracker({ snapshot, filters, onFilterChange, 
 
             {/* Sticky Drawer Footer Actions */}
             <div className="sticky bottom-0 z-10 bg-slate-50/95 backdrop-blur-sm border-t border-slate-100 p-4 sm:p-5 space-y-2 shrink-0">
-              {bookingEnabled && getCustomerStageCategory(selectedCustomer) === 'rented' && (
+              {canManage && bookingEnabled && getCustomerStageCategory(selectedCustomer) === 'rented' && (
                 <button
                   type="button"
                   onClick={() => setRentalActionTarget({ customer: selectedCustomer, interest: selectedCustomer.interests?.[0] })}
@@ -543,7 +520,7 @@ export default function CentralLeadTracker({ snapshot, filters, onFilterChange, 
                 </button>
               )}
 
-              {bookingEnabled && getCustomerStageCategory(selectedCustomer) !== 'booked' && getCustomerStageCategory(selectedCustomer) !== 'rented' && (
+              {bookingEnabled && canStartSalesDeal(selectedCustomer) && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <button
                     type="button"
@@ -564,15 +541,17 @@ export default function CentralLeadTracker({ snapshot, filters, onFilterChange, 
                 </div>
               )}
 
+              {['booked', 'transferred'].includes(getCustomerStageCategory(selectedCustomer)) && <button type="button" onClick={() => setStatusTarget({ ...selectedCustomer, project_name: selectedCustomer.interests?.[0]?.projectName })} className="w-full py-2.5 rounded-xl bg-amber-50 text-amber-900 text-sm font-bold">{salesDealActionLabel(selectedCustomer, canManage)}</button>}
               <button type="button" onClick={() => setSelectedCustomer(null)}
                 className="w-full py-2 sm:py-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs transition-colors cursor-pointer">
                 ปิดแผงข้อมูล
               </button>
             </div>
           </div>
-        </div>
+        </SalesOverlay>
       )}
 
+      {statusTarget && <SalesDealStatusModal key={snapshot.actor.userId + ':' + snapshot.actor.role + ':' + statusTarget.id} lead={statusTarget} currentUser={{ role: snapshot.actor.role }} onClose={() => setStatusTarget(null)} onSaved={msg => { setStatusTarget(null); setSelectedCustomer(null); setAppointmentNotice(msg); onApply(filters); }} />}
       {/* 🌟 5. Modal Dialog for In-App Visit Appointment */}
       {appointmentTarget && (
         <CentralVisitAppointmentModal
@@ -581,7 +560,9 @@ export default function CentralLeadTracker({ snapshot, filters, onFilterChange, 
           customer={appointmentTarget.customer}
           initialInterest={appointmentTarget.interest}
           projects={projects}
-          salesOwners={snapshot.search?.owners || []}
+          salesOwners={snapshot.salesOwners}
+          currentUserRole={snapshot.actor.role}
+          currentUserId={snapshot.actor.userId}
           onSaved={(msg) => {
             setAppointmentNotice(msg);
             setSelectedCustomer(null);
@@ -599,7 +580,9 @@ export default function CentralLeadTracker({ snapshot, filters, onFilterChange, 
           customer={followUpTarget.customer}
           initialInterest={followUpTarget.interest}
           projects={projects}
-          salesOwners={snapshot.search?.owners || []}
+          salesOwners={snapshot.salesOwners}
+          currentUserRole={snapshot.actor.role}
+          currentUserId={snapshot.actor.userId}
           onSaved={(msg) => {
             setAppointmentNotice(msg);
             setSelectedCustomer(null);
@@ -617,7 +600,7 @@ export default function CentralLeadTracker({ snapshot, filters, onFilterChange, 
           customer={bookingTarget.customer}
           initialInterest={bookingTarget.interest}
           projects={projects}
-          salesOwners={snapshot.search?.owners || snapshot.salesOwners || []}
+          salesOwners={snapshot.salesOwners}
           currentUser={{
             userId: snapshot.actor.userId,
             displayName: (snapshot.search?.owners || snapshot.salesOwners || []).find(o => o.userId === snapshot.actor.userId)?.displayName || 'คุณ'
@@ -654,7 +637,7 @@ export default function CentralLeadTracker({ snapshot, filters, onFilterChange, 
           } : null}
           plotId={rentalTarget.interest?.plotId || null}
           projectName={rentalTarget.interest?.projectName || projects[0] || 'ไอลิน สันทราย 2'}
-          salesOwners={snapshot.search?.owners || snapshot.salesOwners || []}
+          salesOwners={snapshot.salesOwners}
           user={{
             userId: snapshot.actor.userId,
             displayName: (snapshot.search?.owners || snapshot.salesOwners || []).find(o => o.userId === snapshot.actor.userId)?.displayName || 'คุณ',
@@ -673,6 +656,7 @@ export default function CentralLeadTracker({ snapshot, filters, onFilterChange, 
       {/* 🌟 9. Modal Dialog for Rental Actions (Convert to Buy / Renew / Move Out) */}
       {rentalActionTarget && (
         <RentalActionModal
+          contractId={rentalActionTarget.customer.active_rental_contract_id}
           isOpen={!!rentalActionTarget}
           onClose={() => setRentalActionTarget(null)}
           lead={rentalActionTarget.customer ? {

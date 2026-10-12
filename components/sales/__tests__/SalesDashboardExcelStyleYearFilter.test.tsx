@@ -100,14 +100,15 @@ vi.mock('@/lib/supabase', () => ({
         if (table === 'projects') result = Promise.resolve({ data: mockProjects, error: null });
         if (table === 'leads') result = Promise.resolve({ data: [], error: null });
         
-        result.order = () => Promise.resolve({ data: mockProjects, error: null });
-        result.in = () => Promise.resolve({ data: [], error: null });
+        result.order = () => result;
+        result.range = () => result;
+        result.in = () => result;
         return result;
       }
     }),
-    rpc: (name: string) => {
+    rpc: (name: string, params: { p_project_name: string }) => {
       if (name === 'crm_v2_project_sales') {
-        return Promise.resolve({ data: { rows: mockSales, hasMore: false }, error: null });
+        return Promise.resolve({ data: { rows: mockSales.filter(sale => sale.projectName === params.p_project_name), hasMore: false }, error: null });
       }
       if (name === 'crm_v2_excel_evidence') {
         return Promise.resolve({ data: { legacyVisits: [], completedVisits: [], unassignedLegacyVisits: [] }, error: null });

@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useCommittedRequestScope } from '@/hooks/useCommittedRequestScope';
 import { Camera, XCircle, Loader2, Send } from 'lucide-react';
 
 interface ReceiptUploadModalProps {
@@ -13,6 +14,9 @@ interface ReceiptUploadModalProps {
   requestStatus: string;
   currentUserRole: string;
   currentUserName: string;
+  currentUserId?: string | number;
+  currentAuthUserId?: string;
+  captureActorScope?: () => () => boolean;
 }
 
 export default function ReceiptUploadModal({
@@ -25,13 +29,33 @@ export default function ReceiptUploadModal({
   requestId,
   requestStatus,
   currentUserRole,
-  currentUserName
+  currentUserName,
+  currentUserId,
+  currentAuthUserId,
+  captureActorScope
 }: ReceiptUploadModalProps) {
   const [receiptUploadNote, setReceiptUploadNote] = useState('');
   const [receiptUploadFile, setReceiptUploadFile] = useState<File | null>(null);
   const [isUploadingReceipt, setIsUploadingReceipt] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const selectionKey = JSON.stringify([isOpen, requestId, plotId, taskId, currentUserName, currentUserRole, currentUserId, currentAuthUserId]);
+  const captureSelection = useCommittedRequestScope(selectionKey);
+  useEffect(() => {
+    setReceiptUploadFile(null);
+    setReceiptUploadNote('');
+    setIsUploadingReceipt(false);
+  }, [selectionKey]);
+  useEffect(() => {
+    if (!isOpen || !receiptUploadFile) { setPreviewUrl(null); return; }
+    const url = URL.createObjectURL(receiptUploadFile);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [isOpen, receiptUploadFile]);
 
   const handleUploadReceipt = async () => {
+    if (isUploadingReceipt || !receiptUploadFile) return;
+    const isCurrentSelection = captureSelection();
+    const isCurrentActor = captureActorScope ? captureActorScope() : isCurrentSelection;
     setIsUploadingReceipt(true);
     try {
       let uploadedUrl = null;
@@ -49,6 +73,7 @@ export default function ReceiptUploadModal({
         uploadedUrl = publicUrlData.publicUrl;
       }
       
+      if (!isCurrentActor()) return;
       const { data: insertedRows, error: insertError } = await supabase
         .from('task_material_receipts')
         .insert([{
@@ -61,6 +86,7 @@ export default function ReceiptUploadModal({
         .select('*');
         
       if (insertError) throw insertError;
+      if (!isCurrentActor()) return;
       
       if (requestStatus !== 'received') {
         const { error: dbError } = await supabase
@@ -75,15 +101,16 @@ export default function ReceiptUploadModal({
       }
       
       // Notify parent to instantly update local state with the returned db row
+      if (!isCurrentSelection()) return;
       if (insertedRows && insertedRows.length > 0) {
         onSuccess(insertedRows[0]);
       }
       
       onClose();
     } catch (e: any) {
-      alert('เกิดข้อผิดพลาดในการอัปโหลด: ' + e.message);
+      if (isCurrentSelection()) alert('เกิดข้อผิดพลาดในการอัปโหลด: ' + e.message);
     } finally {
-      setIsUploadingReceipt(false);
+      if (isCurrentSelection()) setIsUploadingReceipt(false);
     }
   };
 
@@ -112,7 +139,7 @@ export default function ReceiptUploadModal({
               </label>
               {receiptUploadFile && (
                 <div className="w-20 h-20 rounded-xl overflow-hidden border border-slate-200 relative shrink-0">
-                  <img src={URL.createObjectURL(receiptUploadFile)} className="w-full h-full object-cover" />
+                  <img src={previewUrl || undefined} className="w-full h-full object-cover" />
                   <button onClick={() => setReceiptUploadFile(null)} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1"><XCircle size={12}/></button>
                 </div>
               )}

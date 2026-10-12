@@ -1,8 +1,10 @@
+import { parseImportedBookingHistory, type ImportedBookingHistory } from './importedBookingHistory';
 import { bookingRecord, bookingUuid } from './bookingContracts';
 import { parseEvidenceTimestamp } from './leadEvidence';
 import { SALE_STAGES, type CrmRole, type PaymentMethod, type SaleStage } from './workflow';
+import { purchaseNextStages } from './purchaseFlow';
 
-export const POST_BOOKING_CONTRACT_VERSION = 'post_booking_v2';
+export const POST_BOOKING_CONTRACT_VERSION = 'post_booking_v3';
 export const POST_BOOKING_MAX_BYTES = 16384;
 export const POST_BOOKING_ADVANCE_STAGES = ['contracted', 'downpayment', 'document_prep', 'transfer_pending'] as const;
 export type PostBookingAdvanceStage = typeof POST_BOOKING_ADVANCE_STAGES[number];
@@ -15,10 +17,11 @@ export type PostBookingInput =
   | (Base & { command: 'advance'; nextStage: PostBookingAdvanceStage })
   | (Base & { command: 'submit_loan'; bankName: string })
   | (Base & { command: 'loan_result'; loanAttemptId: string; result: 'approved' | 'rejected'; approvedAmountSatang: number | null })
-  | (CommandBase & { command: 'confirm_transfer'; transferDate: string });
+  | (CommandBase & { command: 'confirm_transfer'; transferDate: string })
+  | (CommandBase & { command: 'confirm_handover'; handoverDate: string });
 export interface PostBookingResult {
   requestId: string; command: PostBookingInput['command']; customerId: string; interestId: string; saleId: string;
-  saleRevision: string; stage: SaleStage; eventId: string; loanAttemptId: string | null; transferDate: string | null; replayed: boolean;
+  saleRevision: string; stage: SaleStage; eventId: string; loanAttemptId: string | null; transferDate: string | null; handoverDate: string | null; replayed: boolean;
 }
 export interface PostBookingScope { saleId: string; attemptPage: number; eventPage: number }
 export interface PurchaseLoanAttempt {
@@ -30,12 +33,12 @@ export interface PurchaseLoanAttempt {
 export interface PostBookingEvent {
   id: string; command: PostBookingInput['command']; fromStage: SaleStage; toStage: SaleStage;
   occurredAt: string | null; recordedAt: string; actorUserId: string; reason: string; evidenceNote: string | null;
-  loanAttemptId: string | null; transferDate: string | null;
+  loanAttemptId: string | null; transferDate: string | null; handoverDate: string | null;
 }
 export interface PostBookingSnapshot {
   actor: { userId: string; role: CrmRole };
   sale: { id: string; customerId: string; customerName: string; interestId: string; projectName: string; plotId: string | null;
-    stage: SaleStage; paymentMethod: PaymentMethod | null; bookedAt: string | null; contractedAt: string | null; transferDate: string | null;
+    stage: SaleStage; paymentMethod: PaymentMethod | null; bookedAt: string | null; contractedAt: string | null; transferDate: string | null; handoverDate: string | null; importedHistory: ImportedBookingHistory | null;
     revision: string; interestRevision: string; ownerUserId: string; canEdit: boolean };
   latestAttempt: PurchaseLoanAttempt | null; attempts: PurchaseLoanAttempt[]; attemptPage: number; attemptsHasMore: boolean;
   events: PostBookingEvent[]; eventPage: number; eventsHasMore: boolean;
@@ -104,14 +107,18 @@ export function parsePostBookingPageQuery(raw: Record<string, string | string[] 
   return uuid(raw.saleId);
 }
 export function parsePostBookingInput(value: unknown): PostBookingInput {
-  const raw = record(value), command = choice(raw.command, ['advance', 'submit_loan', 'loan_result', 'confirm_transfer']);
+  const raw = record(value), command = choice(raw.command, ['advance', 'submit_loan', 'loan_result', 'confirm_transfer', 'confirm_handover']);
   keys(raw, ['requestId', 'command', 'customerId', 'saleId', 'expectedSaleRevision', 'expectedInterestRevision', 'reason',
-    ...(command === 'confirm_transfer' ? ['transferDate'] : ['evidenceNote', 'occurredAt',
+    ...(command === 'confirm_transfer' ? ['transferDate'] : command === 'confirm_handover' ? ['handoverDate'] : ['evidenceNote', 'occurredAt',
       ...(command === 'advance' ? ['nextStage'] : command === 'submit_loan' ? ['bankName'] : ['loanAttemptId', 'result', 'approvedAmountSatang'])])]);
   const common: CommandBase = { requestId: uuid(raw.requestId), customerId: uuid(raw.customerId), saleId: uuid(raw.saleId),
     expectedSaleRevision: uuid(raw.expectedSaleRevision), expectedInterestRevision: uuid(raw.expectedInterestRevision),
     reason: line(raw.reason) };
   if (command === 'confirm_transfer') return { ...common, command, transferDate: parseTransferDate(raw.transferDate) };
+  if (command === 'confirm_handover') {
+    let day: string; try { day = parseTransferDate(raw.handoverDate); } catch { return invalid('กรุณาระบุวันรับมอบจริงให้ถูกต้อง'); }
+    return { ...common, command, handoverDate: day };
+  }
   const base: Base = { ...common, evidenceNote: line(raw.evidenceNote), occurredAt: time(raw.occurredAt) };
   if (command === 'advance') return { ...base, command, nextStage: choice(raw.nextStage, POST_BOOKING_ADVANCE_STAGES) };
   if (command === 'submit_loan') return { ...base, command, bankName: line(raw.bankName, 200) };
@@ -122,30 +129,25 @@ export function parsePostBookingInput(value: unknown): PostBookingInput {
 }
 export function postBookingResultStage(input: PostBookingInput): SaleStage {
   if (input.command === 'confirm_transfer') return 'transferred';
+  if (input.command === 'confirm_handover') return 'handover';
   return input.command === 'advance' ? input.nextStage : input.command === 'submit_loan' ? 'loan_submitted' : input.result === 'approved' ? 'loan_approved' : 'loan_rejected';
 }
 /** UI choices only; SQL rechecks trusted current state/ownership/evidence under locks. */
 export function postBookingTargets(stage: SaleStage, method: PaymentMethod | null): readonly SaleStage[] {
-  if (method === null) return [];
-  if (stage === 'transfer_pending') return ['transferred'];
-  if (stage === 'booked') return ['contracted'];
-  if (stage === 'contracted') return method === 'cash' ? ['downpayment', 'document_prep', 'transfer_pending'] : ['downpayment', 'document_prep'];
-  if (stage === 'downpayment') return method === 'cash' ? ['document_prep', 'transfer_pending'] : ['document_prep'];
-  if (stage === 'document_prep') return method === 'cash' ? ['transfer_pending'] : ['loan_submitted'];
-  if (method === 'mortgage' && stage === 'loan_rejected') return ['loan_submitted'];
-  if (method === 'mortgage' && stage === 'loan_submitted') return ['loan_approved', 'loan_rejected'];
-  if (method === 'mortgage' && stage === 'loan_approved') return ['transfer_pending'];
-  return [];
+  // Cancellation remains in booking commands; handover requires its own explicit civil day.
+  const targets = purchaseNextStages(stage, method).filter(next => next !== 'cancelled');
+  return stage === 'loan_submitted' ? targets.reverse() : targets;
 }
 export function parsePostBookingResult(value: unknown, input: PostBookingInput): PostBookingResult {
   const raw = record(value);
-  const result: PostBookingResult = { requestId: uuid(raw.requestId), command: choice(raw.command, ['advance', 'submit_loan', 'loan_result', 'confirm_transfer']),
+  const result: PostBookingResult = { requestId: uuid(raw.requestId), command: choice(raw.command, ['advance', 'submit_loan', 'loan_result', 'confirm_transfer', 'confirm_handover']),
     customerId: uuid(raw.customerId), interestId: uuid(raw.interestId), saleId: uuid(raw.saleId), saleRevision: uuid(raw.saleRevision),
-    stage: choice(raw.stage, SALE_STAGES), eventId: uuid(raw.eventId), loanAttemptId: nullableUuid(raw.loanAttemptId), transferDate: nullableDate(raw.transferDate), replayed: bool(raw.replayed) };
+    stage: choice(raw.stage, SALE_STAGES), eventId: uuid(raw.eventId), loanAttemptId: nullableUuid(raw.loanAttemptId), transferDate: nullableDate(raw.transferDate), handoverDate: nullableDate(raw.handoverDate), replayed: bool(raw.replayed) };
   if (result.requestId !== input.requestId || result.command !== input.command || result.customerId !== input.customerId || result.saleId !== input.saleId
     || result.stage !== postBookingResultStage(input) || result.saleRevision === input.expectedSaleRevision
-    || (input.command === 'advance' || input.command === 'confirm_transfer' ? result.loanAttemptId !== null : result.loanAttemptId === null)
+    || (input.command === 'advance' || input.command === 'confirm_transfer' || input.command === 'confirm_handover' ? result.loanAttemptId !== null : result.loanAttemptId === null)
     || result.transferDate !== (input.command === 'confirm_transfer' ? input.transferDate : null)
+    || result.handoverDate !== (input.command === 'confirm_handover' ? input.handoverDate : null)
     || (input.command === 'loan_result' && result.loanAttemptId !== input.loanAttemptId)) return invalid();
   return result;
 }
@@ -156,7 +158,7 @@ export function parsePostBookingSnapshot(value: unknown, scope: PostBookingScope
     sale: { id: uuid(sale.id), customerId: uuid(sale.customerId), customerName: line(sale.customerName, 200),
       interestId: uuid(sale.interestId), projectName: line(sale.projectName, 200), plotId: nullableText(sale.plotId),
       stage: choice(sale.stage, SALE_STAGES), paymentMethod: sale.paymentMethod === null ? null : choice<PaymentMethod>(sale.paymentMethod, ['cash', 'mortgage']),
-      bookedAt: nullableTime(sale.bookedAt), contractedAt: nullableTime(sale.contractedAt), transferDate: nullableDate(sale.transferDate), revision: uuid(sale.revision),
+      bookedAt: nullableTime(sale.bookedAt), contractedAt: nullableTime(sale.contractedAt), transferDate: nullableDate(sale.transferDate), handoverDate: nullableDate(sale.handoverDate), importedHistory: parseImportedBookingHistory(sale.importedHistory) ?? null, revision: uuid(sale.revision),
       interestRevision: uuid(sale.interestRevision), ownerUserId: uuid(sale.ownerUserId), canEdit: bool(sale.canEdit) },
     latestAttempt: null, attempts: [], attemptPage: page(raw.attemptPage), attemptsHasMore: bool(raw.attemptsHasMore),
     events: [], eventPage: page(raw.eventPage), eventsHasMore: bool(raw.eventsHasMore),
@@ -166,6 +168,11 @@ export function parsePostBookingSnapshot(value: unknown, scope: PostBookingScope
     || (result.sale.plotId === null && result.sale.stage !== 'cancelled')
     || (result.sale.transferDate !== null && (!['transferred', 'handover'].includes(result.sale.stage)
       || [result.sale.bookedAt, result.sale.contractedAt].some(value => value !== null && result.sale.transferDate! < bangkokDateFromTimestamp(value))))
+    || (result.sale.handoverDate !== null && (result.sale.stage !== 'handover'
+      || [result.sale.transferDate, result.sale.importedHistory?.transferredDate ?? null, result.sale.importedHistory?.bookedDate ?? null].some(day => day !== null && result.sale.handoverDate! < day)
+      || [result.sale.bookedAt, result.sale.contractedAt].some(time => time !== null && result.sale.handoverDate! < bangkokDateFromTimestamp(time))))
+    || (result.sale.importedHistory?.sourceStage === 'transferred' && !['transferred', 'handover'].includes(result.sale.stage))
+    || (result.sale.importedHistory?.sourceStage === 'cancelled' && result.sale.stage !== 'cancelled')
     || (result.sale.canEdit && (result.actor.role === 'owner' || postBookingTargets(result.sale.stage, result.sale.paymentMethod).length === 0
       || (result.actor.role === 'sales' && result.actor.userId !== result.sale.ownerUserId)))) return invalid();
   const attempt = (value: unknown): PurchaseLoanAttempt => {
@@ -184,16 +191,24 @@ export function parsePostBookingSnapshot(value: unknown, scope: PostBookingScope
   result.attempts = raw.attempts.map(attempt);
   result.events = raw.events.map(value => {
     const item = record(value);
-    const event: PostBookingEvent = { id: uuid(item.id), command: choice(item.command, ['advance', 'submit_loan', 'loan_result', 'confirm_transfer']),
+    const event: PostBookingEvent = { id: uuid(item.id), command: choice(item.command, ['advance', 'submit_loan', 'loan_result', 'confirm_transfer', 'confirm_handover']),
       fromStage: choice(item.fromStage, SALE_STAGES), toStage: choice(item.toStage, SALE_STAGES), occurredAt: nullableTime(item.occurredAt),
       recordedAt: time(item.recordedAt), actorUserId: uuid(item.actorUserId), reason: line(item.reason), evidenceNote: item.evidenceNote === null ? null : line(item.evidenceNote),
-      loanAttemptId: nullableUuid(item.loanAttemptId), transferDate: nullableDate(item.transferDate) };
-    if (result.sale.paymentMethod !== null && !postBookingTargets(event.fromStage, result.sale.paymentMethod).includes(event.toStage)) return invalid();
+      loanAttemptId: nullableUuid(item.loanAttemptId), transferDate: nullableDate(item.transferDate), handoverDate: nullableDate(item.handoverDate) };
+    // Read old v2 resubmission evidence without offering the old shortcut for new commands.
+    const historicalResubmission = result.sale.paymentMethod === 'mortgage' && event.command === 'submit_loan'
+      && event.fromStage === 'loan_rejected' && event.toStage === 'loan_submitted';
+    if (result.sale.paymentMethod !== null && !historicalResubmission && !postBookingTargets(event.fromStage, result.sale.paymentMethod).includes(event.toStage)) return invalid();
     if (event.command === 'confirm_transfer') {
       if (event.fromStage !== 'transfer_pending' || event.toStage !== 'transferred' || event.transferDate === null
         || event.transferDate !== result.sale.transferDate || event.transferDate > bangkokDateFromTimestamp(event.recordedAt)
-        || event.occurredAt !== null || event.evidenceNote !== null || event.loanAttemptId !== null) return invalid();
-    } else if (event.occurredAt === null || event.evidenceNote === null || event.transferDate !== null
+        || event.handoverDate !== null || event.occurredAt !== null || event.evidenceNote !== null || event.loanAttemptId !== null) return invalid();
+    } else if (event.command === 'confirm_handover') {
+      if (event.fromStage !== 'transferred' || event.toStage !== 'handover' || event.handoverDate === null
+        || event.handoverDate !== result.sale.handoverDate || event.handoverDate > bangkokDateFromTimestamp(event.recordedAt)
+        || [result.sale.transferDate, result.sale.importedHistory?.transferredDate ?? null].some(day => day !== null && event.handoverDate! < day)
+        || event.transferDate !== null || event.occurredAt !== null || event.evidenceNote !== null || event.loanAttemptId !== null) return invalid();
+    } else if (event.occurredAt === null || event.evidenceNote === null || event.transferDate !== null || event.handoverDate !== null
       || parseEvidenceTimestamp(event.occurredAt)! > parseEvidenceTimestamp(event.recordedAt)!
       || (event.command === 'advance' ? !POST_BOOKING_ADVANCE_STAGES.includes(event.toStage as PostBookingAdvanceStage) || event.loanAttemptId !== null
         : event.command === 'submit_loan' ? event.toStage !== 'loan_submitted' || event.loanAttemptId === null

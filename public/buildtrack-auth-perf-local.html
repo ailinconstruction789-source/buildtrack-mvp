@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="robots" content="noindex,nofollow"><title>BuildTrack — วัดล็อกอิน/ออกจากระบบ</title>
+<style>html,body{margin:0;height:100%;font:14px system-ui}iframe{display:block;border:0;width:100%;height:100%}details{position:fixed;bottom:12px;right:12px;z-index:100000;background:white;border:1px solid #94a3b8;border-radius:10px;padding:12px;width:360px;max-width:calc(100vw - 48px)}summary{cursor:pointer;font-weight:700}textarea{box-sizing:border-box;width:100%;height:190px;font:12px monospace}button{padding:8px;margin-top:8px}p{line-height:1.5}</style></head>
+<body><iframe id="frame" title="BuildTrack"></iframe><details open><summary id="status">วัดล็อกอิน/ออกจากระบบ</summary><p>กดออกจากระบบและยืนยัน จากนั้นล็อกอินเอง รอข้อมูล แล้วออกจากระบบอีกครั้ง วัดเฉพาะเวลาปุ่มและข้อมูลเครือข่าย ไม่อ่านชื่อที่เลือก PIN รหัส token หรือ storage ระยะวัดสูงสุด 3 นาที</p><textarea id="result" readonly aria-label="ผลการวัด"></textarea><button id="copy">คัดลอกผลการวัด</button></details>
+<script>
+(()=>{'use strict';
+ const frame=document.getElementById('frame'),output=document.getElementById('result'),label=document.getElementById('status');
+ if(!['127.0.0.1','localhost'].includes(location.hostname)){label.textContent='ใช้ได้เฉพาะในเครื่อง';return;}
+ document.getElementById('copy').onclick=async()=>{try{await navigator.clipboard.writeText(output.value);}catch{output.focus();output.select();}};
+ frame.onload=()=>{
+  const doc=frame.contentDocument,win=frame.contentWindow;if(!doc||!win)return;
+  const p=win.performance,visible=e=>e&&e.getClientRects().length>0;
+  const names={firstLoginScreenMs:null,firstNamesReadyMs:null};const logins=[],logouts=[];let stopped=false;
+  const now=()=>Math.round(p.now());
+  function startLogin(){const button=Array.from(doc.querySelectorAll('button')).find(e=>e.textContent.trim()==='Sign In');if(!button||button.disabled)return;logins.push({clickedMs:now(),authenticatedShellMs:null,hubReadyMs:null});}
+  function click(event){const button=event.target?.closest?.('button');if(!button||button.disabled)return;
+   if(button.textContent.trim()==='Sign In')startLogin();
+   if(button.textContent.trim()==='ยืนยัน'&&Array.from(doc.querySelectorAll('h3')).some(e=>visible(e)&&e.textContent.includes('ยืนยันการออกจากระบบ')))logouts.push({confirmedMs:now(),loginScreenMs:null,namesReadyMs:null,loginEnabledMs:null});
+  }
+  function enter(event){if(event.key==='Enter'&&event.target?.id==='pin-input')startLogin();}
+  function check(){
+   const select=doc.querySelector('#username-select'),loginVisible=visible(select),namesReady=loginVisible&&select.options.length>1;
+   if(loginVisible){names.firstLoginScreenMs??=now();if(namesReady)names.firstNamesReadyMs??=now();}
+   const out=logouts.at(-1);if(out&&loginVisible){out.loginScreenMs??=now();if(namesReady)out.namesReadyMs??=now();
+    const signIn=Array.from(doc.querySelectorAll('button')).find(e=>visible(e)&&e.textContent.trim()==='Sign In');
+    if(signIn&&!select.disabled&&!doc.querySelector('#pin-input')?.disabled)out.loginEnabledMs??=now();
+   }
+   const run=logins.at(-1);if(run){if(visible(doc.querySelector('button[title="ออกจากระบบ"]')))run.authenticatedShellMs??=now();
+    const hub=Array.from(doc.querySelectorAll('h1')).some(e=>visible(e)&&e.textContent.includes('My Sales Hub'));
+    const rows=Array.from(doc.querySelectorAll('table tbody tr')).filter(visible).length;
+    const empty=Array.from(doc.querySelectorAll('h3')).some(e=>visible(e)&&e.textContent.includes('ไม่พบข้อมูลลูกค้าตามเงื่อนไข'));
+    const spinner=Array.from(doc.querySelectorAll('.animate-spin')).some(visible);
+    if(hub&&!spinner&&(rows||empty))run.hubReadyMs??=now();
+   }
+  }
+  function resources(){return p.getEntriesByType('resource').flatMap(r=>{
+   let u;try{u=new URL(r.name);}catch{return[];}
+   if(!u.pathname.startsWith('/auth/v1/')&&!u.pathname.startsWith('/rest/v1/')&&!(u.origin===location.origin&&u.pathname.startsWith('/api/')))return[];
+   return[{endpoint:u.pathname.replace(/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/gi,':id'),startMs:Math.round(r.startTime),endMs:Math.round(r.responseEnd),durationMs:Math.round(r.duration),responseStatus:r.responseStatus||null}];
+  });}
+  function show(){check();output.value=JSON.stringify({status:stopped?'stopped':'observing',timestamp:new Date().toISOString(),elapsedMs:now(),metric:'Passive button-event timings: names ready, Sign In to shell/Hub, confirmed logout to login screen. No form values or credentials.',names,logins:logins.map(r=>({...r,signInToShellMs:r.authenticatedShellMs===null?null:r.authenticatedShellMs-r.clickedMs,signInToHubMs:r.hubReadyMs===null?null:r.hubReadyMs-r.clickedMs})),logouts:logouts.map(r=>({...r,confirmedToLoginScreenMs:r.loginScreenMs===null?null:r.loginScreenMs-r.confirmedMs,confirmedToNamesReadyMs:r.namesReadyMs===null?null:r.namesReadyMs-r.confirmedMs,confirmedToLoginEnabledMs:r.loginEnabledMs===null?null:r.loginEnabledMs-r.confirmedMs})),apiDetails:resources(),limits:['Desktop production local preview; not a physical phone or CPU/RAM measurement','Timing observers and iframe can affect results','Completed resource timings only; request headers, response bodies, cookies, storage and form values are never read','Supabase client/server may continue remote logout after the login screen appears; login remains unavailable until the request finishes','Hub time includes manual navigation if the account opens another initial view']},null,2);}
+  doc.addEventListener('click',click,true);doc.addEventListener('keydown',enter,true);
+  const observer=new win.MutationObserver(show);observer.observe(doc,{childList:true,subtree:true,attributes:true});
+  const timer=setInterval(show,500);const stop=()=>{stopped=true;clearInterval(timer);observer.disconnect();doc.removeEventListener('click',click,true);doc.removeEventListener('keydown',enter,true);show();label.textContent='ครบเวลาวัด — คัดลอกผลได้';};
+  setTimeout(stop,180000);show();
+ };frame.src='/';
+})();
+</script></body></html>

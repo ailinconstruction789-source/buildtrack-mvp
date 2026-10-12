@@ -1,23 +1,36 @@
 'use client';
+import { customerExpectedTransferDay, customerOperationalYear } from '@/lib/sales/customerBusinessDate';
+import { salesDealStages } from '@/lib/sales/dealStatus';
+import { crmSaleCustomer, SALES_WITH_CUSTOMER_SELECT } from '@/lib/sales/saleCustomer';
+import { bangkokToday, isDueSalesLead, isUpcomingSalesLead } from '@/lib/sales/actionFilters';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { 
-  User, Phone, MapPin, Calendar, Clock, ChevronRight, X, Sparkles, 
-  Building, BookmarkCheck, FileText, ExternalLink, Filter, Search, 
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import {
+  User, Phone, MapPin, Calendar, Clock, ChevronRight, X, Sparkles,
+  Building, BookmarkCheck, FileText, ExternalLink, Filter, Search,
   CheckCircle2, RefreshCw, Tag, AlertCircle, History, ArrowRight, Key,
-  Plus, LayoutGrid, Table, PhoneCall, CalendarDays, CheckSquare, 
+  Plus, LayoutGrid, Table, PhoneCall, CalendarDays, CheckSquare,
   TrendingUp, DollarSign, ShieldAlert, Award, ChevronDown, Check,
   Edit3, Trash2, ArrowUpRight, MessageSquare, AlertTriangle, Loader2, Save,
   Home, CheckCircle
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import CentralLeadBookingModal from './CentralLeadBookingModal';
-import CentralLeadFollowUpModal from './CentralLeadFollowUpModal';
-import CentralVisitAppointmentModal from './CentralVisitAppointmentModal';
-import RentalContractModal from './RentalContractModal';
-import RentalActionModal from './RentalActionModal';
-import AdminCustomerImportExportModal from './AdminCustomerImportExportModal';
+import { fetchSalesWithoutLimit } from '@/lib/sales/fetchWithoutLimit';
+import { isSalesStaffRole } from '@/lib/sales/salesStaff';
+import dynamic from 'next/dynamic';
+const CentralLeadBookingModal = dynamic(() => import('./CentralLeadBookingModal'));
+const CentralLeadFollowUpModal = dynamic(() => import('./CentralLeadFollowUpModal'));
+const CentralVisitAppointmentModal = dynamic(() => import('./CentralVisitAppointmentModal'));
+const RentalContractModal = dynamic(() => import('./RentalContractModal'));
+const AdminCustomerImportExportModal = dynamic(() => import('./AdminCustomerImportExportModal'));
 import type { Lead, CRMStatus } from '@/types/sales';
+import { normalizeSalesOwner } from '@/lib/salesNames';
+import type { LoadSalesStartupData } from '@/types/salesStartup';
+import SalesOverlay from './SalesOverlay';
+import { salesDealActionLabel, salesDealStageOf } from '@/lib/sales/dealStatus';
+import { getLeadStage, canStartSalesDeal, canEditSalesRole } from '@/lib/sales/leadStage';
+const RentalActionModal = dynamic(() => import('./RentalActionModal'));
+const SalesDealStatusModal = dynamic(() => import('./SalesDealStatusModal'));
 
 interface Props {
   currentUser?: {
@@ -31,6 +44,7 @@ interface Props {
   projects?: any[];
   plots?: any[];
   onBack?: () => void;
+  loadStartupData?: LoadSalesStartupData;
 }
 
 const STAGES = [
@@ -48,19 +62,27 @@ export default function MySalesWorkspace({
   currentUser,
   projects = [],
   plots = [],
-  onBack
+  onBack,
+  loadStartupData
 }: Props) {
   // 👤 User identity determination
   const myUsername = currentUser?.username || '';
   const myDisplayName = currentUser?.displayName || currentUser?.name || currentUser?.username || 'พนักงานขาย';
   const myUserId = currentUser?.userId || currentUser?.id || '';
 
+  const plotsRef = useRef(plots);
+  const fetchVersionRef = useRef(0);
+  useEffect(() => {
+    plotsRef.current = plots;
+  }, [plots]);
+
   // 🎛️ Navigation & Filter States
   const [scopeMode, setScopeMode] = useState<'my_leads' | 'all_leads'>('my_leads');
   const [viewMode, setViewMode] = useState<'table' | 'kanban'>('table');
-  const [selectedYear, setSelectedYear] = useState<string>('2026'); // Default to 2026 (ปีปัจจุบัน)
+  const [selectedYear, setSelectedYear] = useState<string>(() => new Date().getFullYear().toString()); // Default to current year (2026) for fast operational performance
   const [selectedProject, setSelectedProject] = useState<string>('all');
   const [selectedStage, setSelectedStage] = useState<string>('all');
+  const [actionFilter, setActionFilter] = useState<'due' | 'upcoming' | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
   // 📦 Data State
@@ -69,12 +91,14 @@ export default function MySalesWorkspace({
   const [salesOwners, setSalesOwners] = useState<{ userId: string; displayName: string }[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   // 🪟 Modals State
   const [showAddLeadModal, setShowAddLeadModal] = useState(false);
   const [showAdminDataModal, setShowAdminDataModal] = useState(false);
   const [bookingTarget, setBookingTarget] = useState<any | null>(null);
+  const [statusTarget, setStatusTarget] = useState<any | null>(null);
   const [followUpTarget, setFollowUpTarget] = useState<any | null>(null);
   const [appointmentTarget, setAppointmentTarget] = useState<any | null>(null);
   const [rentalTarget, setRentalTarget] = useState<any | null>(null);
@@ -82,6 +106,7 @@ export default function MySalesWorkspace({
 
   // 🛡️ Admin Role Check
   const isAdmin = ['admin', 'owner', 'superadmin', 'manager'].includes((currentUser?.role || '').toLowerCase());
+  const canWrite = canEditSalesRole(currentUser?.role);
 
   // 📝 New Lead Form State
   const [newCustomerName, setNewCustomerName] = useState('');
@@ -91,6 +116,11 @@ export default function MySalesWorkspace({
   const [newChannel, setNewChannel] = useState('Facebook');
   const [newNotes, setNewNotes] = useState('');
   const [isSavingLead, setIsSavingLead] = useState(false);
+
+  useEffect(() => {
+    setBookingTarget(null); setStatusTarget(null); setFollowUpTarget(null); setAppointmentTarget(null);
+    setRentalTarget(null); setRentalActionTarget(null); setShowAddLeadModal(false); setShowAdminDataModal(false);
+  }, [myUserId, myUsername, currentUser?.role]);
 
   // Project names list
   const projectNames = useMemo(() => {
@@ -105,120 +135,102 @@ export default function MySalesWorkspace({
     }
   }, [projectNames, newProject]);
 
-  // Helper: extract year of an item
-  const getItemYear = useCallback((item: any): number => {
-    if (!item) return 2026;
-    // 1. Transferred date
-    const transDate = item.transferred_date || item.transferredAt || item.importedHistory?.transferredDate;
-    if (transDate) {
-      const d = new Date(transDate);
-      if (!isNaN(d.getTime())) return d.getFullYear();
-    }
-    // 2. Booking date
-    const bookDate = item.booking_date || item.bookedAt || item.importedHistory?.bookedDate;
-    if (bookDate) {
-      const d = new Date(bookDate);
-      if (!isNaN(d.getTime())) return d.getFullYear();
-    }
-    // 3. Appointment date
-    if (item.appointment_date) {
-      const d = new Date(item.appointment_date);
-      if (!isNaN(d.getTime())) return d.getFullYear();
-    }
-    // 4. Created / Updated date
-    const createDate = item.lead_date || item.created_at || item.updated_at;
-    if (createDate) {
-      const d = new Date(createDate);
-      if (!isNaN(d.getTime())) return d.getFullYear();
-    }
-    return 2026;
-  }, []);
+  const getItemYear = useCallback((row: Record<string, unknown>) => customerOperationalYear(row), []);
 
-  // Fetch leads, sales, plots, and sales owners
+  // Fetch leads, sales, plots, and sales owners in parallel without 35 RPC loop
   const fetchData = useCallback(async (isSilent = false) => {
+    const version = ++fetchVersionRef.current;
+    setLoadError(null);
     if (!isSilent) setIsLoading(true);
     else setIsRefreshing(true);
 
     try {
-      // 1. Fetch leads from database
-      const { data: leadsData, error: leadsErr } = await supabase
-        .from('leads')
-        .select('*')
-        .order('created_at', { ascending: false });
+      // Projects already arrive through props; their old read was unused.
+      const [baseData, directSalesData, usersData] = await Promise.all([
+        loadStartupData ? loadStartupData({ fresh: isSilent }) : Promise.all([
+          fetchSalesWithoutLimit('leads', { orderBy: 'created_at', ascending: false }),
+          fetchSalesWithoutLimit('plots', { orderBy: 'id', ascending: true, select: '*, house_types(type_name)' }),
+        ]).then(([leads, plots]) => ({ leads, plots })),
+        fetchSalesWithoutLimit('sales', { orderBy: 'created_at', ascending: false, select: SALES_WITH_CUSTOMER_SELECT }),
+        supabase.from('users').select('id, username, role').then(({ data, error }) => {
+          if (error) throw error;
+          return data || [];
+        })
+      ]);
+      if (version !== fetchVersionRef.current) return;
+      const { leads: leadsData, plots: plotsData } = baseData;
 
-      if (leadsErr) throw leadsErr;
-
-      // 2. Fetch plots from database if needed
-      const { data: plotsData } = await supabase
-        .from('plots')
-        .select('*, house_types(type_name)');
-      
-      const combinedPlots = plotsData && plotsData.length > 0 ? plotsData : (plots || []);
+      const combinedPlots = plotsData && plotsData.length > 0 ? plotsData : (plotsRef.current || []);
       setDbPlots(combinedPlots);
 
-      // 3. Fetch projects list
-      const { data: projList } = await supabase
-        .from('projects')
-        .select('name, is_closed')
-        .order('name');
+      // Process direct sales rows
+      const nativeProfiles = new Map((leadsData || []).map((l: any) => [l.id, l]));
+      const allSalesRows = (directSalesData || []).map((s: any) => {
+        const native = s.lead_id ? nativeProfiles.get(s.lead_id) as Record<string, unknown> | undefined : undefined;
+        const crm = crmSaleCustomer(s);
+        return ({
+        saleId: s.id,
+        crmStage: s.crm_stage,
+        leadId: s.lead_id,
+        customerName: native?.customer_name || crm?.name || (!s.project_interest_id ? s.customer_name || s.customerName : '') || 'ลูกค้าไม่ระบุชื่อ',
+        phone: native?.phone || crm?.phone || (!s.project_interest_id ? s.phone : '') || '',
+        crmCustomerId: crm?.id || null,
+        plotId: s.plot_id || s.plots?.id,
+        plotName: s.plots?.plot_name || s.plot_id,
+        projectName: s.plots?.project_name,
+        stage: s.contract_status?.toLowerCase() === 'transferred' ? 'transferred'
+          : s.contract_status?.toLowerCase() === 'contracted' ? 'contracted'
+          : s.contract_status?.toLowerCase() === 'cancelled' ? 'cancelled'
+          : 'booked',
+        bookedAt: s.booked_at || null,
+        recordedAt: s.created_at || null,
+        updatedAt: s.updated_at || null,
+        transferredAt: s.transferred_at,
+        cancelledAt: s.cancelled_at,
+        ownerName: s.agent_name || s.owner_name,
+        salePrice: s.sale_price ?? s.plots?.selling_price,
+        expectedTransferDate: customerExpectedTransferDay(s),
+        importedHistory: s.imported_history || s.importedHistory
+      }); });
 
-      const projectNamesList = (projList || []).map((p: any) => p.name).filter((n: string) => n && n !== 'ลูกค้าทั่วไป');
+      // 🚀 PERFORMANCE OPTIMIZATION: Build O(1) Lookup Maps to eliminate 3,000,000+ nested loop operations
+      const cleanName = (name: string | null | undefined) =>
+        (name || '').toLowerCase().replace(/^(นาย|นาง|นางสาว|คุณ)\s*/, '').trim();
 
-      // 4. Fetch sales from crm_v2_project_sales RPC across projects
-      let allSalesRows: any[] = [];
-      try {
-        const salesPromises = projectNamesList.map(async (name: string) => {
-          const rows: any[] = [];
-          let page = 0;
-          let hasMore = true;
-          while (hasMore && page < 5) {
-            const { data: res, error } = await supabase.rpc('crm_v2_project_sales', {
-              p_project_name: name,
-              p_tab: 'all',
-              p_query: '',
-              p_page: page
-            });
-            if (error) break;
-            if (res?.rows) rows.push(...res.rows);
-            hasMore = Boolean(res?.hasMore);
-            page++;
-          }
-          return rows;
+      const salesByLeadId = new Map<string, any>();
+      const ambiguousLeadSales = new Set<string>();
+      allSalesRows.forEach(s => {
+        if (!s.leadId || s.stage === 'cancelled') return;
+        if (salesByLeadId.has(s.leadId)) ambiguousLeadSales.add(s.leadId);
+        else salesByLeadId.set(s.leadId, s);
+      });
+
+      const plotsByCleanName = new Map<string, any>();
+      const plotsByPlotKey = new Map<string, any>();
+      if (combinedPlots && combinedPlots.length > 0) {
+        combinedPlots.forEach((p: any) => {
+          const cCust = cleanName(p.customer_name);
+          const cTenant = cleanName(p.current_tenant_name);
+          const cHigh = cleanName(p.highlight_note);
+          if (cCust && !plotsByCleanName.has(cCust)) plotsByCleanName.set(cCust, p);
+          if (cTenant && !plotsByCleanName.has(cTenant)) plotsByCleanName.set(cTenant, p);
+          if (cHigh && !plotsByCleanName.has(cHigh)) plotsByCleanName.set(cHigh, p);
+
+          // Plot key indices for exact plot matching (e.g. "ไอลิน 4-26")
+          if (p.project_name && p.plot_name) plotsByPlotKey.set(`${p.project_name}-${p.plot_name}`.toLowerCase(), p);
+          if (p.project_name && p.id) plotsByPlotKey.set(`${p.project_name}-${p.id}`.toLowerCase(), p);
+          if (p.id) plotsByPlotKey.set(String(p.id).toLowerCase(), p);
         });
-        const rpcResults = await Promise.all(salesPromises);
-        allSalesRows = rpcResults.flat();
-      } catch (e) {
-        console.warn('RPC crm_v2_project_sales error or not permitted:', e);
       }
 
-      // 5. Fallback: If RPC yielded 0 rows, query direct sales table
-      if (allSalesRows.length === 0) {
-        const { data: directSales } = await supabase.from('sales').select('*, plots(*)');
-        if (directSales && directSales.length > 0) {
-          allSalesRows = directSales.map((s: any) => ({
-            saleId: s.id,
-            customerName: s.customer_name || s.customerName,
-            phone: s.phone || '',
-            plotId: s.plot_id || s.plots?.id,
-            plotName: s.plots?.plot_name || s.plot_id,
-            projectName: s.plots?.project_name,
-            stage: s.contract_status?.toLowerCase() === 'transferred' ? 'transferred'
-              : s.contract_status?.toLowerCase() === 'contracted' ? 'contracted'
-              : s.contract_status?.toLowerCase() === 'cancelled' ? 'cancelled'
-              : 'booked',
-            bookedAt: s.booked_at || s.created_at,
-            transferredAt: s.transferred_at,
-            cancelledAt: s.cancelled_at,
-            ownerName: s.agent_name || s.owner_name,
-            salePrice: s.sale_price || s.plots?.selling_price,
-            expectedTransferDate: s.expected_transfer_date || s.plots?.expected_transfer_date
-          }));
-        }
-      }
-
-      // 6. Merge leads with sales and plots
-      const mergedLeads: any[] = (leadsData || []).map((l: any) => ({ ...l }));
+      // Merge leads with sales and plots using O(1) lookups
+      const mergedLeads: any[] = (leadsData || []).map((l: any) => ({
+        ...l, leadId: l.id, sourceKind: 'lead',
+        sales_owner: l.agent_name || l.sales_owner || l.created_by_agent || '',
+      }));
       const matchedSaleIds = new Set<string>();
+      const matchedPlotIds = new Set<string>();
+      const existingLeadCleanNames = new Set<string>();
 
       mergedLeads.forEach(lead => {
         // Backfill plot from legacy 'interest' field if empty
@@ -235,21 +247,17 @@ export default function MySalesWorkspace({
           lead.crm_status = 'โอนกรรมสิทธิ์แล้ว';
         }
 
-        const cleanLeadName = (lead.customer_name || '').toLowerCase().replace(/^(นาย|นาง|นางสาว|คุณ)\s*/, '').trim();
-        
-        // Find matching sale row
-        const matchedSale = allSalesRows.find(s => {
-          if (s.leadId && s.leadId === lead.id) return true;
-          if (cleanLeadName && s.customerName) {
-            const cleanSaleCust = s.customerName.toLowerCase().replace(/^(นาย|นาง|นางสาว|คุณ)\s*/, '').trim();
-            const matchProj = !lead.project_name || !s.projectName || lead.project_name === s.projectName;
-            return matchProj && (cleanLeadName.includes(cleanSaleCust) || cleanSaleCust.includes(cleanLeadName));
-          }
-          return false;
-        });
+        const cleanLeadName = cleanName(lead.customer_name);
+        if (cleanLeadName) existingLeadCleanNames.add(cleanLeadName);
+
+        // Fast O(1) Match for Sales
+        // Names and interested plots are not customer identity or a reviewed CRM link.
+        const matchedSale = lead.id && !ambiguousLeadSales.has(lead.id) ? salesByLeadId.get(lead.id) : null;
 
         if (matchedSale) {
           matchedSaleIds.add(matchedSale.saleId);
+          lead.saleId = matchedSale.leadId === lead.id ? matchedSale.saleId : null;
+          lead.crmStage = matchedSale.crmStage;
           if (!lead.interested_plot_name && matchedSale.plotName) {
             lead.interested_plot_name = matchedSale.plotName;
           }
@@ -285,44 +293,43 @@ export default function MySalesWorkspace({
             lead.status = 'Cancelled';
             lead.crm_status = 'ยกเลิก / ยุติการซื้อ';
           }
+          if (lead.saleId && getLeadStage(lead) === 'booked') {
+            const progressLabel = salesDealStages.find(stage => stage.id === matchedSale.crmStage)?.label;
+            if (progressLabel) lead.crm_status = progressLabel;
+          }
         }
 
-        // Also check matched plots in plotsData (for plot_name, highlight_note, sale_status)
-        if (combinedPlots && combinedPlots.length > 0 && cleanLeadName) {
-          const matchedPlot = combinedPlots.find((p: any) => {
-            const matchProj = !lead.project_name || p.project_name === lead.project_name;
-            if (!matchProj) return false;
-            const highlight = (p.highlight_note || '').toLowerCase();
-            const pTenant = (p.current_tenant_name || '').toLowerCase();
-            return highlight.includes(cleanLeadName) || pTenant.includes(cleanLeadName);
-          });
+        // Fast O(1) Match for Plots by name, tenant, or plot key
+        const plotKey1 = lead.project_name && lead.interested_plot_name ? `${lead.project_name}-${lead.interested_plot_name}`.toLowerCase() : null;
+        const plotKey2 = lead.interested_plot_name ? String(lead.interested_plot_name).toLowerCase() : null;
+        const matchedPlot = (cleanLeadName ? plotsByCleanName.get(cleanLeadName) : null) ||
+                            (plotKey1 ? plotsByPlotKey.get(plotKey1) : null) ||
+                            (plotKey2 ? plotsByPlotKey.get(plotKey2) : null);
 
-          if (matchedPlot) {
-            if (!lead.interested_plot_name) lead.interested_plot_name = matchedPlot.plot_name || matchedPlot.id;
-            if (matchedPlot.sale_status === 'transferred' && lead.status !== 'Transferred') {
-              lead.status = 'Transferred';
-              lead.crm_status = 'โอนกรรมสิทธิ์แล้ว';
-            }
-            if (matchedPlot.current_tenant_name) {
-              lead.status = 'Rented';
-              lead.crm_status = 'สัญญาเช่า / เช่าออม';
-            }
+        if (matchedPlot) {
+          matchedPlotIds.add(matchedPlot.id);
+          if (matchedPlot.plot_name) matchedPlotIds.add(String(matchedPlot.plot_name));
+          if (matchedPlot.project_name && matchedPlot.plot_name) {
+            matchedPlotIds.add(`${matchedPlot.project_name}-${matchedPlot.plot_name}`.toLowerCase());
           }
+          if (matchedPlot.project_name && matchedPlot.id) {
+            matchedPlotIds.add(`${matchedPlot.project_name}-${matchedPlot.id}`.toLowerCase());
+          }
+
+          if (!lead.interested_plot_name) lead.interested_plot_name = matchedPlot.plot_name || matchedPlot.id;
+          // Occupancy belongs to the plot, not automatically to this interested Lead.
         }
       });
 
-      // 7. Synthesize leads for sales rows that had no prior lead record
+      // 7. Fast O(1) Synthesize leads for sales rows without prior lead record
       allSalesRows.forEach(s => {
         if (s.customerName && !matchedSaleIds.has(s.saleId)) {
-          const cleanSaleCust = s.customerName.toLowerCase().replace(/^(นาย|นาง|นางสาว|คุณ)\s*/, '').trim();
-          const exists = mergedLeads.some(l => {
-            const lName = (l.customer_name || '').toLowerCase().replace(/^(นาย|นาง|นางสาว|คุณ)\s*/, '').trim();
-            return lName && (lName.includes(cleanSaleCust) || cleanSaleCust.includes(lName));
-          });
-
-          if (!exists && cleanSaleCust) {
+          const cleanSaleCust = cleanName(s.customerName);
+          if (s.saleId) {
+            existingLeadCleanNames.add(cleanSaleCust);
             mergedLeads.push({
               id: s.saleId || `sale-${Math.random().toString(36).slice(2, 7)}`,
+              sourceKind: 'sale', saleId: s.saleId, leadId: s.leadId || null, crmStage: s.crmStage,
               customer_name: s.customerName,
               phone: s.phone || '',
               project_name: s.projectName || '',
@@ -336,8 +343,8 @@ export default function MySalesWorkspace({
               sale_price: s.salePrice,
               booking_date: s.bookedAt || s.importedHistory?.bookedDate || null,
               transferred_date: s.transferredAt || s.importedHistory?.transferredDate || null,
-              created_at: s.bookedAt || s.importedHistory?.bookedDate || s.transferredAt || s.importedHistory?.transferredDate || new Date().toISOString(),
-              updated_at: s.transferredAt || s.importedHistory?.transferredDate || s.bookedAt || new Date().toISOString(),
+              created_at: s.recordedAt,
+              updated_at: s.updatedAt,
               notes: s.importedHistory ? `[ประวัติการขายเดิม: แถวที่ ${s.importedHistory.sourceRow || '-'}]` : '',
               _isMergedSalesRecord: true
             });
@@ -345,31 +352,39 @@ export default function MySalesWorkspace({
         }
       });
 
-      // 8. Synthesize rentals from plots with current_tenant_name
+      // 8. Fast O(1) Synthesize rentals from plots with current_tenant_name (strictly excluding already matched plots/names)
       if (combinedPlots && combinedPlots.length > 0) {
         combinedPlots.forEach((p: any) => {
-          if (p.current_tenant_name) {
-            const cleanTenant = p.current_tenant_name.toLowerCase().replace(/^(นาย|นาง|นางสาว|คุณ)\s*/, '').trim();
-            const exists = mergedLeads.some(l => {
-              const lName = (l.customer_name || '').toLowerCase().replace(/^(นาย|นาง|นางสาว|คุณ)\s*/, '').trim();
-              return lName && (lName.includes(cleanTenant) || cleanTenant.includes(lName));
-            });
-            if (!exists && cleanTenant) {
+          const plotKey1 = p.project_name && p.plot_name ? `${p.project_name}-${p.plot_name}`.toLowerCase() : null;
+          const plotKey2 = p.project_name && p.id ? `${p.project_name}-${p.id}`.toLowerCase() : null;
+          const isPlotAlreadyMatched =
+            matchedPlotIds.has(p.id) ||
+            (p.plot_name && matchedPlotIds.has(String(p.plot_name))) ||
+            (plotKey1 && matchedPlotIds.has(plotKey1)) ||
+            (plotKey2 && matchedPlotIds.has(plotKey2));
+
+          if (p.current_tenant_name && !isPlotAlreadyMatched) {
+            const cleanTenant = cleanName(p.current_tenant_name);
+            if (cleanTenant && !existingLeadCleanNames.has(cleanTenant)) {
+              existingLeadCleanNames.add(cleanTenant);
+              matchedPlotIds.add(p.id);
               mergedLeads.push({
                 id: `rental-plot-${p.id}`,
+                sourceKind: 'rental_plot', leadId: null, plotId: p.id,
                 customer_name: p.current_tenant_name,
                 phone: p.current_tenant_phone || '',
                 project_name: p.project_name || '',
                 interested_plot_name: p.plot_name || p.id,
                 status: 'Rented',
                 crm_status: 'สัญญาเช่า / เช่าออม',
-                sales_owner: 'ทีมขาย',
-                created_by_agent: 'ระบบเช่า',
+                sales_owner: p.sales_owner || p.agent_name || 'ทีมขาย',
+                created_by_agent: p.sales_owner || p.agent_name || 'ระบบเช่า',
                 channel: 'Direct Rental',
                 monthly_rent: p.monthly_rent,
                 rental_program: p.rental_program,
-                created_at: p.lease_start_date || p.created_at || new Date().toISOString(),
-                updated_at: p.lease_start_date || p.updated_at || new Date().toISOString()
+                rental_start_date: p.lease_start_date || null,
+                created_at: p.created_at || null,
+                updated_at: p.updated_at || null
               });
             }
           }
@@ -378,29 +393,29 @@ export default function MySalesWorkspace({
 
       setLeads(mergedLeads);
 
-      // 9. Fetch sales owners / app_users
-      const { data: usersData } = await supabase
-        .from('app_users')
-        .select('id, username, display_name, role');
-
-      if (usersData) {
-        const salesList = usersData.map(u => ({
-          userId: u.id || u.username,
-          displayName: u.display_name || u.username
-        }));
-        setSalesOwners(salesList);
-      }
+      // The deployed users table identifies staff by username.
+      setSalesOwners(usersData.filter((u: { role?: unknown }) => isSalesStaffRole(u.role)).map((u: { id: number; username: string }) => ({
+        userId: String(u.id),
+        displayName: u.username
+      })));
     } catch (err: any) {
-      console.error('Error fetching sales workspace data:', err);
+      if (version === fetchVersionRef.current) {
+        console.error('Error fetching sales workspace data:', err);
+        setLoadError('โหลดข้อมูลไม่สำเร็จ ข้อมูลเดิมที่แสดงอาจไม่ใช่ข้อมูลล่าสุด กรุณาลองใหม่');
+      }
     } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
+      if (version === fetchVersionRef.current) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
     }
-  }, [plots]);
+  }, [loadStartupData]);
 
   useEffect(() => {
+    const requests = fetchVersionRef;
     fetchData();
-  }, [fetchData]);
+    return () => { requests.current++; };
+  }, [fetchData, myUsername, myUserId, currentUser?.role]);
 
   // Notice auto-dismiss
   useEffect(() => {
@@ -419,6 +434,24 @@ export default function MySalesWorkspace({
     if (myUserId && ownerId && String(ownerId) === String(myUserId)) return true;
     if (myUsername && ownerName.toLowerCase() === myUsername.toLowerCase()) return true;
     if (myDisplayName && ownerName.toLowerCase() === myDisplayName.toLowerCase()) return true;
+
+    // Check normalized sales owner mapping (e.g. นางสาว ปวีณา มีวงศ์ <-> PIEW)
+    const normOwner = normalizeSalesOwner(ownerName);
+    const normMyUsername = normalizeSalesOwner(myUsername);
+    const normMyDisplayName = normalizeSalesOwner(myDisplayName);
+
+    if (normOwner && (normOwner === normMyUsername || normOwner === normMyDisplayName)) return true;
+
+    // Partial Thai/English match
+    const lowerOwner = ownerName.toLowerCase();
+    const lowerMy = myUsername.toLowerCase();
+    if (lowerOwner && lowerMy && (lowerOwner.includes(lowerMy) || lowerMy.includes(lowerOwner))) return true;
+
+    // First name & stripped title match (e.g. ปวีณา in "นางสาว ปวีณา มีวงศ์")
+    const cleanOwner = ownerName.replace(/^(นาย|นาง|นางสาว|คุณ)\s*/i, '').trim().toLowerCase();
+    const cleanMy = myDisplayName.replace(/^(นาย|นาง|นางสาว|คุณ)\s*/i, '').trim().toLowerCase();
+    if (cleanOwner && cleanMy && (cleanOwner.includes(cleanMy) || cleanMy.includes(cleanOwner))) return true;
+
     return false;
   }, [myUserId, myUsername, myDisplayName]);
 
@@ -432,7 +465,7 @@ export default function MySalesWorkspace({
     if (lead.interested_plot_id && String(lead.interested_plot_id).trim()) {
       return String(lead.interested_plot_id).trim();
     }
-    
+
     // 2. Extract from legacy 'interest' field (e.g. "20", "ไอลิน 6-20", "ไอลิน 4-72", "4")
     if (lead.interest && String(lead.interest).trim() && lead.interest !== 'Any' && lead.interest !== 'None') {
       const rawInterest = String(lead.interest).trim();
@@ -473,73 +506,7 @@ export default function MySalesWorkspace({
     return null;
   }, [dbPlots]);
 
-  // Categorize Lead Stage (Strict Check)
-  const getStageCategory = useCallback((lead: any): string => {
-    const statusLower = (lead.status || '').toLowerCase().trim();
-    const crmLower = (lead.crm_status || '').toLowerCase().trim();
-    const notesLower = (lead.notes || '').toLowerCase();
-
-    // 1. Transferred (โอนกรรมสิทธิ์สำเร็จ / โอนแล้ว)
-    if (
-      statusLower === 'transferred' || statusLower === 'closed_won' ||
-      crmLower.includes('โอนกรรมสิทธิ์') || crmLower.includes('โอนแล้ว') ||
-      Boolean(lead.transferred_date || lead.transferredAt)
-    ) {
-      return 'transferred';
-    }
-
-    // 2. Rented
-    if (
-      statusLower.includes('rent') || crmLower.includes('rent') ||
-      statusLower.includes('เช่า') || crmLower.includes('เช่า') ||
-      notesLower.includes('สัญญาเช่า') || notesLower.includes('ผู้เช่า')
-    ) {
-      return 'rented';
-    }
-
-    // 3. Lost / Cancelled
-    if (
-      statusLower === 'lost' || statusLower === 'cancelled' ||
-      statusLower === 'closed_lost' || statusLower === 'nurture' ||
-      statusLower === 'cold' || statusLower === 'unqualified' ||
-      statusLower === 'dropped' ||
-      crmLower.includes('ยุติการซื้อ') || crmLower.includes('ไม่จอง') ||
-      crmLower.includes('ยกเลิก') || crmLower.includes('lost')
-    ) {
-      return 'lost';
-    }
-
-    // 4. Booked / Contracted
-    if (
-      statusLower === 'booked' || statusLower === 'contracted' || 
-      statusLower === 'reserved' ||
-      crmLower.startsWith('booked') || crmLower.startsWith('contracted') ||
-      crmLower.includes('วางเงินจองแปลงแล้ว') || crmLower.includes('จองแล้ว') ||
-      crmLower.includes('ทำสัญญาแล้ว') ||
-      (lead.notes && lead.notes.includes('🏷️ บันทึกการจอง')) ||
-      (lead.auto_status && lead.auto_status.includes('จองแปลง'))
-    ) {
-      return 'booked';
-    }
-
-    // 5. Appointments
-    if (
-      lead.appointment_date || crmLower.includes('นัด') ||
-      statusLower.includes('visit') || statusLower.includes('appointment')
-    ) {
-      return 'appointment';
-    }
-
-    // 6. Loan / Pre-approve
-    if (
-      crmLower.includes('กู้') || crmLower.includes('สินเชื่อ') ||
-      crmLower.includes('pre-approve') || crmLower.includes('พิจารณา')
-    ) {
-      return 'loan';
-    }
-
-    return 'active';
-  }, []);
+  const getStageCategory = useCallback(getLeadStage, []);
 
   // Available Years list
   const availableYears = useMemo(() => {
@@ -557,7 +524,7 @@ export default function MySalesWorkspace({
   }, [leads, getItemYear]);
 
   // Filter Leads
-  const filteredLeads = useMemo(() => {
+  const baseFilteredLeads = useMemo(() => {
     return leads.filter(lead => {
       // Scope Filter (My Leads vs All)
       if (scopeMode === 'my_leads' && !isMyLead(lead)) {
@@ -568,13 +535,14 @@ export default function MySalesWorkspace({
       if (selectedYear !== 'all') {
         const itemYear = getItemYear(lead);
         const stage = getStageCategory(lead);
-        const targetYearNum = parseInt(selectedYear, 10);
+        const targetYearNum = selectedYear === 'unknown' ? null : parseInt(selectedYear, 10);
 
-        // When viewing current year (2026), keep active pipeline leads visible so ongoing follow-ups are never lost.
+        // When viewing current year (2026), keep active pipeline leads and ongoing rental contracts visible so ongoing follow-ups are never lost.
         // For past years (e.g. 2025, 2024), strictly filter items matching that year.
-        if (selectedYear === '2026') {
-          if (stage === 'active' || stage === 'appointment' || stage === 'loan') {
-            // keep ongoing active pipeline leads
+        if ((selectedYear === '2026' || selectedYear === new Date().getFullYear().toString())
+) {
+          if (stage === 'active' || stage === 'appointment' || stage === 'loan' || stage === 'rented') {
+            // keep ongoing active pipeline and rental leads
           } else if (itemYear !== targetYearNum) {
             return false;
           }
@@ -590,12 +558,6 @@ export default function MySalesWorkspace({
         return false;
       }
 
-      // Stage Filter
-      if (selectedStage !== 'all') {
-        const cat = getStageCategory(lead);
-        if (cat !== selectedStage) return false;
-      }
-
       // Search Filter
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -608,7 +570,15 @@ export default function MySalesWorkspace({
 
       return true;
     });
-  }, [leads, scopeMode, isMyLead, selectedYear, selectedProject, selectedStage, searchQuery, getItemYear, getStageCategory]);
+  }, [leads, scopeMode, isMyLead, selectedYear, selectedProject, searchQuery, getItemYear, getStageCategory]);
+
+  const todayKey = bangkokToday();
+  const isDue = useCallback((lead: any) => isDueSalesLead(lead, todayKey), [todayKey]);
+  const isUpcoming = useCallback((lead: any) => isUpcomingSalesLead(lead, todayKey), [todayKey]);
+  const filteredLeads = useMemo(() => baseFilteredLeads.filter(lead =>
+    (selectedStage === 'all' || getStageCategory(lead) === selectedStage) &&
+    (!actionFilter || (actionFilter === 'due' ? isDue(lead) : isUpcoming(lead)))
+  ), [baseFilteredLeads, selectedStage, actionFilter, getStageCategory, isDue, isUpcoming]);
 
   // Today's Action Items & Metrics
   const myLeadsOnly = useMemo(() => leads.filter(isMyLead), [leads, isMyLead]);
@@ -616,9 +586,9 @@ export default function MySalesWorkspace({
   const metrics = useMemo(() => {
     const today = new Date();
     const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-    const targetYearNum = selectedYear === 'all' ? null : parseInt(selectedYear, 10);
+    const targetYearNum = ['all', 'unknown'].includes(selectedYear) ? null : parseInt(selectedYear, 10);
 
-    const targetList = scopeMode === 'my_leads' ? myLeadsOnly : leads;
+    const targetList = baseFilteredLeads;
 
     let dueFollowUpCount = 0;
     let upcomingVisitsCount = 0;
@@ -629,21 +599,10 @@ export default function MySalesWorkspace({
     targetList.forEach(l => {
       const stage = getStageCategory(l);
       const itemYear = getItemYear(l);
-      const matchYear = targetYearNum === null || itemYear === targetYearNum;
+      const matchYear = selectedYear === 'all' || itemYear === targetYearNum;
 
-      // Follow-up due today or overdue
-      if (stage === 'active' || stage === 'appointment' || stage === 'loan') {
-        if (l.appointment_date && l.appointment_date <= todayStr) {
-          dueFollowUpCount++;
-        } else if (l.last_follow_up_date && l.last_follow_up_date <= todayStr) {
-          dueFollowUpCount++;
-        }
-      }
-
-      // Upcoming Visits
-      if (l.appointment_date && l.appointment_date >= todayStr) {
-        upcomingVisitsCount++;
-      }
+      if (isDue(l)) dueFollowUpCount++;
+      if (isUpcoming(l)) upcomingVisitsCount++;
 
       // Year Booked
       if (stage === 'booked' && matchYear) {
@@ -669,7 +628,7 @@ export default function MySalesWorkspace({
       yearTransferredCount,
       activeRentedCount
     };
-  }, [leads, myLeadsOnly, scopeMode, selectedYear, getStageCategory, getItemYear]);
+  }, [baseFilteredLeads, selectedYear, getStageCategory, getItemYear, isDue, isUpcoming]);
 
   // Create New Lead Handler
   const handleCreateLead = async (e: React.FormEvent) => {
@@ -694,7 +653,7 @@ export default function MySalesWorkspace({
           source: newChannel,
           status: 'New',
           crm_status: 'Follow-up — อยู่ระหว่างติดตาม',
-          sales_owner: myDisplayName,
+          agent_name: myDisplayName,
           created_by_agent: myDisplayName,
           notes: initialNote,
           created_at: now.toISOString(),
@@ -704,6 +663,7 @@ export default function MySalesWorkspace({
         .single();
 
       if (error) throw error;
+      if (!data?.id) throw new Error('ไม่ได้รับรหัสลูกค้าหลังบันทึก');
 
       setNotice(`บันทึก Lead ใหม่ "${newCustomerName.trim()}" สำเร็จเรียบร้อยแล้ว!`);
       setShowAddLeadModal(false);
@@ -720,12 +680,23 @@ export default function MySalesWorkspace({
     }
   };
 
+  const openFollowUp = (lead: any) => setFollowUpTarget({ customer: lead });
+  const openBooking = (lead: any) => {
+    if (lead.saleId) { setStatusTarget(lead); return; }
+    setBookingTarget(lead);
+  };
+  const openRental = (lead: any) => {
+    if (getLeadStage(lead) === 'rented') setRentalActionTarget(lead);
+    else setRentalTarget(lead);
+  };
+  const openAddLead = () => setShowAddLeadModal(true);
+
   // Quick Change Lead Stage Handler
   const handleQuickStatusChange = async (leadId: string, newCrmStatus: string, stageLabel: string) => {
     try {
       const now = new Date();
       const timeStr = now.toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-      
+
       const lead = leads.find(l => l.id === leadId);
       const updatedNotes = `[${timeStr} 🔄 ปรับสถานะเป็น "${stageLabel}" โดย ${myDisplayName}]\n` + (lead?.notes || '');
 
@@ -749,12 +720,12 @@ export default function MySalesWorkspace({
 
   return (
     <div className="w-full min-h-screen bg-slate-50 flex flex-col space-y-5 pb-16">
-      
+
       {/* 🌟 1. Top Personal Header Banner */}
       <div className="bg-white border-b border-slate-200/90 shadow-2xs sticky top-0 z-30">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3.5">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-            
+
             {/* Left User & Title */}
             <div className="flex items-center gap-3">
               {onBack && (
@@ -868,7 +839,7 @@ export default function MySalesWorkspace({
               {/* Add Lead Button */}
               <button
                 type="button"
-                onClick={() => setShowAddLeadModal(true)}
+                onClick={openAddLead}
                 className="px-3.5 py-2 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm shadow-orange-500/20 cursor-pointer transition-all active:scale-95"
               >
                 <Plus size={15} />
@@ -881,7 +852,14 @@ export default function MySalesWorkspace({
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 w-full space-y-5">
-        
+
+        {loadError && (
+          <div role="alert" className="p-3.5 bg-rose-50 border border-rose-200 rounded-2xl text-xs font-bold text-rose-900 flex items-center justify-between gap-2">
+            <span>{loadError}</span>
+            <button type="button" disabled={isLoading || isRefreshing} onClick={() => fetchData(true)} className="shrink-0 underline disabled:opacity-50">ลองใหม่</button>
+          </div>
+        )}
+
         {/* Notice Alert */}
         {notice && (
           <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs font-bold text-emerald-900 flex items-center justify-between gap-2 shadow-2xs animate-in fade-in">
@@ -897,11 +875,11 @@ export default function MySalesWorkspace({
 
         {/* 📊 2. Today's Action & Metric Highlight Cards (5 Cards) */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-          
+
           {/* Card 1: ต้องโทรตามวันนี้ */}
-          <div 
-            onClick={() => setSelectedStage(selectedStage === 'active' ? 'all' : 'active')}
-            className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-2xs hover:border-amber-400 transition-all cursor-pointer flex items-center justify-between"
+          <button type="button" aria-pressed={actionFilter === 'due'}
+            onClick={() => { setSelectedStage('all'); setActionFilter(actionFilter === 'due' ? null : 'due'); }}
+            className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-2xs hover:border-amber-400 transition-all cursor-pointer text-left flex items-center justify-between"
           >
             <div>
               <span className="text-[11px] font-bold text-slate-500 block">🔴 ต้องโทรตามวันนี้</span>
@@ -911,12 +889,12 @@ export default function MySalesWorkspace({
             <div className="w-9 h-9 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center font-bold shrink-0">
               <PhoneCall size={18} />
             </div>
-          </div>
+          </button>
 
           {/* Card 2: นัดหมายเข้าชมโครงการ */}
-          <div 
-            onClick={() => setSelectedStage(selectedStage === 'appointment' ? 'all' : 'appointment')}
-            className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-2xs hover:border-purple-400 transition-all cursor-pointer flex items-center justify-between"
+          <button type="button" aria-pressed={actionFilter === 'upcoming'}
+            onClick={() => { setSelectedStage('all'); setActionFilter(actionFilter === 'upcoming' ? null : 'upcoming'); }}
+            className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-2xs hover:border-purple-400 transition-all cursor-pointer text-left flex items-center justify-between"
           >
             <div>
               <span className="text-[11px] font-bold text-slate-500 block">📅 นัดชมโครงการ</span>
@@ -926,12 +904,12 @@ export default function MySalesWorkspace({
             <div className="w-9 h-9 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center font-bold shrink-0">
               <CalendarDays size={18} />
             </div>
-          </div>
+          </button>
 
           {/* Card 3: ยอดจอง */}
-          <div 
-            onClick={() => setSelectedStage(selectedStage === 'booked' ? 'all' : 'booked')}
-            className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-2xs hover:border-amber-400 transition-all cursor-pointer flex items-center justify-between"
+          <div
+
+            className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-2xs transition-all flex items-center justify-between"
           >
             <div>
               <span className="text-[11px] font-bold text-slate-500 block">
@@ -946,9 +924,9 @@ export default function MySalesWorkspace({
           </div>
 
           {/* Card 4: ยอดโอนกรรมสิทธิ์ */}
-          <div 
-            onClick={() => setSelectedStage(selectedStage === 'transferred' ? 'all' : 'transferred')}
-            className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-2xs hover:border-emerald-400 transition-all cursor-pointer flex items-center justify-between"
+          <div
+
+            className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-2xs transition-all flex items-center justify-between"
           >
             <div>
               <span className="text-[11px] font-bold text-slate-500 block">
@@ -963,9 +941,9 @@ export default function MySalesWorkspace({
           </div>
 
           {/* Card 5: สัญญาเช่า / เช่าออม */}
-          <div 
-            onClick={() => setSelectedStage(selectedStage === 'rented' ? 'all' : 'rented')}
-            className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-2xs hover:border-teal-400 transition-all cursor-pointer flex items-center justify-between col-span-2 sm:col-span-1"
+          <div
+
+            className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-2xs transition-all flex items-center justify-between col-span-2 sm:col-span-1"
           >
             <div>
               <span className="text-[11px] font-bold text-slate-500 block">🔑 สัญญาเช่า / เช่าออม</span>
@@ -982,7 +960,7 @@ export default function MySalesWorkspace({
         {/* 🔍 3. Filters Bar: Year + Project + Search + Stage Pills */}
         <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs space-y-3">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-            
+
             {/* Year Selector */}
             <div className="w-full sm:w-44">
               <div className="relative">
@@ -998,6 +976,7 @@ export default function MySalesWorkspace({
                   {availableYears.filter(y => y !== 2026 && y !== 2025 && y !== 2024).map(y => (
                     <option key={y} value={String(y)}>📅 ปี {y}</option>
                   ))}
+                  <option value="unknown">📅 ไม่มีวันที่เดิมระบุปี</option>
                   <option value="all">🌐 ทุกปี (ประวัติรวมทั้งหมด)</option>
                 </select>
                 <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
@@ -1051,15 +1030,15 @@ export default function MySalesWorkspace({
               const count = leads.filter(l => {
                 if (scopeMode === 'my_leads' && !isMyLead(l)) return false;
                 if (selectedProject !== 'all' && l.project_name !== selectedProject) return false;
-                
+
                 // Year filtering for pill count
                 if (selectedYear !== 'all') {
                   const itemYear = getItemYear(l);
                   const stage = getStageCategory(l);
-                  const targetYearNum = parseInt(selectedYear, 10);
-                  if (selectedYear === '2026') {
-                    if (stage === 'active' || stage === 'appointment' || stage === 'loan') {
-                      // include
+                  const targetYearNum = selectedYear === 'unknown' ? null : parseInt(selectedYear, 10);
+                  if (selectedYear === '2026' || selectedYear === new Date().getFullYear().toString()) {
+                    if (stage === 'active' || stage === 'appointment' || stage === 'loan' || stage === 'rented') {
+                      // include ongoing active and rental leads
                     } else if (itemYear !== targetYearNum) {
                       return false;
                     }
@@ -1078,7 +1057,7 @@ export default function MySalesWorkspace({
                 <button
                   key={st.id}
                   type="button"
-                  onClick={() => setSelectedStage(st.id)}
+                  onClick={() => { setSelectedStage(st.id); setActionFilter(null); }}
                   className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all border cursor-pointer ${
                     isSelected
                       ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
@@ -1098,18 +1077,18 @@ export default function MySalesWorkspace({
             <Loader2 size={32} className="animate-spin text-amber-500 mx-auto" />
             <p className="text-xs font-bold text-slate-500">กำลังโหลดข้อมูลลูกค้า...</p>
           </div>
-        ) : filteredLeads.length === 0 ? (
+        ) : loadError && filteredLeads.length === 0 ? null : filteredLeads.length === 0 ? (
           <div className="bg-white p-12 rounded-3xl border border-slate-200 text-center space-y-3">
             <User size={40} className="text-slate-300 mx-auto" />
             <h3 className="text-sm font-bold text-slate-700">ไม่พบข้อมูลลูกค้าตามเงื่อนไขที่เลือก</h3>
             <p className="text-xs text-slate-400">
-              {scopeMode === 'my_leads' 
-                ? 'คุณยังไม่มี Lead ที่ตรงกับตัวกรองนี้ ลองกดปุ่ม "+ เพิ่ม Lead ใหม่" เพื่อเพิ่มลูกค้าเข้าระบบ' 
+              {scopeMode === 'my_leads'
+                ? 'คุณยังไม่มี Lead ที่ตรงกับตัวกรองนี้ ลองกดปุ่ม "+ เพิ่ม Lead ใหม่" เพื่อเพิ่มลูกค้าเข้าระบบ'
                 : 'ไม่พบรายการ Lead ที่ตรงกับการค้นหา'}
             </p>
             <button
               type="button"
-              onClick={() => setShowAddLeadModal(true)}
+              onClick={openAddLead}
               className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
             >
               <Plus size={14} /> + เพิ่ม Lead ของฉัน
@@ -1140,7 +1119,7 @@ export default function MySalesWorkspace({
 
                     return (
                       <tr key={lead.id || idx} className="hover:bg-amber-50/30 transition-colors">
-                        
+
                         {/* Customer Info */}
                         <td className="py-3 px-4">
                           <div className="flex items-start gap-2.5">
@@ -1154,7 +1133,7 @@ export default function MySalesWorkspace({
                                 {lead.customer_name}
                               </span>
                               {lead.phone ? (
-                                <a 
+                                <a
                                   href={`tel:${lead.phone}`}
                                   className="text-[11px] font-semibold text-blue-600 hover:underline inline-flex items-center gap-1 mt-0.5"
                                 >
@@ -1181,14 +1160,7 @@ export default function MySalesWorkspace({
                               <Tag size={10} /> แปลง {plotName}
                             </span>
                           ) : stage === 'booked' ? (
-                            <button
-                              type="button"
-                              onClick={() => setBookingTarget(lead)}
-                              className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-50 hover:bg-amber-100 px-2 py-0.5 rounded-md border border-amber-300 mt-0.5 cursor-pointer"
-                              title="คลิกเพื่อเลือกล็อคแปลงและบันทึกของแถม/ส่วนลด"
-                            >
-                              ⚠️ ยังไม่ระบุแปลง (กดเลือกแปลง)
-                            </button>
+                            <span className="text-[10px] text-amber-800">⚠️ ยังไม่ระบุแปลง</span>
                           ) : (
                             <span className="text-[10px] text-slate-400">ยังไม่ระบุแปลง</span>
                           )}
@@ -1224,7 +1196,7 @@ export default function MySalesWorkspace({
                               stage === 'lost' ? 'bg-rose-100 text-rose-900 border-rose-300' :
                               'bg-blue-100 text-blue-900 border-blue-300'
                             }`}>
-                              {stage === 'transferred' ? '🏡 โอนกรรมสิทธิ์แล้ว' : (lead.crm_status || lead.status || 'กำลังติดตาม')}
+                              {stage === 'transferred' ? (salesDealStageOf(lead) === 'handover' ? '🏡 ส่งมอบบ้านแล้ว' : '🏡 โอนกรรมสิทธิ์แล้ว') : (lead.crm_status || lead.status || 'กำลังติดตาม')}
                             </span>
                             {lead.transferred_date && (
                               <span className="text-[10px] text-emerald-700 font-bold block flex items-center gap-1">
@@ -1242,40 +1214,24 @@ export default function MySalesWorkspace({
                         {/* Actions */}
                         <td className="py-3 px-4 text-center">
                           <div className="flex items-center justify-center gap-1.5 flex-wrap">
-                            
+
                             {/* Follow up modal button */}
                             <button
                               type="button"
-                              onClick={() => setFollowUpTarget({ customer: lead })}
+                              onClick={() => openFollowUp(lead)}
                               className="px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
-                              title="บันทึกผลการโทร / ติดตาม"
+                              disabled={!canWrite || !lead.leadId} title="บันทึกผลการโทร / ติดตาม"
                             >
                               <PhoneCall size={12} className="text-blue-600" />
                               ติดตาม
                             </button>
 
-                            {/* Book Plot modal button */}
-                            <button
-                              type="button"
-                              onClick={() => setBookingTarget(lead)}
-                              className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-lg text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
-                              title="บันทึกการจองแปลง (พร้อมเลือกของแถม/ส่วนลด)"
-                            >
-                              <Tag size={12} className="text-amber-600" />
-                              จองแปลง
-                            </button>
-
-                            {/* Rental Contract modal button */}
-                            <button
-                              type="button"
-                              onClick={() => setRentalTarget(lead)}
-                              className="px-2.5 py-1 bg-teal-50 hover:bg-teal-100 text-teal-900 border border-teal-200 rounded-lg text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
-                              title="ทำสัญญาเช่า (แบบ A, B, C)"
-                            >
-                              <Key size={12} className="text-teal-600" />
-                              เช่า
-                            </button>
-
+                            {canWrite && canStartSalesDeal(lead) && <>
+                              <button type="button" onClick={() => openBooking(lead)} className="px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-lg text-[11px] font-bold">จองแปลง</button>
+                              <button type="button" onClick={() => openRental(lead)} className="px-2.5 py-1 bg-teal-50 border border-teal-200 rounded-lg text-[11px] font-bold">เช่า</button>
+                            </>}
+                            {(['booked', 'transferred'].includes(stage) || lead.saleId) && <button type="button" onClick={() => setStatusTarget(lead)} className="px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-lg text-[11px] font-bold">{salesDealActionLabel(lead, canWrite)}</button>}
+                            {canWrite && stage === 'rented' && <button type="button" onClick={() => setRentalActionTarget(lead)} className="px-2.5 py-1 bg-teal-50 border border-teal-200 rounded-lg text-[11px] font-bold">จัดการสัญญาเช่า</button>}
                           </div>
                         </td>
 
@@ -1288,10 +1244,10 @@ export default function MySalesWorkspace({
           </div>
         ) : (
           /* =========================================================
-             KANBAN BOARD VIEW (Horizontal Scrollable 6 Columns)
+             KANBAN BOARD VIEW (Horizontal Scrollable)
           ========================================================= */
           <div className="flex gap-4 overflow-x-auto pb-4 items-start scrollbar-thin">
-            
+
             {/* Column 1: สนใจ & กำลังติดตาม */}
             <div className="bg-slate-100/90 rounded-2xl p-3 border border-slate-200 space-y-3 min-w-[280px] w-72 shrink-0">
               <div className="flex items-center justify-between pb-1 border-b border-slate-200">
@@ -1306,15 +1262,15 @@ export default function MySalesWorkspace({
 
               <div className="space-y-2.5 max-h-[70vh] overflow-y-auto pr-0.5">
                 {filteredLeads.filter(l => getStageCategory(l) === 'active').map(lead => (
-                  <LeadKanbanCard 
-                    key={lead.id} 
-                    lead={lead} 
+                  <LeadKanbanCard
+                    key={lead.id}
+                    lead={lead}
                     isMine={isMyLead(lead)}
                     plotName={getLeadPlotName(lead)}
                     stage="active"
-                    onBook={() => setBookingTarget(lead)}
-                    onFollowUp={() => setFollowUpTarget({ customer: lead })}
-                    onRent={() => setRentalTarget(lead)}
+                    canWrite={canWrite} onBook={() => openBooking(lead)}
+                    onFollowUp={() => openFollowUp(lead)}
+                    onRent={() => openRental(lead)}
                     onQuickStatus={(status, label) => handleQuickStatusChange(lead.id, status, label)}
                   />
                 ))}
@@ -1335,15 +1291,15 @@ export default function MySalesWorkspace({
 
               <div className="space-y-2.5 max-h-[70vh] overflow-y-auto pr-0.5">
                 {filteredLeads.filter(l => getStageCategory(l) === 'appointment').map(lead => (
-                  <LeadKanbanCard 
-                    key={lead.id} 
-                    lead={lead} 
+                  <LeadKanbanCard
+                    key={lead.id}
+                    lead={lead}
                     isMine={isMyLead(lead)}
                     plotName={getLeadPlotName(lead)}
                     stage="appointment"
-                    onBook={() => setBookingTarget(lead)}
-                    onFollowUp={() => setFollowUpTarget({ customer: lead })}
-                    onRent={() => setRentalTarget(lead)}
+                    canWrite={canWrite} onBook={() => openBooking(lead)}
+                    onFollowUp={() => openFollowUp(lead)}
+                    onRent={() => openRental(lead)}
                     onQuickStatus={(status, label) => handleQuickStatusChange(lead.id, status, label)}
                   />
                 ))}
@@ -1364,15 +1320,15 @@ export default function MySalesWorkspace({
 
               <div className="space-y-2.5 max-h-[70vh] overflow-y-auto pr-0.5">
                 {filteredLeads.filter(l => getStageCategory(l) === 'loan').map(lead => (
-                  <LeadKanbanCard 
-                    key={lead.id} 
-                    lead={lead} 
+                  <LeadKanbanCard
+                    key={lead.id}
+                    lead={lead}
                     isMine={isMyLead(lead)}
                     plotName={getLeadPlotName(lead)}
                     stage="loan"
-                    onBook={() => setBookingTarget(lead)}
-                    onFollowUp={() => setFollowUpTarget({ customer: lead })}
-                    onRent={() => setRentalTarget(lead)}
+                    canWrite={canWrite} onBook={() => openBooking(lead)}
+                    onFollowUp={() => openFollowUp(lead)}
+                    onRent={() => openRental(lead)}
                     onQuickStatus={(status, label) => handleQuickStatusChange(lead.id, status, label)}
                   />
                 ))}
@@ -1393,15 +1349,15 @@ export default function MySalesWorkspace({
 
               <div className="space-y-2.5 max-h-[70vh] overflow-y-auto pr-0.5">
                 {filteredLeads.filter(l => getStageCategory(l) === 'booked').map(lead => (
-                  <LeadKanbanCard 
-                    key={lead.id} 
-                    lead={lead} 
+                  <LeadKanbanCard
+                    key={lead.id}
+                    lead={lead}
                     isMine={isMyLead(lead)}
                     plotName={getLeadPlotName(lead)}
                     stage="booked"
-                    onBook={() => setBookingTarget(lead)}
-                    onFollowUp={() => setFollowUpTarget({ customer: lead })}
-                    onRent={() => setRentalTarget(lead)}
+                    canWrite={canWrite} onBook={() => openBooking(lead)}
+                    onFollowUp={() => openFollowUp(lead)}
+                    onRent={() => openRental(lead)}
                     onQuickStatus={(status, label) => handleQuickStatusChange(lead.id, status, label)}
                   />
                 ))}
@@ -1422,15 +1378,15 @@ export default function MySalesWorkspace({
 
               <div className="space-y-2.5 max-h-[70vh] overflow-y-auto pr-0.5">
                 {filteredLeads.filter(l => getStageCategory(l) === 'transferred').map(lead => (
-                  <LeadKanbanCard 
-                    key={lead.id} 
-                    lead={lead} 
+                  <LeadKanbanCard
+                    key={lead.id}
+                    lead={lead}
                     isMine={isMyLead(lead)}
                     plotName={getLeadPlotName(lead)}
                     stage="transferred"
-                    onBook={() => setBookingTarget(lead)}
-                    onFollowUp={() => setFollowUpTarget({ customer: lead })}
-                    onRent={() => setRentalTarget(lead)}
+                    canWrite={canWrite} onBook={() => openBooking(lead)}
+                    onFollowUp={() => openFollowUp(lead)}
+                    onRent={() => openRental(lead)}
                     onQuickStatus={(status, label) => handleQuickStatusChange(lead.id, status, label)}
                   />
                 ))}
@@ -1451,20 +1407,53 @@ export default function MySalesWorkspace({
 
               <div className="space-y-2.5 max-h-[70vh] overflow-y-auto pr-0.5">
                 {filteredLeads.filter(l => getStageCategory(l) === 'rented').map(lead => (
-                  <LeadKanbanCard 
-                    key={lead.id} 
-                    lead={lead} 
+                  <LeadKanbanCard
+                    key={lead.id}
+                    lead={lead}
                     isMine={isMyLead(lead)}
                     plotName={getLeadPlotName(lead)}
                     stage="rented"
-                    onBook={() => setBookingTarget(lead)}
-                    onFollowUp={() => setFollowUpTarget({ customer: lead })}
-                    onRent={() => setRentalTarget(lead)}
+                    canWrite={canWrite} onBook={() => openBooking(lead)}
+                    onFollowUp={() => openFollowUp(lead)}
+                    onRent={() => openRental(lead)}
                     onQuickStatus={(status, label) => handleQuickStatusChange(lead.id, status, label)}
                   />
                 ))}
               </div>
             </div>
+
+            {filteredLeads.some(l => getStageCategory(l) === 'lost') && (
+              <div
+                role="region"
+                aria-label="ลูกค้ายุติการซื้อ"
+                className={`bg-rose-50/80 rounded-2xl p-3 border border-rose-200 space-y-3 min-w-[280px] w-72 shrink-0 ${selectedStage === 'lost' ? 'order-first' : ''}`}
+              >
+                <div className="flex items-center justify-between pb-1 border-b border-rose-200">
+                  <span className="text-xs font-black text-rose-900 flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
+                    ❌ ยุติการซื้อ
+                  </span>
+                  <span className="text-[11px] font-black text-rose-800 bg-rose-100 px-2 py-0.5 rounded-full">
+                    {filteredLeads.filter(l => getStageCategory(l) === 'lost').length}
+                  </span>
+                </div>
+                <div className="space-y-2.5 max-h-[70vh] overflow-y-auto pr-0.5">
+                  {filteredLeads.filter(l => getStageCategory(l) === 'lost').map(lead => (
+                    <LeadKanbanCard
+                      key={lead.id}
+                      lead={lead}
+                      isMine={isMyLead(lead)}
+                      plotName={getLeadPlotName(lead)}
+                      stage="lost"
+                      canWrite={canWrite} onBook={() => openBooking(lead)}
+                      onFollowUp={() => openFollowUp(lead)}
+                      onRent={() => openRental(lead)}
+                      onQuickStatus={(status, label) => handleQuickStatusChange(lead.id, status, label)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
 
           </div>
         )}
@@ -1477,9 +1466,9 @@ export default function MySalesWorkspace({
 
       {/* 1. Modal: เพิ่ม Lead ใหม่ */}
       {showAddLeadModal && (
-        <div className="fixed inset-0 z-[400] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in">
+        <SalesOverlay className="fixed inset-0 z-[400] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in">
           <div className="bg-white rounded-3xl shadow-2xl border border-slate-100 w-full max-w-lg overflow-hidden animate-in zoom-in-95">
-            
+
             <div className="flex items-center justify-between p-5 border-b border-slate-100">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center font-black">
@@ -1490,8 +1479,8 @@ export default function MySalesWorkspace({
                   <p className="text-xs text-slate-500 font-medium">บันทึกชื่อลูกค้าและกำหนดตนเองเป็นผู้ดูแลอัตโนมัติ</p>
                 </div>
               </div>
-              <button 
-                type="button" 
+              <button
+                type="button"
                 onClick={() => setShowAddLeadModal(false)}
                 className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"
               >
@@ -1500,7 +1489,7 @@ export default function MySalesWorkspace({
             </div>
 
             <form onSubmit={handleCreateLead} className="p-5 space-y-4">
-              
+
               {/* Sales Owner Badge */}
               <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200 text-xs font-bold text-amber-900 flex items-center justify-between">
                 <span className="flex items-center gap-1.5">
@@ -1614,7 +1603,7 @@ export default function MySalesWorkspace({
             </form>
 
           </div>
-        </div>
+        </SalesOverlay>
       )}
 
       {/* 2. Modal: จองแปลง (CentralLeadBookingModal) */}
@@ -1646,6 +1635,8 @@ export default function MySalesWorkspace({
           customer={followUpTarget.customer}
           projects={projectNames}
           salesOwners={salesOwners}
+          currentUserRole={currentUser?.role}
+          currentUserId={String(currentUser?.id || currentUser?.username || '')}
           onSaved={(msg) => {
             setNotice(msg);
             setFollowUpTarget(null);
@@ -1662,6 +1653,8 @@ export default function MySalesWorkspace({
           customer={appointmentTarget.customer}
           projects={projectNames}
           salesOwners={salesOwners}
+          currentUserRole={currentUser?.role}
+          currentUserId={String(currentUser?.id || currentUser?.username || '')}
           onSaved={(msg) => {
             setNotice(msg);
             setAppointmentTarget(null);
@@ -1687,6 +1680,8 @@ export default function MySalesWorkspace({
         />
       )}
 
+      {statusTarget && <SalesDealStatusModal key={myUserId + ':' + currentUser?.role + ':' + statusTarget.id} lead={statusTarget} currentUser={currentUser} onClose={() => setStatusTarget(null)} onSaved={msg => { setNotice(msg); setStatusTarget(null); fetchData(true); }} />}
+      {rentalActionTarget && <RentalActionModal key={myUserId + ':' + rentalActionTarget.id} isOpen onClose={() => setRentalActionTarget(null)} lead={rentalActionTarget.sourceKind === 'rental_plot' ? null : rentalActionTarget} plot={rentalActionTarget.sourceKind === 'rental_plot' ? { id: rentalActionTarget.plotId, project_name: rentalActionTarget.project_name } : null} contractId={rentalActionTarget.active_rental_contract_id} user={currentUser} onSaved={() => { setRentalActionTarget(null); setNotice('อัปเดตสัญญาเช่าแล้ว'); fetchData(true); }} />}
       {/* 6. Modal: Admin Customer Import & Export */}
       {showAdminDataModal && (
         <AdminCustomerImportExportModal
@@ -1717,9 +1712,11 @@ function LeadKanbanCard({
   onBook,
   onFollowUp,
   onRent,
-  onQuickStatus
+  onQuickStatus,
+  canWrite
 }: {
   lead: any;
+  canWrite: boolean;
   isMine: boolean;
   plotName: string | null;
   stage: string;
@@ -1733,7 +1730,7 @@ function LeadKanbanCard({
       stage === 'transferred' ? 'border-emerald-200 ring-1 ring-emerald-100' :
       isMine ? 'border-amber-200 ring-1 ring-amber-100' : 'border-slate-200/80 hover:border-slate-300'
     }`}>
-      
+
       {/* Header: Name & Owner */}
       <div className="flex items-start justify-between gap-2">
         <div>
@@ -1753,7 +1750,7 @@ function LeadKanbanCard({
           </span>
         ) : (
           <span className="text-[9px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded shrink-0">
-            {lead.sales_owner || 'ทีมขาย'}
+            {lead.agent_name || lead.sales_owner || lead.created_by_agent || 'ทีมขาย'}
           </span>
         )}
       </div>
@@ -1768,14 +1765,7 @@ function LeadKanbanCard({
             แปลง {plotName}
           </span>
         ) : stage === 'booked' ? (
-          <button
-            type="button"
-            onClick={onBook}
-            className="text-[9px] font-bold text-amber-800 bg-amber-50 hover:bg-amber-100 px-1.5 py-0.2 rounded border border-amber-300 cursor-pointer"
-            title="คลิกเพื่อเลือกแปลงที่จอง"
-          >
-            ⚠️ ยังไม่ระบุแปลง
-          </button>
+          <span className="text-[9px] font-bold text-amber-800">⚠️ ยังไม่ระบุแปลง</span>
         ) : null}
       </div>
 
@@ -1799,29 +1789,29 @@ function LeadKanbanCard({
       <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-1">
         <button
           type="button"
-          onClick={onFollowUp}
+          disabled={!canWrite || !lead.leadId} onClick={onFollowUp}
           className="px-2 py-1 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer"
         >
           <PhoneCall size={10} className="text-blue-600" /> ตาม
         </button>
 
         <div className="flex items-center gap-1">
-          {stage !== 'transferred' && (
+          {(canWrite && ['active', 'appointment', 'loan', 'booked'].includes(stage) || stage === 'transferred') && (
             <button
               type="button"
               onClick={onBook}
               className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-lg text-[10px] font-black inline-flex items-center gap-1 cursor-pointer"
             >
-              <Tag size={10} className="text-amber-600" /> จอง
+              <Tag size={10} className="text-amber-600" /> {['booked', 'transferred'].includes(stage) ? salesDealActionLabel(lead, canWrite) : 'จอง'}
             </button>
           )}
-          <button
+          {canWrite && ['active', 'appointment', 'loan', 'rented'].includes(stage) && <button
             type="button"
             onClick={onRent}
             className="px-2 py-1 bg-teal-50 hover:bg-teal-100 text-teal-900 border border-teal-200 rounded-lg text-[10px] font-black inline-flex items-center gap-1 cursor-pointer"
           >
-            <Key size={10} className="text-teal-600" /> เช่า
-          </button>
+            <Key size={10} className="text-teal-600" /> {stage === 'rented' ? 'จัดการสัญญาเช่า' : 'เช่า'}
+          </button>}
         </div>
       </div>
 

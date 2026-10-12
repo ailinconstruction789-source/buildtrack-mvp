@@ -1,5 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Calendar, ChevronLeft, ChevronRight, Home, CheckCircle } from 'lucide-react';
+import { constructionScheduleGanttLanes, constructionScheduleGanttRange, constructionScheduleHouseTypeIndex } from '@/lib/constructionSchedule';
+import { useConstructionScheduleToday } from '@/hooks/constructionScheduleToday';
 
 const MasterGanttChart = function MasterGanttChart({
   view, plots, taskTemplates, schedules, latestUpdatesMap, projects, contractors, assignments
@@ -8,11 +10,7 @@ const MasterGanttChart = function MasterGanttChart({
   const [currentMonthOffset, setCurrentMonthOffset] = useState(0);
   const [selectedProject, setSelectedProject] = useState<string>('all');
 
-  const today = useMemo(() => {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return d;
-  }, []);
+  const today = useConstructionScheduleToday();
 
   // Generate a 3-month timeline based on offset
   const timelineDates = useMemo(() => {
@@ -37,6 +35,20 @@ const MasterGanttChart = function MasterGanttChart({
     if (selectedProject === 'all') return plots || [];
     return (plots || []).filter((p: any) => p.project_name === selectedProject);
   }, [plots, selectedProject]);
+
+  const tasksByHouseType = useMemo(() => constructionScheduleHouseTypeIndex(taskTemplates || []), [taskTemplates]);
+  const ganttRows = useMemo(() => filteredPlots.map((plot: any, pIdx: number) => {
+    const activeTasks = (tasksByHouseType.get(plot.house_type_id) || []).flatMap((task: any) => {
+      const sched = schedules?.[`${plot.id}-${task.id}`];
+      if (!sched || !sched.planned_start || !sched.planned_end) return [];
+      const range = constructionScheduleGanttRange(sched.planned_start, sched.planned_end, startDateMs, endDateMs);
+      if (!range) return [];
+      const updateData = latestUpdatesMap?.[`${plot.id}-${task.id}`];
+      return [{ task, sched, ...range, progress: updateData?.progress || 0 }];
+    });
+    const { lanes, laneCount } = constructionScheduleGanttLanes(activeTasks);
+    return { plot, pIdx, activeTasks, lanes, laneCount };
+  }).filter((row: any) => row.activeTasks.length > 0), [filteredPlots, tasksByHouseType, schedules, latestUpdatesMap, startDateMs, endDateMs]);
 
   return (
     <div className="animate-in fade-in zoom-in-95 duration-500 w-full px-2 sm:px-6 mx-auto pb-12 mt-8">
@@ -93,31 +105,7 @@ const MasterGanttChart = function MasterGanttChart({
 
             {/* Body: Plots and Tasks */}
             <div className="flex flex-col relative z-10 min-h-[400px]">
-               {filteredPlots.map((plot: any, pIdx: number) => {
-                  // Get tasks for this plot that fall within the timeline
-                  const pTasks = taskTemplates?.filter((t: any) => t.house_type_id === plot.house_type_id) || [];
-                  const activeTasks = pTasks.map((t: any) => {
-                     const sched = schedules?.[`${plot.id}-${t.id}`];
-                     if (!sched || !sched.planned_start || !sched.planned_end) return null;
-                     const pStart = new Date(sched.planned_start).getTime();
-                     const pEnd = new Date(sched.planned_end).getTime();
-                     
-                     // Check intersection
-                     if (pEnd < startDateMs || pStart > endDateMs) return null;
-
-                     const startIdx = Math.max(0, Math.floor((pStart - startDateMs) / 86400000));
-                     const endIdx = Math.min(89, Math.floor((pEnd - startDateMs) / 86400000));
-                     const width = (endIdx - startIdx + 1) * 40; // 40px per day
-                     const left = startIdx * 40;
-
-                     const updateData = latestUpdatesMap?.[`${plot.id}-${t.id}`];
-                     const progress = updateData?.progress || 0;
-
-                     return { task: t, sched, startIdx, endIdx, width, left, progress };
-                  }).filter((t:any) => t !== null);
-
-                  if (activeTasks.length === 0) return null; // Hide rows with no active tasks in this view
-
+               {ganttRows.map(({ plot, pIdx, activeTasks, lanes, laneCount }: any) => {
                   const bgClass = pIdx % 2 === 0 ? 'bg-white' : 'bg-slate-100/70';
 
                   return (
@@ -135,9 +123,7 @@ const MasterGanttChart = function MasterGanttChart({
                        {/* Gantt Area */}
                        <div className="flex-1 relative min-h-[60px] py-3 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iMTAwJSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48bGluZSB4MT0iMzkiIHkxPSIwIiB4Mj0iMzkiIHkyPSIxMDAlIiBzdHJva2U9IiNmMWY1ZjkiIHN0cm9rZS13aWR0aD0iMSIvPjwvc3ZnPg==')]">
                           {activeTasks.map((at: any, tIdx: number) => {
-                             // Check for overlaps to offset Y vertically (very simple logic)
-                             const overlapping = activeTasks.filter((other: any) => other.startIdx <= at.endIdx && other.endIdx >= at.startIdx);
-                             const yOffset = overlapping.findIndex((o: any) => o.task.id === at.task.id) * 28;
+                             const yOffset = lanes[tIdx] * 28;
 
                              return (
                                 <div 
@@ -158,7 +144,7 @@ const MasterGanttChart = function MasterGanttChart({
                           })}
                           
                           {/* Invisible div to ensure row height fits stacked tasks */}
-                          <div style={{ height: `${Math.max(...activeTasks.map((t:any) => activeTasks.filter((other: any) => other.startIdx <= t.endIdx && other.endIdx >= t.startIdx).length)) * 28 + 12}px` }}></div>
+                          <div style={{ height: `${laneCount * 28 + 12}px` }}></div>
                        </div>
                     </div>
                   );

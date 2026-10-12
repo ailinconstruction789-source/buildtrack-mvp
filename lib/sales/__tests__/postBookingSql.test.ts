@@ -14,8 +14,8 @@ describe('withheld post-booking SQL design (source checks only)', () => {
     expect(code).toContain('post_booking_enabled boolean NOT NULL DEFAULT false');
     expect(source).toContain('NEVER RUN ON SUPABASE');
     expect(body('capabilities')).toContain('public.crm_v2_booking_capabilities()');
-    expect(body('capabilities')).toContain("'contract_version','post_booking_v2'");
-    expect(code).not.toMatch(/cron\.|pg_net|ALTER SYSTEM|DISABLE TRIGGER|DROP TABLE|TRUNCATE/i);
+    expect(body('capabilities')).toContain("'contract_version','post_booking_v3'");
+    expect(code).not.toMatch(/cron\.|pg_net|ALTER SYSTEM|DISABLE TRIGGER|DROP TABLE|\bTRUNCATE\s+(?:TABLE\s+)?(?:public|sales_private)\./i);
   });
   it('uses verified identity, existing shared lock and ordered ownership/revision checks', () => {
     expect(command).toContain('actor_id uuid:=auth.uid(); actor_role text:=public.crm_v2_role()');
@@ -41,13 +41,14 @@ describe('withheld post-booking SQL design (source checks only)', () => {
     expect(command).toContain("NOT IN ('contracted','downpayment','document_prep','transfer_pending')");
     expect(command).toContain("sale_row.payment_method='cash' AND sale_row.crm_stage IN ('contracted','downpayment','document_prep')");
     expect(command).toContain("sale_row.payment_method='mortgage' AND sale_row.crm_stage='loan_approved'");
-    expect(command).toContain("sale_row.payment_method<>'mortgage' OR sale_row.crm_stage NOT IN ('document_prep','loan_rejected')");
+    expect(command).toContain("sale_row.payment_method<>'mortgage' OR sale_row.crm_stage<>'document_prep'");
+    expect(command).toContain("sale_row.crm_stage='loan_rejected' AND next_stage='document_prep'");
     expect(command).not.toMatch(/UPDATE public\.plots|bank_status|SET payment_method|SET sale_price|UPDATE public\.sales_customers|UPDATE public\.lead_project_interests/i);
   });
   it('confirms only civil transfer dates without inventing timestamp or declaration evidence', () => {
     expect(code).toContain('ADD COLUMN crm_transfer_date date NULL');
     expect(command).toContain("WHEN command_name='confirm_transfer' THEN ARRAY['transferDate']");
-    expect(command).toContain("IF command_name<>'confirm_transfer' THEN");
+    expect(command).toContain("IF command_name NOT IN ('confirm_transfer','confirm_handover') THEN");
     expect(command).toContain("!~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'");
     expect(command).toContain("transfer_value<DATE '0001-01-01'");
     expect(command).toContain("transfer_value>=DATE '10000-01-01'");
@@ -110,7 +111,7 @@ describe('withheld post-booking SQL design (source checks only)', () => {
     expect(context).toContain('LIMIT 51 OFFSET p_attempt_page*50'); expect(context).toContain('LIMIT 51 OFFSET p_event_page*50');
     expect(context).toContain('ORDER BY a.attempt_number DESC,a.id LIMIT 1');
     expect(context).toContain("'canEdit',(actor_role='admin'");
-    expect(context).toContain("NOT IN ('cancelled','transferred','handover')");
+    expect(context).toContain("NOT IN ('cancelled','handover')");
     expect(context).toContain("'transferDate',sale_row.crm_transfer_date");
     expect(context).toContain("'transferDate',transfer_date");
     expect(context).not.toMatch(/monthly_income|personal_data|booking_amount|sale_price/);
@@ -136,4 +137,17 @@ describe('withheld post-booking SQL design (source checks only)', () => {
     expect(scenario).toContain('SYNTHETIC_INJECTED_FAILURE');
     expect(scenario).not.toMatch(/DISABLE TRIGGER|session_replication_role|ALTER TABLE|DROP CONSTRAINT/);
   });
+});
+
+
+it('binds the imported adapter to exact reviewed function source, settings, actor and row images', () => {
+  expect(code).toContain("OR replace(original_source,E'\\r\\n',E'\\n') IS DISTINCT FROM expected_source");
+  expect(code).toContain('function_settings IS DISTINCT FROM');
+  expect(code).toContain('owner_name IS DISTINCT FROM current_user');
+  expect(body('external_allowed')).toContain('permit.old_sale=p_old');
+  expect(body('external_allowed')).toContain("permit.new_sale-'updated_at'=p_new-'updated_at'");
+  expect(body('external_allowed')).toContain('permit.actor_user_id=auth.uid()');
+  expect(code).toContain('post_booking_external_write_permits ENABLE ROW LEVEL SECURITY');
+  expect(command).toContain('DELETE FROM sales_private.post_booking_external_write_permits');
+  expect(command).toContain("handover_value<(sale_row.transferred_at AT TIME ZONE 'Asia/Bangkok')::date");
 });

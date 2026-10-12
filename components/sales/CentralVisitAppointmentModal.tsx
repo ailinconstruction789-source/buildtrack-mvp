@@ -1,23 +1,34 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   X, Calendar, Clock, Building2, MapPin, User, 
   Phone, Sparkles, AlertCircle, CheckCircle2, Loader2, FileText 
 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { selectSalesStaffName } from '@/lib/sales/salesStaff';
 import { loadAvailablePlots } from '@/lib/sales/plotAvailabilityClient';
 import type { InterestedPlot } from '@/lib/sales/plotAvailability';
+import SalesOverlay from './SalesOverlay';
+import { canEditSalesRole, getLeadStage, preserveLeadDealStage } from '@/lib/sales/leadStage';
+import { hasDealHistory } from '@/lib/sales/leadLifecycle';
+import { readLeadActivitySnapshot, writeLeadActivitySummary } from '@/lib/sales/leadActivity';
 
 interface Props {
   isOpen: boolean;
   onClose: () => void;
   customer: {
     id: string;
-    name: string;
+    name?: string;
+    customer_name?: string;
     phone?: string | null;
     channel?: string | null;
     ownerUserId?: string;
+    leadId?: string;
+    status?: string | null;
+    crm_status?: string | null;
+    booking_date?: string | null;
+    transferred_date?: string | null;
+    notes?: string | null;
   } | null;
   initialInterest?: {
     id?: string;
@@ -28,17 +39,27 @@ interface Props {
   projects: string[];
   salesOwners: { userId: string; displayName: string }[];
   onSaved?: (notice: string) => void;
+  currentUserRole?: string;
+  currentUserId?: string;
 }
 
-export default function CentralVisitAppointmentModal({
+export default function CentralVisitAppointmentModal(props: Props) {
+  return <AppointmentSession key={JSON.stringify([props.customer?.leadId, props.customer?.id, props.currentUserId, props.currentUserRole])} {...props} />;
+}
+function AppointmentSession({
   isOpen,
   onClose,
   customer,
   initialInterest,
   projects = [],
   salesOwners = [],
-  onSaved
+  onSaved,
+  currentUserRole
 }: Props) {
+  const mounted = useRef(true);
+  const writing = useRef(false);
+  const initialized = useRef<string | null>(null);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [projectName, setProjectName] = useState('');
   const [plotId, setPlotId] = useState('');
   const [availablePlots, setAvailablePlots] = useState<InterestedPlot[]>([]);
@@ -52,7 +73,11 @@ export default function CentralVisitAppointmentModal({
 
   // Set default tomorrow date
   useEffect(() => {
+    if (!isOpen) { initialized.current = null; return; }
     if (isOpen) {
+      const context = JSON.stringify([customer?.id, initialInterest?.id, initialInterest?.projectName]);
+      if (initialized.current === context) return;
+      initialized.current = context;
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);
       const yyyy = tomorrow.getFullYear();
@@ -68,10 +93,13 @@ export default function CentralVisitAppointmentModal({
 
       const initialOwnerId = initialInterest?.ownerUserId || customer?.ownerUserId;
       const ownerObj = salesOwners.find(o => o.userId === initialOwnerId);
-      setAgentName(ownerObj?.displayName || salesOwners[0]?.displayName || 'Sales');
+      setAgentName(selectSalesStaffName(salesOwners, [ownerObj?.displayName]));
       setNotes('');
     }
   }, [isOpen, initialInterest, customer, projects, salesOwners]);
+  useEffect(() => {
+    setAgentName(previous => previous || selectSalesStaffName(salesOwners, []));
+  }, [salesOwners]);
 
   // Load available plots when project changes
   useEffect(() => {
@@ -98,9 +126,17 @@ export default function CentralVisitAppointmentModal({
   }, [projectName]);
 
   if (!isOpen || !customer) return null;
+  const customerName = customer.name || customer.customer_name || 'ลูกค้า';
+  const readOnly = currentUserRole != null && !canEditSalesRole(currentUserRole);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (writing.current) return;
+    if (readOnly) { setErrorMsg('บัญชีนี้ดูข้อมูลได้อย่างเดียว'); return; }
+    if (!salesOwners.some(owner => owner.displayName === agentName)) {
+      setErrorMsg('กรุณาเลือกพนักงานฝ่ายขาย');
+      return;
+    }
     if (!projectName) {
       setErrorMsg('กรุณาเลือกโครงการที่ต้องการนัดเข้าชม');
       return;
@@ -110,16 +146,20 @@ export default function CentralVisitAppointmentModal({
       return;
     }
 
+    writing.current = true;
     setIsSubmitting(true);
     setErrorMsg('');
 
     try {
+      const latest = await readLeadActivitySnapshot(customer);
+      if (!mounted.current) return;
+      if (getLeadStage(latest.lead) === 'lost') throw new Error('กรุณาดึง Lead ที่ไม่สนใจกลับมาติดตาม หรือดำเนินการในรายการยกเลิกก่อนนัดชม');
       const selectedPlot = availablePlots.find(p => p.id === plotId);
       const plotName = selectedPlot ? selectedPlot.plot_name : (plotId || null);
       const appointmentDateTime = `${appointmentDate}T${appointmentTime || '10:00'}:00+07:00`;
 
-      const { error } = await supabase.from('leads').insert({
-        customer_name: customer.name,
+      const payload = {
+        customer_name: customer.name || customer.customer_name,
         phone: customer.phone || null,
         project_name: projectName,
         interested_plot_id: plotId || null,
@@ -132,11 +172,24 @@ export default function CentralVisitAppointmentModal({
         auto_status: 'นัดชมโครงการ',
         crm_status: 'Follow-up — อยู่ระหว่างติดตาม',
         notes: notes ? `[นัดเข้าชม] ${notes}` : `นัดหมายเข้าชมโครงการ ${projectName}`
-      });
-
-      if (error) {
-        throw new Error(error.message || 'บันทึกนัดหมายไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
-      }
+      };
+      // Central API customers may have a different identity; only mapped lead IDs are updated.
+      const protectedHistory = latest.historyExists || hasDealHistory(latest.lead);
+      const summary: Record<string, unknown> = preserveLeadDealStage(latest.lead, {
+            ...(protectedHistory ? {} : {
+              interested_plot_id: plotId || null,
+              interested_plot_name: plotName,
+            }),
+            appointment_date: appointmentDateTime,
+            agent_name: agentName || null,
+            status: payload.status,
+            crm_status: payload.crm_status,
+            auto_status: payload.auto_status,
+            ...(notes.trim() ? { notes: [`[นัดเข้าชม] ${notes.trim()}`, latest.lead.notes].filter(Boolean).join('\n\n---\n') } : {})
+          });
+      if (protectedHistory) { delete summary.status; delete summary.crm_status; }
+      await writeLeadActivitySummary(latest, summary);
+      if (!mounted.current) return;
 
       const formattedDate = new Date(appointmentDate).toLocaleDateString('th-TH', {
         year: 'numeric',
@@ -147,14 +200,15 @@ export default function CentralVisitAppointmentModal({
       onSaved?.(`บันทึกนัดหมายเข้าชมโครงการ ${projectName} วันที่ ${formattedDate} เวลา ${appointmentTime} น. เรียบร้อยแล้ว (ซิงค์เข้าสู่ตารางนัดหมายแล้ว)`);
       onClose();
     } catch (err: any) {
-      setErrorMsg(err.message || 'เกิดข้อผิดพลาดในการบันทึกนัดหมาย');
+      if (mounted.current) setErrorMsg(err.message || 'เกิดข้อผิดพลาดในการบันทึกนัดหมาย');
     } finally {
-      setIsSubmitting(false);
+      writing.current = false;
+      if (mounted.current) setIsSubmitting(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-[300] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200">
+    <SalesOverlay className="fixed inset-0 z-[300] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200">
       <div className="w-full max-w-lg bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh] my-auto animate-in zoom-in-95 duration-200">
         {/* Sticky Header */}
         <div className="sticky top-0 z-20 bg-gradient-to-r from-blue-600 to-indigo-700 px-6 py-4 text-white flex items-center justify-between shrink-0">
@@ -194,7 +248,7 @@ export default function CentralVisitAppointmentModal({
                 <User size={16} />
               </div>
               <div>
-                <span className="font-black text-slate-800 text-sm block">{customer.name}</span>
+                <span className="font-black text-slate-800 text-sm block">{customerName}</span>
                 <span className="text-slate-500 font-medium flex items-center gap-1">
                   <Phone size={11} /> {customer.phone || 'ไม่ระบุเบอร์โทร'}
                 </span>
@@ -208,6 +262,9 @@ export default function CentralVisitAppointmentModal({
           </div>
 
           {/* Project & Plot Selection */}
+          {['loan', 'booked', 'transferred', 'rented', 'lost'].includes(getLeadStage(customer)) && (
+            <p className="text-xs text-slate-600">สถานะลูกค้าปัจจุบัน: {customer.crm_status || customer.status} · นัดหมายนี้ไม่เปลี่ยนสถานะการขาย</p>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
@@ -292,6 +349,7 @@ export default function CentralVisitAppointmentModal({
               onChange={e => setAgentName(e.target.value)}
               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-2xs"
             >
+              {salesOwners.length === 0 && <option value="" disabled>ไม่พบพนักงานฝ่ายขาย</option>}
               {salesOwners.map(owner => (
                 <option key={owner.userId} value={owner.displayName}>
                   {owner.displayName}
@@ -327,7 +385,7 @@ export default function CentralVisitAppointmentModal({
             </button>
             <button
               type="submit"
-              disabled={isSubmitting}
+              disabled={isSubmitting || readOnly}
               className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-sm disabled:opacity-50 transition-all flex items-center gap-1.5 cursor-pointer"
             >
               {isSubmitting ? (
@@ -345,6 +403,6 @@ export default function CentralVisitAppointmentModal({
           </div>
         </form>
       </div>
-    </div>
+    </SalesOverlay>
   );
 }

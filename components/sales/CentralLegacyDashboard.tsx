@@ -7,6 +7,7 @@ import type { ExcelReportData } from '@/lib/sales/excelReportContracts';
 import type { SaleStage } from '@/lib/sales/workflow';
 import { bangkokReportDay, buildExcelReport, formatReportMoney, sumReportMoney, type ExcelSaleRow, type ExcelStockRow } from '@/lib/sales/excelReportMetrics';
 import CentralLegacyWaitingDetails from './CentralLegacyWaitingDetails';
+import SalesOverlay from './SalesOverlay';
 
 interface Props {
   data: ExcelReportData;
@@ -697,7 +698,7 @@ export default function CentralLegacyDashboard({ data, projectName, onProjectCha
       </div>
 
       {showTotalBreakdown && (
-        <div role="dialog" aria-modal="true" aria-label="รายละเอียดรวมบ้านทั้งหมด" className="fixed inset-0 z-[500] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+        <SalesOverlay role="dialog" aria-modal="true" aria-label="รายละเอียดรวมบ้านทั้งหมด" className="fixed inset-0 z-[500] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50 shrink-0">
               <div>
@@ -757,7 +758,7 @@ export default function CentralLegacyDashboard({ data, projectName, onProjectCha
               })}
             </div>
           </div>
-        </div>
+        </SalesOverlay>
       )}
 
     </div>

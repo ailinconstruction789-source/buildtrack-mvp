@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@/lib/supabase', () => ({ supabase: {} }));
 const { loadAvailablePlots } = vi.hoisted(() => ({ loadAvailablePlots: vi.fn() }));
 vi.mock('@/lib/sales/plotAvailabilityClient', () => ({ loadAvailablePlots }));
+const { historicalRead } = vi.hoisted(() => ({ historicalRead: vi.fn() }));
+vi.mock('@/lib/sales/historicalCustomerEvidenceClient', () => ({ historicalCustomerEvidenceApi: { read: historicalRead, watchIdentity: () => () => {} } }));
 import ProjectInterestsWorkspace from '../ProjectInterestsWorkspace';
 import { ProjectInterestsApiError, type ProjectInterestsApi } from '@/lib/sales/projectInterestsClient';
 import { projectInterestsPendingKey, readProjectInterestsPending, writeProjectInterestsPending } from '@/lib/sales/projectInterestsPending';
@@ -25,6 +27,37 @@ async function submit() { await act(async () => { fireEvent.submit(screen.getByR
 const interest = (status = 'new') => ({ id: piId(20), projectName: 'โครงการเดิม', ownerUserId: piId(6), revision: piId(21), status, plotId: null });
 beforeEach(() => { vi.clearAllMocks(); sessionStorage.clear(); loadAvailablePlots.mockImplementation(async (project: string) => [{ id: `${project}-A1`, plot_name: 'A1', project_name: project, has_customer: false, sale_status: 'available' }]); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+describe('opt-in historical customer evidence', () => {
+  it('keeps existing workspace unchanged and makes no evidence request by default', async () => {
+    const api = makeApi(); mount(api); await screen.findByRole('heading', { name: 'ลูกค้าสมมติ' });
+    expect(screen.queryByRole('region', { name: 'ประวัติลูกค้าจากข้อมูลเดิม' })).not.toBeInTheDocument(); expect(historicalRead).not.toHaveBeenCalled();
+  });
+  it('opens customer-scoped history only on click without adding or booking an interest', async () => {
+    const api = makeApi(); historicalRead.mockResolvedValue({ contractVersion: 'historical_customer_evidence_v1', actor: { userId: piId(6), role: 'sales' },
+      customerId: piId(1), interestId: null, saleId: null, page: 0, hasMore: false, readOnly: true, records: [] });
+    render(<ProjectInterestsWorkspace customerId={piId(1)} api={api} historyEnabled />);
+    const button = await screen.findByRole('button', { name: 'ดูประวัติเดิม' }); expect(historicalRead).not.toHaveBeenCalled();
+    fireEvent.click(button); await screen.findByText('ไม่มีประวัติเดิมในหน้านี้');
+    expect(historicalRead).toHaveBeenCalledWith({ customerId: piId(1), interestId: null, saleId: null, page: 0 }, expect.anything());
+    expect(api.save).not.toHaveBeenCalled();
+  });
+});
+
+describe('rental navigation from project interests',()=>{
+  it.each([false,true])('keeps the link bound to the read customer and project when enabled=%s',async enabled=>{
+    const api=makeApi(),data=piSnapshot(); data.interests=[interest()]; api.read.mockResolvedValue(data);
+    render(<ProjectInterestsWorkspace customerId={piId(1)} api={api} rentalsEnabled={enabled}/>);
+    const linkName='สัญญาเช่า / ประวัติ โครงการเดิม';
+    await screen.findByText('โครงการเดิม');
+    if(enabled){
+      const link=screen.getByRole('link',{name:linkName});
+      const query=new URL(link.getAttribute('href')!,'http://localhost').searchParams;
+      expect(query.get('customerId')).toBe(piId(1));expect(query.get('projectName')).toBe('โครงการเดิม');
+    }else expect(screen.queryByRole('link',{name:linkName})).not.toBeInTheDocument();
+    expect(api.save).not.toHaveBeenCalled();
+  });
+});
 
 describe('existing Lead project interests workspace', () => {
   it('saves only a new project, preserving customer revision and using no arbitrary owner or customer creation', async () => {

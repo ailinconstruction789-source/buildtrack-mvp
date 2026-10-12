@@ -9,16 +9,20 @@ export const pbSubmit = (): Extract<PostBookingInput, { command: 'submit_loan' }
 export const pbLoanResult = (): Extract<PostBookingInput, { command: 'loan_result' }> => ({ ...pbBase(), command: 'loan_result', loanAttemptId: pbid(9), result: 'approved', approvedAmountSatang: 180000000 });
 export const pbTransfer = (): Extract<PostBookingInput, { command: 'confirm_transfer' }> => ({ requestId: pbid(8), command: 'confirm_transfer',
   customerId: pbid(2), saleId: pbid(1), expectedSaleRevision: pbid(3), expectedInterestRevision: pbid(4), reason: 'ลูกค้าโอนจริงแล้ว', transferDate: '2026-09-23' });
+export const pbHandover = (): Extract<PostBookingInput, { command: 'confirm_handover' }> => {
+  const { transferDate: _day, ...base } = pbTransfer();
+  return { ...base, command: 'confirm_handover', handoverDate: '2026-09-23', reason: 'ลูกค้ารับมอบบ้านจริง' };
+};
 export const pbResult = (input: PostBookingInput = pbInput(), replayed = false): PostBookingResult => ({ requestId: input.requestId, command: input.command,
   customerId: input.customerId, interestId: pbid(5), saleId: input.saleId, saleRevision: pbid(7), eventId: pbid(10), replayed,
-  stage: input.command === 'confirm_transfer' ? 'transferred' : input.command === 'advance' ? input.nextStage : input.command === 'submit_loan' ? 'loan_submitted' : input.result === 'approved' ? 'loan_approved' : 'loan_rejected',
-  transferDate: input.command === 'confirm_transfer' ? input.transferDate : null,
-  loanAttemptId: input.command === 'advance' || input.command === 'confirm_transfer' ? null : input.command === 'loan_result' ? input.loanAttemptId : pbid(9) });
+  stage: input.command === 'confirm_handover' ? 'handover' : input.command === 'confirm_transfer' ? 'transferred' : input.command === 'advance' ? input.nextStage : input.command === 'submit_loan' ? 'loan_submitted' : input.result === 'approved' ? 'loan_approved' : 'loan_rejected',
+  transferDate: input.command === 'confirm_transfer' ? input.transferDate : null, handoverDate: input.command === 'confirm_handover' ? input.handoverDate : null,
+  loanAttemptId: input.command === 'advance' || input.command === 'confirm_transfer' || input.command === 'confirm_handover' ? null : input.command === 'loan_result' ? input.loanAttemptId : pbid(9) });
 export const pbAttempt = (patch: Partial<PurchaseLoanAttempt> = {}): PurchaseLoanAttempt => ({ id: pbid(9), saleId: pbid(1), interestId: pbid(5),
   attemptNumber: 1, bankName: 'ธนาคารสมมติ', status: 'submitted', submittedAt: '2026-09-23T10:00:00+07:00', resultAt: null, resultReason: null,
   approvedAmount: null, recordedByUserId: pbid(6), ...patch });
 export const pbSnapshot = (scope = pbScope()): PostBookingSnapshot => ({ actor: { userId: pbid(6), role: 'sales' },
   sale: { id: scope.saleId, customerId: pbid(2), customerName: 'ลูกค้าสมมติ', interestId: pbid(5), projectName: 'โครงการ A', plotId: 'A1',
-    stage: 'booked', paymentMethod: 'mortgage', bookedAt: '2026-09-22T12:00:00+07:00', contractedAt: null, transferDate: null, revision: pbid(3),
+    stage: 'booked', paymentMethod: 'mortgage', bookedAt: '2026-09-22T12:00:00+07:00', contractedAt: null, transferDate: null, handoverDate: null, importedHistory: null, revision: pbid(3),
     interestRevision: pbid(4), ownerUserId: pbid(6), canEdit: true },
   latestAttempt: null, attempts: [], attemptPage: scope.attemptPage, attemptsHasMore: false, events: [], eventPage: scope.eventPage, eventsHasMore: false });

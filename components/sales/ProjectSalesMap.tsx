@@ -6,6 +6,8 @@ import { Map as MapIcon, RefreshCw, ZoomIn, ZoomOut } from 'lucide-react';
 import { projectMapApi, type ProjectMapApi } from '@/lib/sales/projectMapClient';
 import { buildProjectMap, type ProjectMapRegion, type ProjectMapSnapshot } from '@/lib/sales/projectMapContracts';
 import { bookingRoundLabel, displayBookingHistoryDate } from '@/lib/sales/importedBookingHistory';
+import { displayTransferDate } from '@/lib/sales/postBookingContracts';
+import type { RentalProjectRow } from '@/lib/sales/rentalProjectReadContracts';
 import type { ProjectSaleRow } from '@/lib/sales/projectSalesContracts';
 
 interface Props { projectName: string; api?: ProjectMapApi }
@@ -13,6 +15,7 @@ const statuses = {
   available: { label: 'ว่าง', style: 'border-slate-400 bg-white text-slate-800' },
   booked: { label: 'จอง / อยู่ระหว่างดำเนินการ', style: 'border-emerald-600 bg-emerald-50 text-emerald-950' },
   transferred: { label: 'โอนแล้ว / ส่งมอบ', style: 'border-violet-600 bg-violet-50 text-violet-950' },
+  rented: { label: 'เช่า / อยู่ระหว่างสัญญา', style: 'border-cyan-600 bg-cyan-50 text-cyan-950' },
   unknown: { label: 'ต้องตรวจสอบ', style: 'border-amber-600 bg-amber-50 text-amber-950' },
 } as const;
 const buttonClass = 'inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:opacity-40';
@@ -35,6 +38,20 @@ function SaleDetails({ sale }: { sale: ProjectSaleRow }) {
   </div>;
 }
 
+
+const rentalStatuses = { active: 'ใช้งาน', renewed: 'ต่อสัญญาแล้ว', ended: 'สิ้นสุดแล้ว', converted: 'เปลี่ยนเป็นซื้อแล้ว' };
+function RentalDetails({ rental }: { rental: RentalProjectRow }) {
+  return <div className="space-y-2 text-sm">
+    <p className="font-semibold text-slate-900">{rental.customerName}</p>
+    <p>โทร: {rental.customerPhone ?? 'ไม่ทราบ'}</p>
+    <p>โปรแกรม {rental.programType.slice(-1).toUpperCase()} · {rentalStatuses[rental.status]}</p>
+    <p>เริ่มสัญญา: {displayTransferDate(rental.startDate)} · ครบสัญญา: {displayTransferDate(rental.endDate)}</p>
+    {rental.endedDate !== null && <p>{rental.status === 'converted' ? 'วันที่เปลี่ยนเป็นซื้อ' : 'สิ้นสุดจริง'}: {displayTransferDate(rental.endedDate)}</p>}
+    <Link prefetch={false} className={linkClass} href={`/sales-crm/rentals?${new URLSearchParams({ customerId: rental.customerId, projectName: rental.projectName, contractId: rental.contractId })}`}
+      aria-label={`สัญญาเช่าของ ${rental.customerName} รหัส ${rental.contractId}`}>เปิดสัญญาเช่าลูกค้า →</Link>
+  </div>;
+}
+
 function PlotDetails({ region }: { region: ProjectMapRegion }) {
   return <aside aria-label={`รายละเอียดแปลง ${region.name}`} className="min-w-0 rounded-xl border border-slate-200 bg-white p-4 lg:w-80 lg:shrink-0">
     <h3 className="text-lg font-bold text-slate-900">แปลง {region.name}</h3>
@@ -42,17 +59,22 @@ function PlotDetails({ region }: { region: ProjectMapRegion }) {
     <p className="mt-2 text-sm text-slate-600">งานก่อสร้าง: {region.isCompleted === true ? 'สร้างเสร็จ' : region.isCompleted === false ? 'ยังไม่เสร็จ' : 'ไม่ทราบ'} (แยกจากสถานะการขาย)</p>
     {region.status === 'unknown' && <p className="my-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-950">ข้อมูลสถานะแปลงหรือการจองไม่ตรงกัน / ยังจับคู่ไม่ได้ กรุณาให้ Admin ตรวจสอบ ไม่ถือเป็นแปลงว่าง</p>}
     {region.currentSale && <section aria-label="ลูกค้าปัจจุบัน" className="mt-4 border-t border-slate-100 pt-3"><h4 className="mb-2 font-semibold">ลูกค้าปัจจุบัน</h4><SaleDetails sale={region.currentSale} /></section>}
+    {region.currentRental && <section aria-label="ลูกค้าเช่าปัจจุบัน" className="mt-4 border-t border-slate-100 pt-3"><h4 className="mb-2 font-semibold">ลูกค้าเช่าปัจจุบัน</h4><RentalDetails rental={region.currentRental} /></section>}
     {region.status === 'available' && <div className="mt-4 space-y-2"><p className="text-sm text-slate-600">เลือกลูกค้าและทำรายการจองผ่านระบบส่วนกลาง</p><Link href="/sales-crm" prefetch={false} className={linkClass}>Lead ส่วนกลาง →</Link></div>}
     <section aria-label="ประวัติของแปลง" className="mt-5 border-t border-slate-100 pt-3">
       <h4 className="font-semibold">ประวัติการจอง ({region.history.length})</h4>
       {region.history.length === 0 ? <p className="mt-2 text-sm text-slate-500">ไม่พบประวัติการจองที่ผูกกับแปลงนี้</p> :
         <ul className="mt-3 space-y-3">{region.history.map(sale => <li key={sale.saleId} className="rounded-lg border border-slate-200 p-3"><SaleDetails sale={sale} /></li>)}</ul>}
     </section>
+    {region.rentalHistory.length > 0 && <section aria-label="ประวัติสัญญาเช่าของแปลง" className="mt-5 border-t border-slate-100 pt-3"><h4 className="font-semibold">ประวัติสัญญาเช่า ({region.rentalHistory.length})</h4><ul className="mt-3 space-y-3">{region.rentalHistory.map(rental => <li key={rental.contractId} className="rounded-lg border border-slate-200 p-3"><RentalDetails rental={rental} /></li>)}</ul></section>}
   </aside>;
 }
 
 export default function ProjectSalesMap(props: Props) {
-  return <ProjectMapSession key={props.projectName} {...props} />;
+  const [identityEpoch, setIdentityEpoch] = useState(0);
+  const api = props.api ?? projectMapApi;
+  useEffect(() => api.watchIdentity?.(() => setIdentityEpoch(value => value + 1)), [api]);
+  return <ProjectMapSession key={`${props.projectName}:${identityEpoch}`} {...props} api={api} />;
 }
 
 function ProjectMapSession({ projectName, api = projectMapApi }: Props) {
@@ -100,7 +122,7 @@ function ProjectMapSession({ projectName, api = projectMapApi }: Props) {
     {error && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-950">{error}</p>}
     {snapshot && model && <>
       <p className="text-xs text-slate-500">จำนวนด้านล่างนับเฉพาะแปลงที่วางบนผัง ไม่รวมรายการทะเบียนนอกผัง เช่น งานสาธารณูปโภค</p>
-      <ul aria-label="สถานะแปลง" className="flex flex-wrap gap-2">{(Object.keys(statuses) as Array<keyof typeof statuses>).map(status => <li key={status} className={`rounded-lg border px-3 py-2 text-xs font-semibold ${statuses[status].style}`}>{statuses[status].label}: {unique.filter(region => region.status === status).length}</li>)}</ul>
+      <ul aria-label="สถานะแปลง" className="flex flex-wrap gap-2">{(Object.keys(statuses) as Array<keyof typeof statuses>).filter(status => status !== 'rented' || snapshot.rentalPages !== undefined).map(status => <li key={status} className={`rounded-lg border px-3 py-2 text-xs font-semibold ${statuses[status].style}`}>{statuses[status].label}: {unique.filter(region => region.status === status).length}</li>)}</ul>
       <div className="flex flex-col gap-4 lg:flex-row">
         <div className="min-w-0 flex-1 space-y-3">
           {snapshot.layout.cells.length > 0 ? <>

@@ -9,6 +9,23 @@ export const draftPaths = Object.freeze([
         '11_first_contact_cycle', '12_supabase_cron_preflight', '13_first_contact_system_worker', '14_first_contact_dispatcher']
         .map(name => `sql/sales/${name}_draft.sql`),
 ]);
+export const postBookingDraftPaths = Object.freeze([
+    'sales_workflow_v2_draft.sql', 'sql/sales/04_lead_work_foundation_draft.sql',
+    'sql/sales/05_lead_lifecycle_draft.sql', 'sql/sales/18_booking_history_draft.sql',
+    'sql/sales/19_project_sales_read_draft.sql', 'sql/sales/20_sales_reports_read_draft.sql',
+    'sql/sales/21_post_booking_draft.sql',
+]);
+
+export const customerDealDetailsDraftPath = 'sql/sales/22_customer_deal_details_draft.sql';
+export const rentalLifecycleDraftPath = 'sql/sales/23_rental_lifecycle_draft.sql';
+export const historicalEvidenceDraftPath = 'sql/sales/24_historical_evidence_ledger_draft.sql';
+export const unknownHistoricalEvidenceDraftPath = 'sql/sales/25_unknown_historical_evidence_draft.sql';
+export const reviewedImportDetailsDraftPath = 'sql/sales/26_reviewed_import_details_draft.sql';
+export const sourceBoundCreationDraftPath = 'sql/sales/27_source_bound_customer_creation_draft.sql';
+export const historicalSaleRevisionDraftPath = 'sql/sales/28_historical_sale_revision_draft.sql';
+export const importedHistoryProjectionDraftPath = 'sql/sales/29_imported_history_projection_draft.sql';
+export const rentalSourceRetirementDraftPath = 'sql/sales/30_rental_source_retirement_draft.sql';
+export const excelEvidenceDraftPath = 'sql/sales/excel_report_evidence_draft.sql';
 
 export function localConnectionArgs(port, database, user) {
     if (!Number.isInteger(port) || port < 1024 || port > 65535
@@ -78,7 +95,7 @@ export function verifyClusterIdentity(actual, expected) {
 }
 
 export function syntheticDraftBody(path, source) {
-    if (!draftPaths.includes(path)) throw new Error('Draft is not allowlisted');
+    if (!draftPaths.includes(path) && !postBookingDraftPaths.includes(path) && ![customerDealDetailsDraftPath,rentalLifecycleDraftPath,historicalEvidenceDraftPath,unknownHistoricalEvidenceDraftPath,reviewedImportDetailsDraftPath,sourceBoundCreationDraftPath,historicalSaleRevisionDraftPath,importedHistoryProjectionDraftPath,rentalSourceRetirementDraftPath,excelEvidenceDraftPath,'sql/sales/31_customer_source_membership_draft.sql','sql/sales/32_customer_replacement_recovery_draft.sql','sql/sales/33_customer_replacement_operator_draft.sql','sql/sales/34_canonical_workspace_read_draft.sql','sql/sales/35_reviewed_post_booking_activation_draft.sql'].includes(path)) throw new Error('Draft is not allowlisted');
     assertPlainSql(source);
     // Only the known single guard wrapper is omitted IN MEMORY, never in source files.
     // The caller must verify its newly-created cluster before loading this body.

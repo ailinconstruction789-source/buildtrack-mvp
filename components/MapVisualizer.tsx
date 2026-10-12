@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import WeeklyProgressReportModal from './WeeklyProgressReportModal';
 import MeterStatusBadges from './MeterStatusBadges';
+import { buildMapAssignmentIndex, buildMapHistoryIndex, buildMapTaskIndex, indexFirstBy } from '@/lib/constructionMapIndex';
 
 interface MapVisualizerProps {
   view: string;
@@ -158,6 +159,18 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
   const [isWeeklyReportOpen, setIsWeeklyReportOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
 
+  const plotsById = useMemo(() => indexFirstBy(plots || [], p => p.id), [plots]);
+  const normalizedPlotsById = useMemo(() => indexFirstBy(plots || [], p => String(p.id)), [plots]);
+  const houseTypesById = useMemo(() => indexFirstBy(houseTypes || [], h => h.id), [houseTypes]);
+  const normalizedHouseTypesById = useMemo(() => indexFirstBy(houseTypes || [], h => String(h.id)), [houseTypes]);
+  const taskIndex = useMemo(() => buildMapTaskIndex(taskTemplates || []), [taskTemplates]);
+  const historyIndex = useMemo(() => buildMapHistoryIndex(allUpdatesRecord || [], taskIndex.grassTaskIds), [allUpdatesRecord, taskIndex]);
+  const assignmentIndex = useMemo(() => buildMapAssignmentIndex(assignments || [], taskIndex.grassTaskIds), [assignments, taskIndex]);
+  const cellGrid = useMemo(() => gridMap || indexFirstBy(
+    (mapGrid || []).filter(c => typeof c.x === 'number' && typeof c.y === 'number' && (c.type === 'plot' || c.type === 'road' || c.type === 'park')),
+    c => `${c.x}-${c.y}`,
+  ), [mapGrid, gridMap]);
+
   // 👷‍♂️ วิศวกรโครงการ (Site Engineer - หมวกขาว) และ 👷‍♀️ QC (หมวกเขียว) ที่เข้าตรวจในแปลงวันนี้
   const roleActivitiesToday = useMemo(() => {
     const today = new Date().toLocaleDateString('en-CA');
@@ -223,8 +236,9 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
 
   // 🚀 Performance Fix: Memoize the Task List for the Dropdown
   const uniqueTaskNamesList = useMemo(() => {
+    const projectHouseTypes = new Set(plots?.filter((p: any) => p.project_name === selectedProject?.name).map((p: any) => p.house_type_id));
     return Array.from(new Set(
-      taskTemplates?.filter((t:any) => plots.some((p:any) => p.house_type_id === t.house_type_id && p.project_name === selectedProject?.name))
+      taskTemplates?.filter((t:any) => projectHouseTypes.has(t.house_type_id))
       .map((t:any) => t.task_name)
     )).sort();
   }, [taskTemplates, plots, selectedProject?.name]);
@@ -360,7 +374,7 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
 
                      {/* 🌟 UX Blueprint Map 🌟 */}
                      {(() => {
-                       const isDrawingInfraGlobal = isEditMapMode && mapTool === 'plot' && mapSelectedPlot && houseTypes?.find((h: any) => String(h.id) === String(plots.find((p: any) => String(p.id) === String(mapSelectedPlot))?.house_type_id))?.is_infrastructure;
+                       const isDrawingInfraGlobal = isEditMapMode && mapTool === 'plot' && mapSelectedPlot && normalizedHouseTypesById.get(String(normalizedPlotsById.get(String(mapSelectedPlot))?.house_type_id))?.is_infrastructure;
                        return (
                        <div className="w-full overflow-auto pb-4 custom-scrollbar bg-slate-300 rounded-xl sm:rounded-3xl border-2 sm:border-4 border-slate-400 shadow-inner relative" style={{ height: isMobileLayout ? '350px' : '75vh' }}>
 
@@ -392,14 +406,14 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                              const t = (e.target as HTMLElement).closest('[data-plot-id]');
                              const plotId = t?.getAttribute('data-plot-id');
                               if (plotId) {
-                                const plotInfo = plots.find(p => p.id === plotId);
+                                const plotInfo = plotsById.get(plotId);
                                 if (plotInfo) { handlePlotClick(plotInfo); }
                               }
                            }}
                          >
                            {Array.from({length: gridCols * gridRows}).map((_, i) => {
                              const x = i % gridCols, y = Math.floor(i / gridCols);
-                             const cellData = gridMap ? gridMap.get(`${x}-${y}`) : mapGrid.find((c: any) => c.x === x && c.y === y && (c.type === 'plot' || c.type === 'road' || c.type === 'park'));
+                             const cellData = cellGrid.get(`${x}-${y}`);
                              
                              let baseStyles = 'border-r border-b border-transparent '; // Remove solid grid lines
                              if (isEditMapMode && !cellData) baseStyles += 'hover:bg-slate-400/30 ';
@@ -443,13 +457,13 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                          
                          {/* 🌟 Infrastructure Edge Lines 🌟 */}
                          {mapGrid.filter((c: any) => c.type === 'infra-h').map((c: any) => {
-                              const plotInfo = plots.find((p: any) => p.id === c.plotId);
+                              const plotInfo = plotsById.get(c.plotId);
                               const statusInfo = !isEditMapMode && plotInfo && plotStatusCache[plotInfo.id] ? plotStatusCache[plotInfo.id] : { status: 'on-track', actual: 0 };
                               
                               let infraColor = "bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.6)]"; // default
                               if (plotInfo) {
                                   if (isEditMapMode) {
-                                      const hName = houseTypes?.find((h: any) => h.id === plotInfo.house_type_id)?.name || '';
+                                      const hName = houseTypesById.get(plotInfo.house_type_id)?.name || '';
                                       if (hName.includes('ทางเท้า')) infraColor = "bg-slate-600";
                                       else if (hName.includes('ประปา') || hName.includes('น้ำ')) infraColor = "bg-sky-500";
                                       else if (hName.includes('ไฟ')) infraColor = "bg-yellow-400";
@@ -479,13 +493,13 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                               );
                          })}
                          {mapGrid.filter((c: any) => c.type === 'infra-v').map((c: any) => {
-                              const plotInfo = plots.find((p: any) => p.id === c.plotId);
+                              const plotInfo = plotsById.get(c.plotId);
                               const statusInfo = !isEditMapMode && plotInfo && plotStatusCache[plotInfo.id] ? plotStatusCache[plotInfo.id] : { status: 'on-track', actual: 0 };
                               
                               let infraColor = "bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.6)]"; // default
                               if (plotInfo) {
                                   if (isEditMapMode) {
-                                      const hName = houseTypes?.find((h: any) => h.id === plotInfo.house_type_id)?.name || '';
+                                      const hName = houseTypesById.get(plotInfo.house_type_id)?.name || '';
                                       if (hName.includes('ทางเท้า')) infraColor = "bg-slate-600";
                                       else if (hName.includes('ประปา') || hName.includes('น้ำ')) infraColor = "bg-sky-500";
                                       else if (hName.includes('ไฟ')) infraColor = "bg-yellow-400";
@@ -518,10 +532,10 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
 
                           {/* 🌟 UX Blueprint: Smart Hover Tooltips & Contractor Filter 🌟 */}
                          {Object.entries(plotBounds).map(([plotId, bounds]:any) => {
-                           const plotInfo = plots.find((p: any) => p.id === plotId); if (!plotInfo) return null;
+                           const plotInfo = plotsById.get(plotId); if (!plotInfo) return null;
                            const w = bounds.maxX - bounds.minX + 1, h = bounds.maxY - bounds.minY + 1;
 
-                           const isInfra = houseTypes?.find((h: any) => h.id === plotInfo.house_type_id)?.is_infrastructure || false;
+                           const isInfra = houseTypesById.get(plotInfo.house_type_id)?.is_infrastructure || false;
                            
                            let utilityModeClass = '';
                            
@@ -545,30 +559,21 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                            const statusInfo = isEditMapMode ? { planned: 0, actual: 0, status: 'on-track', label: '' } : (plotStatusCache[plotInfo.id] || { planned: 0, actual: 0, status: 'on-track', label: '' });
 
                            // 🌟 หางานล่าสุดที่มีการอัปเดตของแปลงนี้
-                           const plotUpdates = allUpdatesRecord?.filter((u: any) => u.plot_id === plotInfo.id) || [];
-                           const latestUpdate = plotUpdates.length > 0 ? plotUpdates[plotUpdates.length - 1] : null;
-                           const latestTask = latestUpdate ? taskTemplates.find((t: any) => t.id === latestUpdate.task_template_id) : null;
+                           const latestUpdate = historyIndex.latestByPlot.get(plotInfo.id);
+                           const latestTask = latestUpdate ? taskIndex.byId.get(latestUpdate.task_template_id) : null;
                            const latestTaskStr = latestTask ? `${latestTask.task_name} (${latestUpdate.progress}%)` : 'ยังไม่มีงานอัปเดต';
 
                            // 🌿 ตรวจสอบสถานะงาน "งานปูหญ้า" ว่าเสร็จ 100% หรือไม่
-                           const grassTaskTemplates = taskTemplates?.filter((t: any) => t.task_name.includes('งานปูหญ้า')) || [];
-                           let isGrassPlanted = false;
-                           if (grassTaskTemplates.length > 0) {
-                              const grassTemplateIds = grassTaskTemplates.map((t: any) => String(t.id));
-                              const grassUpdates = plotUpdates.filter((u: any) => grassTemplateIds.includes(String(u.task_template_id)));
-                              if (grassUpdates.length > 0) {
-                                 const latestGrassUpdate = grassUpdates.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
-                                 if (Number(latestGrassUpdate.progress) === 100) isGrassPlanted = true;
-                              } else {
-                                 const grassAssignment = assignments?.find((a: any) => String(a.plot_id) === String(plotInfo.id) && grassTemplateIds.includes(String(a.task_template_id)));
-                                 if (grassAssignment && Number(grassAssignment.current_progress) === 100) isGrassPlanted = true;
-                              }
-                           }
+                           const latestGrassUpdate = historyIndex.latestGrassByPlot.get(plotInfo.id);
+                           const grassAssignment = assignmentIndex.firstGrassByPlot.get(String(plotInfo.id));
+                           const isGrassPlanted = latestGrassUpdate
+                             ? Number(latestGrassUpdate.progress) === 100
+                             : Number(grassAssignment?.current_progress) === 100;
 
                            // ดักจับว่าแปลงนี้ใช้ช่างที่เรากำลังค้นหาอยู่หรือไม่
 
                             const hasSearchedTask = searchTask.trim() !== '';
-                            const plotTaskMatch = hasSearchedTask ? taskTemplates?.find((t: any) => String(t.house_type_id) === String(plotInfo.house_type_id) && t.task_name === searchTask) : null;
+                            const plotTaskMatch = hasSearchedTask ? taskIndex.byNormalizedHouseAndName.get(String(plotInfo.house_type_id))?.get(searchTask) : null;
                             const isMatchTask = !!plotTaskMatch;
 
                             const isActiveToday = plotsActiveToday.has(plotId) || plotsActiveToday.has(String(plotId));
@@ -585,7 +590,7 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                                  // ดึงข้อมูล Schedule และ Update
                                  const tKey = `${plotId}-${plotTaskMatch.id}`;
                                  const tPlan = schedules?.[tKey];
-                                 const tAct = assignments?.slice().reverse().find((a: any) => a.plot_id === plotId && a.task_template_id === plotTaskMatch.id);
+                                 const tAct = assignmentIndex.lastByPlotAndTask.get(plotId)?.get(plotTaskMatch.id);
                                  
                                  const currentProgress = tAct?.current_progress || 0;
                                  
@@ -883,18 +888,18 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                          {/* 🌟 🌟 Layer ที่ 2: ป้ายสถานะงานแบบลอย (Floating Badge) 🌟 🌟 
                               แยกออกมาวาดทีหลัง เพื่อให้ป้ายอยู่บนสุดเสมอ ไม่ถูกบ้านแปลงด้านล่างทับ */}
                          {Object.entries(plotBounds).map(([plotId, bounds]:any) => {
-                           const plotInfo = plots.find((p: any) => p.id === plotId); if (!plotInfo) return null;
+                           const plotInfo = plotsById.get(plotId); if (!plotInfo) return null;
                            const w = bounds.maxX - bounds.minX + 1, h = bounds.maxY - bounds.minY + 1;
                            
                            const hasSearchedTask = searchTask.trim() !== '';
-                           const plotTaskMatch = hasSearchedTask ? taskTemplates?.find((t: any) => t.house_type_id === plotInfo.house_type_id && t.task_name === searchTask) : null;
+                           const plotTaskMatch = hasSearchedTask ? taskIndex.byHouseAndName.get(plotInfo.house_type_id)?.get(searchTask) : null;
                            const isMatchTask = !!plotTaskMatch;
 
                            if (!hasSearchedTask || !isMatchTask) return null;
 
                            const tKey = `${plotId}-${plotTaskMatch.id}`;
                            const tPlan = schedules?.[tKey];
-                           const tAct = assignments?.slice().reverse().find((a: any) => a.plot_id === plotId && a.task_template_id === plotTaskMatch.id);
+                           const tAct = assignmentIndex.lastByPlotAndTask.get(plotId)?.get(plotTaskMatch.id);
                            
                            const currentProgress = tAct?.current_progress || 0;
                            
@@ -981,9 +986,8 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                         const statusInfo = plotStatusCache[plot.id] || { actual: 0, planned: 0, status: 'none' };
                         
                         // 🌟 หางานล่าสุดที่มีการอัปเดตของการ์ดแปลงนี้
-                        const plotUpdates = allUpdatesRecord?.filter((u: any) => u.plot_id === plot.id) || [];
-                        const latestUpdate = plotUpdates.length > 0 ? plotUpdates[plotUpdates.length - 1] : null;
-                        const latestTask = latestUpdate ? taskTemplates.find((t: any) => t.id === latestUpdate.task_template_id) : null;
+                        const latestUpdate = historyIndex.latestByPlot.get(plot.id);
+                        const latestTask = latestUpdate ? taskIndex.byId.get(latestUpdate.task_template_id) : null;
                         const latestTaskStr = latestTask ? `${latestTask.task_name} (${latestUpdate.progress}%)` : 'ยังไม่มีงานอัปเดต';
 
                         return (

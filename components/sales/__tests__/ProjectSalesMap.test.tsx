@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@/lib/supabase', () => ({ supabase: {} }));
 import ProjectSalesMap from '../ProjectSalesMap';
 import type { ProjectMapSnapshot } from '@/lib/sales/projectMapContracts';
+import type { RentalProjectRow } from '@/lib/sales/rentalProjectReadContracts';
+import { pid } from '@/lib/sales/__tests__/projectSalesFixtures';
 import { projectCustomerId, projectSalesSnapshot } from './projectSalesFixtures';
 
 function fixture(projectName = 'โครงการ A'): ProjectMapSnapshot {
@@ -127,4 +129,18 @@ describe('central booking read-only project map', () => {
     expect(screen.getByRole('button', { name: 'คืนขนาดผัง 100%' })).toHaveTextContent('100%');
     expect(screen.getByRole('region', { name: 'พื้นที่ผังแปลง เลื่อนเพื่อดูทั้งโครงการ' })).toHaveAttribute('tabindex', '0');
   });
+});
+
+
+function rentalFixture(overrides:Partial<RentalProjectRow>={}) {
+ const s=fixture();s.salePages[0].rows=[];s.plots[1].hasCustomer=true;
+ const row:RentalProjectRow={contractId:pid(70),customerId:pid(71),interestId:pid(72),ownerUserId:s.actor.userId,projectName:s.projectName,plotId:'A-2',customerName:'Verified renter',customerPhone:'0800000000',programType:'program_c',status:'active',revision:pid(73),startDate:'2026-01-01',endDate:'2026-12-31',endedDate:null,convertedSaleId:null,...overrides};
+ s.rentalPages=[{projectName:s.projectName,actor:s.actor,snapshotRevision:'a'.repeat(32),page:0,hasMore:false,rows:[row]}];return s;
+}
+describe('canonical rental links on read-only map',()=>{
+ it('shows verified current rental and exact customer/project/contract link without legacy lead',async()=>{const api={read:vi.fn(async()=>rentalFixture())};render(<ProjectSalesMap projectName="โครงการ A" api={api}/>);fireEvent.click(await screen.findByRole('button',{name:'แปลง 2 — เช่า / อยู่ระหว่างสัญญา'}));const section=within(screen.getByRole('region',{name:'ลูกค้าเช่าปัจจุบัน'}));expect(section.getByText('Verified renter')).toBeInTheDocument();expect(section.getByText('โปรแกรม C · ใช้งาน')).toBeInTheDocument();expect(section.getByRole('link')).toHaveAttribute('href',`/sales-crm/rentals?${new URLSearchParams({customerId:pid(71),projectName:'โครงการ A',contractId:pid(70)})}`);expect(screen.queryByRole('textbox')).not.toBeInTheDocument();expect(within(screen.getByRole('list',{name:'สถานะแปลง'})).getByText('เช่า / อยู่ระหว่างสัญญา: 1')).toBeInTheDocument();});
+ it.each(['ended','converted'] as const)('keeps exact %s rental history link available for owner read role',async status=>{const s=rentalFixture({status,endedDate:'2026-10-09',convertedSaleId:status==='converted'?pid(74):null});s.actor.role='owner';s.rentalPages![0].actor.role='owner';s.plots[1].hasCustomer=false;render(<ProjectSalesMap projectName="โครงการ A" api={{read:vi.fn(async()=>s)}}/>);fireEvent.click(await screen.findByRole('button',{name:'แปลง 2 — ว่าง'}));expect(screen.queryByRole('region',{name:'ลูกค้าเช่าปัจจุบัน'})).not.toBeInTheDocument();const history=within(screen.getByRole('region',{name:'ประวัติสัญญาเช่าของแปลง'}));expect(history.getByRole('link')).toHaveAttribute('href',expect.stringContaining(`contractId=${pid(70)}`));expect(history.getByText(status==='ended'?'โปรแกรม C · สิ้นสุดแล้ว':'โปรแกรม C · เปลี่ยนเป็นซื้อแล้ว')).toBeInTheDocument();});
+ it('preserves old map legend exactly when rental feature is absent',async()=>{render(<ProjectSalesMap projectName="โครงการ A" api={apiFor()}/>);await bookedButton();expect(within(screen.getByRole('list',{name:'สถานะแปลง'})).queryByText(/เช่า/)).not.toBeInTheDocument();});
+ it('hides previous account renter and contract links immediately on auth change, rejects its late refresh',async()=>{let onChange!:()=>void;const pending=deferred<ProjectMapSnapshot>();const next=fixture();next.salePages[0].rows=[];next.plots[1].hasCustomer=false;const api={read:vi.fn().mockResolvedValueOnce(rentalFixture()).mockReturnValueOnce(pending.promise).mockResolvedValue(next),watchIdentity:vi.fn((notify:()=>void)=>{onChange=notify;return vi.fn();})};render(<ProjectSalesMap projectName="โครงการ A" api={api}/>);fireEvent.click(await screen.findByRole('button',{name:'แปลง 2 — เช่า / อยู่ระหว่างสัญญา'}));expect(screen.getAllByText('Verified renter').length).toBeGreaterThan(0);fireEvent.click(screen.getByRole('button',{name:'โหลดผังล่าสุด'}));await act(async()=>{});await act(async()=>onChange());await screen.findByRole('button',{name:'แปลง 2 — ว่าง'});expect(screen.queryByText('Verified renter')).not.toBeInTheDocument();expect(screen.queryByRole('link',{name:/สัญญาเช่าของ/})).not.toBeInTheDocument();await act(async()=>pending.resolve(rentalFixture()));expect(screen.queryByRole('button',{name:'แปลง 2 — เช่า / อยู่ระหว่างสัญญา'})).not.toBeInTheDocument();});
+ it('hides current rental/selection on idle account switch without refresh',async()=>{let onChange!:()=>void;const next=fixture();const api={read:vi.fn().mockResolvedValueOnce(rentalFixture()).mockResolvedValue(next),watchIdentity:vi.fn((notify:()=>void)=>{onChange=notify;return vi.fn();})};render(<ProjectSalesMap projectName="โครงการ A" api={api}/>);fireEvent.click(await screen.findByRole('button',{name:'แปลง 2 — เช่า / อยู่ระหว่างสัญญา'}));await act(async()=>onChange());expect(screen.queryByText('Verified renter')).not.toBeInTheDocument();expect(screen.queryByRole('complementary')).not.toBeInTheDocument();});
 });

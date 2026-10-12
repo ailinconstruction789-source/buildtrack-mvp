@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { clearPostBookingPending, postBookingPendingKey, readPostBookingPending, writePostBookingPending } from '../postBookingPending';
-import { pbid, pbInput, pbTransfer } from './postBookingFixtures';
+import { pbid, pbInput, pbTransfer, pbHandover } from './postBookingFixtures';
 function storage() { const values = new Map<string, string>(); return { getItem: (key: string) => values.get(key) ?? null,
   setItem: (key: string, value: string) => { values.set(key, value); }, removeItem: (key: string) => { values.delete(key); } }; }
 describe('immutable post-booking pending commands', () => {
@@ -36,4 +36,13 @@ describe('immutable post-booking pending commands', () => {
     const store = storage(); expect(() => writePostBookingPending(pbid(6), pbInput(), { ...store, setItem: () => {} })).toThrow();
     writePostBookingPending(pbid(6), pbInput(), store); expect(() => clearPostBookingPending(pbid(6), pbInput(), { ...store, removeItem: () => {} })).toThrow();
   });
+});
+
+
+it('retains an uncertain handover day and its original request ID across actor-scoped retries', () => {
+  const store = storage(), value = pbHandover(); writePostBookingPending(pbid(6), value, store);
+  expect(readPostBookingPending(pbid(6), store)).toEqual(value); expect(readPostBookingPending(pbid(99), store)).toBeNull();
+  expect(() => writePostBookingPending(pbid(6), { ...value, handoverDate: '2026-09-24' }, store)).toThrow();
+  expect(() => writePostBookingPending(pbid(6), { ...value, requestId: pbid(90) }, store)).toThrow();
+  expect(readPostBookingPending(pbid(6), store)).toEqual(value);
 });

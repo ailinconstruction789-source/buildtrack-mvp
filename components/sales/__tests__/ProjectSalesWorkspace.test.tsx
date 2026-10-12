@@ -135,10 +135,10 @@ describe('read-only project booked customers', () => {
     expect(rows()).toHaveLength(2);
     const old = within(screen.getByRole('row', { name: `การจอง ${oldProjectSaleId}` }));
     expect(old.getByText('ไม่ทราบแปลง')).toBeInTheDocument(); expect(old.getByText('ไม่ทราบเบอร์โทร')).toBeInTheDocument();
-    expect(old.getByText('ราคาขายบ้าน: ไม่ทราบ')).toBeInTheDocument(); expect(old.getByText('วันที่จอง: ไม่ทราบเวลา')).toBeInTheDocument();
+    expect(old.getByText('ราคาขายปัจจุบัน: ไม่ทราบ')).toBeInTheDocument(); expect(old.getByText('วันที่จอง: ไม่ทราบเวลา')).toBeInTheDocument();
     expect(old.getByText(/ลูกค้าขอยกเลิกรอบแรก/)).toBeInTheDocument(); expect(old.getByText(/วันที่ยกเลิก:/)).not.toHaveTextContent('ไม่ทราบเวลา');
     const current = within(screen.getByRole('row', { name: `การจอง ${newProjectSaleId}` }));
-    expect(current.getByText('ราคาขายบ้าน: 1,990,000.00 บาท')).toBeInTheDocument();
+    expect(current.getByText('ราคาขายปัจจุบัน: 1,990,000.00 บาท')).toBeInTheDocument();
     expect(current.getByText(`อ้างอิงจองเดิม ${oldProjectSaleId}`)).toBeInTheDocument();
     expect(screen.getAllByText('Sales ผู้ดูแล (คุณ)')).toHaveLength(2);
     expect(screen.getByText(/ไม่ใช่ยอดรวม \/ KPI/)).toBeInTheDocument();

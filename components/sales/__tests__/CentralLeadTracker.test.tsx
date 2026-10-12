@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import CentralLeadTracker from '../CentralLeadTracker';
 
@@ -30,6 +30,7 @@ const mockCustomers = [
   },
   {
     id: 'c-lost-3',
+    leadId: 'c-lost-3',
     name: 'คุณสมหญิง ไม่สนใจ',
     phone: '0833333333',
     channel: 'Facebook',
@@ -68,10 +69,40 @@ vi.mock('@/lib/supabase', () => ({
     }))
   }
 }));
+vi.mock('@/lib/sales/leadActivity', () => ({
+  readLeadActivitySnapshot: async (customer: unknown) => ({ lead: customer, historyExists: false }),
+  writeLeadActivitySummary: vi.fn().mockResolvedValue(undefined),
+}));
 
 describe('CentralLeadTracker Smart Views (Active / Booked / Lost / All)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('uses eligible sales staff instead of historical owner-filter entries in follow-up', () => {
+    const snapshot = {
+      ...mockSnapshot,
+      search: {
+        ...mockSnapshot.search,
+        owners: [...mockSnapshot.search.owners, { userId: 'foreman', displayName: 'Foreman A' }]
+      }
+    };
+    render(
+      <CentralLeadTracker
+        snapshot={snapshot}
+        filters={snapshot.search.filters}
+        onFilterChange={vi.fn()}
+        onApply={vi.fn()}
+        leadWorkEnabled={true}
+        bookingEnabled={true}
+        visitsEnabled={true}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'ข้อมูลด่วนและจัดการ คุณสมชาย กำลังติดตาม' }));
+    fireEvent.click(screen.getByRole('button', { name: 'ติดตามโครงการ โครงการ A ของ คุณสมชาย กำลังติดตาม' }));
+    const ownerSelect = screen.getByText('ผู้บันทึก / Sales ผู้ดูแล').parentElement!.querySelector('select')!;
+    expect(within(ownerSelect).getAllByRole('option').map(option => option.textContent)).toEqual(['Sales A']);
+    expect(within(ownerSelect).queryByRole('option', { name: 'Foreman A' })).not.toBeInTheDocument();
   });
 
   it('renders Active leads by default and hides Booked and Lost leads from main view', () => {

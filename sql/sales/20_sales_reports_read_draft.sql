@@ -92,7 +92,9 @@ BEGIN
       AND (i.id IS NULL OR c.id IS NULL OR c.merged_into_customer_id IS NOT NULL
         OR owner_role.user_id IS NULL OR owner_role.role<>'sales'
         OR s.crm_stage IS NULL OR s.crm_stage NOT IN ('booked','contracted','downpayment','document_prep','loan_submitted',
-          'loan_rejected','loan_approved','transfer_pending','transferred','handover','cancelled') OR s.booking_round IS NULL
+          'loan_rejected','loan_approved','transfer_pending','transferred','handover','cancelled')
+        OR ((s.booking_round IS NULL OR to_jsonb(s)->>'external_booking_id' IS NOT NULL OR to_jsonb(s)->>'external_source_stage' IS NOT NULL)
+          AND sales_private.crm_booking_imported_history(to_jsonb(s)) IS NULL)
         OR (s.plot_id IS NOT NULL AND (p.id IS NULL OR p.project_name IS DISTINCT FROM i.project_name))
         OR (s.plot_id IS NULL AND s.crm_stage<>'cancelled')
         OR (s.previous_sale_id IS NOT NULL AND (previous.id IS NULL

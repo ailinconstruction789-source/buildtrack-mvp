@@ -164,8 +164,8 @@ function BookingWorkspaceSession({ initialCustomerId = null, api = bookingApi }:
           <div className="flex flex-wrap justify-between gap-2"><h3 className="font-bold">{sale.projectName} · แปลง {sale.plotId ?? 'ไม่ทราบแปลง'} · {bookingRoundLabel(sale.bookingRound)}</h3>
             <span className={sale.stage === 'cancelled' ? 'font-bold text-rose-700' : 'font-bold text-blue-800'}>{stageLabels[sale.stage] ?? sale.stage}</span></div>
           <dl className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
-            <div><dt>ราคาก่อนส่วนลด</dt><dd>{money(sale.listPrice)}</dd></div><div><dt>ส่วนลด</dt><dd>{money(sale.discountAmount)}</dd></div>
-            <div><dt>ราคาขายบ้าน</dt><dd>{money(sale.salePrice)}</dd></div><div><dt>เงินจองที่รับ</dt><dd>{money(sale.depositAmount)}</dd></div>
+            <div><dt>ราคาก่อนส่วนลดตอนจอง</dt><dd>{money(sale.listPrice)}</dd></div><div><dt>ส่วนลดตอนจอง</dt><dd>{money(sale.discountAmount)}</dd></div>
+            <div><dt>ราคาขายปัจจุบัน</dt><dd>{money(sale.salePrice)}</dd></div><div><dt>เงินจองที่รับ</dt><dd>{money(sale.depositAmount)}</dd></div>
             <div><dt>วันที่จอง</dt><dd>{displayBookingHistoryDate(sale.bookedAt, sale.importedHistory?.bookedDate)}</dd></div><div><dt>การชำระ</dt><dd>{sale.paymentMethod === 'cash' ? 'เงินสด' : sale.paymentMethod === 'mortgage' ? 'กู้ธนาคาร' : 'ไม่ทราบ'}</dd></div>
             {sale.importedHistory && ['transferred', 'handover'].includes(sale.stage) && <div><dt>วันที่โอนตามข้อมูลเดิม</dt><dd>{displayBookingHistoryDate(null, sale.importedHistory.transferredDate)}</dd></div>}
           </dl>

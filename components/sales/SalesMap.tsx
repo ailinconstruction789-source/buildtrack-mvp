@@ -11,6 +11,65 @@ interface SalesMapProps {
   onPlotClick?: (plotId: string, status: string, lead?: any) => void;
 }
 
+interface MapPlotIdentity { id: string; plot_name?: string | null }
+interface MapCustomerIdentity {
+  status: string;
+  project_name?: string | null;
+  plot?: string | null;
+  plotId?: string | null;
+  interested_plot_id?: string | null;
+  plotName?: string | null;
+  interested_plot_name?: string | null;
+  booked_at?: string | null;
+  bookingDate?: string | null;
+  booking_date?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+/** Resolve saved layout labels within this project, then select by plot identity. */
+export function matchingMapCustomer<T extends MapCustomerIdentity>(
+  layoutPlotId: string, projectName: string, plots: readonly MapPlotIdentity[], customers: readonly T[],
+): T | null {
+  const compact = (value: string) => value.replace(/\s+/g, '');
+  const prefix = compact(projectName);
+  const projectAlias = /^ไอลิน(\d+)$/.exec(prefix)?.[1];
+  const kantAlias = /^กานต์รวี(\d+)(พิเศษ)?$/.exec(prefix);
+  const prefixes = [prefix, ...(projectAlias ? [`AL${projectAlias}`] : prefix === 'โยริว' ? ['YR']
+    : kantAlias ? [`K${kantAlias[1]}${kantAlias[2] ?? ''}`] : [])];
+  const label = (value: string) => {
+    let result = compact(value);
+    const matchedPrefix = prefixes.find(item => result.toLowerCase().startsWith(item.toLowerCase()));
+    if (matchedPrefix) result = result.slice(matchedPrefix.length).replace(/^-/, '');
+    return /^\d+$/.test(result) ? result.replace(/^0+(?=\d)/, '') : result;
+  };
+  const exactPlot = plots.find(item => item.id === layoutPlotId);
+  const labelMatches = exactPlot ? [] : plots.filter(item => item.plot_name && label(item.plot_name) === label(layoutPlotId));
+  const plot = exactPlot ?? (labelMatches.length === 1 ? labelMatches[0] : undefined);
+  if (!plot) return null;
+  let selected: T | null = null;
+  let selectedTime = -Infinity;
+  for (const customer of customers) {
+    if (['Visit', 'Cancelled', 'Rejected', 'Lost'].includes(customer.status)) continue;
+    if (customer.project_name && customer.project_name !== projectName) continue;
+    const authoritativeId = customer.plotId || customer.interested_plot_id;
+    if (authoritativeId && authoritativeId !== plot.id) continue;
+    const explicitId = authoritativeId || customer.plot;
+    // An explicit different ID cannot be overridden by a coincidentally equal plot label.
+    const sameId = explicitId === plot.id;
+    if (!sameId && explicitId && (!plot.plot_name || label(explicitId) !== label(plot.plot_name))) continue;
+    const legacyLabel = customer.plotName || customer.interested_plot_name || explicitId;
+    const sameLegacyLabel = customer.project_name === projectName && legacyLabel
+      && plot.plot_name && label(legacyLabel) === label(plot.plot_name);
+    if (!sameId && !sameLegacyLabel) continue;
+    const rawTime = customer.booked_at || customer.bookingDate || customer.booking_date || customer.created_at || customer.updated_at;
+    const time = rawTime ? Date.parse(rawTime) : NaN;
+    const comparableTime = Number.isFinite(time) ? time : -Infinity;
+    if (!selected || comparableTime > selectedTime) { selected = customer; selectedTime = comparableTime; }
+  }
+  return selected;
+}
+
 export default function SalesMap({ projectName = 'ไอลิน6', leads = [], onPlotClick }: SalesMapProps) {
   const [loading, setLoading] = useState(true);
   const [mapGrid, setMapGrid] = useState<any[]>([]);
@@ -135,11 +194,22 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
     hasRight: mapGrid.some(c => c.x === x + 1 && c.y === y && c.type === type && (type !== 'plot' || c.plotId === plotId)) 
   });
 
+  const plotCustomers = useMemo(() => new Map(Object.keys(plotBounds).map(plotId =>
+    [plotId, matchingMapCustomer(plotId, projectName, plots, leads)])), [plotBounds, projectName, plots, leads]);
+  const findMatchingLead = (plotId: string) => plotCustomers.get(plotId) ?? null;
+
   const getSalesStatus = (plotId: string) => {
-    // Find if any lead is associated with this plot
-    const lead = leads.find(l => l.plot === plotId && l.status !== 'Visit' && l.status !== 'Cancelled');
-    if (!lead) return 'Available';
-    return lead.status;
+    const lead = findMatchingLead(plotId);
+    if (lead) return lead.status;
+
+    // Check plot flags from DB
+    const currentPlot = plots.find(p => p.id === plotId || p.plot_name === plotId);
+    if (currentPlot) {
+      if (currentPlot.sale_status === 'transferred') return 'Transferred';
+      if (currentPlot.has_customer && currentPlot.sale_status !== 'ready_for_sale') return 'Reserved';
+    }
+
+    return 'Available';
   };
 
   const getSalesColor = (status: string) => {
@@ -225,19 +295,8 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
           {Object.entries(plotBounds).map(([plotId, bounds]:any) => {
             const w = bounds.maxX - bounds.minX + 1;
             const h = bounds.maxY - bounds.minY + 1;
-            const activeLead = leads.find(l => {
-              if (l.status === 'Visit' || l.status === 'Cancelled') return false;
-              if (l.plot === plotId || l.plotName === plotId) return true;
-              if (l.plotName) {
-                const normL = l.plotName.replace(/\s+/g, '');
-                const normId = plotId.replace(/\s+/g, '');
-                const prefix = projectName.replace(/\s+/g, '');
-                if (`${prefix}-${normL}` === normId || `${prefix}${normL}` === normId) return true;
-                if (normL === normId.replace(new RegExp(`^${prefix}-?`), '')) return true;
-              }
-              return false;
-            });
-            const status = activeLead ? activeLead.status : 'Available';
+            const activeLead = findMatchingLead(plotId);
+            const status = getSalesStatus(plotId);
             
             // Check if Construction is finished or grass is planted
             const plotInfo = plots.find((p: any) => {

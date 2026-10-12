@@ -158,7 +158,21 @@ export async function runPostBookingConcurrency({ query }) {
   const staleTransfer = await overlap('distinct transfer requests compare current revision after lock', post(competingTransfer), post(competingTransfer));
   check(staleTransfer.waiting.error?.message.includes('CRM_POST_BOOKING_STALE_STATE'), 'different transfer request cannot repeat terminal date transition');
   check(await query(`SELECT count(*) FROM sales_private.post_booking_events WHERE sale_id='${nine.saleId}' AND command='confirm_transfer';`) === '1', 'competing transfers append only one transfer event');
-  check(await query('SELECT (SELECT count(*) FROM sales_private.booking_write_permits)+(SELECT count(*) FROM sales_private.post_booking_write_permits);') === '0',
+  const handoverPayload = async b => {
+    const value = await payload(b, { command: 'confirm_handover' }); delete value.evidenceNote; delete value.occurredAt;
+    return { ...value, handoverDate: await query("SELECT ((clock_timestamp() AT TIME ZONE 'Asia/Bangkok')::date)::text;") };
+  };
+  const handoverInput = await handoverPayload(six), handoverId = randomUUID();
+  const handover = await overlap('identical handover retry retains one day-only receipt', post(handoverInput, handoverId), post(handoverInput, handoverId));
+  check(handover.waiting.value?.replayed && handover.held.eventId === handover.waiting.value.eventId
+    && handover.held.handoverDate === handoverInput.handoverDate, 'handover retry never duplicates the actual day');
+  check(await query(`SELECT crm_stage='handover' AND crm_handover_date=DATE '${handoverInput.handoverDate}' AND transferred_at IS NULL
+    AND (SELECT count(*)=1 FROM sales_private.post_booking_events WHERE sale_id=s.id AND command='confirm_handover') FROM public.sales s WHERE id='${six.saleId}';`) === 't', 'native handover preserves unknown transfer timestamp');
+  const staleHandoverInput = await handoverPayload(nine);
+  const competingHandover = await overlap('distinct handover requests compare revision after lock', post(staleHandoverInput), post(staleHandoverInput));
+  check(competingHandover.waiting.error?.message.includes('CRM_POST_BOOKING_STALE_STATE'), 'stale handover cannot overwrite the first actual date');
+  check(await query(`SELECT count(*) FROM sales_private.post_booking_events WHERE sale_id='${nine.saleId}' AND command='confirm_handover';`) === '1', 'competing handovers append one event');
+  check(await query('SELECT (SELECT count(*) FROM sales_private.booking_write_permits)+(SELECT count(*) FROM sales_private.post_booking_write_permits)+(SELECT count(*) FROM sales_private.post_booking_external_write_permits);') === '0',
     'all race successes and failures leave no reusable permits');
   return { groups, assertions, syntheticOnly: true, productionCertified: false };
 }

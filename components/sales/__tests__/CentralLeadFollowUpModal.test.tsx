@@ -4,8 +4,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import CentralLeadFollowUpModal from '../CentralLeadFollowUpModal';
 
 const mockInsert = vi.fn().mockResolvedValue({ data: {}, error: null });
-const mockUpdate = vi.fn().mockReturnValue({
-  eq: vi.fn().mockResolvedValue({ data: {}, error: null })
+const leadRow = { id: 'cust-123', customer_name: 'คุณสมศักดิ์ มั่งมี', status: 'Follow Up', notes: 'เคยสนใจบ้านเดี่ยว', updated_at: null };
+const mockUpdate = vi.fn(() => {
+  const query = { eq: () => query, is: () => query, select: () => ({ single: async () => ({ data: { id: leadRow.id }, error: null }) }) };
+  return query;
 });
 const mockSelect = vi.fn().mockReturnValue({
   eq: vi.fn().mockReturnValue({
@@ -37,9 +39,13 @@ vi.mock('@/lib/supabase', () => ({
       }
       if (table === 'leads') {
         return {
-          update: mockUpdate
+          update: mockUpdate,
+          select: () => ({ eq: () => ({ single: async () => ({ data: leadRow, error: null }) }) })
         };
       }
+      if (table === 'sales' || table === 'rental_contracts') return {
+        select: () => ({ eq: () => ({ limit: async () => ({ data: [], error: null }) }) })
+      };
       return {};
     })
   }
@@ -52,6 +58,7 @@ describe('CentralLeadFollowUpModal', () => {
 
   const mockCustomer = {
     id: 'cust-123',
+    leadId: 'cust-123',
     name: 'คุณสมศักดิ์ มั่งมี',
     phone: '081-234-5678',
     channel: 'Facebook',

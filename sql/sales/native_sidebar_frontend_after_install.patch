@@ -1,0 +1,23 @@
+*** Begin Patch
+*** Update File: components/sales/CentralLeadBookingModal.tsx
+@@
+-            customer_id: leadId,
++            native_lead_id: leadId,
+*** Update File: components/sales/CentralLeadFollowUpModal.tsx
+@@
+-        .eq('customer_id', customerId)
++        .eq('native_lead_id', customerId)
+@@
+-            customer_id: latest.lead.id,
++            native_lead_id: latest.lead.id,
+*** Update File: components/sales/__tests__/CentralLeadBookingSafety.test.tsx
+@@
+-    expect(mocks.activity.mock.calls[0][0][0].customer_id).toBe('new-lead-1');
++    expect(mocks.activity.mock.calls[0][0][0].native_lead_id).toBe('new-lead-1');
++    expect(mocks.activity.mock.calls[0][0][0]).not.toHaveProperty('customer_id');
+*** Update File: components/sales/__tests__/CentralLeadFollowUpModal.test.tsx
+@@
+       expect(mockInsert).toHaveBeenCalled();
++      expect(mockInsert.mock.calls[0][0][0].native_lead_id).toBe('cust-123');
++      expect(mockInsert.mock.calls[0][0][0]).not.toHaveProperty('customer_id');
+*** End Patch

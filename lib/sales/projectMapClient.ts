@@ -3,7 +3,7 @@ import { bookingRecord, bookingUuid } from './bookingContracts';
 import { ProjectSalesApiError } from './projectSalesClient';
 import { parseProjectMapName, parseProjectMapSnapshot, type ProjectMapSnapshot } from './projectMapContracts';
 
-export interface ProjectMapApi { read(projectName: string): Promise<ProjectMapSnapshot> }
+export interface ProjectMapApi { read(projectName: string): Promise<ProjectMapSnapshot>; watchIdentity?(onChange: () => void): () => void }
 const unavailable = () => new ProjectSalesApiError('READ_UNAVAILABLE', 'โหลดผังโครงการไม่ได้ กรุณาลองใหม่');
 export const projectMapApi: ProjectMapApi = {
   async read(projectName) {
@@ -27,9 +27,20 @@ export const projectMapApi: ProjectMapApi = {
     }
     if (response.status !== 200 || !('data' in envelope) || 'error' in envelope) throw unavailable();
     try {
+      const current = await supabase.auth.getSession();
+      if (current.error || current.data.session?.user.id !== actor) throw unavailable();
       const snapshot = parseProjectMapSnapshot(envelope.data, name);
       if (snapshot.actor.userId !== actor) throw unavailable();
       return snapshot;
     } catch { throw unavailable(); }
+  },
+  watchIdentity: onChange => {
+    let identity: string | null | undefined;
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      const next = session?.user.id ?? null;
+      if ((identity !== undefined && identity !== next) || (identity === undefined && event !== 'INITIAL_SESSION')) onChange();
+      identity = next;
+    });
+    return () => data.subscription.unsubscribe();
   },
 };

@@ -31,6 +31,15 @@ async function request(path: string, input?: PostBookingInput, actorUserId?: str
     if (typeof failure.code === 'string' && typeof failure.message === 'string') throw new PostBookingApiError(failure.code, failure.message, response.status);
   }
   if (!response.ok || !('data' in envelope) || 'error' in envelope) throw unknown();
+  // A reply started under the previous account must not populate the new session.
+  // A write may already have committed: keep its original pending command uncertain.
+  try {
+    const current = await supabase.auth.getSession();
+    if (current.error || current.data.session?.user.id !== actor) throw new Error('actor changed');
+  } catch {
+    if (input) throw unknown();
+    throw new PostBookingApiError('READ_UNAVAILABLE', 'บัญชีเปลี่ยนระหว่างโหลด กรุณาเปิดรายการใหม่');
+  }
   return { data: envelope.data, status: response.status, actor };
 }
 export const postBookingApi: PostBookingApi = {

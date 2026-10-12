@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Key, 
   XCircle, 
@@ -22,6 +22,9 @@ import {
   Plus
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { canStartSalesDeal } from '@/lib/sales/leadStage';
+import { selectSalesStaffName } from '@/lib/sales/salesStaff';
+import { useSalesStaffOptions } from '@/hooks/useSalesStaffOptions';
 import { 
   Lead, 
   RentalProgramType, 
@@ -30,6 +33,7 @@ import {
 } from '@/types/sales';
 import { calculateRentalTerms } from '@/lib/rentalHelper';
 import LeadPicker from './LeadPicker';
+import SalesOverlay from './SalesOverlay';
 
 interface RentalContractModalProps {
   isOpen: boolean;
@@ -49,9 +53,10 @@ export default function RentalContractModal({
   plotId,
   projectName = 'ไอลิน สันทราย 2',
   user,
-  salesOwners = [],
+  salesOwners: providedSalesOwners,
   onSaved
 }: RentalContractModalProps) {
+  const salesOwners = useSalesStaffOptions(isOpen, providedSalesOwners, String(user?.id ?? user?.username ?? ''));
   const [selectedLead, setSelectedLead] = useState<any | null>(initialLead || null);
   const [isNewLeadMode, setIsNewLeadMode] = useState(false);
   const [selectedProgram, setSelectedProgram] = useState<RentalProgramType>('program_a');
@@ -75,6 +80,18 @@ export default function RentalContractModal({
 
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const saveProgress = useRef<{ completed: number; steps: (() => Promise<void>)[] } | null>(null);
+  const busy = useRef(false);
+  const scope = `${isOpen}:${initialLead?.id || ''}:${plotId || ''}:${user?.id || user?.username || ''}`;
+  const currentScope = useRef(scope);
+  currentScope.current = scope;
+  useEffect(() => {
+    saveProgress.current = null;
+    busy.current = false;
+    setSubmitting(false);
+    setErrorMsg(null);
+  }, [scope]);
+
 
   // Handle lead selection from LeadPicker
   const handleLeadSelect = (chosenLead: any | null) => {
@@ -83,9 +100,9 @@ export default function RentalContractModal({
       setTenantName(chosenLead.customer_name || '');
       setTenantPhone(chosenLead.phone || '');
       // Default closer is the logged in user (ID ปัจจุบัน)
-      const defaultAgent = user?.displayName || user?.username || user?.name || salesOwners?.[0]?.displayName || 'ทีมขาย';
+      const defaultAgent = selectSalesStaffName(salesOwners, [user?.displayName, user?.username, user?.name]);
       setAgentName(defaultAgent);
-      setOwnerSource('current_user');
+      setOwnerSource(defaultAgent && [user?.displayName, user?.username, user?.name].includes(defaultAgent) ? 'current_user' : 'manual');
       if (chosenLead.project_name) {
         setTargetProject(chosenLead.project_name);
       }
@@ -112,9 +129,9 @@ export default function RentalContractModal({
     if (initialLead) {
       handleLeadSelect(initialLead);
     } else {
-      const defaultAgent = user?.displayName || user?.username || user?.name || salesOwners?.[0]?.displayName || 'ทีมขาย';
+      const defaultAgent = selectSalesStaffName(salesOwners, [user?.displayName, user?.username, user?.name]);
       setAgentName(defaultAgent);
-      setOwnerSource('current_user');
+      setOwnerSource(defaultAgent && [user?.displayName, user?.username, user?.name].includes(defaultAgent) ? 'current_user' : 'manual');
     }
     if (plotId) {
       setSelectedPlotId(plotId);
@@ -152,6 +169,7 @@ export default function RentalContractModal({
           }
         }
       } catch (err) {
+        if (!isCancelled) setErrorMsg('โหลดรายการแปลงไม่สำเร็จ กรุณาปิดแล้วเปิดแบบฟอร์มใหม่');
         console.error('Error loading plots for rental modal:', err);
       } finally {
         if (!isCancelled) setLoadingPlots(false);
@@ -200,165 +218,131 @@ export default function RentalContractModal({
 
   const currentProgram = RENTAL_PROGRAM_DETAILS[selectedProgram];
   const selectedPlot = plotsList.find(p => p.id === selectedPlotId);
-  const effectiveLead = selectedLead || initialLead;
+  const effectiveLead = isNewLeadMode ? null : selectedLead || initialLead;
   const leadOwnerName = effectiveLead?.agent_name || effectiveLead?.sales_owner || effectiveLead?.salesOwner || null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (busy.current || loadingPlots) return;
+    const requestScope = currentScope.current;
+    if (!saveProgress.current && !salesOwners.some(owner => owner.displayName === agentName)) {
+      setErrorMsg('กรุณาเลือกพนักงานฝ่ายขาย');
+      return;
+    }
     setErrorMsg(null);
     setSubmitting(true);
-
+    busy.current = true;
+    let progress = saveProgress.current;
     try {
-      if (!tenantName.trim()) throw new Error('กรุณาระบุชื่อผู้เช่า');
-      if (!targetProject) throw new Error('กรุณาระบุโครงการ');
-      if (!selectedPlotId) throw new Error('กรุณาเลือกแปลง/บ้านที่จะทำสัญญาเช่า');
-      const rentNum = parseFloat(monthlyRent) || 0;
-      if (rentNum <= 0) throw new Error('กรุณาระบุค่าเช่าต่อเดือนให้ถูกต้อง');
-
-      const now = new Date().toISOString();
-      const depositNum = parseFloat(customDeposit) || (rentNum * 2);
-      const savingsNum = selectedProgram === 'program_b' ? (parseFloat(savingsPerMonth) || 5000) : 0;
-      const priceNum = selectedProgram === 'program_c' ? (parseFloat(basePrice) || 0) : 0;
-
-      const effectiveLead = selectedLead || initialLead;
-      let targetLeadId = effectiveLead?.id || null;
-
-      const crmStatus = selectedProgram === 'program_b' 
-        ? 'Rent-to-Own / Active — สัญญาเช่าซื้อ/เช่าออม (สะสมเงินดาวน์)'
-        : 'Rented / Active — ทำสัญญาเช่าแล้ว (อยู่ระหว่างเช่า)';
-
-      // 1. If Walk-in (no existing lead), create Lead first to get lead_id
-      if (!targetLeadId) {
-        const { data: newLeadData, error: newLeadErr } = await supabase
-          .from('leads')
-          .insert([{
-            customer_name: tenantName.trim(),
-            phone: tenantPhone.trim(),
-            project_name: targetProject,
-            channel: 'Walk in',
-            source: 'Walk in',
-            agent_name: agentName.trim() || 'ทีมขาย',
-            created_by_agent: agentName.trim() || 'ทีมขาย',
-            deal_type: 'rent',
-            rental_program: selectedProgram,
-            crm_status: crmStatus,
-            interested_plot_id: selectedPlotId,
-            interested_plot_name: selectedPlot?.plot_name || selectedPlotId,
-            rental_monthly_rent: rentNum,
-            rental_deposit: depositNum,
-            rental_savings_per_month: savingsNum,
-            rental_base_price: priceNum,
-            rental_start_date: startDate,
-            rental_end_date: calcResults.endDate,
-            rental_status: 'Active',
-            notes: notes.trim() || null,
-            created_at: now
-          }])
-          .select('id')
-          .single();
-
-        if (newLeadErr) {
-          console.warn('Could not create walk-in lead:', newLeadErr);
-        } else if (newLeadData?.id) {
-          targetLeadId = newLeadData.id;
+      if (!progress) {
+        const effectiveLead = isNewLeadMode ? null : selectedLead || initialLead;
+        if (effectiveLead && !canStartSalesDeal(effectiveLead)) {
+          throw new Error('ลูกค้ารายนี้อยู่ในขั้นตอนจอง โอน เช่า หรือสิ้นสุดแล้ว กรุณาจัดการรายการเดิม');
+        }
+        if (!tenantName.trim()) throw new Error('กรุณาระบุชื่อผู้เช่า');
+        if (!targetProject || !selectedPlotId) throw new Error('กรุณาเลือกโครงการและแปลงที่จะทำสัญญาเช่า');
+        const rentNum = parseFloat(monthlyRent) || 0;
+        if (rentNum <= 0) throw new Error('กรุณาระบุค่าเช่าต่อเดือนให้ถูกต้อง');
+        const now = new Date().toISOString();
+        const depositNum = parseFloat(customDeposit) || rentNum * 2;
+        const savingsNum = selectedProgram === 'program_b' ? parseFloat(savingsPerMonth) || 5000 : 0;
+        const priceNum = selectedProgram === 'program_c' ? parseFloat(basePrice) || 0 : 0;
+        let targetLeadId: string | null = effectiveLead?.id || null;
+        let targetContractId: string | null = null;
+        const crmStatus = selectedProgram === 'program_b'
+          ? 'Rent-to-Own / Active — สัญญาเช่าซื้อ/เช่าออม (สะสมเงินดาวน์)'
+          : 'Rented / Active — ทำสัญญาเช่าแล้ว (อยู่ระหว่างเช่า)';
+        const leadPayload = {
+          deal_type: 'rent', rental_program: selectedProgram, crm_status: crmStatus,
+          interested_plot_id: selectedPlotId, interested_plot_name: selectedPlot?.plot_name || selectedPlotId,
+          rental_monthly_rent: rentNum, rental_deposit: depositNum, rental_savings_per_month: savingsNum,
+          rental_base_price: priceNum, rental_start_date: startDate, rental_end_date: calcResults.endDate,
+          rental_status: 'Active'
+        };
+        if (targetLeadId) {
+          const { data, error } = await supabase.from('rental_contracts').select('id')
+            .eq('lead_id', targetLeadId).in('status', ['Active', 'Renewed']).limit(1);
+          if (requestScope !== currentScope.current) return;
+          if (error) throw error;
+          if (data?.length) throw new Error('ลูกค้ามีสัญญาเช่าที่ใช้งานอยู่แล้ว กรุณาจัดการสัญญาเดิม');
+        }
+        const steps: (() => Promise<void>)[] = [];
+        if (!targetLeadId) steps.push(async () => {
+          const { data, error } = await supabase.from('leads').insert([{
+            customer_name: tenantName.trim(), phone: tenantPhone.trim(), project_name: targetProject,
+            channel: 'Walk in', source: 'Walk in', agent_name: agentName.trim(),
+            created_by_agent: agentName.trim(), ...leadPayload, notes: notes.trim() || null, created_at: now
+          }]).select('id').single();
+          if (error) throw error;
+          if (!data?.id) throw new Error('สร้างลูกค้าไม่สำเร็จ');
+          targetLeadId = data.id;
+        });
+        steps.push(async () => {
+          const payload: Partial<RentalContract> = {
+            lead_id: targetLeadId, project_name: targetProject, plot_id: selectedPlotId,
+            plot_name: selectedPlot?.plot_name || selectedPlotId, tenant_name: tenantName.trim(),
+            tenant_phone: tenantPhone.trim() || null, agent_name: agentName.trim(), program_type: selectedProgram,
+            monthly_rent: rentNum, security_deposit: depositNum, advance_rent: rentNum,
+            savings_per_month: savingsNum, accumulated_savings: 0, base_price: priceNum,
+            discount_1yr_pct: 10, discount_2yr_pct: 5, lease_duration_months: durationMonths,
+            lease_start_date: startDate, lease_end_date: calcResults.endDate, status: 'Active',
+            notes: notes.trim() || null, created_at: now, updated_at: now
+          };
+          const { data, error } = await supabase.from('rental_contracts').insert([payload]).select('id').single();
+          if (error) throw error;
+          if (!data?.id) throw new Error('สร้างสัญญาเช่าไม่สำเร็จ');
+          targetContractId = data.id;
+        });
+        steps.push(async () => {
+          const { data, error } = await supabase.from('leads').update({
+            ...leadPayload, active_rental_contract_id: targetContractId,
+            notes: notes ? ((effectiveLead?.notes || '') + '\n[สัญญาเช่า ' + currentProgram.name + ']: ' + notes).trim() : effectiveLead?.notes
+          }).eq('id', targetLeadId!).select('id').single();
+          if (error) throw error;
+          if (!data?.id) throw new Error('ไม่พบลูกค้าที่อัปเดตได้');
+        });
+        steps.push(async () => {
+          const { data, error } = await supabase.from('plots').update({
+            sale_status: 'Rented', has_customer: true, current_tenant_name: tenantName.trim(),
+            current_tenant_phone: tenantPhone.trim() || null, rental_program: selectedProgram,
+            monthly_rent: rentNum, security_deposit: depositNum, lease_start_date: startDate,
+            lease_end_date: calcResults.endDate, highlight_note: 'เช่า: ' + currentProgram.name + ' (' + tenantName.trim() + ')'
+          }).eq('id', selectedPlotId).select('id').single();
+          if (error) throw error;
+          if (!data?.id) throw new Error('ไม่พบแปลงที่อัปเดตได้');
+        });
+        progress = { completed: 0, steps };
+        saveProgress.current = progress;
+      }
+      while (progress.completed < progress.steps.length) {
+        if (requestScope !== currentScope.current) return;
+        await progress.steps[progress.completed]();
+        progress.completed++;
+      }
+      if (requestScope !== currentScope.current) return;
+      saveProgress.current = null;
+      onSaved?.();
+      onClose();
+    } catch (error) {
+      if (requestScope === currentScope.current) {
+        const detail = error instanceof Error ? error.message : (error as { message?: string })?.message || 'บันทึกสัญญาเช่าไม่สำเร็จ';
+        if (progress && progress.completed > 0) {
+          setErrorMsg('บันทึกบางส่วนแล้ว แต่ยังไม่ครบ: ' + detail + ' กดยืนยันอีกครั้งเพื่อบันทึกส่วนที่เหลือ');
+        } else {
+          saveProgress.current = null;
+          setErrorMsg(detail);
         }
       }
-
-      // 2. Create Record in rental_contracts
-      const contractPayload: Partial<RentalContract> = {
-        lead_id: targetLeadId,
-        project_name: targetProject,
-        plot_id: selectedPlotId,
-        plot_name: selectedPlot?.plot_name || selectedPlotId,
-        tenant_name: tenantName.trim(),
-        tenant_phone: tenantPhone.trim() || null,
-        agent_name: agentName.trim() || 'ทีมขาย',
-        program_type: selectedProgram,
-        monthly_rent: rentNum,
-        security_deposit: depositNum,
-        advance_rent: rentNum,
-        savings_per_month: savingsNum,
-        accumulated_savings: 0,
-        base_price: priceNum,
-        discount_1yr_pct: 10.0,
-        discount_2yr_pct: 5.0,
-        lease_duration_months: durationMonths,
-        lease_start_date: startDate,
-        lease_end_date: calcResults.endDate,
-        status: 'Active',
-        notes: notes.trim() || null,
-        created_at: now,
-        updated_at: now
-      };
-
-      const { data: contractData, error: contractErr } = await supabase
-        .from('rental_contracts')
-        .insert([contractPayload])
-        .select('id')
-        .single();
-
-      if (contractErr) {
-        console.warn('Could not insert to rental_contracts (table might be newly created):', contractErr);
-      }
-
-      const contractId = contractData?.id || null;
-
-      // 3. Update Lead with active_rental_contract_id
-      if (targetLeadId) {
-        await supabase
-          .from('leads')
-          .update({
-            deal_type: 'rent',
-            rental_program: selectedProgram,
-            crm_status: crmStatus,
-            interested_plot_id: selectedPlotId,
-            interested_plot_name: selectedPlot?.plot_name || selectedPlotId,
-            rental_monthly_rent: rentNum,
-            rental_deposit: depositNum,
-            rental_savings_per_month: savingsNum,
-            rental_base_price: priceNum,
-            rental_start_date: startDate,
-            rental_end_date: calcResults.endDate,
-            rental_status: 'Active',
-            active_rental_contract_id: contractId,
-            notes: notes ? `${effectiveLead?.notes || ''}\n[สัญญาเช่า ${currentProgram.name}]: ${notes}`.trim() : effectiveLead?.notes
-          })
-          .eq('id', targetLeadId);
-      }
-
-      // 4. Update Plot Table
-      const { error: plotErr } = await supabase
-        .from('plots')
-        .update({
-          sale_status: 'Rented',
-          has_customer: true,
-          current_tenant_name: tenantName.trim(),
-          current_tenant_phone: tenantPhone.trim() || null,
-          rental_program: selectedProgram,
-          monthly_rent: rentNum,
-          security_deposit: depositNum,
-          lease_start_date: startDate,
-          lease_end_date: calcResults.endDate,
-          highlight_note: `เช่า: ${currentProgram.name} (${tenantName.trim()})`
-        })
-        .eq('id', selectedPlotId);
-
-      if (plotErr) {
-        console.warn('Plot update notice:', plotErr);
-      }
-
-      if (onSaved) onSaved();
-      onClose();
-    } catch (err: any) {
-      console.error('Error saving rental contract:', err);
-      setErrorMsg(err.message || 'บันทึกสัญญาเช่าไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
     } finally {
-      setSubmitting(false);
+      if (requestScope === currentScope.current) {
+        busy.current = false;
+        setSubmitting(false);
+      }
     }
   };
 
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto animate-fade-in">
+    <SalesOverlay className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto animate-fade-in">
       <div className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden my-auto flex flex-col max-h-[90vh]">
         
         {/* Modal Header */}
@@ -398,6 +382,7 @@ export default function RentalContractModal({
             </div>
           )}
 
+          <fieldset disabled={submitting || (saveProgress.current?.completed || 0) > 0} className="contents">
           {/* 🌟 1. Three Rental Programs Selector Tabs 🌟 */}
           <div>
             <label className="block text-slate-700 font-bold mb-2 flex items-center justify-between">
@@ -515,9 +500,9 @@ export default function RentalContractModal({
                   setSelectedLead(null);
                   setTenantName('');
                   setTenantPhone('');
-                  const defaultAgent = user?.displayName || user?.username || user?.name || salesOwners?.[0]?.displayName || 'ทีมขาย';
+                  const defaultAgent = selectSalesStaffName(salesOwners, [user?.displayName, user?.username, user?.name]);
                   setAgentName(defaultAgent);
-                  setOwnerSource('current_user');
+                  setOwnerSource(defaultAgent && [user?.displayName, user?.username, user?.name].includes(defaultAgent) ? 'current_user' : 'manual');
                 }
               }}
               label="เลือกลูกค้าผู้เช่าจาก Lead CRM"
@@ -614,24 +599,14 @@ export default function RentalContractModal({
                     }}
                     className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-2xs"
                   >
-                    {agentName && !salesOwners.some(o => o.displayName === agentName) && (
-                      <option value={agentName}>{agentName}</option>
-                    )}
                     {salesOwners.map(o => (
                       <option key={o.userId} value={o.displayName}>{o.displayName}</option>
                     ))}
                   </select>
                 ) : (
-                  <input
-                    type="text"
-                    value={agentName}
-                    onChange={e => {
-                      setAgentName(e.target.value);
-                      setOwnerSource('manual');
-                    }}
-                    placeholder="เช่น คุณสมชาย (ทีมขาย)"
-                    className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-2xs"
-                  />
+                  <select value="" disabled className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-800">
+                    <option value="">ไม่พบพนักงานฝ่ายขาย</option>
+                  </select>
                 )}
                 <div className="text-[10px] text-slate-500 font-medium flex items-center justify-between flex-wrap gap-1 mt-1">
                   <span>บันทึกชื่อผู้ใช้งานที่ทำสัญญานี้ (สามารถเลือกเปลี่ยนชื่อได้)</span>
@@ -815,6 +790,7 @@ export default function RentalContractModal({
             />
           </div>
 
+          </fieldset>
           {/* Modal Actions */}
           <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100 shrink-0">
             <button
@@ -826,7 +802,7 @@ export default function RentalContractModal({
             </button>
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || loadingPlots}
               className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-blue-700 via-indigo-700 to-slate-900 hover:from-blue-800 hover:to-slate-950 text-white font-bold shadow-md shadow-indigo-700/20 cursor-pointer flex items-center gap-2 transition-all disabled:opacity-50"
             >
               <Key size={15} />
@@ -835,6 +811,6 @@ export default function RentalContractModal({
           </div>
         </form>
       </div>
-    </div>
+    </SalesOverlay>
   );
 }

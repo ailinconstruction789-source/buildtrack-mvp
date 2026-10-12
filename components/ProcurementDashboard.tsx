@@ -1,11 +1,28 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
+import { buildProcurementIndex } from '@/lib/constructionProcurement';
+import { useCommittedRequestScope } from '@/hooks/useCommittedRequestScope';
 import { Users, Save, Loader2, Search, Check, Copy } from 'lucide-react';
 
-export default function ProcurementDashboard({ projects, plots, taskTemplates, assignments, contractors, fetchAllData }: any) {
+export default function ProcurementDashboard({ projects, plots, taskTemplates, assignments, contractors, fetchAllData, loggedInUser }: any) {
   const [selectedProject, setSelectedProject] = useState('');
   const [selectedTask, setSelectedTask] = useState('');
-  const [targetPlots, setTargetPlots] = useState<any[]>([]);
+  const index = useMemo(() => buildProcurementIndex(plots, taskTemplates, assignments), [plots, taskTemplates, assignments]);
+  const taskNames = useMemo(() => Array.from(new Set<string>(taskTemplates.map((task: any) => task.task_name))).sort(), [taskTemplates]);
+  const targetPlots = useMemo(() => {
+    if (!selectedProject || !selectedTask) return [];
+    const templates = index.tasksByNameAndHouse.get(selectedTask);
+    return plots.filter((plot: any) => {
+      if (plot.project_name !== selectedProject) return false;
+      const template = templates?.get(plot.house_type_id);
+      if (!template) return false;
+      const assignment = index.assignmentsByPlotAndTask.get(plot.id)?.get(template.id);
+      return !assignment || !assignment.contractor_name || assignment.contractor_name.trim() === '';
+    }).sort((a: any, b: any) => (a.plot_name || '').localeCompare(b.plot_name || ''));
+  }, [selectedProject, selectedTask, plots, index]);
+  const editingScopeKey = JSON.stringify([selectedProject, selectedTask, loggedInUser?.id, loggedInUser?.authUserId, loggedInUser?.username, loggedInUser?.role]);
+  const captureSelection = useCommittedRequestScope(editingScopeKey);
+  const draftScope = useRef<string | null>(null);
   
   // State for the "Apply to All" fields
   const [globalName, setGlobalName] = useState('');
@@ -17,43 +34,22 @@ export default function ProcurementDashboard({ projects, plots, taskTemplates, a
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error' | '', message: '' | string }>({ type: '', message: '' });
 
-  // 1. Filter plots based on project and task selection
+  // Refresh eligible rows without erasing an in-progress draft for the same selection.
   useEffect(() => {
-    if (selectedProject && selectedTask) {
-      // Get all plots in the selected project
-      const projPlots = plots.filter((p: any) => p.project_name === selectedProject);
-      
-      // Filter plots that DO NOT have a contractor assigned for this specific task
-      const unassignedPlots = projPlots.filter((p: any) => {
-        const matchingTemplates = taskTemplates.filter((t: any) => t.task_name === selectedTask);
-        const templateForThisPlot = matchingTemplates.find((t: any) => t.house_type_id === p.house_type_id);
-        
-        if (!templateForThisPlot) return false;
-
-        const assignment = assignments.find((a: any) => a.plot_id === p.id && a.task_template_id === templateForThisPlot.id);
-        // If no assignment exists, or it exists but contractor_name is empty/null, include it.
-        return !assignment || !assignment.contractor_name || assignment.contractor_name.trim() === '';
-      });
-
-      // Sort plots by name (e.g. A01, A02)
-      unassignedPlots.sort((a: any, b: any) => (a.plot_name || '').localeCompare(b.plot_name || ''));
-
-      setTargetPlots(unassignedPlots);
-      
-      // Initialize edits state
-      const initialEdits: Record<string, { name: string; phone: string }> = {};
-      unassignedPlots.forEach((p: any) => {
-        initialEdits[p.id] = { name: '', phone: '' };
-      });
-      setEdits(initialEdits);
+    const sameSelection = draftScope.current === editingScopeKey;
+    draftScope.current = editingScopeKey;
+    setEdits(previous => {
+      const next: Record<string, { name: string; phone: string }> = {};
+      targetPlots.forEach((plot: any) => { next[plot.id] = sameSelection && previous[plot.id] ? previous[plot.id] : { name: '', phone: '' }; });
+      return next;
+    });
+    if (!sameSelection) {
+      setIsSubmitting(false);
       setSaveStatus({ type: '', message: '' });
       setGlobalName('');
       setGlobalPhone('');
-    } else {
-      setTargetPlots([]);
-      setEdits({});
     }
-  }, [selectedProject, selectedTask, plots, assignments]);
+  }, [editingScopeKey, targetPlots]);
 
   const handleEditChange = (plotId: string, field: 'name' | 'phone', value: string) => {
     setEdits(prev => {
@@ -93,6 +89,7 @@ export default function ProcurementDashboard({ projects, plots, taskTemplates, a
   };
 
   const handleSave = async () => {
+    const isCurrentSelection = captureSelection();
     if (!selectedProject || !selectedTask) return;
     
     // Filter out plots that have no changes (empty name AND empty phone)
@@ -113,14 +110,14 @@ export default function ProcurementDashboard({ projects, plots, taskTemplates, a
       // Actually, upsert in Supabase overwrites the entire row if not careful, but we can do UPDATEs for existing, and INSERT for new.
       // A safer approach: check if assignment exists in our global state, then use update or insert.
       
-      const matchingTemplates = taskTemplates.filter((t: any) => t.task_name === selectedTask);
+      const matchingTemplates = index.tasksByNameAndHouse.get(selectedTask);
 
       const promises = plotsToUpdate.map(async (plotId) => {
-        const plot = plots.find((p: any) => p.id === plotId);
-        const templateForThisPlot = matchingTemplates.find((t: any) => t.house_type_id === plot?.house_type_id);
-        if (!templateForThisPlot) return null;
+        const plot = index.plotsById.get(plotId);
+        const templateForThisPlot = matchingTemplates?.get(plot?.house_type_id);
+        if (!plot || !templateForThisPlot) throw new Error('ไม่พบแปลงหรืองานที่เลือก กรุณาตรวจข้อมูลอีกครั้ง');
 
-        const existingAssignment = assignments.find((a: any) => a.plot_id === plotId && a.task_template_id === templateForThisPlot.id);
+        const existingAssignment: any = index.assignmentsByPlotAndTask.get(plotId)?.get(templateForThisPlot.id);
         const { name, phone } = edits[plotId];
         
         if (existingAssignment) {
@@ -150,20 +147,21 @@ export default function ProcurementDashboard({ projects, plots, taskTemplates, a
         }
       });
 
-      await Promise.all(promises);
-
-      setSaveStatus({ type: 'success', message: 'บันทึกข้อมูลช่างเรียบร้อยแล้ว!' });
+      const results = await Promise.all(promises);
+      const failed = results.find(result => result?.error);
       
       // Refresh global state so the dashboard updates
       if (fetchAllData) {
         await fetchAllData();
       }
+      if (failed?.error) throw failed.error;
+      if (isCurrentSelection()) setSaveStatus({ type: 'success', message: 'บันทึกข้อมูลช่างเรียบร้อยแล้ว!' });
       
     } catch (err: any) {
       console.error(err);
-      setSaveStatus({ type: 'error', message: 'เกิดข้อผิดพลาดในการบันทึกข้อมูล: ' + err.message });
+      if (isCurrentSelection()) setSaveStatus({ type: 'error', message: 'เกิดข้อผิดพลาดในการบันทึกข้อมูล: ' + err.message });
     } finally {
-      setIsSubmitting(false);
+      if (isCurrentSelection()) setIsSubmitting(false);
     }
   };
 
@@ -211,7 +209,7 @@ export default function ProcurementDashboard({ projects, plots, taskTemplates, a
               disabled={!selectedProject}
             >
               <option value="">-- กรุณาเลือกงาน --</option>
-              {Array.from(new Set(taskTemplates.map((t: any) => t.task_name))).sort().map((taskName: any) => (
+              {taskNames.map((taskName: string) => (
                 <option key={taskName} value={taskName}>{taskName}</option>
               ))}
             </select>

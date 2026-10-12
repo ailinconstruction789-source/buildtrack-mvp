@@ -64,7 +64,7 @@ function rpcError(error: unknown): LeadLifecycleHttpError {
             case 'CRM_LIFECYCLE_STALE_ACTION': return new LeadLifecycleHttpError(409, 'STALE_ACTION', 'งานถัดไปเปลี่ยนแล้ว กรุณาโหลดสถานะล่าสุดก่อนทำรายการ');
             case 'CRM_LIFECYCLE_SCOPE_CLOSED': return new LeadLifecycleHttpError(409, 'SCOPE_CLOSED', 'ขอบเขตงานนี้ปิดแล้ว ไม่สามารถเปลี่ยนแปลงตามคำขอได้');
             case 'CRM_LIFECYCLE_INACTIVE_TARGET': return new LeadLifecycleHttpError(409, 'INACTIVE_TARGET', 'ผู้ดูแลคนใหม่ต้องเป็น Sales ที่ใช้งานอยู่ กรุณาให้ Admin ตรวจสอบ');
-            case 'CRM_LIFECYCLE_BOOKING_HISTORY_EXISTS': return new LeadLifecycleHttpError(409, 'BOOKING_HISTORY_EXISTS', 'Lead นี้มีประวัติการจองแล้ว จึงไม่สามารถปิดเป็น Lost ก่อนจองได้');
+            case 'CRM_LIFECYCLE_BOOKING_HISTORY_EXISTS': return new LeadLifecycleHttpError(409, 'BOOKING_HISTORY_EXISTS', 'ลูกค้านี้มีประวัติการจองหรือเช่าแล้ว จึงไม่สามารถปิดเป็น Lost ก่อนจองได้');
             case 'CRM_LIFECYCLE_OPEN_INTERESTS': return new LeadLifecycleHttpError(409, 'OPEN_INTERESTS', 'ยังมีงานในโครงการที่เปิดอยู่ กรุณาตรวจแต่ละโครงการก่อนปิด Lead ส่วนกลาง');
             case 'CRM_LIFECYCLE_UNCHANGED_OWNER': return new LeadLifecycleHttpError(409, 'UNCHANGED_OWNER', 'ผู้ดูแลที่เลือกเป็นคนเดิม กรุณาตรวจสอบอีกครั้ง');
         }

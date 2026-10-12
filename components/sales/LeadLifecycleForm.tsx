@@ -165,7 +165,7 @@ function LifecycleSession({ context, save, onSaved, onLockedChange, onRefreshReq
             <p className="mt-1 text-sm text-slate-500">ตรวจผลกระทบก่อนยืนยันทุกครั้ง ไม่เปลี่ยนวันเริ่ม Lead และไม่ลบประวัติ</p></div>
         {disabled && <p className="rounded-xl bg-slate-100 p-3 text-sm text-slate-700">ยังไม่เปิดให้เปลี่ยนแปลงในขณะนี้ คำขอค้างยังเก็บไว้ ห้ามเริ่มใหม่แทนคำขอเดิม</p>}
         {!allowed.reassign && !allowed.close && <p className="text-sm text-slate-700">อ่านอย่างเดียว: {work.scopeClosed ? 'งานนี้ปิดแล้ว' : 'สิทธิ์หรือเงื่อนไขปัจจุบันไม่อนุญาตให้ทำรายการ'}</p>}
-        {context.blockers.hasBookingHistory && <p className="text-sm text-amber-900">มีประวัติการจองแล้ว ปิดเป็น Lost ก่อนจองจากหน้านี้ไม่ได้</p>}
+        {context.blockers.hasBookingHistory && <p className="text-sm text-amber-900">มีประวัติการจองหรือเช่าแล้ว ปิดเป็น Lost ก่อนจองจากหน้านี้ไม่ได้</p>}
         {scope.interestId === null && context.blockers.hasOpenInterests && <p className="text-sm text-amber-900">ยังมีงานในโครงการที่เปิดอยู่ ต้องตรวจแต่ละโครงการก่อนปิด Lead ส่วนกลาง</p>}
         {error && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</p>}
         {pending && <div className="space-y-2 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">

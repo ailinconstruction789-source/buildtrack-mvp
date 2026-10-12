@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import LoginScreen from '../LoginScreen';
+let LoginScreen: typeof import('../LoginScreen').default;
 import { readLoginNames } from '@/lib/auth/loginDirectory';
 
 vi.mock('@/lib/supabase', () => ({ supabase: {} }));
@@ -10,7 +10,7 @@ vi.mock('@/lib/auth/loginDirectory', async importOriginal => ({
 const props = { loginData: { username: 'Sales A', pin: '1234' }, setLoginData: vi.fn(), handleLogin: vi.fn() };
 
 describe('separate public login screen', () => {
-    beforeEach(() => { vi.resetAllMocks(); });
+    beforeEach(async () => { vi.resetAllMocks(); vi.resetModules(); LoginScreen = (await import('../LoginScreen')).default; });
     it('waits for names, then allows the existing PIN login', async () => {
         let resolve!: (value: { username: string }[]) => void;
         vi.mocked(readLoginNames).mockReturnValue(new Promise(accept => { resolve = accept; }));
@@ -44,5 +44,19 @@ describe('separate public login screen', () => {
         await act(async () => { resolveOld([{ username: 'Old user' }]); });
         expect(screen.queryByRole('option', { name: 'Old user' })).not.toBeInTheDocument();
         await waitFor(() => expect(readLoginNames).toHaveBeenCalledTimes(2));
+    });
+    it('shows only cached public names immediately on remount while refreshing the list', async () => {
+        vi.mocked(readLoginNames).mockResolvedValueOnce([{ username: 'Sales A' }]);
+        const old = render(<LoginScreen {...props} />);
+        await screen.findByRole('option', { name: 'Sales A' }); old.unmount();
+        let finish!: (value: { username: string }[]) => void;
+        vi.mocked(readLoginNames).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+        render(<LoginScreen {...props} />);
+        expect(screen.getByRole('option', { name: 'Sales A' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Sign In' })).toBeEnabled();
+        await act(async () => finish([{ username: 'Sales B' }]));
+        expect(screen.queryByRole('option', { name: 'Sales A' })).not.toBeInTheDocument();
+        expect(screen.getByRole('option', { name: 'Sales B' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Sign In' })).toBeDisabled();
     });
 });

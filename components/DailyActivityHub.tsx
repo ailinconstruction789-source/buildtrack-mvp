@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { firstBy, groupBy } from '@/lib/constructionReportsIndex';
 import { 
   Activity, Clock, Calendar, Search, Filter, HardHat, 
   CheckCircle, AlertTriangle, ShieldAlert, Eye, UserCheck, 
@@ -8,6 +9,8 @@ import {
 } from 'lucide-react';
 import DailyAccountabilityModal from './DailyAccountabilityModal';
 import MeterPhotoConfirmationModal from './MeterPhotoConfirmationModal';
+
+const EMPTY_ACTIVITY_ROWS: any[] = [];
 
 interface DailyActivityHubProps {
   allUpdatesRecord: any[];
@@ -154,6 +157,13 @@ export default function DailyActivityHub({
     return map;
   }, [allUsers]);
 
+  const taskById = useMemo(() => firstBy(taskTemplates || [], task => task.id), [taskTemplates]);
+  const plotById = useMemo(() => firstBy(plots || [], plot => String(plot.id)), [plots]);
+  const updatesByDay = useMemo(() => groupBy(allUpdatesRecord || [], update =>
+    new Date(update.created_at).toLocaleDateString('en-CA')), [allUpdatesRecord]);
+  const defectsByDay = useMemo(() => groupBy(defects || [], defect =>
+    new Date(defect.created_at).toLocaleDateString('en-CA')), [defects]);
+
   // Normalize role
   const getRoleCategory = (roleStr?: string, userName?: string): 'Foreman' | 'Site Engineer' | 'QC' | 'Other' => {
     const r = (roleStr || '').toLowerCase();
@@ -201,11 +211,11 @@ export default function DailyActivityHub({
     const list: any[] = [];
 
     // 1. Task Updates
-    (allUpdatesRecord || []).forEach(u => {
-      if (new Date(u.created_at).toLocaleDateString('en-CA') === selectedDate && u.role !== 'Admin') {
+    (updatesByDay.get(selectedDate) || []).forEach(u => {
+      if (u.role !== 'Admin') {
         const roleCat = getRoleCategory(u.role, u.user_name);
-        const task = (taskTemplates || []).find(t => t.id === u.task_template_id);
-        const plotObj = (plots || []).find(p => String(p.id) === String(u.plot_id));
+        const task = taskById.get(u.task_template_id);
+        const plotObj = plotById.get(String(u.plot_id));
         const validImage = extractFirstValidImageUrl(u.image_url || u.images);
         
         list.push({
@@ -230,13 +240,12 @@ export default function DailyActivityHub({
     });
 
     // 2. Defects
-    (defects || []).forEach(d => {
-      if (new Date(d.created_at).toLocaleDateString('en-CA') === selectedDate) {
+    (defectsByDay.get(selectedDate) || []).forEach(d => {
         const userObj = userMap.get((d.reported_by || '').toLowerCase());
         if (userObj?.role === 'Admin') return;
         const roleCat = getRoleCategory(userObj?.role, d.reported_by);
-        const task = (taskTemplates || []).find(t => t.id === d.task_id);
-        const plotObj = (plots || []).find(p => String(p.id) === String(d.plot_id));
+        const task = taskById.get(d.task_id);
+        const plotObj = plotById.get(String(d.plot_id));
         const validImage = extractFirstValidImageUrl(d.image_url || d.images);
 
         list.push({
@@ -257,12 +266,11 @@ export default function DailyActivityHub({
           taskObj: task,
           plotObj
         });
-      }
     });
 
     // Sort descending by time (latest first)
     return list.sort((a, b) => b.rawTime - a.rawTime);
-  }, [allUpdatesRecord, defects, selectedDate, taskTemplates, plots, userMap]);
+  }, [updatesByDay, defectsByDay, selectedDate, taskById, plotById, userMap]);
 
   // Filter activities for timeline based on project selection (if any)
   const scopedActivities = useMemo(() => {
@@ -1082,6 +1090,8 @@ export default function DailyActivityHub({
                             <img
                               src={act.image}
                               alt="รูปหน้างาน"
+                              loading="lazy"
+                              decoding="async"
                               className="w-8 h-8 rounded-lg object-cover border border-slate-200 hover:scale-110 transition-transform"
                               onError={(e) => {
                                 (e.currentTarget as HTMLElement).style.display = 'none';
@@ -1304,13 +1314,13 @@ export default function DailyActivityHub({
         onClose={() => setIsModalOpen(false)}
         selectedDate={selectedDate}
         setSelectedDate={setSelectedDate}
-        allUpdatesRecord={allUpdatesRecord}
-        defects={defects}
-        defectUpdates={defectUpdates}
-        allUsers={allUsers}
-        plots={plots}
-        taskTemplates={taskTemplates}
-        projects={projects}
+        allUpdatesRecord={isModalOpen ? allUpdatesRecord : EMPTY_ACTIVITY_ROWS}
+        defects={isModalOpen ? defects : EMPTY_ACTIVITY_ROWS}
+        defectUpdates={isModalOpen ? defectUpdates : EMPTY_ACTIVITY_ROWS}
+        allUsers={isModalOpen ? allUsers : EMPTY_ACTIVITY_ROWS}
+        plots={isModalOpen ? plots : EMPTY_ACTIVITY_ROWS}
+        taskTemplates={isModalOpen ? taskTemplates : EMPTY_ACTIVITY_ROWS}
+        projects={isModalOpen ? projects : EMPTY_ACTIVITY_ROWS}
       />
 
       {/* 📸 Meter Photo Confirmation Modal */}
