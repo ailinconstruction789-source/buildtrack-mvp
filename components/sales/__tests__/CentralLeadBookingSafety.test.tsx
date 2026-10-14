@@ -115,7 +115,9 @@ describe('booking transaction status/error safety', () => {
     expect(mocks.deletePromotions).toHaveBeenCalledOnce();
     expect(mocks.updatePlot).toHaveBeenCalledTimes(2);
     expect(mocks.updatePlot.mock.calls.every(call => call[1] === 'id' && call[2] === 'P1')).toBe(true);
-    expect(mocks.activity.mock.calls[0][0][0].customer_id).toBe('new-lead-1');
+    expect(mocks.updatePlot.mock.calls[0][0]).toEqual({ highlight_note: 'จอง: New customer' });
+    expect(mocks.activity.mock.calls[0][0][0].native_lead_id).toBe('new-lead-1');
+    expect(mocks.activity.mock.calls[0][0][0]).not.toHaveProperty('customer_id');
   });
 
   it('retrying a failed promotion insert keeps the prior acknowledged deletion and lead update', async () => {

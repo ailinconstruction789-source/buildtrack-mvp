@@ -107,6 +107,136 @@ describe('Ailin Rental Programs Helper & Calculations', () => {
       expect(credit.applicableDiscountAmount).toBe(175000);
       expect(credit.finalPurchasePrice).toBe(3325000);
     });
+
+    it('calculates 8% interest for Program C when entering year 4 with default rent', () => {
+      const result = calculateRentalTerms({
+        programType: 'program_c',
+        monthlyRent: 15000,
+        basePrice: 3000000,
+        durationMonths: 48,
+        startDate: '2026-01-01'
+      });
+
+      // 8% of 15,000 = 1,200
+      expect(result.year4InterestPct).toBe(8);
+      expect(result.year4BaseRent).toBe(15000);
+      expect(result.year4InterestAmount).toBe(1200);
+      expect(result.year4MonthlyRent).toBe(16200); // 15,000 + 1,200
+    });
+
+    it('calculates 8% interest based on custom agreed installment for Year 4', () => {
+      const result = calculateRentalTerms({
+        programType: 'program_c',
+        monthlyRent: 15000,
+        customYear4MonthlyRent: 20000, // ตกลงผ่อนเพิ่มเป็น 20,000 บาท/เดือน
+        basePrice: 3000000,
+        durationMonths: 48,
+        startDate: '2026-01-01'
+      });
+
+      // 8% of 20,000 = 1,600
+      expect(result.year4InterestPct).toBe(8);
+      expect(result.year4BaseRent).toBe(20000);
+      expect(result.year4InterestAmount).toBe(1600);
+      expect(result.year4MonthlyRent).toBe(21600); // 20,000 + 1,600
+    });
+  });
+
+  describe('Advance Rent Options & Program C Contract Fee', () => {
+    it('supports disabling advance rent across all programs', () => {
+      const resultA = calculateRentalTerms({
+        programType: 'program_a',
+        monthlyRent: 15000,
+        hasAdvanceRent: false
+      });
+      expect(resultA.hasAdvanceRent).toBe(false);
+      expect(resultA.advanceRent).toBe(0);
+      expect(resultA.securityDeposit).toBe(30000);
+      expect(resultA.totalInitialPayment).toBe(30000); // only deposit
+
+      const resultB = calculateRentalTerms({
+        programType: 'program_b',
+        monthlyRent: 20000,
+        hasAdvanceRent: false
+      });
+      expect(resultB.advanceRent).toBe(0);
+      expect(resultB.totalInitialPayment).toBe(40000);
+
+      const resultC = calculateRentalTerms({
+        programType: 'program_c',
+        monthlyRent: 12000,
+        hasAdvanceRent: false,
+        contractFee: 10000
+      });
+      expect(resultC.advanceRent).toBe(0);
+      expect(resultC.contractFee).toBe(10000);
+      expect(resultC.totalInitialPayment).toBe(34000); // deposit 24,000 + fee 10,000
+    });
+
+    it('supports multi-month advance rent (e.g. 2 or 3 months)', () => {
+      const result = calculateRentalTerms({
+        programType: 'program_a',
+        monthlyRent: 15000,
+        hasAdvanceRent: true,
+        advanceRentMonths: 3
+      });
+      expect(result.advanceRentMonths).toBe(3);
+      expect(result.advanceRent).toBe(45000); // 15,000 * 3
+      expect(result.securityDeposit).toBe(30000); // 15,000 * 2
+      expect(result.totalInitialPayment).toBe(75000); // 45,000 + 30,000
+    });
+
+    it('includes contract fee specifically for Program C in total initial payment', () => {
+      const resultC = calculateRentalTerms({
+        programType: 'program_c',
+        monthlyRent: 15000,
+        basePrice: 3000000,
+        hasAdvanceRent: true,
+        advanceRentMonths: 1,
+        contractFee: 10000
+      });
+
+      expect(resultC.contractFee).toBe(10000);
+      expect(resultC.securityDeposit).toBe(30000);
+      expect(resultC.advanceRent).toBe(15000);
+      // Total: deposit (30,000) + advance rent (15,000) + contract fee (10,000) = 55,000
+      expect(resultC.totalInitialPayment).toBe(55000);
+
+      // Contract fee should not apply to Program A or B
+      const resultA = calculateRentalTerms({
+        programType: 'program_a',
+        monthlyRent: 15000,
+        contractFee: 10000
+      });
+      expect(resultA.contractFee).toBe(0);
+      expect(resultA.totalInitialPayment).toBe(45000);
+    });
+
+    it('supports configuring security deposit months (e.g. 1 month, 3 months, or 0 months)', () => {
+      const result1M = calculateRentalTerms({
+        programType: 'program_a',
+        monthlyRent: 15000,
+        depositMonths: 1
+      });
+      expect(result1M.depositMonths).toBe(1);
+      expect(result1M.securityDeposit).toBe(15000); // 15,000 * 1
+
+      const result3M = calculateRentalTerms({
+        programType: 'program_b',
+        monthlyRent: 20000,
+        depositMonths: 3
+      });
+      expect(result3M.depositMonths).toBe(3);
+      expect(result3M.securityDeposit).toBe(60000); // 20,000 * 3
+
+      const result0M = calculateRentalTerms({
+        programType: 'program_c',
+        monthlyRent: 12000,
+        depositMonths: 0
+      });
+      expect(result0M.depositMonths).toBe(0);
+      expect(result0M.securityDeposit).toBe(0);
+    });
   });
 
   describe('Lead Integration & Prioritization Rules', () => {
@@ -129,3 +259,4 @@ describe('Ailin Rental Programs Helper & Calculations', () => {
     });
   });
 });
+

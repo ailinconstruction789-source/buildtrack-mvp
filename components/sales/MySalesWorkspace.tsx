@@ -48,14 +48,14 @@ interface Props {
 }
 
 const STAGES = [
-  { id: 'all', label: 'ทั้งหมด', color: 'bg-slate-100 text-slate-700' },
   { id: 'active', label: '🔥 กำลังติดตาม / สนใจ', color: 'bg-blue-50 text-blue-700 border-blue-200' },
   { id: 'appointment', label: '📅 นัดชมโครงการ', color: 'bg-purple-50 text-purple-700 border-purple-200' },
   { id: 'loan', label: '🏦 เช็คเครดิต / ยื่นกู้', color: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
   { id: 'booked', label: '🏷️ วางจองแล้ว', color: 'bg-amber-50 text-amber-700 border-amber-200' },
   { id: 'transferred', label: '🏡 โอนกรรมสิทธิ์แล้ว', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
   { id: 'rented', label: '🔑 สัญญาเช่า / เช่าออม', color: 'bg-teal-50 text-teal-700 border-teal-200' },
-  { id: 'lost', label: '❌ ยุติการซื้อ', color: 'bg-rose-50 text-rose-700 border-rose-200' }
+  { id: 'lost', label: '❌ ยุติการซื้อ', color: 'bg-rose-50 text-rose-700 border-rose-200' },
+  { id: 'all', label: 'ทั้งหมด', color: 'bg-slate-100 text-slate-700' }
 ];
 
 export default function MySalesWorkspace({
@@ -81,7 +81,7 @@ export default function MySalesWorkspace({
   const [viewMode, setViewMode] = useState<'table' | 'kanban'>('table');
   const [selectedYear, setSelectedYear] = useState<string>(() => new Date().getFullYear().toString()); // Default to current year (2026) for fast operational performance
   const [selectedProject, setSelectedProject] = useState<string>('all');
-  const [selectedStage, setSelectedStage] = useState<string>('all');
+  const [selectedStage, setSelectedStage] = useState<string>('active');
   const [actionFilter, setActionFilter] = useState<'due' | 'upcoming' | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -576,9 +576,9 @@ export default function MySalesWorkspace({
   const isDue = useCallback((lead: any) => isDueSalesLead(lead, todayKey), [todayKey]);
   const isUpcoming = useCallback((lead: any) => isUpcomingSalesLead(lead, todayKey), [todayKey]);
   const filteredLeads = useMemo(() => baseFilteredLeads.filter(lead =>
-    (selectedStage === 'all' || getStageCategory(lead) === selectedStage) &&
+    (viewMode === 'kanban' || selectedStage === 'all' || getStageCategory(lead) === selectedStage) &&
     (!actionFilter || (actionFilter === 'due' ? isDue(lead) : isUpcoming(lead)))
-  ), [baseFilteredLeads, selectedStage, actionFilter, getStageCategory, isDue, isUpcoming]);
+  ), [baseFilteredLeads, viewMode, selectedStage, actionFilter, getStageCategory, isDue, isUpcoming]);
 
   // Today's Action Items & Metrics
   const myLeadsOnly = useMemo(() => leads.filter(isMyLead), [leads, isMyLead]);
@@ -722,7 +722,7 @@ export default function MySalesWorkspace({
     <div className="w-full min-h-screen bg-slate-50 flex flex-col space-y-5 pb-16">
 
       {/* 🌟 1. Top Personal Header Banner */}
-      <div className="bg-white border-b border-slate-200/90 shadow-2xs sticky top-0 z-30">
+      <div className="bg-white border-b border-slate-200/90 shadow-2xs">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3.5">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
 

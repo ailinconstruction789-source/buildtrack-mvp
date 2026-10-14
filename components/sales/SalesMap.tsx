@@ -297,6 +297,8 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
             const h = bounds.maxY - bounds.minY + 1;
             const activeLead = findMatchingLead(plotId);
             const status = getSalesStatus(plotId);
+            const customerName = [activeLead?.name, activeLead?.customer_name]
+              .find((value): value is string => typeof value === 'string' && Boolean(value.trim()))?.trim() || '';
             
             // Check if Construction is finished or grass is planted
             const plotInfo = plots.find((p: any) => {
@@ -339,6 +341,7 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
                     <span className="font-bold text-[8px] sm:text-[9px] leading-tight text-center break-words">{plotId}</span>
                     {status !== 'Available' && status !== 'Cancelled' && (
                       <div className="flex flex-col items-center mt-0.5">
+                        {customerName && <span className="text-[6px] sm:text-[7px] text-center leading-tight font-semibold truncate w-full max-w-[40px] sm:max-w-[60px]" title={customerName}>{customerName}</span>}
                         <User size={10} className="opacity-80" strokeWidth={2.5} />
                         {activeLead?.agentName && (
                            <span className="text-[5px] sm:text-[6px] text-center leading-none mt-0.5 font-bold opacity-90 truncate w-full max-w-[20px] sm:max-w-[30px]" title={activeLead.agentName}>{activeLead.agentName}</span>

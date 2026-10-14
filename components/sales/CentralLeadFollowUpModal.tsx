@@ -137,7 +137,7 @@ function FollowUpSession({
       const { data, error } = await supabase
         .from('lead_activities')
         .select('*')
-        .eq('customer_id', customerId)
+        .eq('native_lead_id', customerId)
         .order('occurred_at', { ascending: false })
         .limit(20);
 
@@ -217,7 +217,7 @@ function FollowUpSession({
         const { error: activityError } = await supabase
           .from('lead_activities')
           .insert([{
-            customer_id: latest.lead.id,
+            native_lead_id: latest.lead.id,
             activity_type: channel,
             result: result,
             occurred_at: now.toISOString(),

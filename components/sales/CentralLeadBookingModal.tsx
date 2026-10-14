@@ -687,7 +687,7 @@ export default function CentralLeadBookingModal({
         const { error } = await supabase
           .from('lead_activities')
           .insert([{
-            customer_id: leadId,
+            native_lead_id: leadId,
             activity_type: 'note',
             result: 'contact_success',
             occurred_at: now.toISOString(),
@@ -698,14 +698,13 @@ export default function CentralLeadBookingModal({
         checkpoint.activitySaved = true;
       }
 
-      // 5. Try to update plot status in plots table
+      // The sale insert already derives occupancy through the database trigger.
+      // Save only the existing display note; do not overwrite guarded stock fields.
       if (!checkpoint.plotSaved) {
         phase = 'สถานะแปลง';
         const { error } = await supabase
           .from('plots')
           .update({ 
-            sale_status: 'Reserved',
-            has_customer: true,
             highlight_note: `จอง: ${effectiveName}`
           })
           .eq('id', resolvedPlotId);

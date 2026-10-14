@@ -125,7 +125,7 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
       const { error: activityError } = await supabase
         .from('lead_activities')
         .insert({
-          customer_id: latest.lead.id,
+          native_lead_id: latest.lead.id,
           activity_type: 'note',
           result: 'contact_success',
           note: reactivateNote,

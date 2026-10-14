@@ -9,6 +9,25 @@ GRANT ALL ON native_sidebar_results TO authenticated;
 DO $proof$
 DECLARE actor record; lead uuid; sale uuid; plot text; n integer; denied boolean; claims text; sample uuid;
 BEGIN
+ IF (SELECT count(*) FROM public.crm_settings WHERE id=true)<>1
+  OR EXISTS(SELECT 1 FROM public.crm_settings s CROSS JOIN LATERAL jsonb_each(to_jsonb(s)) j
+   WHERE (right(j.key,8)='_enabled' OR j.key='booking_cutover_reviewed') AND j.value='true'::jsonb)
+  THEN RAISE EXCEPTION 'NATIVE_MODE_SWITCHES_INCOMPLETE'; END IF;
+ INSERT INTO native_sidebar_results VALUES('all_live_CRM_switches_disabled_singleton_id_retained',true);
+ IF NOT EXISTS(SELECT 1 FROM native_sidebar_activation_before b
+  WHERE b.definition=pg_get_functiondef('crm_external_private.reject_unreviewed_activation()'::regprocedure)
+   AND b.triggers=(SELECT jsonb_agg(jsonb_build_object('name',tgname,'enabled',tgenabled,'definition',pg_get_triggerdef(oid)) ORDER BY tgname)
+    FROM pg_trigger WHERE tgrelid='public.crm_settings'::regclass
+     AND tgfoid='crm_external_private.reject_unreviewed_activation()'::regprocedure))
+  OR NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='public.crm_settings'::regclass
+    AND tgfoid='crm_external_private.reject_unreviewed_activation()'::regprocedure AND tgenabled IN('O','A'))
+  THEN RAISE EXCEPTION 'ACTIVATION_GUARD_CHANGED_OR_DISABLED'; END IF;
+ INSERT INTO native_sidebar_results VALUES('activation_guard_unchanged_and_enabled',true);
+ IF (SELECT prosecdef FROM pg_proc WHERE oid='public.update_sales_updated_at_column()'::regprocedure)
+   OR has_schema_privilege('authenticated','sales_recovery_private','USAGE')
+   OR has_function_privilege('authenticated','sales_recovery_private.row_allowed(text,text,jsonb,jsonb)','EXECUTE')
+  THEN RAISE EXCEPTION 'TIMESTAMP_FIX_ESCALATES_PRIVILEGES'; END IF;
+ INSERT INTO native_sidebar_results VALUES('timestamp_fix_remains_invoker_private_recovery_not_granted',true);
  FOR actor IN SELECT * FROM native_sidebar_roles WHERE role IN('Admin','Sales','Owner') LOOP
   SELECT p.id INTO plot FROM public.plots p WHERE NOT EXISTS(SELECT 1 FROM public.sales s WHERE s.plot_id=p.id)
     ORDER BY p.id LIMIT 1;
@@ -27,6 +46,11 @@ BEGIN
    INSERT INTO native_sidebar_results VALUES(actor.role||'_native_booking_with_active_old_seals',true);
    IF NOT EXISTS(SELECT 1 FROM public.plots WHERE id=plot AND has_customer) THEN RAISE EXCEPTION 'NATIVE_STOCK_NOT_SYNCED'; END IF;
    INSERT INTO native_sidebar_results VALUES(actor.role||'_exact_plot_stock_synced',true);
+   UPDATE public.plots SET highlight_note='Synthetic native booking note' WHERE id=plot;
+   GET DIAGNOSTICS n=ROW_COUNT;
+   IF n<>1 OR NOT EXISTS(SELECT 1 FROM public.plots WHERE id=plot AND has_customer
+     AND highlight_note='Synthetic native booking note') THEN RAISE EXCEPTION 'NATIVE_BOOKING_NOTE_FAILED'; END IF;
+   INSERT INTO native_sidebar_results VALUES(actor.role||'_booking_note_preserves_derived_stock',true);
    UPDATE public.sales SET sale_price=1300000,land_office_price=1250000,bank_name='Synthetic bank',crm_stage='contracted',contract_status='Contracted',contracted_at=now() WHERE id=sale;
    GET DIAGNOSTICS n=ROW_COUNT; IF n<>1 THEN RAISE EXCEPTION 'NATIVE_UPDATE_FAILED'; END IF;
    UPDATE public.leads SET customer_name='Synthetic updated',phone='0811111111',occupation='Synthetic',agent_name='Synthetic Sales',notes='Synthetic preserved note' WHERE id=lead;

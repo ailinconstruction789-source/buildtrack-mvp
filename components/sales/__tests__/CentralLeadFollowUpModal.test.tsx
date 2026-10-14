@@ -139,6 +139,8 @@ describe('CentralLeadFollowUpModal', () => {
 
     await waitFor(() => {
       expect(mockInsert).toHaveBeenCalled();
+      expect(mockInsert.mock.calls[0][0][0].native_lead_id).toBe('cust-123');
+      expect(mockInsert.mock.calls[0][0][0]).not.toHaveProperty('customer_id');
       expect(mockUpdate).toHaveBeenCalled();
       expect(handleSaved).toHaveBeenCalledWith(
         expect.stringContaining('คุณสมศักดิ์ มั่งมี')

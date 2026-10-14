@@ -22,7 +22,7 @@ import {
   Plus
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { canStartSalesDeal } from '@/lib/sales/leadStage';
+import { canStartSalesDeal, getLeadStage } from '@/lib/sales/leadStage';
 import { selectSalesStaffName } from '@/lib/sales/salesStaff';
 import { useSalesStaffOptions } from '@/hooks/useSalesStaffOptions';
 import { 
@@ -70,8 +70,28 @@ export default function RentalContractModal({
   const [tenantPhone, setTenantPhone] = useState<string>(initialLead?.phone || '');
   const [monthlyRent, setMonthlyRent] = useState<string>('15000');
   const [durationMonths, setDurationMonths] = useState<number>(12);
-  const [startDate, setStartDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [bookingDate, setBookingDate] = useState<string>(() => {
+    const raw = initialLead?.booking_date;
+    return raw ? String(raw).split('T')[0] : new Date().toISOString().split('T')[0];
+  });
+  const [bookingAmount, setBookingAmount] = useState<string>(() => {
+    const raw = initialLead?.booking_amount;
+    return raw !== undefined && raw !== null ? String(raw) : '10000';
+  });
+  const [contractDate, setContractDate] = useState<string>(() => {
+    const raw = initialLead?.contracted_at || initialLead?.contract_date;
+    return raw ? String(raw).split('T')[0] : new Date().toISOString().split('T')[0];
+  });
+  const [startDate, setStartDate] = useState<string>(() => {
+    const raw = initialLead?.rental_start_date;
+    return raw ? String(raw).split('T')[0] : new Date().toISOString().split('T')[0];
+  });
   const [customDeposit, setCustomDeposit] = useState<string>('30000');
+  const [depositMonths, setDepositMonths] = useState<number>(2);
+  const [hasAdvanceRent, setHasAdvanceRent] = useState<boolean>(true);
+  const [advanceRentMonths, setAdvanceRentMonths] = useState<number>(1);
+  const [contractFee, setContractFee] = useState<string>('10000');
+  const [year4AgreedRent, setYear4AgreedRent] = useState<string>('');
   const [savingsPerMonth, setSavingsPerMonth] = useState<string>('5000');
   const [basePrice, setBasePrice] = useState<string>('2990000');
   const [agentName, setAgentName] = useState<string>('');
@@ -115,6 +135,18 @@ export default function RentalContractModal({
       if (chosenLead.rental_monthly_rent) {
         setMonthlyRent(chosenLead.rental_monthly_rent.toString());
       }
+      if (chosenLead.booking_date) {
+        setBookingDate(String(chosenLead.booking_date).split('T')[0]);
+      }
+      if (chosenLead.booking_amount !== undefined && chosenLead.booking_amount !== null) {
+        setBookingAmount(chosenLead.booking_amount.toString());
+      }
+      if (chosenLead.contracted_at || chosenLead.contract_date) {
+        setContractDate(String(chosenLead.contracted_at || chosenLead.contract_date).split('T')[0]);
+      }
+      if (chosenLead.rental_start_date) {
+        setStartDate(String(chosenLead.rental_start_date).split('T')[0]);
+      }
       setIsNewLeadMode(false);
     } else {
       if (!isNewLeadMode) {
@@ -138,7 +170,7 @@ export default function RentalContractModal({
     }
   }, [initialLead, plotId, user, salesOwners]);
 
-  // Fetch available plots for the selected project
+  // Fetch available plots for the selected project & sort naturally
   useEffect(() => {
     if (!isOpen) return;
     let isCancelled = false;
@@ -152,10 +184,17 @@ export default function RentalContractModal({
 
         if (error) throw error;
         if (!isCancelled && data) {
-          setPlotsList(data);
+          // Sort plots naturally by numeric plot number (e.g. 1, 2, 3... 10, 11)
+          const sorted = [...data].sort((a, b) => {
+            const nameA = a.plot_name || a.id || '';
+            const nameB = b.plot_name || b.id || '';
+            return nameA.localeCompare(nameB, 'th', { numeric: true, sensitivity: 'base' });
+          });
+          setPlotsList(sorted);
+
           // If no plot selected yet or plot not in this project, pick the first available
-          if (!selectedPlotId && data.length > 0) {
-            const firstVacant = data.find(p => !p.has_customer && p.sale_status !== 'Reserved' && p.sale_status !== 'Transferred');
+          if (!selectedPlotId && sorted.length > 0) {
+            const firstVacant = sorted.find(p => !p.has_customer && p.sale_status !== 'Reserved' && p.sale_status !== 'Booked' && p.sale_status !== 'Transferred' && p.sale_status !== 'Rented');
             if (firstVacant) {
               setSelectedPlotId(firstVacant.id);
               const priceVal = firstVacant.selling_price || firstVacant.base_price || firstVacant.price;
@@ -179,6 +218,29 @@ export default function RentalContractModal({
     return () => { isCancelled = true; };
   }, [isOpen, targetProject]);
 
+  // Filter and naturally sort plots for the dropdown:
+  // - Show Available plots (🟢 ว่าง)
+  // - Show Booked plots (🟡 ติดจอง)
+  // - Keep current customer's plot
+  // - Hide Transferred / Rented to someone else
+  const availableAndBookedPlots = useMemo(() => {
+    return [...plotsList]
+      .filter(p => {
+        const isMyPlot = p.id === selectedPlotId || p.id === (selectedLead?.interested_plot_id || plotId) || (selectedLead?.customer_name && p.customer_name === selectedLead.customer_name);
+        if (isMyPlot) return true;
+        // Hide transferred plots
+        if (p.sale_status === 'Transferred') return false;
+        // Hide plots already occupied/rented to another tenant
+        if (p.sale_status === 'Rented' || p.current_tenant_name) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const nameA = a.plot_name || a.id || '';
+        const nameB = b.plot_name || b.id || '';
+        return nameA.localeCompare(nameB, 'th', { numeric: true, sensitivity: 'base' });
+      });
+  }, [plotsList, selectedPlotId, selectedLead, plotId]);
+
   // When plot selection changes, sync plot base price or monthly rent
   const handlePlotChange = (pId: string) => {
     setSelectedPlotId(pId);
@@ -190,11 +252,11 @@ export default function RentalContractModal({
     }
   };
 
-  // Keep deposit in sync with monthly rent whenever rent changes
+  // Keep deposit in sync with monthly rent and depositMonths
   useEffect(() => {
     const rentNum = parseFloat(monthlyRent) || 0;
-    setCustomDeposit((rentNum * 2).toString());
-  }, [monthlyRent]);
+    setCustomDeposit((rentNum * depositMonths).toString());
+  }, [monthlyRent, depositMonths]);
 
   // Calculate live financial calculations using helper
   const calcResults = useMemo(() => {
@@ -202,6 +264,8 @@ export default function RentalContractModal({
     const depositNum = parseFloat(customDeposit) || 0;
     const savingsNum = parseFloat(savingsPerMonth) || 0;
     const priceNum = parseFloat(basePrice) || 0;
+    const feeNum = parseFloat(contractFee) || 0;
+    const year4RentNum = parseFloat(year4AgreedRent);
 
     return calculateRentalTerms({
       programType: selectedProgram,
@@ -209,10 +273,15 @@ export default function RentalContractModal({
       basePrice: priceNum,
       durationMonths,
       startDate,
+      depositMonths,
       customDeposit: depositNum,
-      customSavingsPerMonth: savingsNum
+      customSavingsPerMonth: savingsNum,
+      hasAdvanceRent,
+      advanceRentMonths,
+      contractFee: feeNum,
+      customYear4MonthlyRent: !isNaN(year4RentNum) && year4RentNum > 0 ? year4RentNum : undefined
     });
-  }, [selectedProgram, monthlyRent, customDeposit, savingsPerMonth, basePrice, durationMonths, startDate]);
+  }, [selectedProgram, monthlyRent, depositMonths, customDeposit, savingsPerMonth, basePrice, durationMonths, startDate, hasAdvanceRent, advanceRentMonths, contractFee, year4AgreedRent]);
 
   if (!isOpen) return null;
 
@@ -236,17 +305,24 @@ export default function RentalContractModal({
     try {
       if (!progress) {
         const effectiveLead = isNewLeadMode ? null : selectedLead || initialLead;
-        if (effectiveLead && !canStartSalesDeal(effectiveLead)) {
-          throw new Error('ลูกค้ารายนี้อยู่ในขั้นตอนจอง โอน เช่า หรือสิ้นสุดแล้ว กรุณาจัดการรายการเดิม');
+        if (effectiveLead) {
+          const stage = getLeadStage(effectiveLead);
+          const isAllowedStage = canStartSalesDeal(effectiveLead) || stage === 'booked' || effectiveLead?.deal_type === 'rent';
+          if (!isAllowedStage) {
+            throw new Error('ลูกค้ารายนี้อยู่ในขั้นตอนโอน หรือสิ้นสุดแล้ว กรุณาจัดการรายการเดิม');
+          }
         }
         if (!tenantName.trim()) throw new Error('กรุณาระบุชื่อผู้เช่า');
         if (!targetProject || !selectedPlotId) throw new Error('กรุณาเลือกโครงการและแปลงที่จะทำสัญญาเช่า');
         const rentNum = parseFloat(monthlyRent) || 0;
         if (rentNum <= 0) throw new Error('กรุณาระบุค่าเช่าต่อเดือนให้ถูกต้อง');
         const now = new Date().toISOString();
+        const bookingAmountNum = parseFloat(bookingAmount) || 0;
+        const bookingIso = bookingDate ? `${bookingDate}T00:00:00.000Z` : null;
+        const contractIso = contractDate ? `${contractDate}T00:00:00.000Z` : now;
         const depositNum = parseFloat(customDeposit) || rentNum * 2;
         const savingsNum = selectedProgram === 'program_b' ? parseFloat(savingsPerMonth) || 5000 : 0;
-        const priceNum = selectedProgram === 'program_c' ? parseFloat(basePrice) || 0 : 0;
+        const priceNum = (selectedProgram === 'program_b' || selectedProgram === 'program_c') ? parseFloat(basePrice) || 0 : 0;
         let targetLeadId: string | null = effectiveLead?.id || null;
         let targetContractId: string | null = null;
         const crmStatus = selectedProgram === 'program_b'
@@ -257,7 +333,10 @@ export default function RentalContractModal({
           interested_plot_id: selectedPlotId, interested_plot_name: selectedPlot?.plot_name || selectedPlotId,
           rental_monthly_rent: rentNum, rental_deposit: depositNum, rental_savings_per_month: savingsNum,
           rental_base_price: priceNum, rental_start_date: startDate, rental_end_date: calcResults.endDate,
-          rental_status: 'Active'
+          rental_status: 'Active',
+          booking_date: bookingIso,
+          booking_amount: bookingAmountNum,
+          contracted_at: contractIso
         };
         if (targetLeadId) {
           const { data, error } = await supabase.from('rental_contracts').select('id')
@@ -271,22 +350,47 @@ export default function RentalContractModal({
           const { data, error } = await supabase.from('leads').insert([{
             customer_name: tenantName.trim(), phone: tenantPhone.trim(), project_name: targetProject,
             channel: 'Walk in', source: 'Walk in', agent_name: agentName.trim(),
-            created_by_agent: agentName.trim(), ...leadPayload, notes: notes.trim() || null, created_at: now
+            created_by_agent: agentName.trim(), ...leadPayload, notes: notes.trim() || null, created_at: contractIso
           }]).select('id').single();
           if (error) throw error;
           if (!data?.id) throw new Error('สร้างลูกค้าไม่สำเร็จ');
           targetLeadId = data.id;
         });
         steps.push(async () => {
-          const payload: Partial<RentalContract> = {
+          const year4InterestNote = (selectedProgram === 'program_c' && durationMonths > 36)
+            ? `[ปีที่ 4+: ค่างวดตกลง ${calcResults.year4BaseRent.toLocaleString()} บ. + ดอกเบี้ย 8% รวม ${calcResults.year4MonthlyRent.toLocaleString()} บ./ด.]`
+            : null;
+
+          const depositNote = (depositMonths !== 2 || depositNum !== rentNum * 2)
+            ? `[เงินประกัน ${depositMonths} เดือน: ${depositNum.toLocaleString()} บ.]`
+            : null;
+          const contractFeeNum = selectedProgram === 'program_c' ? (parseFloat(contractFee) || 0) : 0;
+          const contractFeeNote = contractFeeNum > 0 ? `[ค่าทำสัญญา: ${contractFeeNum.toLocaleString()} บ.]` : null;
+          const advanceRentNote = hasAdvanceRent
+            ? `[ค่าเช่าล่วงหน้า ${advanceRentMonths} เดือน: ${calcResults.advanceRent.toLocaleString()} บ.]`
+            : '[ไม่เก็บค่าเช่าล่วงหน้า]';
+
+          const contractNotes = [
+            notes.trim() || null,
+            bookingAmountNum > 0 ? `[เงินจอง: ${bookingAmountNum.toLocaleString()} บ.]` : null,
+            bookingDate ? `[วันที่จอง: ${bookingDate}]` : null,
+            contractDate ? `[วันที่ทำสัญญา: ${contractDate}]` : null,
+            priceNum > 0 ? `[ราคาบ้านตกลง: ${priceNum.toLocaleString()} บ.]` : null,
+            depositNote,
+            contractFeeNote,
+            advanceRentNote,
+            year4InterestNote
+          ].filter(Boolean).join(' ') || null;
+
+          const payload: Partial<RentalContract> & { created_at?: string } = {
             lead_id: targetLeadId, project_name: targetProject, plot_id: selectedPlotId,
             plot_name: selectedPlot?.plot_name || selectedPlotId, tenant_name: tenantName.trim(),
             tenant_phone: tenantPhone.trim() || null, agent_name: agentName.trim(), program_type: selectedProgram,
-            monthly_rent: rentNum, security_deposit: depositNum, advance_rent: rentNum,
+            monthly_rent: rentNum, security_deposit: depositNum, advance_rent: calcResults.advanceRent,
             savings_per_month: savingsNum, accumulated_savings: 0, base_price: priceNum,
             discount_1yr_pct: 10, discount_2yr_pct: 5, lease_duration_months: durationMonths,
             lease_start_date: startDate, lease_end_date: calcResults.endDate, status: 'Active',
-            notes: notes.trim() || null, created_at: now, updated_at: now
+            notes: contractNotes, created_at: contractIso, updated_at: now
           };
           const { data, error } = await supabase.from('rental_contracts').insert([payload]).select('id').single();
           if (error) throw error;
@@ -294,9 +398,20 @@ export default function RentalContractModal({
           targetContractId = data.id;
         });
         steps.push(async () => {
+          const dateSuffix = contractDate ? ` (ทำสัญญา: ${contractDate})` : '';
+          const bookingSuffix = bookingAmountNum > 0 ? ` (เงินจอง: ${bookingAmountNum.toLocaleString()} บ.)` : '';
+          const priceSuffix = priceNum > 0 ? ` (ราคาบ้าน: ${priceNum.toLocaleString()} บ.)` : '';
+          const depositSuffix = (depositMonths !== 2 || depositNum !== rentNum * 2) ? ` (ประกัน ${depositMonths} ด.: ${depositNum.toLocaleString()} บ.)` : '';
+          const contractFeeNum = selectedProgram === 'program_c' ? (parseFloat(contractFee) || 0) : 0;
+          const feeSuffix = contractFeeNum > 0 ? ` (ค่าสัญญา: ${contractFeeNum.toLocaleString()} บ.)` : '';
+          const advanceSuffix = hasAdvanceRent ? ` (ล่วงหน้า ${advanceRentMonths} ด.: ${calcResults.advanceRent.toLocaleString()} บ.)` : ' (ไม่มีค่าเช่าล่วงหน้า)';
+          const year4Suffix = (selectedProgram === 'program_c' && durationMonths > 36) ? ` (ปีที่ 4+: ค่างวดตกลง ${calcResults.year4BaseRent.toLocaleString()} บ. + ดอกเบี้ย 8% รวม ${calcResults.year4MonthlyRent.toLocaleString()} บ./ด.)` : '';
+          const leadNotes = notes
+            ? ((effectiveLead?.notes || '') + '\n[สัญญาเช่า ' + currentProgram.name + dateSuffix + bookingSuffix + priceSuffix + depositSuffix + feeSuffix + advanceSuffix + year4Suffix + ']: ' + notes).trim()
+            : effectiveLead?.notes;
           const { data, error } = await supabase.from('leads').update({
             ...leadPayload, active_rental_contract_id: targetContractId,
-            notes: notes ? ((effectiveLead?.notes || '') + '\n[สัญญาเช่า ' + currentProgram.name + ']: ' + notes).trim() : effectiveLead?.notes
+            notes: leadNotes
           }).eq('id', targetLeadId!).select('id').single();
           if (error) throw error;
           if (!data?.id) throw new Error('ไม่พบลูกค้าที่อัปเดตได้');
@@ -343,7 +458,7 @@ export default function RentalContractModal({
 
   return (
     <SalesOverlay className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto animate-fade-in">
-      <div className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden my-auto flex flex-col max-h-[90vh]">
+      <div className="bg-white rounded-3xl max-w-4xl w-full shadow-2xl border border-slate-200 overflow-hidden my-auto flex flex-col max-h-[92vh]">
         
         {/* Modal Header */}
         <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white px-6 py-5 flex items-center justify-between shrink-0">
@@ -560,13 +675,28 @@ export default function RentalContractModal({
                   required
                   className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                 >
-                  <option value="">-- เลือกแปลงบ้าน --</option>
-                  {plotsList.map(p => {
-                    const isTaken = p.has_customer && p.id !== (selectedLead?.interested_plot_id || plotId);
-                    const tag = p.sale_status === 'Rented' ? '🔵 มีผู้เช่า' : (p.has_customer ? '🔴 ไม่ว่าง' : '🟢 ว่าง');
+                  <option value="">-- เลือกแปลงบ้าน (เรียงตามลำดับเลขแปลง) --</option>
+                  {availableAndBookedPlots.map(p => {
+                    const isMyPlot = p.id === selectedPlotId || p.id === (effectiveLead?.interested_plot_id || plotId) || (effectiveLead?.customer_name && p.customer_name === effectiveLead.customer_name);
+                    const isBooked = p.sale_status === 'Booked' || p.sale_status === 'Reserved' || (p.has_customer && !p.current_tenant_name);
+                    
+                    let tag = '🟢 ว่าง';
+                    let disabled = false;
+                    if (isMyPlot && isBooked) {
+                      tag = '🟡 ติดจอง (แปลงของลูกค้ารายนี้)';
+                      disabled = false;
+                    } else if (isBooked) {
+                      tag = '🟡 ติดจอง';
+                      disabled = true;
+                    } else if (p.sale_status === 'Rented' || p.current_tenant_name) {
+                      tag = '🔵 มีผู้เช่า';
+                      disabled = !isMyPlot;
+                    }
+
+                    const priceVal = p.price || p.selling_price || p.base_price;
                     return (
-                      <option key={p.id} value={p.id} disabled={isTaken}>
-                        {p.plot_name || p.id} ({tag}) {p.price ? `- ${Number(p.price).toLocaleString()} บ.` : ''}
+                      <option key={p.id} value={p.id} disabled={disabled}>
+                        {p.plot_name || p.id} ({tag}) {priceVal ? `- ${Number(priceVal).toLocaleString()} บ.` : ''}
                       </option>
                     );
                   })}
@@ -626,86 +756,289 @@ export default function RentalContractModal({
               <DollarSign size={14} className="text-emerald-600" /> เงื่อนไขสัญญาเช่า & การชำระเงิน
             </h4>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <label className="block text-slate-700 font-bold mb-1">ค่าเช่าต่อเดือน (บาท) *</label>
-                <input
-                  type="number"
-                  required
-                  min="0"
-                  step="500"
-                  value={monthlyRent}
-                  onChange={e => setMonthlyRent(e.target.value)}
-                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 font-black text-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                />
+            {/* 📅 วันที่สำคัญ & เงินจอง (Key Dates & Booking History) */}
+            <div className="p-3.5 sm:p-4 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 border-b border-slate-100 pb-2">
+                <span className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                  <Calendar size={14} className="text-blue-600" /> ข้อมูลการจอง & กำหนดวันทำสัญญา (รองรับการบันทึกย้อนหลัง)
+                </span>
+                <span className="text-[11px] text-slate-500 font-medium">
+                  ใส่วันที่และเงินจองย้อนหลังได้ตามจริง
+                </span>
               </div>
 
-              <div>
-                <label className="block text-slate-700 font-bold mb-1">ระยะเวลาสัญญาเช่า (เดือน)</label>
-                <select
-                  value={durationMonths}
-                  onChange={e => setDurationMonths(parseInt(e.target.value) || 12)}
-                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                >
-                  <option value={12}>12 เดือน (1 ปี - ขั้นต่ำ)</option>
-                  <option value={24}>24 เดือน (2 ปี)</option>
-                  <option value={36}>36 เดือน (3 ปี)</option>
-                </select>
-              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                {/* 1. วันที่จอง */}
+                <div>
+                  <label htmlFor="rental-booking-date" className="block text-slate-700 font-bold mb-1 text-[11px]">
+                    วันที่จอง (Booking Date)
+                  </label>
+                  <input
+                    id="rental-booking-date"
+                    type="date"
+                    value={bookingDate}
+                    onChange={e => setBookingDate(e.target.value)}
+                    className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
+                  <span className="text-[10px] text-slate-400 block mt-0.5">วันวางเงินจอง (ถ้ามี)</span>
+                </div>
 
-              <div>
-                <label className="block text-slate-700 font-bold mb-1">วันเริ่มต้นสัญญา *</label>
-                <input
-                  type="date"
-                  required
-                  value={startDate}
-                  onChange={e => setStartDate(e.target.value)}
-                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 font-medium focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                />
-              </div>
+                {/* 2. เงินจอง */}
+                <div>
+                  <label htmlFor="rental-booking-amount" className="block text-slate-700 font-bold mb-1 text-[11px]">
+                    เงินจอง / มัดจำ (บาท)
+                  </label>
+                  <div className="relative">
+                    <input
+                      id="rental-booking-amount"
+                      type="number"
+                      min="0"
+                      step="1000"
+                      value={bookingAmount}
+                      onChange={e => setBookingAmount(e.target.value)}
+                      placeholder="เช่น 10,000"
+                      className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none pr-8"
+                    />
+                    <span className="absolute right-3 top-2.5 text-[11px] text-slate-400 font-bold pointer-events-none">บาท</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 block mt-0.5">นำไปหักวันโอนกรรมสิทธิ์</span>
+                </div>
 
-              <div>
-                <label className="block text-slate-700 font-bold mb-1">เงินประกันบ้าน 2 เดือน (บาท)</label>
-                <input
-                  type="number"
-                  min="0"
-                  value={customDeposit}
-                  onChange={e => setCustomDeposit(e.target.value)}
-                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                />
-                <span className="text-[10px] text-slate-500 mt-0.5 block">คำนวณอัตโนมัติ 2 เดือน</span>
-              </div>
+                {/* 3. วันที่ทำสัญญา */}
+                <div>
+                  <label htmlFor="rental-contract-date" className="block text-slate-700 font-bold mb-1 text-[11px]">
+                    วันที่ทำสัญญา (Contract Date) <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    id="rental-contract-date"
+                    type="date"
+                    required
+                    value={contractDate}
+                    onChange={e => setContractDate(e.target.value)}
+                    className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
+                  <span className="text-[10px] text-slate-400 block mt-0.5">วันที่เซ็นสัญญาเช่า</span>
+                </div>
 
-              <div>
-                <label className="block text-slate-700 font-bold mb-1">ค่าเช่าล่วงหน้า 1 เดือน (บาท)</label>
-                <div className="w-full bg-slate-200/70 border border-slate-300 rounded-xl px-3 py-2 font-bold text-slate-700">
-                  {calcResults.advanceRent.toLocaleString()} บาท
+                {/* 4. วันเริ่มต้นสัญญา */}
+                <div>
+                  <label htmlFor="rental-start-date" className="block text-slate-700 font-bold mb-1 text-[11px]">
+                    วันเริ่มต้นสัญญา (Start Date) <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    id="rental-start-date"
+                    type="date"
+                    required
+                    value={startDate}
+                    onChange={e => setStartDate(e.target.value)}
+                    className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
+                  <span className="text-[10px] text-slate-400 block mt-0.5">วันเริ่มเข้าพัก/คิดค่าเช่า</span>
                 </div>
               </div>
 
-              <div>
-                <label className="block text-slate-700 font-bold mb-1">วันสิ้นสุดสัญญา (คำนวณ)</label>
-                <div className="w-full bg-blue-50 border border-blue-200 rounded-xl px-3 py-2 font-bold text-blue-800 flex items-center gap-1">
-                  <Calendar size={13} /> {calcResults.endDate}
+              {/* แถบคำนวณวันสิ้นสุดสัญญาอัตโนมัติ */}
+              <div className="bg-blue-50/70 border border-blue-200/80 rounded-xl px-3.5 py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-xs text-blue-900">
+                <div className="flex items-center gap-2">
+                  <Calendar size={15} className="text-blue-600 shrink-0" />
+                  <span className="font-bold text-slate-700">วันสิ้นสุดสัญญา (คำนวณอัตโนมัติ):</span>
+                  <span className="font-black text-blue-950 bg-white px-2.5 py-0.5 rounded-lg border border-blue-200 shadow-2xs">
+                    {calcResults.endDate}
+                  </span>
                 </div>
+                <span className="text-[11px] text-blue-700 font-medium">
+                  ครอบคลุมระยะเวลา {durationMonths} เดือน ({startDate} ถึง {calcResults.endDate})
+                </span>
               </div>
             </div>
 
-            {/* Program B Specific: Savings per month */}
+            {/* 💵 ค่าเช่ารายเดือน, ระยะเวลา, เงินประกัน & ค่าเช่าล่วงหน้า */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 pt-1">
+              {/* 1. ค่าเช่าต่อเดือน */}
+              <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-1.5 flex flex-col justify-between">
+                <div>
+                  <label htmlFor="rental-monthly-rent" className="block text-slate-800 font-bold text-xs mb-1">
+                    ค่าเช่าต่อเดือน (บาท) <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      id="rental-monthly-rent"
+                      type="number"
+                      required
+                      min="0"
+                      step="500"
+                      value={monthlyRent}
+                      onChange={e => setMonthlyRent(e.target.value)}
+                      className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3 py-2 font-black text-slate-900 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm pr-16"
+                    />
+                    <span className="absolute right-3 top-2.5 text-xs text-slate-400 font-bold pointer-events-none">บาท/เดือน</span>
+                  </div>
+                </div>
+                <span className="text-[10px] text-slate-500 block">
+                  ค่าเช่าอยู่อาศัยรายเดือนที่ระบุในสัญญา
+                </span>
+              </div>
+
+              {/* 2. ระยะเวลาสัญญาเช่า */}
+              <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-1.5 flex flex-col justify-between">
+                <div>
+                  <label htmlFor="rental-duration-months" className="block text-slate-800 font-bold text-xs mb-1">
+                    ระยะเวลาสัญญาเช่า (เดือน) <span className="text-rose-500">*</span>
+                  </label>
+                  <select
+                    id="rental-duration-months"
+                    value={durationMonths}
+                    onChange={e => setDurationMonths(parseInt(e.target.value) || 12)}
+                    className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3 py-2 font-bold text-slate-800 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none text-xs"
+                  >
+                    <option value={12}>12 เดือน (1 ปี - ขั้นต่ำ)</option>
+                    <option value={24}>24 เดือน (2 ปี)</option>
+                    <option value={36}>36 เดือน (3 ปี)</option>
+                    <option value={48}>48 เดือน (4 ปี — เข้าปีที่ 4 บวกดอกเบี้ย 8%)</option>
+                    <option value={60}>60 เดือน (5 ปี — เข้าปีที่ 4 เป็นต้นไป บวกดอกเบี้ย 8%)</option>
+                  </select>
+                </div>
+                <span className="text-[10px] text-slate-500 block">
+                  กำหนดสิ้นสุด: {calcResults.endDate}
+                </span>
+              </div>
+
+              {/* 3. เงินประกันบ้าน */}
+              <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-1.5 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <label htmlFor="rental-custom-deposit" className="text-slate-800 font-bold text-xs">
+                      เงินประกันบ้าน
+                    </label>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="text-[11px] text-slate-500 font-semibold">เลือก:</span>
+                      <select
+                        aria-label="จำนวนเดือนเงินประกันบ้าน"
+                        value={depositMonths}
+                        onChange={e => {
+                          const m = parseInt(e.target.value) || 0;
+                          setDepositMonths(m);
+                          const rentNum = parseFloat(monthlyRent) || 0;
+                          setCustomDeposit((rentNum * m).toString());
+                        }}
+                        className="bg-slate-100 hover:bg-slate-200/80 border border-slate-300 rounded-lg px-2 py-1 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 focus:outline-none cursor-pointer"
+                      >
+                        <option value={0}>0 เดือน (ไม่มี)</option>
+                        <option value={1}>1 เดือน</option>
+                        <option value={2}>2 เดือน (มาตรฐาน)</option>
+                        <option value={3}>3 เดือน</option>
+                        <option value={4}>4 เดือน</option>
+                        <option value={5}>5 เดือน</option>
+                        <option value={6}>6 เดือน</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="relative">
+                    <input
+                      id="rental-custom-deposit"
+                      type="number"
+                      min="0"
+                      value={customDeposit}
+                      onChange={e => setCustomDeposit(e.target.value)}
+                      className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3 py-2 font-bold text-slate-800 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none text-xs pr-10"
+                    />
+                    <span className="absolute right-3 top-2.5 text-xs text-slate-400 font-bold pointer-events-none">บาท</span>
+                  </div>
+                </div>
+                <span className="text-[10px] text-slate-500 block">
+                  {depositMonths > 0 
+                    ? `คำนวณ ${depositMonths} เดือน (${(parseFloat(monthlyRent) || 0).toLocaleString()} × ${depositMonths}) หรือปรับยอดได้`
+                    : 'ไม่เรียกเก็บเงินประกันบ้าน'}
+                </span>
+              </div>
+
+              {/* 4. ค่าเช่าล่วงหน้า */}
+              <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-1.5 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <label className="text-slate-800 font-bold text-xs flex items-center gap-1.5 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={hasAdvanceRent}
+                        onChange={e => setHasAdvanceRent(e.target.checked)}
+                        className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
+                      />
+                      <span>เก็บค่าเช่าล่วงหน้า</span>
+                    </label>
+                    {hasAdvanceRent && (
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-[11px] text-slate-500 font-semibold">เลือก:</span>
+                        <select
+                          aria-label="จำนวนเดือนค่าเช่าล่วงหน้า"
+                          value={advanceRentMonths}
+                          onChange={e => setAdvanceRentMonths(parseInt(e.target.value) || 1)}
+                          className="bg-slate-100 hover:bg-slate-200/80 border border-slate-300 rounded-lg px-2 py-1 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 focus:outline-none cursor-pointer"
+                        >
+                          <option value={1}>1 เดือน</option>
+                          <option value={2}>2 เดือน</option>
+                          <option value={3}>3 เดือน</option>
+                          <option value={4}>4 เดือน</option>
+                          <option value={5}>5 เดือน</option>
+                          <option value={6}>6 เดือน</option>
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                  <div className={`w-full border rounded-xl px-3 py-2 font-bold text-xs flex items-center justify-between transition-colors ${
+                    hasAdvanceRent 
+                      ? 'bg-slate-100/90 border-slate-300 text-slate-900' 
+                      : 'bg-slate-100/50 border-slate-200 text-slate-400'
+                  }`}>
+                    <span>{hasAdvanceRent ? `${calcResults.advanceRent.toLocaleString()} บาท` : '0 บาท (ไม่เรียกเก็บ)'}</span>
+                    {hasAdvanceRent && <span className="text-[10px] text-slate-500 font-normal">ชำระวันทำสัญญา</span>}
+                  </div>
+                </div>
+                <span className="text-[10px] text-slate-500 block">
+                  {hasAdvanceRent 
+                    ? `คำนวณ ${advanceRentMonths} เดือน (${(parseFloat(monthlyRent) || 0).toLocaleString()} × ${advanceRentMonths})` 
+                    : 'ไม่เรียกเก็บค่าเช่าล่วงหน้า'}
+                </span>
+              </div>
+            </div>
+
+            {/* Program B Specific: House Price & Savings Breakdown */}
             {selectedProgram === 'program_b' && (
-              <div className="p-3.5 bg-amber-50 rounded-xl border border-amber-200 space-y-2 animate-fade-in">
+              <div className="p-3.5 bg-amber-50 rounded-xl border border-amber-200 space-y-3 animate-fade-in">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-amber-900 text-xs flex items-center gap-1">
-                    <PiggyBank size={15} className="text-amber-600" /> เงินสะสมเพื่อซื้อบ้านรายเดือน (Program B)
+                    <PiggyBank size={15} className="text-amber-600" /> โปรแกรมเช่าซื้อ (Rent to Own) — กำหนดราคาบ้าน & สะสมเงินดาวน์
                   </span>
                   <span className="text-[11px] bg-amber-200 text-amber-900 font-black px-2 py-0.5 rounded-full">
                     สะสมปีละ {calcResults.projected1YrSavings.toLocaleString()} บาท
                   </span>
                 </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-amber-800 font-bold mb-1">เงินสะสมรายเดือน (บาท/เดือน)</label>
+                    <label htmlFor="rental-base-price-b" className="block text-amber-900 font-bold mb-1">
+                      ราคาบ้านที่ตกลงซื้อขาย (บาท) <span className="text-rose-500">*</span>
+                    </label>
                     <input
+                      id="rental-base-price-b"
+                      type="number"
+                      min="0"
+                      step="10000"
+                      required
+                      value={basePrice}
+                      onChange={e => setBasePrice(e.target.value)}
+                      className="w-full bg-white border border-amber-300 rounded-xl px-3 py-2 font-black text-amber-950 focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                    />
+                    <span className="text-[10px] text-amber-800 mt-0.5 block">
+                      ราคาบ้านที่ตกลงขายตามสัญญา (ดึงจากแปลง สามารถปรับได้)
+                    </span>
+                  </div>
+
+                  <div>
+                    <label htmlFor="rental-savings-b" className="block text-amber-900 font-bold mb-1">
+                      เงินสะสมเพื่อซื้อบ้านรายเดือน (บาท/เดือน)
+                    </label>
+                    <input
+                      id="rental-savings-b"
                       type="number"
                       min="0"
                       step="500"
@@ -713,66 +1046,222 @@ export default function RentalContractModal({
                       onChange={e => setSavingsPerMonth(e.target.value)}
                       className="w-full bg-white border border-amber-300 rounded-xl px-3 py-2 font-black text-amber-950 focus:ring-2 focus:ring-amber-500 focus:outline-none"
                     />
-                  </div>
-                  <div className="flex flex-col justify-center text-[11px] text-amber-800">
-                    <div>• ชำระรวมต่อเดือน = <b>{(calcResults.monthlyRent + calcResults.savingsPerMonth).toLocaleString()} บาท</b></div>
-                    <div>• เมื่อตัดสินใจโอนกรรมสิทธิ์ <b>หักเงินสะสมจริงจากราคาบ้าน</b></div>
+                    <span className="text-[10px] text-amber-800 mt-0.5 block">
+                      ชำระรวมรายเดือน (ค่าเช่า + เงินสะสม) = <b>{(calcResults.monthlyRent + calcResults.savingsPerMonth).toLocaleString()} บาท/ด.</b>
+                    </span>
                   </div>
                 </div>
+
+                {/* Calculation Summary Box for Program B */}
+                {(() => {
+                  const bPrice = parseFloat(basePrice) || 0;
+                  const bDeposit = parseFloat(bookingAmount) || 0;
+                  const totalSavings = calcResults.savingsPerMonth * durationMonths;
+                  const netTransferPrice = Math.max(0, bPrice - bDeposit - totalSavings);
+
+                  return (
+                    <div className="p-3 bg-white rounded-xl border border-amber-300/80 space-y-1.5 shadow-2xs">
+                      <div className="text-[11px] font-bold text-amber-900 flex items-center justify-between">
+                        <span>สรุปการหักเงินดาวน์สะสม ณ วันโอนกรรมสิทธิ์ ({durationMonths} เดือน):</span>
+                        <span className="text-amber-700 font-bold">หักรวม {(bDeposit + totalSavings).toLocaleString()} บาท</span>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-center text-xs">
+                        <div className="bg-amber-50/70 p-2 rounded-lg border border-amber-100">
+                          <div className="text-[10px] text-slate-500">ราคาบ้านตกลง</div>
+                          <div className="font-bold text-slate-900">{bPrice.toLocaleString()} บ.</div>
+                        </div>
+                        <div className="bg-amber-50/70 p-2 rounded-lg border border-amber-100">
+                          <div className="text-[10px] text-amber-700">หักเงินจอง</div>
+                          <div className="font-bold text-amber-800">-{bDeposit.toLocaleString()} บ.</div>
+                        </div>
+                        <div className="bg-amber-50/70 p-2 rounded-lg border border-amber-100">
+                          <div className="text-[10px] text-amber-700">หักสะสม ({durationMonths} ด.)</div>
+                          <div className="font-bold text-amber-800">-{totalSavings.toLocaleString()} บ.</div>
+                        </div>
+                        <div className="bg-emerald-50 p-2 rounded-lg border border-emerald-200">
+                          <div className="text-[10px] text-emerald-700 font-bold">🎯 ยอดกู้/ชำระวันโอน</div>
+                          <div className="font-black text-emerald-700">{netTransferPrice.toLocaleString()} บ.</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             )}
 
-            {/* Program C Specific: Base Price & Discounts */}
+            {/* Program C Specific: Base Price, Discounts & Year 4+ Interest */}
             {selectedProgram === 'program_c' && (
               <div className="p-3.5 bg-emerald-50 rounded-xl border border-emerald-200 space-y-2.5 animate-fade-in">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-emerald-900 text-xs flex items-center gap-1">
-                    <Percent size={15} className="text-emerald-600" /> ราคาฐาน & สิทธิ์ส่วนลดการโอน (Program C)
+                    <Percent size={15} className="text-emerald-600" /> โปรแกรมเช่าออม (Rent and Save) — ราคาตั้ง, ส่วนลด & เงื่อนไขดอกเบี้ยปีที่ 4
                   </span>
                   <span className="text-[11px] bg-emerald-200 text-emerald-900 font-black px-2 py-0.5 rounded-full">
                     Rent and Save
                   </span>
                 </div>
 
-                <div>
-                  <label className="block text-emerald-800 font-bold mb-1">ราคาตั้ง / Base Price (บาท)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="10000"
-                    value={basePrice}
-                    onChange={e => setBasePrice(e.target.value)}
-                    className="w-full bg-white border border-emerald-300 rounded-xl px-3 py-2 font-black text-emerald-950 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 pt-1">
-                  <div className="p-2.5 bg-white rounded-lg border border-emerald-200">
-                    <div className="text-[10px] text-slate-500 font-bold">🎯 โอนภายใน 1 ปี (ลด 10%)</div>
-                    <div className="text-xs font-black text-emerald-700 mt-0.5">
-                      {calcResults.netPrice1Yr.toLocaleString()} บาท
-                    </div>
-                    <div className="text-[10px] text-emerald-600">ประหยัด {calcResults.discount1YrAmount.toLocaleString()} บ.</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label htmlFor="rental-base-price-c" className="block text-emerald-800 font-bold mb-1">
+                      ราคาตั้ง / Base Price (บาท) <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      id="rental-base-price-c"
+                      type="number"
+                      min="0"
+                      step="10000"
+                      required
+                      value={basePrice}
+                      onChange={e => setBasePrice(e.target.value)}
+                      className="w-full bg-white border border-emerald-300 rounded-xl px-3 py-2 font-black text-emerald-950 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                    />
+                    <span className="text-[10px] text-emerald-700 mt-0.5 block">
+                      ราคาบ้านตั้งต้นที่นำมาคำนวณสิทธิ์ส่วนลดโอน 10% หรือ 5%
+                    </span>
                   </div>
 
-                  <div className="p-2.5 bg-white rounded-lg border border-emerald-200">
-                    <div className="text-[10px] text-slate-500 font-bold">🎯 โอนภายใน 2 ปี (ลด 5%)</div>
-                    <div className="text-xs font-black text-emerald-700 mt-0.5">
-                      {calcResults.netPrice2Yr.toLocaleString()} บาท
-                    </div>
-                    <div className="text-[10px] text-emerald-600">ประหยัด {calcResults.discount2YrAmount.toLocaleString()} บ.</div>
+                  <div>
+                    <label htmlFor="rental-contract-fee-c" className="block text-emerald-800 font-bold mb-1 flex items-center justify-between">
+                      <span>ค่าทำสัญญา (บาท)</span>
+                      <span className="text-[10px] font-normal text-emerald-700 bg-emerald-200/80 px-1.5 py-0.2 rounded">เฉพาะแบบ C</span>
+                    </label>
+                    <input
+                      id="rental-contract-fee-c"
+                      type="number"
+                      min="0"
+                      step="1000"
+                      value={contractFee}
+                      onChange={e => setContractFee(e.target.value)}
+                      className="w-full bg-white border border-emerald-300 rounded-xl px-3 py-2 font-black text-emerald-950 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                    />
+                    <span className="text-[10px] text-emerald-700 mt-0.5 block">
+                      ค่าธรรมเนียมทำสัญญาเช่าออม (รวมในยอดชำระวันทำสัญญา)
+                    </span>
                   </div>
                 </div>
+
+                {(() => {
+                  const bDeposit = parseFloat(bookingAmount) || 0;
+                  const netWithDeposit1Yr = Math.max(0, calcResults.netPrice1Yr - bDeposit);
+                  const netWithDeposit2Yr = Math.max(0, calcResults.netPrice2Yr - bDeposit);
+                  const bPrice = parseFloat(basePrice) || 0;
+                  const netWithDeposit3Yr = Math.max(0, bPrice - bDeposit);
+
+                  return (
+                    <div className="space-y-2 pt-1">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <div className="p-2.5 bg-white rounded-lg border border-emerald-200">
+                          <div className="text-[10px] text-slate-500 font-bold">🎯 ปีที่ 1 (ลด 10%{bDeposit > 0 ? ' + หักเงินจอง' : ''})</div>
+                          <div className="text-xs font-black text-emerald-700 mt-0.5">
+                            {netWithDeposit1Yr.toLocaleString()} บาท
+                          </div>
+                          <div className="text-[10px] text-emerald-600">
+                            ลดราคา {calcResults.discount1YrAmount.toLocaleString()} บ.
+                          </div>
+                        </div>
+
+                        <div className="p-2.5 bg-white rounded-lg border border-emerald-200">
+                          <div className="text-[10px] text-slate-500 font-bold">🎯 ปีที่ 2 (ลด 5%{bDeposit > 0 ? ' + หักเงินจอง' : ''})</div>
+                          <div className="text-xs font-black text-emerald-700 mt-0.5">
+                            {netWithDeposit2Yr.toLocaleString()} บาท
+                          </div>
+                          <div className="text-[10px] text-emerald-600">
+                            ลดราคา {calcResults.discount2YrAmount.toLocaleString()} บ.
+                          </div>
+                        </div>
+
+                        <div className="p-2.5 bg-white rounded-lg border border-emerald-200">
+                          <div className="text-[10px] text-slate-500 font-bold">🎯 ปีที่ 3 (ราคาปกติ{bDeposit > 0 ? ' + หักเงินจอง' : ''})</div>
+                          <div className="text-xs font-black text-slate-800 mt-0.5">
+                            {netWithDeposit3Yr.toLocaleString()} บาท
+                          </div>
+                          <div className="text-[10px] text-slate-500">
+                            ดอกเบี้ย 0% (ตาม Base Price)
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 📈 เงื่อนไขผ่อนเกิน 3 ปี เข้าปีที่ 4 บวกดอกเบี้ย 8% */}
+                      <div className="p-3 bg-amber-50/90 rounded-xl border border-amber-300 text-amber-950 space-y-2.5 text-xs">
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1.5">
+                          <div className="font-bold flex items-center gap-1.5 text-amber-900">
+                            <span>📈 เงื่อนไขผ่อนเกิน 3 ปี (เข้าปีที่ 4 เป็นต้นไป):</span>
+                            <span className="bg-amber-200 text-amber-900 font-black px-1.5 py-0.2 rounded text-[10px]">บวกดอกเบี้ย 8%</span>
+                          </div>
+                          <div className="text-[11px] text-amber-800">
+                            งวดเดือนที่ 1 - 36 ผ่อนปกติ <b>{calcResults.monthlyRent.toLocaleString()} บ./ด.</b> (ดอกเบี้ย 0%)
+                          </div>
+                        </div>
+
+                        {/* Input for Agreed Monthly Installment in Year 4 */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1 border-t border-amber-200/80 items-center">
+                          <div>
+                            <label htmlFor="rental-year4-agreed-rent" className="block text-amber-900 font-bold mb-1 text-[11px]">
+                              ค่างวดที่ตกลงใหม่ปีที่ 4 (ก่อนดอกเบี้ย):
+                            </label>
+                            <div className="relative">
+                              <input
+                                id="rental-year4-agreed-rent"
+                                type="number"
+                                min="0"
+                                step="500"
+                                placeholder={monthlyRent || '15000'}
+                                value={year4AgreedRent}
+                                onChange={e => setYear4AgreedRent(e.target.value)}
+                                className="w-full bg-white border border-amber-300 rounded-lg px-2.5 py-1.5 font-bold text-amber-950 focus:ring-2 focus:ring-amber-500 focus:outline-none text-xs"
+                              />
+                              <span className="absolute right-2.5 top-1.5 text-[11px] text-amber-700 pointer-events-none">บ./ด.</span>
+                            </div>
+                            <span className="text-[10px] text-amber-800 mt-0.5 block">
+                              {year4AgreedRent ? `ปรับจากเดิม ${(parseFloat(monthlyRent) || 0).toLocaleString()} บ.` : 'ค่าเริ่มต้นเท่ากับค่างวดปกติ (สามารถปรับเพิ่มตามตกลง)'}
+                            </span>
+                          </div>
+
+                          <div className="bg-white p-2.5 rounded-xl border border-amber-300 flex items-center justify-between shadow-2xs">
+                            <div className="space-y-0.5">
+                              <div className="text-[10px] text-amber-800 font-bold">ยอดผ่อนปีที่ 4 รวมดอกเบี้ย 8%:</div>
+                              <div className="text-[10px] text-slate-500">
+                                ({calcResults.year4BaseRent.toLocaleString()} + ดอกเบี้ย {calcResults.year4InterestAmount.toLocaleString()} บ.)
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <div className="font-black text-amber-900 text-sm">
+                                {calcResults.year4MonthlyRent.toLocaleString()}
+                              </div>
+                              <div className="text-[9px] text-amber-700">บาท/เดือน</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {durationMonths > 36 && (
+                        <div className="p-2 bg-blue-50 border border-blue-200 text-blue-900 rounded-lg text-[11px] font-semibold flex items-center gap-1.5">
+                          <span>📌 สัญญานี้มีระยะเวลา {durationMonths} เดือน: ตั้งแต่งวดเดือนที่ 37 เป็นต้นไป ค่าผ่อนจะปรับเป็น <b>{calcResults.year4MonthlyRent.toLocaleString()} บาท/เดือน</b> (ค่างวดตกลง {calcResults.year4BaseRent.toLocaleString()} บ. + ดอกเบี้ย 8%) ตามเงื่อนไข</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             )}
 
             {/* Total Initial Payment Summary */}
-            <div className="p-3 bg-indigo-50/80 rounded-xl border border-indigo-100 flex items-center justify-between">
+            <div className="p-3 bg-indigo-50/80 rounded-xl border border-indigo-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
-                <span className="font-bold text-indigo-900 text-xs">ยอดรวมชำระวันทำสัญญา (ประกัน 2 ด. + ล่วงหน้า 1 ด.):</span>
-                <p className="text-[10px] text-indigo-600 mt-0.5">เงินประกันจะได้รับคืนเมื่อสิ้นสุดสัญญาตามเงื่อนไข</p>
+                <span className="font-bold text-indigo-900 text-xs">
+                  ยอดรวมชำระวันทำสัญญา:
+                </span>
+                <p className="text-[11px] text-indigo-700 font-semibold mt-0.5">
+                  {[
+                    calcResults.securityDeposit > 0 ? `ประกัน ${depositMonths} ด. (${calcResults.securityDeposit.toLocaleString()} บ.)` : null,
+                    hasAdvanceRent ? `ล่วงหน้า ${advanceRentMonths} ด. (${calcResults.advanceRent.toLocaleString()} บ.)` : null,
+                    (selectedProgram === 'program_c' && calcResults.appliedContractFee > 0) ? `ค่าสัญญา (${calcResults.appliedContractFee.toLocaleString()} บ.)` : null
+                  ].filter(Boolean).join(' + ') || '0 บาท'}
+                </p>
+                <p className="text-[10px] text-indigo-500 mt-0.5">เงินประกันจะได้รับคืนเมื่อสิ้นสุดสัญญาตามเงื่อนไข</p>
               </div>
-              <div className="text-sm font-black text-indigo-700 bg-white px-3 py-1.5 rounded-xl border border-indigo-200 shadow-sm">
+              <div className="text-sm font-black text-indigo-700 bg-white px-3 py-1.5 rounded-xl border border-indigo-200 shadow-sm self-end sm:self-auto shrink-0">
                 {calcResults.totalInitialPayment.toLocaleString()} บาท
               </div>
             </div>

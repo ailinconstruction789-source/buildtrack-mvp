@@ -2,6 +2,7 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import CentralLeadTracker from '../CentralLeadTracker';
+import { supabase } from '@/lib/supabase';
 
 const USER = '00000000-0000-4000-8000-000000000001';
 
@@ -186,5 +187,10 @@ describe('CentralLeadTracker Smart Views (Active / Booked / Lost / All)', () => 
       expect(screen.getByText(/ดึง "คุณสมหญิง ไม่สนใจ" กลับมาอยู่ในรายการ 🟢 กำลังติดตาม/)).toBeInTheDocument();
       expect(onApplyMock).toHaveBeenCalled();
     });
+    const activityCall = vi.mocked(supabase.from).mock.calls.findIndex(([table]) => table === 'lead_activities');
+    expect(activityCall).toBeGreaterThanOrEqual(0);
+    const activityWriter = vi.mocked(supabase.from).mock.results[activityCall].value;
+    expect(activityWriter.insert).toHaveBeenCalledWith(expect.objectContaining({ native_lead_id: 'c-lost-3' }));
+    expect(vi.mocked(activityWriter.insert).mock.calls[0][0]).not.toHaveProperty('customer_id');
   });
 });

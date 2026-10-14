@@ -32,6 +32,7 @@ describe('restored Lead workflow after customer cleanup', () => {
     mock.read.mockImplementation(async (table: string) => table === 'leads' ? [{ ...native, status: 'Booked', booking_date: '2026-10-01' }]
       : table === 'plots' ? [plot] : [{ id: 'sale-a', lead_id: 'lead-a', plot_id: 'plot-a', contract_status: 'Reserved', crm_stage: 'booked', plots: plot, booked_at: '2026-10-01', agent_name: 'PIEW', sale_price: 3200000 }]);
     render(<MySalesWorkspace currentUser={currentUser} projects={[project]} />);
+    fireEvent.click(await screen.findByRole('button', { name: /วางจองแล้ว/ }));
     await screen.findByText('Native Customer');
     fireEvent.click(screen.getByRole('button', { name: /อัปเดตสถานะ/ }));
     expect(screen.getByTestId('inline-deal')).toHaveTextContent('lead-a:sale-a');

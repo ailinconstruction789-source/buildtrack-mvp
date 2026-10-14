@@ -14,7 +14,7 @@ import RentalPaymentLedgerModal from './RentalPaymentLedgerModal';
 import CentralLeadBookingModal from './CentralLeadBookingModal';
 import SalesDealStatusModal, { type SalesDealEditorModel } from './SalesDealStatusModal';
 import { SALES_BANK_LOGOS as BANK_LOGOS } from '@/lib/sales/banks';
-import { salesDealStageOf } from '@/lib/sales/dealStatus';
+import { salesDealStageOf, salesDealStages } from '@/lib/sales/dealStatus';
 import { customerDealDetails } from '@/lib/sales/customerDealDetails';
 import { crmSaleCustomer, SALES_WITH_CUSTOMER_SELECT } from '@/lib/sales/saleCustomer';
 import LeadPicker from './LeadPicker';
@@ -26,6 +26,7 @@ import { fetchSalesWithoutLimit } from '@/lib/sales/fetchWithoutLimit';
 import { useSalesStaffOptions } from '@/hooks/useSalesStaffOptions';
 import SalesOverlay from './SalesOverlay';
 import { canStartSalesDeal, getLeadStage } from '@/lib/sales/leadStage';
+import { loadSalesStatusHistory, mergeSalesTimeline, type SalesStatusHistoryRow } from '@/lib/sales/salesStatusHistory';
 
 async function checkedResult<T extends { error?: { message?: string } | null }>(query: PromiseLike<T>): Promise<T> {
   const result = await query;
@@ -158,6 +159,29 @@ export default function SalesKanban({
   
   const [panelState, setPanelState] = useState<{type: 'default' | 'booking' | 'customer' | 'new-customer', plotId: string, lead: any}>({ type: 'default', plotId: '', lead: null });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [statusHistory, setStatusHistory] = useState<{ scope: string; rows: SalesStatusHistoryRow[]; loading: boolean; error: string }>({ scope: '', rows: [], loading: false, error: '' });
+  const [historyRetry, setHistoryRetry] = useState(0);
+  const historyLeadId: string | null = panelState.type === 'customer' ? panelState.lead?.leadId || (panelState.lead?.sourceKind === 'lead' ? panelState.lead.id : null) : null;
+  const historySaleId: string | null = panelState.type === 'customer' ? panelState.lead?.saleId || null : null;
+  const historyScope = JSON.stringify([user?.id, user?.username, user?.role, project?.name, panelState.type, historyLeadId, historySaleId]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!historyLeadId && !historySaleId) {
+      setStatusHistory({ scope: historyScope, rows: [], loading: false, error: '' });
+      return;
+    }
+    setStatusHistory(previous => ({ scope: historyScope, rows: previous.scope === historyScope ? previous.rows : [], loading: true, error: '' }));
+    loadSalesStatusHistory(historyLeadId, historySaleId).then(rows => {
+      if (!cancelled) setStatusHistory({ scope: historyScope, rows, loading: false, error: '' });
+    }).catch(() => {
+      if (!cancelled) setStatusHistory(previous => ({ ...previous, loading: false, error: 'โหลดประวัติสถานะไม่สำเร็จ กรุณาลองใหม่' }));
+    });
+    return () => { cancelled = true; };
+  }, [historyScope, historyLeadId, historySaleId, historyRetry]);
+  const timeline = mergeSalesTimeline(statusHistory.scope === historyScope ? statusHistory.rows.map(row => ({
+    id: row.id, status: STATUS_CONFIG[row.new_status] ? row.new_status : salesDealStages.some(stage => stage.id === row.new_status.toLowerCase()) ? stageToKanbanStatus(row.new_status) : row.new_status,
+    timestamp: row.created_at, note: row.changed_by || '',
+  })) : [], panelState.lead?.history || []);
 
   // For Customer Editing
   const [editCustomerForm, setEditCustomerForm] = useState({ name: '', phone: '', occupation: '', status: '', plot: '', salePrice: '', bank: '', cancelReason: '', landOfficePrice: '', agentName: '', transactionDate: new Date().toISOString().split('T')[0], note: '' });
@@ -2476,22 +2500,24 @@ export default function SalesKanban({
                   </form>
                   
                   {/* Timeline History */}
-                  {panelState.lead.history && panelState.lead.history.length > 0 && (
-                    <div className="mt-8 pt-6 border-t border-slate-200">
+                  {(timeline.length > 0 || (statusHistory.scope === historyScope && (statusHistory.loading || statusHistory.error))) && (
+                    <div aria-label="ประวัติสถานะ" className="mt-8 pt-6 border-t border-slate-200">
                       <h4 className="font-bold text-slate-800 text-sm mb-4 flex items-center gap-2">
                         <Clock size={16} className="text-slate-500" /> ประวัติสถานะ (Timeline)
                       </h4>
+                      {statusHistory.scope === historyScope && statusHistory.loading && <p role="status" className="text-xs text-slate-500 mb-3">กำลังโหลดประวัติสถานะ…</p>}
+                      {statusHistory.scope === historyScope && statusHistory.error && <p role="alert" className="text-xs text-red-700 mb-3">{statusHistory.error} <button type="button" className="underline" onClick={() => setHistoryRetry(value => value + 1)}>ลองใหม่</button></p>}
                       <div className="space-y-4">
-                        {panelState.lead.history.map((h: any, i: number) => {
-                          const config = STATUS_CONFIG[h.status] || STATUS_CONFIG['Visit'];
+                        {timeline.map((h, i) => {
+                          const config = STATUS_CONFIG[h.status] || STATUS_CONFIG['legacy_unclassified'];
                           const Icon = config.icon;
                           const dateObj = new Date(h.timestamp);
                           const dateStr = dateObj.toLocaleDateString('th-TH', { year: '2-digit', month: 'short', day: 'numeric' });
                           const timeStr = dateObj.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
                           
                           return (
-                            <div key={i} className="flex gap-3 relative">
-                              {i !== panelState.lead.history.length - 1 && (
+                            <div key={h.id || `milestone-${i}`} className="flex gap-3 relative">
+                              {i !== timeline.length - 1 && (
                                 <div className="absolute top-8 bottom-[-16px] left-[15px] w-0.5 bg-slate-200 z-0"></div>
                               )}
                               <div className={`w-8 h-8 rounded-full ${config.bg} flex items-center justify-center shrink-0 z-10 border border-white shadow-sm`}>

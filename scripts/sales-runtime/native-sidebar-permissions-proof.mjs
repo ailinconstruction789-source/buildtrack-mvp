@@ -29,6 +29,11 @@ try{
  const source=readFileSync('sql/sales/native_sidebar_permissions_review.sql','utf8').replace(/\r\n/g,'\n').replace(/^BEGIN;\s*$/m,'').replace(/COMMIT;\s*$/,'');
  const migration=options.includes('--crlf')?source.replace(/\n/g,'\r\n'):source;
  const proof=readFileSync('scripts/sales-runtime/native-sidebar-permissions-proof.sql','utf8');
+ const timestampBefore=readFileSync('reports/native-sidebar-timestamp-before-2026-10-12.sql','utf8');
+ const timestampFixSource=readFileSync('sql/sales/native_sidebar_timestamp_review.sql','utf8').replace(/\r\n/g,'\n')
+  .replace(/^BEGIN;\s*$/m,'').replace(/COMMIT;\s*$/,'');
+ const timestampFix=options.includes('--crlf')?timestampFixSource.replace(/\n/g,'\r\n'):timestampFixSource;
+ const reproduce=readFileSync('scripts/sales-runtime/native-sidebar-timestamp-reproduction.sql','utf8');
  // Emulate the inspected current live configuration with synthetic data; rollback ALL local changes.
  const setup=`BEGIN;
  DO $$ BEGIN IF current_database() !~ '^buildtrack_sales_runtime_' OR current_setting('buildtrack.synthetic_runtime',true)<>'on'
@@ -41,8 +46,15 @@ try{
  REVOKE INSERT,UPDATE,DELETE ON public.sales FROM authenticated;
  REVOKE INSERT,UPDATE,DELETE ON public.lead_activities FROM authenticated;
  ALTER TABLE public.crm_settings DISABLE TRIGGER USER;
- UPDATE public.crm_settings SET central_intake_enabled=true,booking_enabled=true,post_booking_enabled=true;
+ UPDATE public.crm_settings SET central_intake_enabled=true,lead_work_enabled=true,lead_lifecycle_enabled=true,
+  visits_enabled=true,visit_sop_enabled=true,customer_voices_enabled=true,
+  booking_enabled=true,booking_cutover_reviewed=true,post_booking_enabled=true WHERE id=true;
  ALTER TABLE public.crm_settings ENABLE TRIGGER USER;
+ CREATE TEMP TABLE native_sidebar_activation_before AS
+  SELECT pg_get_functiondef('crm_external_private.reject_unreviewed_activation()'::regprocedure) definition,
+   (SELECT jsonb_agg(jsonb_build_object('name',tgname,'enabled',tgenabled,'definition',pg_get_triggerdef(oid)) ORDER BY tgname)
+    FROM pg_trigger WHERE tgrelid='public.crm_settings'::regclass
+     AND tgfoid='crm_external_private.reject_unreviewed_activation()'::regprocedure) triggers;
  ALTER TABLE crm_external_private.sales_cutover_receipts RENAME TO fixture_saved_cutover_receipts;
  CREATE TABLE crm_external_private.sales_cutover_receipts(batch_id uuid);
  INSERT INTO crm_external_private.sales_cutover_receipts VALUES('10000000-0000-4000-8000-000000000096');
@@ -59,13 +71,17 @@ try{
  ALTER TABLE public.sales DISABLE TRIGGER USER;
  INSERT INTO public.sales(id,sale_price,contract_status) VALUES('10000000-0000-4000-8000-000000000099',99,'Cancelled');
  ALTER TABLE public.sales ENABLE TRIGGER USER;
+ ${timestampBefore};
+ REVOKE ALL ON SCHEMA sales_recovery_private FROM PUBLIC,anon,authenticated;
+ REVOKE EXECUTE ON FUNCTION sales_recovery_private.row_allowed(text,text,jsonb,jsonb) FROM PUBLIC,anon,authenticated;
  `;
- const output=query(setup+'\n'+migration+'\n'+proof+'\nROLLBACK;');
+ const output=query(setup+'\n'+migration+'\n'+reproduce+'\n'+timestampFix+'\n'+proof+'\nROLLBACK;');
  const replies=output.split(/\r?\n/).filter(line=>line.startsWith('{')).map(line=>JSON.parse(line));
  const result=replies.find(row=>row.phase==='native_sidebar_permission_proof');
- if(!result||result.passed!==20)throw Error('Incomplete native sidebar proof: '+JSON.stringify(result));
+ if(!result||result.passed!==25||!replies.some(row=>row.timestampPermissionFailureReproduced===true))throw Error('Incomplete native sidebar proof: '+JSON.stringify(result));
  writeFileSync('reports/native-sidebar-permissions-proof-2026-10-12'+(options.includes('--crlf')?'-crlf':'')+'.json',JSON.stringify({ownedLoopback:true,realDatabaseWrites:false,
    migrationLineEndings:options.includes('--crlf')?'CRLF':'LF',
+   timestampPermissionFailureReproduced:true,
    transactionRolledBack:true,retention:replies.find(row=>row.installed),...result},null,2));
  console.log(JSON.stringify({phase:result.phase,passed:result.passed,lineEndings:options.includes('--crlf')?'CRLF':'LF',ownedLoopback:true,transactionRolledBack:true}));
 }finally{if(started)command('pg_ctl',['-D',data,'stop','-m','fast','-w','-t','20']);writeFileSync(hba,originalHba);console.log('ownedClusterStopped=true');}

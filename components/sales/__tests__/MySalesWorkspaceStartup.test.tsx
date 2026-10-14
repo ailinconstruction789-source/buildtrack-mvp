@@ -19,7 +19,7 @@ const user = { username: 'PIEW', role: 'Sales', id: 'U1' };
 const projects = [{ name: 'Project A' }];
 const base: SalesStartupData = {
   leads: [{ id: 'L1', customer_name: 'Startup Customer', project_name: 'Project A',
-    interested_plot_id: 'P1', sales_owner: 'PIEW', status: 'Booked',
+    interested_plot_id: 'P1', sales_owner: 'PIEW', status: 'New',
     booking_date: '2026-01-01', created_at: '2026-01-01', updated_at: '2026-01-01' }],
   plots: [{ id: 'P1', plot_name: '1', project_name: 'Project A', house_types: { type_name: 'Type A' } }],
 };
@@ -87,6 +87,7 @@ describe('Sales Hub startup sharing', () => {
     }] : []));
     render(<MySalesWorkspace currentUser={user} projects={projects} />);
     await screen.findByText('Startup Customer'); expect(screen.queryByText('Old Sale Customer')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^ทั้งหมด/ }));
     const option = screen.getByRole('option', { name: '📅 ไม่มีวันที่เดิมระบุปี' });
     fireEvent.change(option.closest('select')!, { target: { value: 'unknown' } });
     expect(await screen.findByText('Old Sale Customer')).toBeInTheDocument(); expect(screen.queryByText('Startup Customer')).not.toBeInTheDocument();
@@ -164,7 +165,7 @@ describe('Sales Hub startup sharing', () => {
     }));
     render(<MySalesWorkspace currentUser={user} projects={[...projects, { name: 'Project B' }]}
       loadStartupData={vi.fn().mockResolvedValue({ ...base, leads })} />);
-    await screen.findByText('Customer Lost');
+    await screen.findByText('Customer Active');
     fireEvent.click(screen.getByTitle('มุมมองการ์ดบอร์ด (Kanban View)'));
     for (const lead of leads) expect(screen.getByText(lead.customer_name)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '❌ ยุติการซื้อ 3' }));

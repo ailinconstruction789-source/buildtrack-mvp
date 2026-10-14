@@ -7,15 +7,26 @@ export interface RentalCalculationInput {
   basePrice?: number;
   durationMonths?: number;
   startDate?: string;
+  depositMonths?: number;
   customDeposit?: number;
   customSavingsPerMonth?: number;
+  hasAdvanceRent?: boolean;
+  advanceRentMonths?: number;
+  customAdvanceRent?: number;
+  contractFee?: number;
+  customYear4MonthlyRent?: number;
 }
 
 export interface RentalCalculationResult {
   programType: RentalProgramType;
   monthlyRent: number;
+  depositMonths: number;
   securityDeposit: number;
   advanceRent: number;
+  hasAdvanceRent: boolean;
+  advanceRentMonths: number;
+  contractFee: number;
+  appliedContractFee: number;
   totalInitialPayment: number;
   savingsPerMonth: number;
   projected1YrSavings: number;
@@ -25,6 +36,10 @@ export interface RentalCalculationResult {
   discount2YrAmount: number;
   netPrice2Yr: number;
   endDate: string;
+  year4BaseRent: number;
+  year4InterestPct: number;
+  year4MonthlyRent: number;
+  year4InterestAmount: number;
 }
 
 /**
@@ -54,8 +69,14 @@ export function calculateRentalTerms(input: RentalCalculationInput): RentalCalcu
     basePrice = 0,
     durationMonths = 12,
     startDate = new Date().toISOString().split('T')[0],
+    depositMonths = 2,
     customDeposit,
-    customSavingsPerMonth
+    customSavingsPerMonth,
+    hasAdvanceRent = true,
+    advanceRentMonths = 1,
+    customAdvanceRent,
+    contractFee = 0,
+    customYear4MonthlyRent
   } = input;
 
   // Calculate End Date safely with month clamping
@@ -74,25 +95,30 @@ export function calculateRentalTerms(input: RentalCalculationInput): RentalCalcu
   const endD = String(endDateObj.getDate()).padStart(2, '0');
   const endDate = `${endY}-${endM}-${endD}`;
 
-  // Advance rent is 1 month
-  const advanceRent = monthlyRent;
-
-  let securityDeposit = 0;
-  let savingsPerMonth = 0;
-
-  if (programType === 'program_a') {
-    // Program A: Rent - 2 months security deposit
-    securityDeposit = customDeposit !== undefined ? customDeposit : monthlyRent * 2;
-  } else if (programType === 'program_b') {
-    // Program B: Rent to Own - Standard 2 months deposit + 5,000 THB/month savings
-    securityDeposit = customDeposit !== undefined ? customDeposit : monthlyRent * 2;
-    savingsPerMonth = customSavingsPerMonth !== undefined ? customSavingsPerMonth : 5000;
-  } else if (programType === 'program_c') {
-    // Program C: Rent and Save - 2 months deposit
-    securityDeposit = customDeposit !== undefined ? customDeposit : monthlyRent * 2;
+  // Advance rent calculation (supports toggle on/off and custom months across all programs)
+  let advanceRent = 0;
+  if (hasAdvanceRent) {
+    if (customAdvanceRent !== undefined) {
+      advanceRent = customAdvanceRent;
+    } else {
+      advanceRent = monthlyRent * advanceRentMonths;
+    }
+  } else {
+    advanceRent = 0;
   }
 
-  const totalInitialPayment = advanceRent + securityDeposit;
+  // Security deposit calculation (supports custom amount or monthlyRent * depositMonths)
+  const securityDeposit = customDeposit !== undefined ? customDeposit : monthlyRent * depositMonths;
+  let savingsPerMonth = 0;
+
+  if (programType === 'program_b') {
+    // Program B: Rent to Own - Standard 5,000 THB/month savings
+    savingsPerMonth = customSavingsPerMonth !== undefined ? customSavingsPerMonth : 5000;
+  }
+
+  // Contract Fee applies to Program C
+  const appliedContractFee = programType === 'program_c' ? contractFee : 0;
+  const totalInitialPayment = advanceRent + securityDeposit + appliedContractFee;
   const projected1YrSavings = savingsPerMonth * 12;
 
   // Program C Discounts: 10% within 1 year, 5% within 2 years
@@ -102,11 +128,24 @@ export function calculateRentalTerms(input: RentalCalculationInput): RentalCalcu
   const discount2YrAmount = (basePrice * 5) / 100;
   const netPrice2Yr = Math.max(0, basePrice - discount2YrAmount);
 
+  // Program C Year 4+ Interest: 8% added to agreed monthly installment if renting/paying over 3 years
+  const year4InterestPct = 8;
+  const year4BaseRent = customYear4MonthlyRent !== undefined && customYear4MonthlyRent > 0
+    ? customYear4MonthlyRent
+    : monthlyRent;
+  const year4InterestAmount = Math.round((year4BaseRent * year4InterestPct) / 100);
+  const year4MonthlyRent = year4BaseRent + year4InterestAmount;
+
   return {
     programType,
     monthlyRent,
+    depositMonths,
     securityDeposit,
     advanceRent,
+    hasAdvanceRent,
+    advanceRentMonths,
+    contractFee: appliedContractFee,
+    appliedContractFee,
     totalInitialPayment,
     savingsPerMonth,
     projected1YrSavings,
@@ -115,7 +154,11 @@ export function calculateRentalTerms(input: RentalCalculationInput): RentalCalcu
     netPrice1Yr,
     discount2YrAmount,
     netPrice2Yr,
-    endDate
+    endDate,
+    year4BaseRent,
+    year4InterestPct,
+    year4MonthlyRent,
+    year4InterestAmount
   };
 }
 

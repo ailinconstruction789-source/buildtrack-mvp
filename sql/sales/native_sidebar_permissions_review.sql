@@ -239,10 +239,16 @@ CREATE POLICY native_lead_activity_insert ON public.lead_activities FOR INSERT T
    AND EXISTS(SELECT 1 FROM public.leads l WHERE l.id=native_lead_id));
 GRANT SELECT ON public.lead_activities TO authenticated;
 GRANT INSERT(native_lead_id,activity_type,result,occurred_at,note,next_follow_up_at) ON public.lead_activities TO authenticated;
-UPDATE public.crm_settings SET central_intake_enabled=false,booking_enabled=false,post_booking_enabled=false;
+-- Return every reviewed CRM workflow switch to native mode together. Keep the singleton id and activation guard.
+UPDATE public.crm_settings SET central_intake_enabled=false,lead_work_enabled=false,lead_lifecycle_enabled=false,
+ visits_enabled=false,visit_sop_enabled=false,customer_voices_enabled=false,
+ booking_enabled=false,booking_cutover_reviewed=false,post_booking_enabled=false WHERE id=true;
 DO $verify_retention$
 DECLARE r record; n bigint; checksum text;
 BEGIN
+ IF EXISTS(SELECT 1 FROM public.crm_settings s CROSS JOIN LATERAL jsonb_each(to_jsonb(s)) j
+   WHERE (right(j.key,8)='_enabled' OR j.key='booking_cutover_reviewed') AND j.value='true'::jsonb)
+   THEN RAISE EXCEPTION 'NATIVE_SIDEBAR_CRM_SWITCH_REMAINS_ENABLED'; END IF;
  FOR r IN SELECT * FROM native_sidebar_retention LOOP
   EXECUTE format('SELECT count(*),md5(coalesce(string_agg((to_jsonb(t)-''native_lead_id'')::text,E''\n'' ORDER BY t.id),'''')) FROM %s t',r.relation)
     INTO n,checksum;

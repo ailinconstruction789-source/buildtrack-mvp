@@ -59,7 +59,8 @@ export const RENTAL_PROGRAM_DETAILS = {
     minDurationMonths: 12,
     discount1YrPct: 10,
     discount2YrPct: 5,
-    description: 'เช่าบ้านพร้อมออมเงิน ใช้ราคาตั้งเป็น Base Price โอนบ้านภายใน 1 ปี ลดราคา 10% / ภายใน 2 ปี ลด 5%'
+    year4InterestPct: 8,
+    description: 'เช่าบ้านพร้อมออมเงิน ใช้ราคาตั้งเป็น Base Price โอนบ้านภายใน 1 ปี ลดราคา 10% / ภายใน 2 ปี ลด 5% (หากผ่อนเกิน 3 ปี เข้าปีที่ 4 ผ่อนเพิ่มตามตกลงบวกดอกเบี้ย 8%)'
   }
 } as const;
 
@@ -116,7 +117,9 @@ export interface RentalContract {
   program_type: RentalProgramType;
   monthly_rent: number;
   security_deposit: number;
+  security_deposit_months?: number;
   advance_rent: number;
+  contract_fee?: number | null; // For Program C Contract Fee
   savings_per_month?: number; // For Program B (default 5,000)
   accumulated_savings?: number;
   base_price?: number; // For Program C Base Price
@@ -181,6 +184,8 @@ export interface Lead {
   active_rental_contract_id?: string | null;
 
   // Finance & Transfer
+  contracted_at?: string | null;
+  contract_date?: string | null;
   loan_submission_date?: string | null;
   loan_approved_date?: string | null;
   transferred_date?: string | null;
