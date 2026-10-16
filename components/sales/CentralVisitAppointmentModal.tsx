@@ -29,6 +29,7 @@ interface Props {
     booking_date?: string | null;
     transferred_date?: string | null;
     notes?: string | null;
+    salesOwner?: string | null;
   } | null;
   initialInterest?: {
     id?: string;
@@ -41,10 +42,11 @@ interface Props {
   onSaved?: (notice: string) => void;
   currentUserRole?: string;
   currentUserId?: string;
+  currentUser?: { id?: string; userId?: string; displayName?: string; username?: string; name?: string } | null;
 }
 
 export default function CentralVisitAppointmentModal(props: Props) {
-  return <AppointmentSession key={JSON.stringify([props.customer?.leadId, props.customer?.id, props.currentUserId, props.currentUserRole])} {...props} />;
+  return <AppointmentSession key={JSON.stringify([props.customer?.leadId, props.customer?.id, props.currentUserId, props.currentUser?.username, props.currentUser?.displayName, props.currentUserRole])} {...props} />;
 }
 function AppointmentSession({
   isOpen,
@@ -54,7 +56,9 @@ function AppointmentSession({
   projects = [],
   salesOwners = [],
   onSaved,
-  currentUserRole
+  currentUserRole,
+  currentUserId,
+  currentUser
 }: Props) {
   const mounted = useRef(true);
   const writing = useRef(false);
@@ -70,6 +74,19 @@ function AppointmentSession({
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+
+  // Include logged in user in the available sales options if not already listed
+  const effectiveSalesOwners = React.useMemo(() => {
+    const list = [...salesOwners];
+    const loggedName = currentUser?.displayName || currentUser?.username || currentUser?.name;
+    if (loggedName && !list.some(o => o.displayName.toLowerCase() === loggedName.toLowerCase())) {
+      list.unshift({
+        userId: String(currentUser?.id || currentUser?.userId || currentUserId || 'current-user'),
+        displayName: loggedName
+      });
+    }
+    return list;
+  }, [salesOwners, currentUser, currentUserId]);
 
   // Set default tomorrow date
   useEffect(() => {
@@ -91,15 +108,24 @@ function AppointmentSession({
       setProjectName(proj);
       setPlotId(initialInterest?.plotId || '');
 
+      const loggedName = currentUser?.displayName || currentUser?.username || currentUser?.name;
       const initialOwnerId = initialInterest?.ownerUserId || customer?.ownerUserId;
-      const ownerObj = salesOwners.find(o => o.userId === initialOwnerId);
-      setAgentName(selectSalesStaffName(salesOwners, [ownerObj?.displayName]));
+      const ownerObj = effectiveSalesOwners.find(o => o.userId === initialOwnerId);
+      setAgentName(selectSalesStaffName(effectiveSalesOwners, [
+        loggedName,
+        customer?.salesOwner,
+        ownerObj?.displayName,
+        currentUser?.displayName,
+        currentUser?.username
+      ]));
       setNotes('');
     }
-  }, [isOpen, initialInterest, customer, projects, salesOwners]);
+  }, [isOpen, initialInterest, customer, projects, effectiveSalesOwners, currentUser]);
   useEffect(() => {
-    setAgentName(previous => previous || selectSalesStaffName(salesOwners, []));
-  }, [salesOwners]);
+    setAgentName(previous => previous || selectSalesStaffName(effectiveSalesOwners, [
+      currentUser?.displayName || currentUser?.username || currentUser?.name
+    ]));
+  }, [effectiveSalesOwners, currentUser]);
 
   // Load available plots when project changes
   useEffect(() => {
@@ -345,12 +371,13 @@ function AppointmentSession({
               Sales ผู้ดูแลพาชม
             </label>
             <select
+              aria-label="Sales ผู้ดูแลพาชม"
               value={agentName}
               onChange={e => setAgentName(e.target.value)}
               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-2xs"
             >
-              {salesOwners.length === 0 && <option value="" disabled>ไม่พบพนักงานฝ่ายขาย</option>}
-              {salesOwners.map(owner => (
+              {effectiveSalesOwners.length === 0 && <option value="" disabled>ไม่พบพนักงานฝ่ายขาย</option>}
+              {effectiveSalesOwners.map(owner => (
                 <option key={owner.userId} value={owner.displayName}>
                   {owner.displayName}
                 </option>

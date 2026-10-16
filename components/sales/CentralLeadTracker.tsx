@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { 
   User, Phone, MapPin, Calendar, Clock, ChevronRight, X, Sparkles, 
@@ -39,6 +39,19 @@ const columns = ['No.', 'วันที่เป็น Lead', 'ชื่อล�
 export function getCustomerStageCategory(customer: any): 'active' | 'rented' | 'booked' | 'lost' | 'transferred' {
   const stage = getLeadStage(customer);
   return stage === 'loan' || stage === 'appointment' ? 'active' : stage;
+}
+
+export function formatLeadDisplayDate(dateStr: string | null | undefined): string {
+  if (!dateStr || !Number.isFinite(Date.parse(dateStr))) return 'ไม่ทราบวันที่';
+  try {
+    const d = new Date(dateStr);
+    if (d.getFullYear() > 2400) {
+      d.setFullYear(d.getFullYear() - 543);
+    }
+    return d.toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok' });
+  } catch {
+    return 'ไม่ทราบวันที่';
+  }
 }
 
 export default function CentralLeadTracker(props: Props) {
@@ -83,10 +96,26 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
   const transferredCount = visible.filter(c => getCustomerStageCategory(c) === 'transferred').length;
   const lostCount = visible.filter(c => getCustomerStageCategory(c) === 'lost').length;
 
-  // Filter visible customers by selected stage view
-  const displayedCustomers = viewFilter === 'all' 
-    ? visible 
-    : visible.filter(c => getCustomerStageCategory(c) === viewFilter);
+  // Filter visible customers by selected stage view and sort descending by leadCreatedAt
+  const displayedCustomers = useMemo(() => {
+    const list = viewFilter === 'all' 
+      ? visible 
+      : visible.filter(c => getCustomerStageCategory(c) === viewFilter);
+    return [...list].sort((a, b) => {
+      const getNormalizedTime = (item: any) => {
+        if (!item?.leadCreatedAt) return 0;
+        try {
+          const d = new Date(item.leadCreatedAt);
+          if (isNaN(d.getTime())) return 0;
+          if (d.getFullYear() > 2400) d.setFullYear(d.getFullYear() - 543);
+          return d.getTime();
+        } catch {
+          return 0;
+        }
+      };
+      return getNormalizedTime(b) - getNormalizedTime(a);
+    });
+  }, [visible, viewFilter]);
 
   const ownerName = (id: string) => snapshot.search?.owners?.find(owner => owner.userId === id)?.displayName || (id && id !== 'unassigned' ? id : 'ส่วนกลาง / ไม่ระบุ');
   const change = (next: Partial<CentralTrackerFilters>) => onFilterChange({ ...filters, ...next });
@@ -297,8 +326,7 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
               setSelectedCustomer(customer);
             }} className="align-top transition-colors hover:bg-blue-50/50 cursor-pointer group">
               <td className="p-3.5 font-bold text-slate-400">{snapshot.page * CENTRAL_PAGE_SIZE + index + 1}</td>
-              <td className="whitespace-nowrap p-3.5 text-slate-500">{customer.leadCreatedAt && Number.isFinite(Date.parse(customer.leadCreatedAt))
-                ? new Date(customer.leadCreatedAt).toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok' }) : 'ไม่ทราบวันที่'}</td>
+              <td className="whitespace-nowrap p-3.5 text-slate-500">{formatLeadDisplayDate(customer.leadCreatedAt)}</td>
               <td className="min-w-40 p-3.5">
                 <span className="font-bold text-slate-900 group-hover:text-blue-700 transition-colors flex items-center gap-1.5">{customer.name}</span>
                 {customer.notes && <p className="mt-1 line-clamp-2 max-w-64 text-[11px] text-slate-500 bg-slate-50 p-1.5 rounded-lg border border-slate-100" title={customer.notes}>{customer.notes}</p>}</td>
@@ -581,6 +609,10 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
           initialInterest={followUpTarget.interest}
           projects={projects}
           salesOwners={snapshot.salesOwners}
+          currentUser={{
+            userId: snapshot.actor.userId,
+            displayName: (snapshot.search?.owners || snapshot.salesOwners || []).find(o => o.userId === snapshot.actor.userId)?.displayName || 'คุณ'
+          }}
           currentUserRole={snapshot.actor.role}
           currentUserId={snapshot.actor.userId}
           onSaved={(msg) => {

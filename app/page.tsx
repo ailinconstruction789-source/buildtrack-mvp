@@ -43,6 +43,7 @@ const SalesWorkspaceEntry = dynamic(() => import('@/components/sales/SalesWorksp
 const SalesReportingEntry = dynamic(() => import('@/components/sales/SalesReportingEntry'));
 const CentralLeadsView = dynamic(() => import('@/components/sales/CentralLeadsView'));
 const MySalesWorkspace = dynamic(() => import('@/components/sales/MySalesWorkspace'));
+const SalesKpiMasterDashboard = dynamic(() => import('@/components/sales/SalesKpiMasterDashboard'));
 const SalesFunnelAnalytics = dynamic(() => import('@/components/sales/SalesFunnelAnalytics'));
 const AdminDocsManager = dynamic(() => import('@/components/sales/AdminDocsManager'));
 const SampleHouseLogsView = dynamic(() => import('@/components/sales/SampleHouseLogsView'));
@@ -2650,6 +2651,7 @@ export default function ConstructionApp() {
   const isOwner = currentUserRole?.toLowerCase() === 'owner';
   const isStore = currentUserRole?.toLowerCase() === 'store';
   const isSales = currentUserRole?.toLowerCase() === 'sales';
+  const isSalesExecutive = isAdmin || isOwner || loggedInUser?.username?.toUpperCase() === 'TEAW' || ['sales_manager', 'sales_executive', 'ผู้บริหาร sale'].includes((currentUserRole || '').toLowerCase());
 
   const isMobileLayout = isMobilePreview || isRealMobile;
   const unreadNotifs = notifications.filter(n => !n.is_read);
@@ -3354,6 +3356,7 @@ export default function ConstructionApp() {
             isQC={isQC}
             isForeman={isForeman}
             isSales={isSales}
+            isSalesExecutive={isSalesExecutive}
             isProcurement={isProcurement}
             isStore={isStore}
             isMobilePreview={isMobilePreview}
@@ -4948,6 +4951,18 @@ export default function ConstructionApp() {
                 </div>
               )}
 
+              {/* 🎯 View: แดชบอร์ด KPI ฝ่ายขาย (Sales KPI Master Dashboard - Executive Only) */}
+              {view === 'sales-kpi-master' && isSalesExecutive && (
+                <div className="w-full h-full">
+                  <SalesKpiMasterDashboard
+                    currentUser={loggedInUser}
+                    projects={projects}
+                    plots={plots}
+                    onBack={() => { setView('dashboard'); setSelectedProject(null); }}
+                  />
+                </div>
+              )}
+
               {/* 👥 View: Lead ส่วนกลาง (CRM) */}
               {view === 'central-leads' && (
                 <div className="w-full h-full">
@@ -5440,7 +5455,7 @@ export default function ConstructionApp() {
                   key={JSON.stringify([loggedInUser?.username, loggedInUser?.role])}
                   dataRevision={salesDataRevision}
                   isActive={!loadingView && view === 'sales-dashboard-excel'}
-                  project={selectedProject}
+                  project={null}
                   onViewDefects={(plot: any) => {
                     const foundProj = projects.find((p: any) => p.name === plot.project_name || p.project_name === plot.project_name);
                     if (foundProj) setSelectedProject(foundProj);
@@ -5584,6 +5599,12 @@ export default function ConstructionApp() {
                 <Lightbulb size={28} className="text-[#d4af37] mb-3" />
                 <span className="text-xs font-bold text-slate-700 text-center">Strategic<br/>Report</span>
               </button>
+              {isSalesExecutive && (
+                <button onClick={() => { setView('sales-kpi-master'); setShowMobileSalesMenu(false); }} className={`flex flex-col items-center justify-center p-5 rounded-2xl border-2 transition-all ${activeView === 'sales-kpi-master' ? 'border-[#d4af37] bg-[#d4af37]/10' : 'border-slate-100 bg-slate-50 hover:border-slate-200'}`}>
+                  <Award size={28} className="text-[#d4af37] mb-3" />
+                  <span className="text-xs font-bold text-slate-700 text-center">แดชบอร์ด<br/>KPI</span>
+                </button>
+              )}
             </div>
           </div>
         </div>

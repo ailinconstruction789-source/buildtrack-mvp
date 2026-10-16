@@ -47,6 +47,32 @@ interface Props {
   loadStartupData?: LoadSalesStartupData;
 }
 
+function formatAppointmentDate(value: any): string {
+  if (!value) return '';
+  const str = String(value).trim();
+  if (!str) return '';
+  try {
+    const d = new Date(str.includes('T') ? str : str.replace(' ', 'T'));
+    if (isNaN(d.getTime())) return str;
+    if (d.getFullYear() > 2400) d.setFullYear(d.getFullYear() - 543);
+    const datePart = d.toLocaleDateString('th-TH', {
+      day: 'numeric',
+      month: 'short',
+      year: '2-digit'
+    });
+    if (str.includes('T') || str.includes(':')) {
+      const timePart = d.toLocaleTimeString('th-TH', {
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+      return `${datePart} (${timePart} น.)`;
+    }
+    return datePart;
+  } catch {
+    return str;
+  }
+}
+
 const STAGES = [
   { id: 'active', label: '🔥 กำลังติดตาม / สนใจ', color: 'bg-blue-50 text-blue-700 border-blue-200' },
   { id: 'appointment', label: '📅 นัดชมโครงการ', color: 'bg-purple-50 text-purple-700 border-purple-200' },
@@ -575,10 +601,60 @@ export default function MySalesWorkspace({
   const todayKey = bangkokToday();
   const isDue = useCallback((lead: any) => isDueSalesLead(lead, todayKey), [todayKey]);
   const isUpcoming = useCallback((lead: any) => isUpcomingSalesLead(lead, todayKey), [todayKey]);
-  const filteredLeads = useMemo(() => baseFilteredLeads.filter(lead =>
-    (viewMode === 'kanban' || selectedStage === 'all' || getStageCategory(lead) === selectedStage) &&
-    (!actionFilter || (actionFilter === 'due' ? isDue(lead) : isUpcoming(lead)))
-  ), [baseFilteredLeads, viewMode, selectedStage, actionFilter, getStageCategory, isDue, isUpcoming]);
+  const filteredLeads = useMemo(() => {
+    const list = baseFilteredLeads.filter(lead =>
+      (viewMode === 'kanban' || selectedStage === 'all' || getStageCategory(lead) === selectedStage) &&
+      (!actionFilter || (actionFilter === 'due' ? isDue(lead) : isUpcoming(lead)))
+    );
+
+    const parseTime = (dateStr: string | null | undefined): number => {
+      if (!dateStr) return 0;
+      try {
+        const d = new Date(dateStr.includes('T') ? dateStr : dateStr.replace(' ', 'T'));
+        if (isNaN(d.getTime())) return 0;
+        if (d.getFullYear() > 2400) d.setFullYear(d.getFullYear() - 543);
+        return d.getTime();
+      } catch {
+        return 0;
+      }
+    };
+
+    return [...list].sort((a, b) => {
+      const getNormalizedScore = (lead: any) => {
+        // When viewing appointment stage: leads with appointment_date come first!
+        if (selectedStage === 'appointment') {
+          const appt = parseTime(lead.appointment_date);
+          if (appt > 0) return 10000000000000 + appt;
+        }
+
+        // When viewing booked stage: prioritize booking_date / booked_at
+        if (selectedStage === 'booked') {
+          const booked = parseTime(lead.booking_date || lead.booked_at || lead.bookedAt);
+          if (booked > 0) return 10000000000000 + booked;
+        }
+
+        // When viewing transferred stage: prioritize transferred_date
+        if (selectedStage === 'transferred') {
+          const trans = parseTime(lead.transferred_date || lead.transferred_at || lead.transferredAt);
+          if (trans > 0) return 10000000000000 + trans;
+        }
+
+        // General fallback: latest activity or lead_date / created_at
+        const candidates = [
+          parseTime(lead.appointment_date),
+          parseTime(lead.actual_visit_date),
+          parseTime(lead.booking_date || lead.booked_at || lead.bookedAt),
+          parseTime(lead.transferred_date || lead.transferred_at || lead.transferredAt),
+          parseTime(lead.contacted_date),
+          parseTime(lead.lead_date),
+          parseTime(lead.created_at || lead.createdAt)
+        ];
+        return Math.max(...candidates, 0);
+      };
+
+      return getNormalizedScore(b) - getNormalizedScore(a);
+    });
+  }, [baseFilteredLeads, viewMode, selectedStage, actionFilter, getStageCategory, isDue, isUpcoming]);
 
   // Today's Action Items & Metrics
   const myLeadsOnly = useMemo(() => leads.filter(isMyLead), [leads, isMyLead]);
@@ -681,6 +757,21 @@ export default function MySalesWorkspace({
   };
 
   const openFollowUp = (lead: any) => setFollowUpTarget({ customer: lead });
+  const openAppointment = (lead: any) => setAppointmentTarget({
+    customer: {
+      ...lead,
+      leadId: lead.leadId || lead.id,
+      id: lead.id,
+      name: lead.customer_name || lead.name,
+      customer_name: lead.customer_name || lead.name,
+    },
+    initialInterest: {
+      id: lead.interested_plot_id || lead.plot_id,
+      projectName: lead.project_name,
+      plotId: lead.interested_plot_id || lead.plot_id,
+      ownerUserId: lead.owner_user_id || lead.ownerUserId,
+    }
+  });
   const openBooking = (lead: any) => {
     if (lead.saleId) { setStatusTarget(lead); return; }
     setBookingTarget(lead);
@@ -1204,8 +1295,9 @@ export default function MySalesWorkspace({
                               </span>
                             )}
                             {lead.appointment_date && stage !== 'transferred' && (
-                              <span className="text-[10px] text-purple-700 font-bold block flex items-center gap-1">
-                                <Calendar size={10} /> นัด: {lead.appointment_date}
+                              <span className="text-[10px] text-purple-700 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-md font-bold inline-flex items-center gap-1 shadow-2xs">
+                                <Calendar size={11} className="text-purple-600 shrink-0" />
+                                <span>นัดดู: {formatAppointmentDate(lead.appointment_date)}</span>
                               </span>
                             )}
                           </div>
@@ -1225,6 +1317,23 @@ export default function MySalesWorkspace({
                               <PhoneCall size={12} className="text-blue-600" />
                               ติดตาม
                             </button>
+
+                            {/* Appointment button */}
+                            {canWrite && canStartSalesDeal(lead) && (
+                              <button
+                                type="button"
+                                onClick={() => openAppointment(lead)}
+                                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer transition-colors shadow-2xs border ${
+                                  lead.appointment_date
+                                    ? 'bg-purple-50 hover:bg-purple-100 text-purple-800 border-purple-200'
+                                    : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-200'
+                                }`}
+                                title={lead.appointment_date ? `มีนัดดู: ${formatAppointmentDate(lead.appointment_date)} (คลิกเพื่อแก้ไข/ดูนัด)` : 'บันทึกนัดหมายเข้าชมโครงการ'}
+                              >
+                                <Calendar size={12} className={lead.appointment_date ? 'text-purple-600' : 'text-indigo-600'} />
+                                {lead.appointment_date ? 'นัดดูแล้ว' : 'นัดชม'}
+                              </button>
+                            )}
 
                             {canWrite && canStartSalesDeal(lead) && <>
                               <button type="button" onClick={() => openBooking(lead)} className="px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-lg text-[11px] font-bold">จองแปลง</button>
@@ -1270,6 +1379,7 @@ export default function MySalesWorkspace({
                     stage="active"
                     canWrite={canWrite} onBook={() => openBooking(lead)}
                     onFollowUp={() => openFollowUp(lead)}
+                    onAppointment={() => openAppointment(lead)}
                     onRent={() => openRental(lead)}
                     onQuickStatus={(status, label) => handleQuickStatusChange(lead.id, status, label)}
                   />
@@ -1299,6 +1409,7 @@ export default function MySalesWorkspace({
                     stage="appointment"
                     canWrite={canWrite} onBook={() => openBooking(lead)}
                     onFollowUp={() => openFollowUp(lead)}
+                    onAppointment={() => openAppointment(lead)}
                     onRent={() => openRental(lead)}
                     onQuickStatus={(status, label) => handleQuickStatusChange(lead.id, status, label)}
                   />
@@ -1328,6 +1439,7 @@ export default function MySalesWorkspace({
                     stage="loan"
                     canWrite={canWrite} onBook={() => openBooking(lead)}
                     onFollowUp={() => openFollowUp(lead)}
+                    onAppointment={() => openAppointment(lead)}
                     onRent={() => openRental(lead)}
                     onQuickStatus={(status, label) => handleQuickStatusChange(lead.id, status, label)}
                   />
@@ -1635,6 +1747,7 @@ export default function MySalesWorkspace({
           customer={followUpTarget.customer}
           projects={projectNames}
           salesOwners={salesOwners}
+          currentUser={currentUser}
           currentUserRole={currentUser?.role}
           currentUserId={String(currentUser?.id || currentUser?.username || '')}
           onSaved={(msg) => {
@@ -1651,8 +1764,10 @@ export default function MySalesWorkspace({
           isOpen={true}
           onClose={() => setAppointmentTarget(null)}
           customer={appointmentTarget.customer}
+          initialInterest={appointmentTarget.initialInterest}
           projects={projectNames}
           salesOwners={salesOwners}
+          currentUser={currentUser}
           currentUserRole={currentUser?.role}
           currentUserId={String(currentUser?.id || currentUser?.username || '')}
           onSaved={(msg) => {
@@ -1711,6 +1826,7 @@ function LeadKanbanCard({
   stage,
   onBook,
   onFollowUp,
+  onAppointment,
   onRent,
   onQuickStatus,
   canWrite
@@ -1722,6 +1838,7 @@ function LeadKanbanCard({
   stage: string;
   onBook: () => void;
   onFollowUp: () => void;
+  onAppointment?: () => void;
   onRent: () => void;
   onQuickStatus: (status: string, label: string) => void;
 }) {
@@ -1779,21 +1896,39 @@ function LeadKanbanCard({
             <CheckCircle size={10} /> โอน: {String(lead.transferred_date).split('T')[0]}
           </span>
         ) : lead.appointment_date ? (
-          <span className="font-bold text-purple-700 flex items-center gap-1">
-            <Calendar size={10} /> นัด {lead.appointment_date}
+          <span className="font-bold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200 flex items-center gap-1">
+            <Calendar size={10} className="text-purple-600 shrink-0" /> นัดดู: {formatAppointmentDate(lead.appointment_date)}
           </span>
         ) : null}
       </div>
 
       {/* Actions */}
-      <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-1">
-        <button
-          type="button"
-          disabled={!canWrite || !lead.leadId} onClick={onFollowUp}
-          className="px-2 py-1 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer"
-        >
-          <PhoneCall size={10} className="text-blue-600" /> ตาม
-        </button>
+      <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-1 flex-wrap">
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            disabled={!canWrite || !lead.leadId} onClick={onFollowUp}
+            className="px-2 py-1 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer"
+          >
+            <PhoneCall size={10} className="text-blue-600" /> ตาม
+          </button>
+
+          {canWrite && canStartSalesDeal(lead) && onAppointment && (
+            <button
+              type="button"
+              onClick={onAppointment}
+              className={`px-2 py-1 rounded-lg text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer border ${
+                lead.appointment_date
+                  ? 'bg-purple-50 hover:bg-purple-100 text-purple-800 border-purple-200'
+                  : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-200'
+              }`}
+              title={lead.appointment_date ? `มีนัดดู: ${formatAppointmentDate(lead.appointment_date)} (คลิกเพื่อแก้ไข/ดูนัด)` : 'บันทึกนัดหมายเข้าชมโครงการ'}
+            >
+              <Calendar size={10} className={lead.appointment_date ? 'text-purple-600' : 'text-indigo-600'} />
+              {lead.appointment_date ? 'นัดแล้ว' : 'นัดชม'}
+            </button>
+          )}
+        </div>
 
         <div className="flex items-center gap-1">
           {(canWrite && ['active', 'appointment', 'loan', 'booked'].includes(stage) || stage === 'transferred') && (

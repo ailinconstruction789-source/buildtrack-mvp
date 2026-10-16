@@ -31,7 +31,7 @@ describe('pre-booking workflow through the actual forms (fixture requests only)'
     fireEvent.change(screen.getByRole('combobox', { name: 'สถานะลูกค้า' }), { target: { value: 'Lost' } }); followSubmit();
     await waitFor(() => expect(props.onSaved).toHaveBeenCalledOnce());
     expect(mocks.write).toHaveBeenCalledWith(expect.objectContaining({ lead: latest }), expect.objectContaining({ status: 'Lost', crm_status: 'Lost — ไม่สนใจ / ยุติการติดตาม', notes: expect.stringContaining('fresh concurrent notes') }));
-    expect(mocks.activity).toHaveBeenCalledWith([expect.objectContaining({ customer_id: 'L1' })]);
+    expect(mocks.activity).toHaveBeenCalledWith([expect.objectContaining({ native_lead_id: 'L1' })]);
   });
   it('requires a recorded reason before a Lost write', () => {
     render(<FollowUp {...followProps()} />);

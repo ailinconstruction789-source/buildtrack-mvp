@@ -1,5 +1,6 @@
 "use client";
 import { customerExpectedTransferDay } from '@/lib/sales/customerBusinessDate';
+import { extractAgreedPrices, extractExpectedTransferDate } from '@/lib/sales/customerDealDetails';
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
@@ -183,32 +184,139 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
           fallbackSales = directSales || [];
           if (directSales && directSales.length > 0) {
             allSalesRows = directSales.map((s: any) => {
-              const matchedPlot = (pData || []).find((p: any) => p.id === s.plot_id || p.plot_name === s.plot_id);
-              const matchedLead = (lData || []).find((l: any) => l.id === s.lead_id);
+              const matchedPlot = (pData || []).find((p: any) => p.id === s.plot_id || (p.plot_name === s.plot_id && (!s.project_name || p.project_name === s.project_name)));
+              const proj = s.project_name || matchedPlot?.project_name;
+              const matchedLead = (lData || []).find((l: any) =>
+                (s.lead_id && l.id === s.lead_id) ||
+                (l.customer_name && s.customer_name && l.customer_name.trim() === s.customer_name.trim()) ||
+                (matchedPlot?.highlight_note && l.customer_name && matchedPlot.highlight_note.includes(l.customer_name.trim())) ||
+                (proj && l.project_name === proj && (
+                  (s.plot_id && (l.interested_plot_id === s.plot_id || (l.interested_plot_name && (s.plot_id === `${proj}-${l.interested_plot_name}` || matchedPlot?.plot_name === l.interested_plot_name))))
+                ))
+              );
               const stageRaw = (s.contract_status || s.crm_stage || s.status || '').toLowerCase();
+              const { salePrice: notesSalePrice, landAppraisalPrice: notesTdPrice } = extractAgreedPrices(matchedLead?.notes);
+              const salePrice = Number(s.sale_price) || notesSalePrice || Number(matchedPlot?.selling_price || 0);
+              const tdPrice = Number(s.land_office_price) || notesTdPrice || Number(matchedPlot?.land_appraisal_price || 0) || salePrice;
+              const expectedTransferDate = s.expected_transfer_date || extractExpectedTransferDate(matchedLead?.notes) || customerExpectedTransferDay(s) || null;
+
+              const isTransferred = stageRaw === 'transferred' || stageRaw === 'handover' ||
+                Boolean(s.transferred_at) || Boolean(matchedLead?.transferred_date) ||
+                (matchedPlot?.sale_status || '').toLowerCase() === 'transferred';
 
               return {
                 saleId: s.id,
-                customerId: s.lead_id || s.customer_id || s.customerId,
+                customerId: s.lead_id || s.customer_id || s.customerId || matchedLead?.id,
                 customerName: s.customer_name || s.customerName || matchedLead?.customer_name || matchedPlot?.customer_name,
                 phone: s.phone || matchedLead?.phone || '',
                 plotId: s.plot_id || matchedPlot?.id,
                 plotName: matchedPlot?.plot_name || s.plot_id,
-                projectName: s.project_name || matchedPlot?.project_name || 'ไม่ระบุโครงการ',
-                stage: stageRaw === 'transferred' ? 'transferred'
+                projectName: proj || 'ไม่ระบุโครงการ',
+                stage: isTransferred ? 'transferred'
                   : stageRaw === 'contracted' ? 'contracted'
                   : stageRaw === 'cancelled' ? 'cancelled'
                   : 'booked',
-                bookedAt: s.booked_at || s.created_at,
-                transferredAt: s.transferred_at,
+                bookedAt: s.booked_at || matchedLead?.booking_date || s.created_at,
+                transferredAt: s.transferred_at || matchedLead?.transferred_date || null,
+                leadDate: matchedLead?.actual_visit_date || matchedLead?.lead_date || matchedLead?.created_at || null,
                 cancelledAt: s.cancelled_at,
                 ownerName: s.agent_name || s.owner_name || matchedLead?.agent_name,
-                salePrice: s.sale_price || matchedPlot?.selling_price,
-                expectedTransferDate: customerExpectedTransferDay(s)
+                salePrice,
+                tdPrice,
+                expectedTransferDate
               };
             });
           }
         }
+
+        // Enhance existing rows with matched lead info if missing salePrice/tdPrice/expectedTransferDate
+        allSalesRows = allSalesRows.map((s: any) => {
+          const matchedPlot = (pData || []).find((p: any) => p.id === s.plotId || (p.plot_name === s.plotName && (!s.projectName || p.project_name === s.projectName)));
+          const proj = s.projectName || matchedPlot?.project_name;
+          const matchedLead = (lData || []).find((l: any) =>
+            (s.customerId && l.id === s.customerId) ||
+            (l.customer_name && s.customerName && l.customer_name.trim() === s.customerName.trim()) ||
+            (matchedPlot?.highlight_note && l.customer_name && matchedPlot.highlight_note.includes(l.customer_name.trim())) ||
+            (proj && l.project_name === proj && (
+              (s.plotId && (l.interested_plot_id === s.plotId || (l.interested_plot_name && (s.plotId === `${proj}-${l.interested_plot_name}` || matchedPlot?.plot_name === l.interested_plot_name))))
+            ))
+          );
+          const { salePrice: notesSalePrice, landAppraisalPrice: notesTdPrice } = extractAgreedPrices(matchedLead?.notes);
+          const resolvedSalePrice = Number(s.salePrice) || notesSalePrice || Number(matchedPlot?.selling_price || 0);
+          const resolvedTdPrice = Number(s.tdPrice) || notesTdPrice || Number(matchedPlot?.land_appraisal_price || 0) || resolvedSalePrice;
+          const resolvedExpTransfer = s.expectedTransferDate || extractExpectedTransferDate(matchedLead?.notes) || customerExpectedTransferDay(s) || null;
+
+          const stageRaw = (s.stage || '').toLowerCase();
+          const isTransferred = stageRaw === 'transferred' || stageRaw === 'handover' ||
+            Boolean(s.transferredAt) || Boolean(s.transferred_at) || Boolean(matchedLead?.transferred_date) ||
+            (matchedPlot?.sale_status || '').toLowerCase() === 'transferred';
+
+          const resolvedBookedAt = s.booked_at || matchedLead?.booking_date || s.bookedAt || s.created_at;
+          const resolvedTransferredAt = s.transferredAt || s.transferred_at || matchedLead?.transferred_date || null;
+          const resolvedLeadDate = s.leadDate || matchedLead?.actual_visit_date || matchedLead?.lead_date || matchedLead?.created_at || null;
+
+          return {
+            ...s,
+            customerName: s.customerName || matchedLead?.customer_name || matchedPlot?.customer_name,
+            phone: s.phone || matchedLead?.phone || '',
+            ownerName: s.ownerName || matchedLead?.agent_name,
+            stage: isTransferred ? 'transferred' : s.stage,
+            bookedAt: resolvedBookedAt,
+            transferredAt: resolvedTransferredAt,
+            leadDate: resolvedLeadDate,
+            salePrice: resolvedSalePrice,
+            tdPrice: resolvedTdPrice,
+            expectedTransferDate: resolvedExpTransfer
+          };
+        });
+
+        // Append active booked/contracted leads from lData not yet in allSalesRows
+        const existingPlotKeys = new Set(allSalesRows.map((s: any) => `${s.projectName}-${s.plotName}`));
+        const existingCustomerNames = new Set(allSalesRows.map((s: any) => s.customerName).filter(Boolean));
+
+        (lData || []).forEach((l: any) => {
+          const isBookedOrContracted = l.booking_date ||
+            ['reserved', 'booked', 'contracted'].includes((l.status || '').toLowerCase()) ||
+            /booked|contracted|reserved|จอง|สัญญา/i.test(l.crm_status || l.auto_status || '');
+          if (!isBookedOrContracted) return;
+
+          const matchedPlot = (pData || []).find((p: any) =>
+            (l.project_name && p.project_name === l.project_name && (p.id === l.interested_plot_id || p.plot_name === (l.interested_plot_name || l.interested_plot_id))) ||
+            (l.interested_plot_id && p.id === l.interested_plot_id) ||
+            (l.customer_name && p.highlight_note && p.highlight_note.includes(l.customer_name.trim()))
+          );
+
+          const plotKey = `${l.project_name}-${matchedPlot?.plot_name || l.interested_plot_name || l.interested_plot_id}`;
+          if (existingPlotKeys.has(plotKey) || (l.customer_name && existingCustomerNames.has(l.customer_name))) {
+            return;
+          }
+
+          const { salePrice: notesSalePrice, landAppraisalPrice: notesTdPrice } = extractAgreedPrices(l.notes);
+          const salePrice = notesSalePrice || Number(matchedPlot?.selling_price || 0);
+          const tdPrice = notesTdPrice || Number(matchedPlot?.land_appraisal_price || 0) || salePrice;
+          const expectedTransferDate = extractExpectedTransferDate(l.notes);
+          const stage = /contract/i.test(l.crm_status || l.status || '') ? 'contracted' : 'booked';
+
+          allSalesRows.push({
+            saleId: `lead-${l.id}`,
+            customerId: l.id,
+            customerName: l.customer_name,
+            phone: l.phone || '',
+            plotId: matchedPlot?.id || l.interested_plot_id,
+            plotName: matchedPlot?.plot_name || l.interested_plot_name || l.interested_plot_id,
+            projectName: l.project_name || matchedPlot?.project_name || 'ไม่ระบุโครงการ',
+            stage,
+            bookedAt: l.booking_date || l.created_at,
+            transferredAt: l.transferred_date || null,
+            leadDate: l.actual_visit_date || l.lead_date || l.created_at || null,
+            cancelledAt: null,
+            ownerName: l.agent_name || l.created_by_agent,
+            salePrice,
+            tdPrice,
+            expectedTransferDate
+          });
+          existingPlotKeys.add(plotKey);
+        });
 
         if (isCurrentRequest()) {
           request.loadedAt = Date.now();
@@ -242,7 +350,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
 
     const targetDate = new Date(selectedDateStr);
     const targetMonthPrefix = `${selectedYear}-${selectedMonth.padStart(2, '0')}`;
-    const activeProjectName = selectedProjectFilter || projectName;
+    const activeProjectName = (selectedProjectFilter && selectedProjectFilter !== 'all') ? selectedProjectFilter : null;
 
     // Filter plots by project if specified
     const activePlots = activeProjectName 
@@ -285,6 +393,28 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       });
     });
 
+    if (!data.canonical && (data.leads || []).length > 0) {
+      (data.leads || []).forEach((l: any) => {
+        const visitD = l.actual_visit_date || l.contacted_date || l.lead_date;
+        if (visitD) {
+          const cleanDate = visitD.split('T')[0];
+          const k = `lead-visit:${l.id}`;
+          if (!visitMap.has(k)) {
+            visitMap.set(k, { key: k, customerId: l.id, visitDate: cleanDate, projectName: l.project_name || null });
+          }
+        }
+        const leadD = l.lead_date || l.actual_visit_date || l.contacted_date;
+        if (leadD) {
+          const cleanDate = leadD.split('T')[0];
+          if (!leadDates.has(l.id)) leadDates.set(l.id, cleanDate);
+          if (l.customer_name) {
+            const nameKey = `name:${l.customer_name.trim()}`;
+            if (!leadDates.has(nameKey)) leadDates.set(nameKey, cleanDate);
+          }
+        }
+      });
+    }
+
     const allVisits = Array.from(visitMap.values());
     const filteredVisits = activeProjectName 
       ? allVisits.filter(v => v.projectName === activeProjectName)
@@ -297,25 +427,38 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
     if (data.sales && data.sales.length > 0) {
       records = data.sales.map((s: any) => {
         const matchingPlot = data.plots.find((p: any) => p.id === s.plotId || (p.plot_name === s.plotName && p.project_name === s.projectName));
+        const matchingLead = data.leads?.find((l: any) =>
+          (s.customerId && l.id === s.customerId) ||
+          (l.customer_name && s.customerName && l.customer_name.trim() === s.customerName.trim()) ||
+          (matchingPlot?.highlight_note && l.customer_name && matchingPlot.highlight_note.includes(l.customer_name.trim()))
+        );
         const salePrice = data.canonical ? s.salePrice : s.salePrice ? Number(s.salePrice) : Number(matchingPlot?.selling_price || 0);
-        const bookDate = s.importedHistory?.bookedDate || s.bookedAt?.split('T')[0] || null;
-        const transferDate = ['transferred', 'handover'].includes(s.stage) 
-          ? (s.importedHistory?.transferredDate || s.transferredAt?.split('T')[0] || null) 
+        const bookDate = s.importedHistory?.bookedDate || s.bookedAt?.split('T')[0] || matchingLead?.booking_date?.split('T')[0] || null;
+        const isTransferred = ['transferred', 'handover'].includes(s.stage) || Boolean(s.transferredAt) || Boolean(matchingLead?.transferred_date);
+        const transferDate = isTransferred 
+          ? (s.importedHistory?.transferredDate || s.transferredAt?.split('T')[0] || matchingLead?.transferred_date?.split('T')[0] || null) 
           : null;
         const cancelDate = s.stage === 'cancelled' 
           ? (s.importedHistory?.cancelledDate || s.cancelledAt?.split('T')[0] || null) 
           : null;
-        const customerLeadDate = s.customerId ? leadDates.get(s.customerId) : null;
-        const createdDate = data.canonical ? customerLeadDate ?? null : customerLeadDate || bookDate || s.created_at?.split('T')[0] || '2025-01-01';
+        const customerLeadDate = s.customerId ? (leadDates.get(s.customerId) || (s.customerName ? leadDates.get(`name:${s.customerName.trim()}`) : null)) : null;
+        const leadVisitDate = matchingLead?.actual_visit_date?.split('T')[0] || matchingLead?.lead_date?.split('T')[0] || null;
+        const createdDate = data.canonical ? customerLeadDate ?? null : customerLeadDate || leadVisitDate || s.leadDate?.split('T')[0] || bookDate || s.created_at?.split('T')[0] || '2025-01-01';
         const tdPrice = s.saleId ? tdPriceMap.get(s.saleId) : null;
+        const resolvedTdPrice = tdPrice ?? s.tdPrice ?? matchingPlot?.land_appraisal_price ?? salePrice;
+        const expectedTransfer = customerExpectedTransferDay(s) || s.expectedTransferDate || null;
 
-        const status = s.stage === 'cancelled' ? 'Cancelled' 
-          : ['transferred', 'handover'].includes(s.stage) ? 'Transferred' 
+        const effectiveStage = s.stage === 'cancelled' ? 'cancelled' 
+          : isTransferred ? 'transferred' 
+          : s.stage;
+
+        const status = effectiveStage === 'cancelled' ? 'Cancelled' 
+          : ['transferred', 'handover'].includes(effectiveStage) ? 'Transferred' 
           : 'Reserved';
 
-        const statusLabel = s.stage === 'transferred' ? 'โอนแล้ว' 
-          : s.stage === 'cancelled' ? 'ยกเลิก' 
-          : ['booked', 'contracted'].includes(s.stage) ? 'จองแล้ว' 
+        const statusLabel = effectiveStage === 'transferred' ? 'โอนแล้ว' 
+          : effectiveStage === 'cancelled' ? 'ยกเลิก' 
+          : ['booked', 'contracted'].includes(effectiveStage) ? 'จองแล้ว' 
           : 'รอโอน';
 
         return {
@@ -328,41 +471,44 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
           phone: s.phone || '-',
           agent_name: s.ownerName || '-',
           salePrice,
+          tdPrice: resolvedTdPrice,
           status,
           statusLabel,
-          stage: s.stage,
+          stage: effectiveStage,
           bookDate,
           transferDate,
           cancelDate,
           createdDate,
-          expectedTransfer: customerExpectedTransferDay(s),
-          plot: matchingPlot || { id: s.plotId, plot_name: s.plotName, project_name: s.projectName, selling_price: salePrice },
-          sale: { ...s, tdPrice: tdPrice ?? s.tdPrice }
+          expectedTransfer,
+          expectedTransferDate: expectedTransfer,
+          plot: matchingPlot || { id: s.plotId, plot_name: s.plotName, project_name: s.projectName, selling_price: salePrice, land_appraisal_price: resolvedTdPrice },
+          sale: { ...s, stage: effectiveStage, tdPrice: resolvedTdPrice, expectedTransferDate: expectedTransfer }
         };
       });
     } else if (data.fallbackSales && data.fallbackSales.length > 0) {
       records = data.fallbackSales.map((s: any) => {
         const matchingPlot = data.plots.find((p: any) => p.id === s.plot_id);
-        const matchingLead = data.leads?.find((l: any) => l.id === s.lead_id);
+        const matchingLead = data.leads?.find((l: any) => l.id === s.lead_id || (l.customer_name && s.customer_name && l.customer_name.trim() === s.customer_name.trim()));
         const salePrice = s.sale_price ? Number(s.sale_price) : Number(matchingPlot?.selling_price || 0);
+        const isTransferred = s.contract_status === 'Transferred' || s.crm_stage === 'transferred' || Boolean(s.transferred_at) || Boolean(matchingLead?.transferred_date);
         const status = s.contract_status === 'Cancelled' || s.crm_stage === 'cancelled' ? 'Cancelled' 
-          : s.contract_status === 'Transferred' || s.crm_stage === 'transferred' ? 'Transferred' 
+          : isTransferred ? 'Transferred' 
           : 'Reserved';
         return {
           id: s.id,
           plot_id: s.plot_id,
           plot_name: matchingPlot?.plot_name || s.plot_id,
           project_name: matchingPlot?.project_name || 'ไม่ระบุ',
-          customer_name: matchingLead?.customer_name || 'ลูกค้าไม่ระบุชื่อ',
-          phone: matchingLead?.phone || '-',
-          agent_name: matchingLead?.agent_name || '-',
+          customer_name: matchingLead?.customer_name || s.customer_name || 'ลูกค้าไม่ระบุชื่อ',
+          phone: matchingLead?.phone || s.phone || '-',
+          agent_name: matchingLead?.agent_name || s.agent_name || '-',
           salePrice,
           status,
-          stage: s.crm_stage || s.contract_status,
-          bookDate: s.booked_at?.split('T')[0] || s.created_at?.split('T')[0] || null,
-          transferDate: s.transferred_at?.split('T')[0] || null,
+          stage: isTransferred ? 'transferred' : (s.crm_stage || s.contract_status),
+          bookDate: s.booked_at?.split('T')[0] || matchingLead?.booking_date?.split('T')[0] || s.created_at?.split('T')[0] || null,
+          transferDate: isTransferred ? (s.transferred_at?.split('T')[0] || matchingLead?.transferred_date?.split('T')[0] || null) : null,
           cancelDate: s.cancelled_at?.split('T')[0] || null,
-          createdDate: s.created_at?.split('T')[0] || '2025-01-01',
+          createdDate: matchingLead?.actual_visit_date?.split('T')[0] || matchingLead?.lead_date?.split('T')[0] || s.created_at?.split('T')[0] || '2025-01-01',
           expectedTransfer: customerExpectedTransferDay(s),
           plot: matchingPlot,
           sale: s
@@ -468,7 +614,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
 
       if (transferInYear) {
         price = data.canonical ? Number(transferInYear.salePrice ?? 0) : transferInYear.salePrice ? Number(transferInYear.salePrice) : price;
-        appraisal = transferInYear.sale?.tdPrice || appraisal || price;
+        appraisal = transferInYear.tdPrice || transferInYear.sale?.tdPrice || appraisal || price;
         if (appraisal <= 0) appraisal = price;
 
         projectGroups[proj].transferred++;
@@ -478,7 +624,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       } else if (waitingSale || (!data.canonical && !transferPrior && ['booked', 'contracted', 'reserved'].includes((p.sale_status || '').toLowerCase()))) {
         const sale = waitingSale || plotSales.find((s: any) => s.stage !== 'cancelled' && s.status !== 'Cancelled');
         price = data.canonical ? Number(sale?.salePrice ?? 0) : sale?.salePrice ? Number(sale.salePrice) : price;
-        appraisal = sale?.sale?.tdPrice || appraisal || price;
+        appraisal = sale?.tdPrice || sale?.sale?.tdPrice || appraisal || price;
         if (appraisal <= 0) appraisal = price;
 
         projectGroups[proj].waiting++;
@@ -488,7 +634,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       } else if (transferPrior || (!data.canonical && !transferInYear && (p.sale_status || '').toLowerCase() === 'transferred')) {
         const sale = transferPrior || plotSales.find((s: any) => ['transferred', 'handover'].includes((s.stage || s.status || '').toLowerCase()));
         price = data.canonical ? Number(sale?.salePrice ?? 0) : sale?.salePrice ? Number(sale.salePrice) : price;
-        appraisal = sale?.sale?.tdPrice || appraisal || price;
+        appraisal = sale?.tdPrice || sale?.sale?.tdPrice || appraisal || price;
         if (appraisal <= 0) appraisal = price;
 
         projectGroups[proj].priorTransferred++;

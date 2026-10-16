@@ -269,7 +269,9 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = EM
           const expectedTransfer = rawExpected ? formatThaiDate(rawExpected) : 'ยังไม่ระบุ';
           const rawActual = currentRecord?.transferDate || currentRecord?.transferredAt || (plot.sale_status === 'Transferred' ? 'โอนแล้ว' : 'ยังไม่โอน');
           const actualTransfer = rawActual && rawActual !== 'ยังไม่โอน' && rawActual !== 'โอนแล้ว' ? formatThaiDate(rawActual) : rawActual;
-          const customerName = currentRecord?.customer_name || currentRecord?.customerName || plot.activeSale?.customerName;
+          const customerName = currentRecord?.customer_name || currentRecord?.customerName || (plot as any).activeSale?.customerName || plot.customer_name;
+          const displaySalePrice = Number(currentRecord?.salePrice || (plot as any).activeSale?.salePrice || plot.price || plot.selling_price || 0);
+          const displayTdPrice = Number(currentRecord?.tdPrice || (currentRecord as any)?.sale?.tdPrice || (plot as any).activeSale?.tdPrice || plot.appraisal || plot.land_appraisal_price || displaySalePrice);
           const progress = actualProgress[plot.id] ?? (plot.progress || 0);
 
           // Plot Fresh Inspection & Promotions Data
@@ -315,8 +317,13 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = EM
                     <span>โครงการ {plot.project_name} - แปลง {plot.plot_name || plot.id}</span>
                   </div>
                   {customerName && (
-                    <div className="text-xs font-bold text-amber-300 mb-2 truncate">
+                    <div className="text-xs font-bold text-amber-300 mb-1 truncate">
                       👤 ลูกค้า: {customerName}
+                    </div>
+                  )}
+                  {displaySalePrice > 0 && (
+                    <div className="text-xs font-black text-white/95 bg-white/20 px-2 py-0.5 rounded backdrop-blur-xs inline-block mb-2">
+                      ราคาขาย: ฿{displaySalePrice.toLocaleString('th-TH')}
                     </div>
                   )}
                   <div className="flex justify-between items-center mt-2 text-sm">
@@ -332,17 +339,29 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = EM
               {/* Details & Checklists */}
               <div className="md:w-1/2 lg:w-3/5 p-6 flex flex-col gap-6">
                 
-                {/* Dates */}
-                <div className="grid grid-cols-2 gap-3">
+                {/* Dates & Financials */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
                     <div className="text-xs text-slate-500 font-bold mb-1 flex items-center gap-1"><Calendar size={12}/> สถานะล่าสุด</div>
                     <div className="text-sm font-bold text-slate-700 truncate">{currentRecord?.status || plot.sale_status || '-'}</div>
                   </div>
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
                     <div className="text-xs text-slate-500 font-bold mb-1 flex items-center gap-1"><Clock size={12}/> วันที่โอน</div>
-                    <div className="text-sm font-bold text-blue-600">
+                    <div className="text-sm font-bold text-blue-600 truncate">
                       <span className="text-[10px] text-slate-400 block mb-0.5">คาดการณ์: {expectedTransfer}</span>
                       {actualTransfer !== 'ยังไม่โอน' ? actualTransfer : 'รอดำเนินการ'}
+                    </div>
+                  </div>
+                  <div className="bg-blue-50/70 p-3 rounded-xl border border-blue-100">
+                    <div className="text-xs text-blue-700 font-bold mb-1 flex items-center gap-1">ราคาขาย (ตกลง)</div>
+                    <div className="text-sm font-black text-blue-900 truncate">
+                      {displaySalePrice > 0 ? `฿${displaySalePrice.toLocaleString('th-TH')}` : '-'}
+                    </div>
+                  </div>
+                  <div className="bg-emerald-50/70 p-3 rounded-xl border border-emerald-100">
+                    <div className="text-xs text-emerald-700 font-bold mb-1 flex items-center gap-1">ยอดขาย ทด. ประเมิน</div>
+                    <div className="text-sm font-black text-emerald-900 truncate">
+                      {displayTdPrice > 0 ? `฿${displayTdPrice.toLocaleString('th-TH')}` : '-'}
                     </div>
                   </div>
                 </div>

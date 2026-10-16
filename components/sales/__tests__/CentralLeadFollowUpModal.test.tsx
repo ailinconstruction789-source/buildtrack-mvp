@@ -168,4 +168,20 @@ describe('CentralLeadFollowUpModal', () => {
       expect(screen.getByText(/โทรคุยเรื่องสินเชื่อแล้ว ลูกค้าสนใจบ้านแปลง A01/i)).toBeInTheDocument();
     });
   });
+
+  it('defaults the follow-up agent to the currently logged in user', () => {
+    render(
+      <CentralLeadFollowUpModal
+        isOpen={true}
+        onClose={vi.fn()}
+        customer={mockCustomer}
+        projects={['โครงการ สวนหลวง']}
+        salesOwners={mockOwners}
+        currentUser={{ displayName: 'Sales Joy', username: 'joy' }}
+      />
+    );
+
+    const select = screen.getByRole('combobox', { name: /ผู้บันทึก \/ Sales ผู้ดูแล/i });
+    expect(select).toHaveValue('Sales Joy');
+  });
 });

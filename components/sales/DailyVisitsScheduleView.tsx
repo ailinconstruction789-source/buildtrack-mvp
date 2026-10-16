@@ -179,7 +179,8 @@ export default function DailyVisitsScheduleView({
     if (!dateInput) return null;
     const d = new Date(dateInput);
     if (isNaN(d.getTime())) return null;
-    const year = d.getFullYear();
+    let year = d.getFullYear();
+    if (year > 2400) year -= 543;
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
@@ -265,14 +266,22 @@ export default function DailyVisitsScheduleView({
       }
     });
 
+    const getSafeTime = (dateStr: string | null | undefined): number => {
+      if (!dateStr) return 0;
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return 0;
+      if (d.getFullYear() > 2400) d.setFullYear(d.getFullYear() - 543);
+      return d.getTime();
+    };
+
     // Sort today by appointment date/time
-    todayGroup.sort((a, b) => new Date(a.appointment_date || '').getTime() - new Date(b.appointment_date || '').getTime());
+    todayGroup.sort((a, b) => getSafeTime(a.appointment_date) - getSafeTime(b.appointment_date));
     // Sort upcoming ascending
-    upcomingGroup.sort((a, b) => new Date(a.appointment_date || '').getTime() - new Date(b.appointment_date || '').getTime());
+    upcomingGroup.sort((a, b) => getSafeTime(a.appointment_date) - getSafeTime(b.appointment_date));
     // Sort overdue descending (most recent overdue first)
-    overdueGroup.sort((a, b) => new Date(b.appointment_date || '').getTime() - new Date(a.appointment_date || '').getTime());
+    overdueGroup.sort((a, b) => getSafeTime(b.appointment_date) - getSafeTime(a.appointment_date));
     // Sort completed descending
-    completedGroup.sort((a, b) => new Date(b.actual_visit_date || '').getTime() - new Date(a.actual_visit_date || '').getTime());
+    completedGroup.sort((a, b) => getSafeTime(b.actual_visit_date) - getSafeTime(a.actual_visit_date));
 
     return {
       todayLeads: todayGroup,

@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
+import { fetchSalesWithoutLimit } from '@/lib/sales/fetchWithoutLimit';
+import { extractAgreedPrices } from '@/lib/sales/customerDealDetails';
 import SalesReports from './SalesReports';
 import { Loader2 } from 'lucide-react';
 
@@ -14,97 +16,114 @@ export default function SalesReportsView({ project, viewType = 'reports' }: { pr
       setLoading(true);
       const projName = project?.name;
       try {
-        let leadsData: any[] = [];
-        let from = 0;
-        const limit = 1000;
-        let hasMore = true;
+        const [plotsData, nativeLeads, salesResult] = await Promise.all([
+          fetchSalesWithoutLimit('plots', {
+            filterCol: projName ? 'project_name' : undefined,
+            filterVal: projName,
+            select: 'id, plot_name, selling_price, land_appraisal_price, project_name, highlight_note',
+            orderBy: 'id',
+            ascending: true
+          }),
+          fetchSalesWithoutLimit('leads', {
+            filterCol: projName ? 'project_name' : undefined,
+            filterVal: projName,
+            select: '*',
+            orderBy: 'created_at',
+            ascending: false
+          }),
+          fetchSalesWithoutLimit('sales', {
+            select: '*, plots(*)',
+            orderBy: 'created_at',
+            ascending: false
+          })
+        ]);
 
-        while (hasMore) {
-          let query = supabase.from('leads').select('*').range(from, from + limit - 1);
-          if (projName) {
-             query = query.eq('project_name', projName);
-          }
-          const { data: chunk, error: leadsErr } = await query;
-          if (leadsErr) throw leadsErr;
-          
-          if (chunk && chunk.length > 0) {
-            leadsData = [...leadsData, ...chunk];
-            if (chunk.length < limit) {
-              hasMore = false; // We fetched less than limit, no more pages
-            } else {
-              from += limit;
-            }
-          } else {
-            hasMore = false;
-          }
-        }
-        
-        if (!leadsData || leadsData.length === 0) {
+        if (!nativeLeads || nativeLeads.length === 0) {
           setLeads([]);
           setLoading(false);
           return;
         }
 
-        // Chunking array helper to prevent PostgREST URL length limit errors
         const chunkArray = (arr: any[], size: number) => Array.from({ length: Math.ceil(arr.length / size) }, (v, i) => arr.slice(i * size, i * size + size));
-        
-        let salesData: any[] = [];
-        let historyData: any[] = [];
-        let plotsData: any[] = [];
-        const leadIds = leadsData.map(l => l.id);
+        const leadIds = nativeLeads.map((l: any) => l.id);
         const chunks = chunkArray(leadIds, 100);
-        
-        for (const chunk of chunks) {
-          const { data: sData } = await supabase.from('sales').select('*').in('lead_id', chunk);
-          if (sData) {
-             salesData = [...salesData, ...sData];
-             const plotIds = sData.map(s => s.plot_id).filter(Boolean);
-             if (plotIds.length > 0) {
-              const { data: pData } = await supabase.from('plots').select('id, plot_id, selling_price, land_appraisal_price').in('plot_id', plotIds);
-               if (pData) plotsData = [...plotsData, ...pData];
-             }
-          }
-          
-          const { data: hData } = await supabase.from('status_history').select('*').in('entity_id', chunk).order('created_at', { ascending: true });
-          if (hData) historyData = [...historyData, ...hData];
-        }
 
-        const formattedLeads = leadsData.map(l => {
-          const sale = salesData?.find(s => s.lead_id === l.id);
-          const history = historyData?.filter(h => h.entity_id === l.id).map(h => ({
-             status: h.new_status,
-             timestamp: h.created_at,
-             note: h.changed_by
+        const historyResults = await Promise.all(
+          chunks.map(chunk => supabase.from('status_history').select('*').in('entity_id', chunk).order('created_at', { ascending: true }))
+        );
+        const historyData = historyResults.flatMap(r => r.data || []);
+
+        const formattedLeads = nativeLeads.map((l: any) => {
+          const sale = salesResult?.find((s: any) =>
+            s.lead_id === l.id ||
+            (l.interested_plot_id && s.plot_id === l.interested_plot_id) ||
+            (l.interested_plot_name && s.plot_id === `${l.project_name}-${l.interested_plot_name}`) ||
+            (s.plots && s.plots.project_name === l.project_name && s.plots.plot_name === l.interested_plot_name) ||
+            (l.customer_name && s.plots?.highlight_note && s.plots.highlight_note.includes(l.customer_name.trim()))
+          );
+
+          const matchingPlot = plotsData?.find((p: any) =>
+            (sale && (p.id === sale.plot_id || p.plot_name === sale.plot_id)) ||
+            p.id === l.interested_plot_id ||
+            (p.plot_name === l.interested_plot_name && (!l.project_name || p.project_name === l.project_name)) ||
+            p.id === `${l.project_name}-${l.interested_plot_name}`
+          );
+
+          const history = historyData?.filter((h: any) => h.entity_id === l.id).map((h: any) => ({
+            status: h.new_status,
+            timestamp: h.created_at,
+            note: h.changed_by
           })) || [];
-          
-          // Excel imports save the 'Booking Date' into sale.created_at
-          const explicitReserved = history.find(h => h.status === 'Reserved')?.timestamp?.split('T')[0];
-          const saleCreatedAt = sale?.created_at?.split('T')[0];
-          const bookingDate = explicitReserved || saleCreatedAt || l.created_at?.split('T')[0] || null;
 
-          const plotInfo = plotsData?.find(p => p.plot_id === sale?.plot_id || p.id === sale?.plot_id);
-          const rawSellingPrice = sale?.sale_price ? Number(sale.sale_price) : (plotInfo?.selling_price || 0);
-          let rawLandAppraisal = Number(sale?.land_office_price || plotInfo?.land_appraisal_price || 0);
-          if (rawLandAppraisal === 0) rawLandAppraisal = rawSellingPrice;
+          const explicitReserved = history.find((h: any) => h.status === 'Reserved')?.timestamp?.split('T')[0];
+          const saleCreatedAt = sale?.created_at?.split('T')[0];
+          const leadBookingDate = l.booking_date?.split('T')[0];
+          const bookingDate = leadBookingDate || explicitReserved || sale?.booked_at?.split('T')[0] || saleCreatedAt || l.created_at?.split('T')[0] || null;
+
+          const leadTransferDate = l.transferred_date?.split('T')[0];
+          const saleTransferDate = sale?.transferred_at?.split('T')[0] || sale?.crm_transfer_date?.split('T')[0];
+          const transferredDate = leadTransferDate || saleTransferDate || null;
+
+          const { salePrice: notesSalePrice, landAppraisalPrice: notesLandPrice } = extractAgreedPrices(l.notes);
+
+          const rawSellingPrice = (sale?.sale_price && Number(sale.sale_price) > 0)
+            ? Number(sale.sale_price)
+            : (notesSalePrice ?? (matchingPlot?.selling_price ? Number(matchingPlot.selling_price) : 0));
+
+          let rawLandAppraisal = (sale?.land_office_price && Number(sale.land_office_price) > 0)
+            ? Number(sale.land_office_price)
+            : (notesLandPrice ?? (matchingPlot?.land_appraisal_price && Number(matchingPlot.land_appraisal_price) > 0 ? Number(matchingPlot.land_appraisal_price) : 0));
+
+          if (rawLandAppraisal === 0 && rawSellingPrice > 0) {
+            rawLandAppraisal = rawSellingPrice;
+          }
+
+          const plotCode = sale?.plots?.plot_name
+            || matchingPlot?.plot_name
+            || l.interested_plot_name
+            || sale?.plot_id
+            || l.interested_plot_id
+            || null;
 
           return {
             id: l.id,
             name: l.customer_name,
             project: l.project_name,
             status: l.status,
-            plot: sale?.plot_id || null,
+            plot: plotCode,
             salePrice: rawSellingPrice,
             landAppraisalPrice: rawLandAppraisal,
             expectedTransferDate: sale?.expected_transfer_date || null,
             bookingDate,
+            transferredDate,
             agentName: l.agent_name || 'ไม่ระบุ',
             created_at: l.created_at,
             history
           };
         });
-        
+
         setLeads(formattedLeads);
-      } catch(e) {
+      } catch (e) {
         console.error('Error fetching sales data for reports:', e);
       }
       setLoading(false);

@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, ClipboardList, Home, PieChart, BarChartHorizontal, TrendingUp, Building2, Users, Lightbulb, Grid, Calendar, Activity, ShieldAlert, PlusCircle, MapIcon, Building, DollarSign, Monitor, FileSpreadsheet, Wrench, FolderOpen, Smartphone, ChevronRight, Gift, CalendarDays, FileText, ShieldCheck, Key, User, Award } from 'lucide-react';
+import { LayoutDashboard, ClipboardList, Home, PieChart, BarChartHorizontal, TrendingUp, Building2, Users, Lightbulb, Grid, Calendar, Activity, ShieldAlert, PlusCircle, MapIcon, Building, DollarSign, Monitor, FileSpreadsheet, Wrench, FolderOpen, Smartphone, ChevronRight, Gift, CalendarDays, FileText, ShieldCheck, Key, User, Award, Target } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
 
@@ -15,6 +15,7 @@ const Sidebar = React.memo(({
   isQC,
   isForeman,
   isSales,
+  isSalesExecutive,
   isProcurement,
   isStore,
   isMobilePreview,
@@ -231,7 +232,7 @@ const Sidebar = React.memo(({
                         )}
                         <nav className="space-y-1">
                           <button 
-                            onClick={() => setView('sales-dashboard-excel')} 
+                            onClick={() => { setSelectedProject(null); setView('sales-dashboard-excel'); }} 
                             title="Dashboard (Excel)"
                             aria-label="Dashboard (Excel)"
                             className={`w-full flex items-center gap-3 py-2.5 rounded-xl font-bold text-xs transition-all ${activeView === 'sales-dashboard-excel' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5'}`}
@@ -270,6 +271,16 @@ const Sidebar = React.memo(({
                           >
                             <Lightbulb size={17} />{!isSidebarCollapsed && <span>Strategic Report</span>}
                           </button>
+                          {isSalesExecutive && (
+                            <button 
+                              onClick={() => { setView('sales-kpi-master'); setSelectedProject(null); }} 
+                              title="แดชบอร์ด KPI ฝ่ายขาย"
+                              aria-label="แดชบอร์ด KPI ฝ่ายขาย"
+                              className={`w-full flex items-center gap-3 py-2.5 rounded-xl font-bold text-xs transition-all ${activeView === 'sales-kpi-master' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5'}`}
+                            >
+                              <Target size={17} />{!isSidebarCollapsed && <span className="flex items-center gap-1.5">แดชบอร์ด KPI ฝ่ายขาย <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1 py-0.2 rounded font-black">Admin</span></span>}
+                            </button>
+                          )}
                         </nav>
                       </div>
 

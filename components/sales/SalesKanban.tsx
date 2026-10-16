@@ -53,26 +53,39 @@ export const STATUS_CONFIG: Record<string, { label: string, color: string, bg: s
   'LoanRejected': { label: 'สินเชื่อไม่ผ่าน รอยื่นใหม่', color: 'text-orange-700', bg: 'bg-orange-50', icon: AlertTriangle },
   'Transferred': { label: 'โอนกรรมสิทธิ์', color: 'text-violet-700', bg: 'bg-violet-50', icon: UserCheck },
   'Handover': { label: 'รับมอบบ้าน', color: 'text-sky-700', bg: 'bg-sky-50', icon: Key },
-  'Cancelled': { label: 'ยกเลิกจอง', color: 'text-red-700', bg: 'bg-red-50', icon: XCircle }
+  'Cancelled': { label: 'ยกเลิกจอง', color: 'text-red-700', bg: 'bg-red-50', icon: XCircle },
+  // Status aliases for robustness
+  'Booked': { label: 'จองแล้ว', color: 'text-emerald-700', bg: 'bg-emerald-50', icon: Home },
+  'Follow Up': { label: 'กำลังติดตาม', color: 'text-blue-700', bg: 'bg-blue-50', icon: Users },
+  'Follow-up': { label: 'กำลังติดตาม', color: 'text-blue-700', bg: 'bg-blue-50', icon: Users },
+  'Active': { label: 'กำลังติดตาม / สนใจ', color: 'text-blue-700', bg: 'bg-blue-50', icon: Users },
+  'New': { label: 'ลูกค้าใหม่', color: 'text-blue-700', bg: 'bg-blue-50', icon: Users },
+  'Rented': { label: 'สัญญาเช่า', color: 'text-teal-700', bg: 'bg-teal-50', icon: Key },
+  'Rent': { label: 'สัญญาเช่า', color: 'text-teal-700', bg: 'bg-teal-50', icon: Key }
 };
 
-
-
-const getNextStatuses = (current: string) => {
-  switch (current) {
-    case 'Visit': return ['Visit', 'Negotiation', 'Reserved', 'Cancelled'];
-    case 'Negotiation': return ['Negotiation', 'Reserved', 'Cancelled'];
-    case 'Reserved': return ['Reserved', 'Contracted', 'Cancelled'];
-    case 'Contracted': return ['Contracted', 'DownPayment', 'DocumentPrep', 'Transferred', 'Cancelled'];
-    case 'DownPayment': return ['DownPayment', 'DocumentPrep', 'Transferred', 'Cancelled'];
-    case 'DocumentPrep': return ['DocumentPrep', 'LoanProcessing', 'Cancelled'];
-    case 'LoanProcessing': return ['LoanProcessing', 'Approved', 'DocumentPrep', 'Cancelled'];
-    case 'Approved': return ['Approved', 'Transferred', 'Cancelled'];
-    case 'Transferred': return ['Transferred', 'Handover', 'Cancelled'];
-    case 'Handover': return ['Handover'];
-    case 'Cancelled': return ['Cancelled'];
-    default: return [current];
+const getNextStatuses = (current?: string | null) => {
+  const raw = String(current || '').trim();
+  const normalized = stageToKanbanStatus(raw) || raw;
+  let statuses: string[];
+  switch (normalized) {
+    case 'Visit': statuses = ['Visit', 'Negotiation', 'Reserved', 'Cancelled']; break;
+    case 'Negotiation': statuses = ['Negotiation', 'Reserved', 'Cancelled']; break;
+    case 'Reserved': statuses = ['Reserved', 'Contracted', 'Cancelled']; break;
+    case 'Contracted': statuses = ['Contracted', 'DownPayment', 'DocumentPrep', 'Transferred', 'Cancelled']; break;
+    case 'DownPayment': statuses = ['DownPayment', 'DocumentPrep', 'Transferred', 'Cancelled']; break;
+    case 'DocumentPrep': statuses = ['DocumentPrep', 'LoanProcessing', 'Cancelled']; break;
+    case 'LoanProcessing': statuses = ['LoanProcessing', 'Approved', 'DocumentPrep', 'Cancelled']; break;
+    case 'Approved': statuses = ['Approved', 'Transferred', 'Cancelled']; break;
+    case 'Transferred': statuses = ['Transferred', 'Handover', 'Cancelled']; break;
+    case 'Handover': statuses = ['Handover']; break;
+    case 'Cancelled': statuses = ['Cancelled', 'Visit', 'Reserved']; break;
+    case 'Lost': statuses = ['Lost', 'Visit', 'Reserved']; break;
+    default:
+      statuses = STATUS_CONFIG[normalized] ? [normalized, 'Reserved', 'Cancelled'] : ['Visit', 'Negotiation', 'Reserved', 'Cancelled'];
+      break;
   }
+  return statuses.filter(s => Boolean(STATUS_CONFIG[s]));
 };
 
 const formatPhoneNumber = (value: string | null | undefined) => {
@@ -85,6 +98,8 @@ const formatPhoneNumber = (value: string | null | undefined) => {
 
 export const stageToKanbanStatus = (stage: string): string => {
   switch (stage?.toLowerCase()) {
+    case 'visit': return 'Visit';
+    case 'negotiation': return 'Negotiation';
     case 'booked': return 'Reserved';
     case 'contracted': return 'Contracted';
     case 'downpayment': return 'DownPayment';
@@ -97,12 +112,15 @@ export const stageToKanbanStatus = (stage: string): string => {
     case 'handover': return 'Handover';
     case 'loan_rejected': return 'LoanRejected';
     case 'cancelled': return 'Cancelled';
+    case 'lost': return 'Lost';
     default: return 'Reserved';
   }
 };
 
 export const kanbanStatusToStage = (status: string): string => {
   switch (status) {
+    case 'Visit': return 'visit';
+    case 'Negotiation': return 'negotiation';
     case 'Reserved': return 'booked';
     case 'Contracted': return 'contracted';
     case 'DownPayment': return 'downpayment';
@@ -114,6 +132,7 @@ export const kanbanStatusToStage = (status: string): string => {
     case 'Transferred': return 'transferred';
     case 'Handover': return 'handover';
     case 'Cancelled': return 'cancelled';
+    case 'Lost': return 'lost';
     default: return 'booked';
   }
 };
@@ -226,7 +245,7 @@ export default function SalesKanban({
   const [projectAvailability, setProjectAvailability] = useState<Record<string, { total: number; vacant: number }>>({});
   const [loadingAvailability, setLoadingAvailability] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [showOnlyAvailable, setShowOnlyAvailable] = useState(false); // Default to false so all projects display immediately
+  const [showOnlyAvailable, setShowOnlyAvailable] = useState(true); // Default to true so only projects with available houses display on enter
 
   useEffect(() => {
     if (internalProject) return;
@@ -610,15 +629,17 @@ export default function SalesKanban({
     if (status === 'Available' || status === 'Cancelled' || status === 'Rejected' || !lead) {
       setPanelState({ type: 'booking', plotId, lead: null });
     } else if (lead) {
+      const canonicalStatus = STATUS_CONFIG[lead.status] ? lead.status : (stageToKanbanStatus(lead.status) || 'Reserved');
       setPanelState({ type: 'customer', plotId, lead });
-      setEditCustomerForm({ name: lead.name, phone: lead.phone, occupation: lead.occupation || '', status: lead.status, plot: lead.plot || '', salePrice: lead.salePrice?.toString() || '', bank: lead.bank || '', cancelReason: lead.cancelReason || '', landOfficePrice: lead.landOfficePrice || '', transactionDate: new Date().toISOString().split('T')[0], agentName: lead.agentName || '', note: '' });
+      setEditCustomerForm({ name: lead.name, phone: lead.phone, occupation: lead.occupation || '', status: canonicalStatus, plot: lead.plot || '', salePrice: lead.salePrice?.toString() || '', bank: lead.bank || '', cancelReason: lead.cancelReason || '', landOfficePrice: lead.landOfficePrice || '', transactionDate: new Date().toISOString().split('T')[0], agentName: lead.agentName || '', note: '' });
     }
   };
 
   const handleEditLeadClick = (lead: any) => {
     setActiveTab('map');
+    const canonicalStatus = STATUS_CONFIG[lead.status] ? lead.status : (stageToKanbanStatus(lead.status) || 'Reserved');
     setPanelState({ type: 'customer', plotId: lead.plot || '', lead });
-    setEditCustomerForm({ name: lead.name, phone: lead.phone, occupation: lead.occupation || '', status: lead.status, plot: lead.plot || '', salePrice: lead.salePrice?.toString() || '', bank: lead.bank || '', cancelReason: lead.cancelReason || '', landOfficePrice: lead.landOfficePrice || '', transactionDate: new Date().toISOString().split('T')[0], agentName: lead.agentName || '', note: '' });
+    setEditCustomerForm({ name: lead.name, phone: lead.phone, occupation: lead.occupation || '', status: canonicalStatus, plot: lead.plot || '', salePrice: lead.salePrice?.toString() || '', bank: lead.bank || '', cancelReason: lead.cancelReason || '', landOfficePrice: lead.landOfficePrice || '', transactionDate: new Date().toISOString().split('T')[0], agentName: lead.agentName || '', note: '' });
   };
 
   const handleSaveNewCustomer = async (e: React.FormEvent) => {
@@ -2276,7 +2297,7 @@ export default function SalesKanban({
                     await editor.save({ confirmedBySubmit: true });
                   };
                   const isSubmitting = editor ? editor.busy : panelSubmitting;
-                  const getNextStatuses = editor ? () => editor.choices.map(stageToKanbanStatus) : panelStatuses;
+                  const getNextStatuses = editor ? () => editor.choices.map(stageToKanbanStatus).filter(s => Boolean(STATUS_CONFIG[s])) : panelStatuses;
                   return (
                 <div className="flex flex-col h-full animate-in fade-in duration-300">
                   <div className="flex justify-between items-center mb-6">
@@ -2362,9 +2383,14 @@ export default function SalesKanban({
                       <label className="block text-sm font-semibold text-slate-700 mb-2">อัปเดตสถานะการขาย (Guided Workflow)</label>
                       
                       <div className="flex flex-wrap gap-2 mb-4">
-                        {getNextStatuses(panelState.lead.status).map(s => {
-                          const config = STATUS_CONFIG[s];
-                          const Icon = config.icon;
+                        {getNextStatuses(panelState.lead?.status).map(s => {
+                          const config = STATUS_CONFIG[s] || STATUS_CONFIG['legacy_unclassified'] || {
+                            label: s || 'ไม่ระบุ',
+                            color: 'text-slate-600',
+                            bg: 'bg-slate-100',
+                            icon: Users
+                          };
+                          const Icon = config.icon || Users;
                           const isSelected = editCustomerForm.status === s;
                           return (
                             <button 
@@ -2375,10 +2401,10 @@ export default function SalesKanban({
                               onClick={() => setEditCustomerForm({...editCustomerForm, status: s})}
                               className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold border transition-all ${isSelected ? 'bg-[#0f172a] text-white border-[#0f172a] shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400 hover:bg-slate-50'}`}
                             >
-                              <Icon size={14} className={isSelected ? 'text-white' : config.color} />
-                              {config.label}
+                              <Icon size={14} className={isSelected ? 'text-white' : (config.color || 'text-slate-600')} />
+                              {config.label || s}
                             </button>
-                          )
+                          );
                         })}
                       </div>
 

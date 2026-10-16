@@ -117,4 +117,27 @@ describe('CentralVisitAppointmentModal', () => {
       expect(onClose).toHaveBeenCalled();
     });
   });
+
+  it('defaults the sales caretaker to the logged-in user when provided', async () => {
+    const loggedInUser = {
+      id: 'current-uid',
+      username: 'TEAW',
+      displayName: 'TEAW Executive',
+      role: 'executive_sales'
+    };
+
+    render(
+      <CentralVisitAppointmentModal
+        isOpen={true}
+        onClose={vi.fn()}
+        customer={customer}
+        projects={projects}
+        salesOwners={salesOwners}
+        currentUser={loggedInUser}
+      />
+    );
+
+    const select = screen.getByLabelText('Sales ผู้ดูแลพาชม') as HTMLSelectElement;
+    expect(select.value).toBe('TEAW Executive');
+  });
 });

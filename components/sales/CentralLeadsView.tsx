@@ -20,6 +20,22 @@ type CurrentSalesActor = { id?: string | number; userId?: string; username?: str
 
 const snapshotCache = new Map<string, CentralSearchSnapshot>();
 
+function normalizeLeadDateIso(rawDate: string | null | undefined, fallbackDate?: string | null | undefined): string {
+  const target = rawDate || fallbackDate;
+  if (!target) return new Date().toISOString();
+  try {
+    const d = new Date(target);
+    if (isNaN(d.getTime())) return target;
+    const year = d.getFullYear();
+    if (year > 2400) {
+      d.setFullYear(year - 543);
+    }
+    return d.toISOString();
+  } catch {
+    return target;
+  }
+}
+
 async function fetchCentralLeadsSnapshot(
   page: number,
   filters: CentralSearchFilters,
@@ -98,7 +114,7 @@ async function fetchCentralLeadsSnapshot(
         channel: lead.channel || 'Walk in',
         notes: lead.notes || null,
         ownerUserId,
-        leadCreatedAt: lead.lead_date || lead.created_at || new Date().toISOString(),
+        leadCreatedAt: normalizeLeadDateIso(lead.lead_date, lead.created_at),
         intakeStatus,
         interests: lead.project_name ? [
           {
@@ -111,6 +127,13 @@ async function fetchCentralLeadsSnapshot(
           }
         ] : []
       };
+    });
+
+    // Sort customers by leadCreatedAt descending (newest lead date first)
+    allCustomers.sort((a: any, b: any) => {
+      const timeA = a.leadCreatedAt ? new Date(a.leadCreatedAt).getTime() : 0;
+      const timeB = b.leadCreatedAt ? new Date(b.leadCreatedAt).getTime() : 0;
+      return timeB - timeA;
     });
 
     // Apply search and filter conditions

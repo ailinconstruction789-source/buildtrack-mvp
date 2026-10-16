@@ -52,10 +52,11 @@ interface Props {
   onSaved?: (notice: string) => void;
   currentUserRole?: string;
   currentUserId?: string;
+  currentUser?: { id?: string; userId?: string; displayName?: string; username?: string; name?: string } | null;
 }
 
 export default function CentralLeadFollowUpModal(props: Props) {
-  return <FollowUpSession key={JSON.stringify([props.customer?.leadId, props.customer?.id, props.currentUserId, props.currentUserRole])} {...props} />;
+  return <FollowUpSession key={JSON.stringify([props.customer?.leadId, props.customer?.id, props.currentUserId, props.currentUser?.username, props.currentUser?.displayName, props.currentUserRole])} {...props} />;
 }
 function FollowUpSession({
   isOpen,
@@ -65,7 +66,9 @@ function FollowUpSession({
   projects = [],
   salesOwners = [],
   onSaved,
-  currentUserRole
+  currentUserRole,
+  currentUserId,
+  currentUser
 }: Props) {
   const [projectName, setProjectName] = useState('');
   const [channel, setChannel] = useState<'call' | 'chat' | 'follow_up' | 'note'>('call');
@@ -78,6 +81,19 @@ function FollowUpSession({
   const [agentName, setAgentName] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+
+  // Include logged in user in the available sales options if not already listed
+  const effectiveSalesOwners = React.useMemo(() => {
+    const list = [...salesOwners];
+    const loggedName = currentUser?.displayName || currentUser?.username || currentUser?.name;
+    if (loggedName && !list.some(o => o.displayName.toLowerCase() === loggedName.toLowerCase())) {
+      list.unshift({
+        userId: String(currentUser?.id || currentUser?.userId || currentUserId || 'current-user'),
+        displayName: loggedName
+      });
+    }
+    return list;
+  }, [salesOwners, currentUser, currentUserId]);
   
   // History state
   const [historyList, setHistoryList] = useState<ActivityItem[]>([]);
@@ -118,18 +134,30 @@ function FollowUpSession({
       const proj = initialInterest?.projectName || (projects.length > 0 ? projects[0] : '');
       setProjectName(proj);
 
+      // Default follow-up agent:
+      // Priority 1: Current logged-in user
+      // Priority 2: Assigned customer sales owner
+      const currentUserName = currentUser?.displayName || currentUser?.username || currentUser?.name;
       const initialOwnerId = initialInterest?.ownerUserId || customer.ownerUserId;
-      const ownerObj = salesOwners.find(o => o.userId === initialOwnerId);
-      setAgentName(selectSalesStaffName(salesOwners, [ownerObj?.displayName, customer.salesOwner]));
+      const ownerObj = effectiveSalesOwners.find(o => o.userId === initialOwnerId);
+      const customerOwner = customer.salesOwner || (customer as any).sales_owner || (customer as any).agent_name;
+
+      const defaultAgent = selectSalesStaffName(
+        effectiveSalesOwners,
+        [currentUserName, ownerObj?.displayName, customerOwner]
+      );
+      setAgentName(defaultAgent);
 
       // Load history
       const id = nativeLeadId(customer);
       if (id) void loadHistory(id);
     }
-  }, [isOpen, customer, initialInterest, projects, salesOwners]);
+  }, [isOpen, customer, initialInterest, projects, effectiveSalesOwners, currentUser]);
   useEffect(() => {
-    setAgentName(previous => previous || selectSalesStaffName(salesOwners, [customer?.salesOwner]));
-  }, [salesOwners, customer?.salesOwner]);
+    const currentUserName = currentUser?.displayName || currentUser?.username || currentUser?.name;
+    const customerOwner = customer?.salesOwner || (customer as any)?.sales_owner || (customer as any)?.agent_name;
+    setAgentName(previous => previous || selectSalesStaffName(effectiveSalesOwners, [currentUserName, customerOwner]));
+  }, [effectiveSalesOwners, currentUser, customer?.salesOwner]);
 
   const loadHistory = async (customerId: string) => {
     setLoadingHistory(true);
@@ -183,7 +211,7 @@ function FollowUpSession({
     e.preventDefault();
     if (writing.current) return;
     if (readOnly) { setErrorMsg('บัญชีนี้ดูข้อมูลได้อย่างเดียว'); return; }
-    if (!salesOwners.some(owner => owner.displayName === agentName)) {
+    if (!effectiveSalesOwners.some(owner => owner.displayName === agentName)) {
       setErrorMsg('กรุณาเลือกพนักงานฝ่ายขาย');
       return;
     }
@@ -552,12 +580,13 @@ function FollowUpSession({
                     <User size={13} className="text-indigo-500" /> ผู้บันทึก / Sales ผู้ดูแล
                   </label>
                   <select
+                    aria-label="ผู้บันทึก / Sales ผู้ดูแล"
                     value={agentName}
                     onChange={(e) => setAgentName(e.target.value)}
                     className="w-full text-xs font-medium bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
                   >
-                    {salesOwners.length > 0 ? (
-                      salesOwners.map(o => (
+                    {effectiveSalesOwners.length > 0 ? (
+                      effectiveSalesOwners.map(o => (
                         <option key={o.userId} value={o.displayName}>{o.displayName}</option>
                       ))
                     ) : (
