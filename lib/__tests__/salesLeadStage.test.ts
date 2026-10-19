@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { canStartSalesDeal, getLeadStage, preserveLeadDealStage } from '../sales/leadStage';
 import { bangkokToday, isDueSalesLead, isUpcomingSalesLead } from '../sales/actionFilters';
 import { salesDealStageOf } from '../sales/dealStatus';
+import { isCancelledBookingLead, isPreBookingLost } from '../sales/leadLifecycle';
+import { mapCRMStatusToLegacyStatus, mapToCRMStatus } from '../salesImportHelper';
 
 describe('shared Sales deal state', () => {
   it.each(['Lost', 'Cancelled', 'Closed_Lost', 'MovedOut'])('%s wins over old booking history', status => {
@@ -39,5 +41,31 @@ describe('shared Sales deal state', () => {
   it('upcoming uses appointment date rather than stage name', () => {
     expect(isUpcomingSalesLead({ status: 'Active', appointment_date: '2026-10-10' }, '2026-10-09')).toBe(true);
     expect(isUpcomingSalesLead({ status: 'Visit', appointment_date: '2026-10-08' }, '2026-10-09')).toBe(false);
+  });
+  it('separates cancelled bookings from pre-booking lost leads', () => {
+    const cancelledBooking = { status: 'Cancelled', crm_status: 'Cancelled — ยกเลิกจอง', auto_status: 'ยกเลิกจอง', booking_date: '2026-01-10' };
+    const preBookingLost1 = { status: 'Lost', crm_status: 'Lost — ยุติการซื้อ / ไม่จอง', auto_status: 'ยุติการซื้อ' };
+    const preBookingLost2 = { status: 'Lost', crm_status: 'Lost — ไม่สนใจ / ยุติการติดตาม' };
+    const unqualified = { status: 'Unqualified', crm_status: 'Unqualified (ไม่สนใจ / ยกเลิกติดตาม)' };
+
+    expect(isCancelledBookingLead(cancelledBooking)).toBe(true);
+    expect(isPreBookingLost(cancelledBooking)).toBe(false);
+
+    expect(isCancelledBookingLead(preBookingLost1)).toBe(false);
+    expect(isPreBookingLost(preBookingLost1)).toBe(true);
+
+    expect(isCancelledBookingLead(preBookingLost2)).toBe(false);
+    expect(isPreBookingLost(preBookingLost2)).toBe(true);
+
+    expect(isCancelledBookingLead(unqualified)).toBe(false);
+    expect(isPreBookingLost(unqualified)).toBe(true);
+
+    expect(mapToCRMStatus('ยกเลิกจอง')).toBe('Cancelled — ยกเลิกจอง');
+    expect(mapToCRMStatus('หลุดจอง')).toBe('Cancelled — ยกเลิกจอง');
+    expect(mapCRMStatusToLegacyStatus('Cancelled — ยกเลิกจอง')).toBe('Cancelled');
+
+    expect(mapToCRMStatus('ยุติการซื้อ')).toBe('Lost — ยุติการซื้อ / ไม่จอง');
+    expect(mapToCRMStatus('ไม่สนใจ')).toBe('Lost — ยุติการซื้อ / ไม่จอง');
+    expect(mapCRMStatusToLegacyStatus('Lost — ยุติการซื้อ / ไม่จอง')).toBe('Lost');
   });
 });

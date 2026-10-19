@@ -191,15 +191,34 @@ export default function AdminCustomerImportExportModal({
         let status = 'New';
         const lowerCrm = crmStatus.toLowerCase();
         const lowerNotes = notes.toLowerCase();
-        if (transferredDate || crmStatus.includes('โอน') || lowerCrm.includes('transferred')) {
+        const isCancelStatus =
+          lowerCrm.includes('cancel') ||
+          crmStatus.includes('ยกเลิกจอง') ||
+          crmStatus.includes('หลุดจอง') ||
+          crmStatus.includes('ยกเลิกสัญญา') ||
+          (crmStatus.includes('ยกเลิก') && !crmStatus.includes('ยกเลิกติดตาม') && !crmStatus.includes('ยกเลิกการติดตาม'));
+        const isPreBookingLostStatus =
+          lowerCrm.includes('lost') ||
+          crmStatus.includes('ยุติ') ||
+          crmStatus.includes('ไม่สนใจ') ||
+          crmStatus.includes('ไม่ซื้อ') ||
+          crmStatus.includes('ไม่จอง') ||
+          crmStatus.includes('ยกเลิกติดตาม') ||
+          crmStatus.includes('ยกเลิกการติดตาม');
+
+        if (isCancelStatus || (bookingDate && isPreBookingLostStatus)) {
+          status = 'Cancelled';
+          crmStatus = 'Cancelled — ยกเลิกจอง';
+        } else if (isPreBookingLostStatus) {
+          status = 'Lost';
+          crmStatus = 'Lost — ยุติการซื้อ / ไม่จอง';
+        } else if (transferredDate || crmStatus.includes('โอน') || lowerCrm.includes('transferred')) {
           status = 'Transferred';
         } else if (crmStatus.includes('เช่า') || lowerCrm.includes('rent') || lowerNotes.includes('เช่า') || lowerNotes.includes('rent')) {
           status = 'Rented';
           if (!crmStatus.includes('เช่า')) crmStatus = 'สัญญาเช่า / เช่าออม';
         } else if (bookingDate || crmStatus.includes('จอง') || lowerCrm.includes('booked') || lowerCrm.includes('reserved')) {
           status = 'Booked';
-        } else if (crmStatus.includes('ยกเลิก') || crmStatus.includes('lost') || lowerCrm.includes('cancel')) {
-          status = 'Lost';
         } else if (crmStatus.includes('กู้') || lowerCrm.includes('loan')) {
           status = 'Loan';
         } else if (crmStatus.includes('นัด') || lowerCrm.includes('visit') || lowerCrm.includes('appoint')) {
@@ -268,8 +287,10 @@ export default function AdminCustomerImportExportModal({
           sales_owner: row.salesOwner,
           crm_status: row.crmStatus,
           status: row.status,
+          auto_status: row.status === 'Cancelled' ? 'ยกเลิกจอง' : row.status === 'Lost' ? 'ยุติการซื้อ' : undefined,
           updated_at: now
         };
+        if (payload.auto_status === undefined) delete payload.auto_status;
 
         if (row.leadDate) payload.lead_date = row.leadDate;
         if (row.bookingDate) payload.booking_date = row.bookingDate;

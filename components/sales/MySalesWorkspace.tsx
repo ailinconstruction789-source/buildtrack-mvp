@@ -29,6 +29,7 @@ import type { LoadSalesStartupData } from '@/types/salesStartup';
 import SalesOverlay from './SalesOverlay';
 import { salesDealActionLabel, salesDealStageOf } from '@/lib/sales/dealStatus';
 import { getLeadStage, canStartSalesDeal, canEditSalesRole } from '@/lib/sales/leadStage';
+import { isCancelledBookingLead } from '@/lib/sales/leadLifecycle';
 const RentalActionModal = dynamic(() => import('./RentalActionModal'));
 const SalesDealStatusModal = dynamic(() => import('./SalesDealStatusModal'));
 
@@ -80,6 +81,7 @@ const STAGES = [
   { id: 'booked', label: '🏷️ วางจองแล้ว', color: 'bg-amber-50 text-amber-700 border-amber-200' },
   { id: 'transferred', label: '🏡 โอนกรรมสิทธิ์แล้ว', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
   { id: 'rented', label: '🔑 สัญญาเช่า / เช่าออม', color: 'bg-teal-50 text-teal-700 border-teal-200' },
+  { id: 'cancelled', label: '🚫 ยกเลิกจอง', color: 'bg-orange-50 text-orange-800 border-orange-200' },
   { id: 'lost', label: '❌ ยุติการซื้อ', color: 'bg-rose-50 text-rose-700 border-rose-200' },
   { id: 'all', label: 'ทั้งหมด', color: 'bg-slate-100 text-slate-700' }
 ];
@@ -105,9 +107,9 @@ export default function MySalesWorkspace({
   // 🎛️ Navigation & Filter States
   const [scopeMode, setScopeMode] = useState<'my_leads' | 'all_leads'>('my_leads');
   const [viewMode, setViewMode] = useState<'table' | 'kanban'>('table');
-  const [selectedYear, setSelectedYear] = useState<string>(() => new Date().getFullYear().toString()); // Default to current year (2026) for fast operational performance
+  const [selectedYear, setSelectedYear] = useState<string>('all');
   const [selectedProject, setSelectedProject] = useState<string>('all');
-  const [selectedStage, setSelectedStage] = useState<string>('active');
+  const [selectedStage, setSelectedStage] = useState<string>('all');
   const [actionFilter, setActionFilter] = useState<'due' | 'upcoming' | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -266,11 +268,13 @@ export default function MySalesWorkspace({
           lead.interested_plot_name = hyphenMatch ? hyphenMatch[1].trim() : rawInterest;
         }
 
-        // Adjust display crm_status if status is Reserved / Booked / Transferred
+        // Adjust display crm_status if status is Reserved / Booked / Transferred / Cancelled
         if ((lead.status === 'Reserved' || lead.status === 'Booked') && (!lead.crm_status || lead.crm_status.includes('Follow-up'))) {
           lead.crm_status = 'วางเงินจองแปลงแล้ว';
         } else if (lead.status === 'Transferred' && (!lead.crm_status || lead.crm_status.includes('Follow-up'))) {
           lead.crm_status = 'โอนกรรมสิทธิ์แล้ว';
+        } else if (lead.status === 'Cancelled' && (!lead.crm_status || lead.crm_status === 'Lost — ยุติการซื้อ / ไม่จอง')) {
+          lead.crm_status = 'Cancelled — ยกเลิกจอง';
         }
 
         const cleanLeadName = cleanName(lead.customer_name);
@@ -317,7 +321,7 @@ export default function MySalesWorkspace({
             lead.crm_status = 'วางเงินจองแปลงแล้ว';
           } else if (matchedSale.stage === 'cancelled') {
             lead.status = 'Cancelled';
-            lead.crm_status = 'ยกเลิก / ยุติการซื้อ';
+            lead.crm_status = 'Cancelled — ยกเลิกจอง';
           }
           if (lead.saleId && getLeadStage(lead) === 'booked') {
             const progressLabel = salesDealStages.find(stage => stage.id === matchedSale.crmStage)?.label;
@@ -361,7 +365,7 @@ export default function MySalesWorkspace({
               project_name: s.projectName || '',
               interested_plot_name: s.plotName || s.plotId || '',
               status: s.stage === 'transferred' ? 'Transferred' : s.stage === 'contracted' ? 'Contracted' : s.stage === 'booked' ? 'Booked' : s.stage === 'cancelled' ? 'Cancelled' : 'Active',
-              crm_status: s.stage === 'transferred' ? 'โอนกรรมสิทธิ์แล้ว' : s.stage === 'contracted' ? 'ทำสัญญาแล้ว' : s.stage === 'booked' ? 'วางเงินจองแปลงแล้ว' : s.stage === 'cancelled' ? 'ยกเลิกการซื้อ' : 'กำลังติดตาม',
+              crm_status: s.stage === 'transferred' ? 'โอนกรรมสิทธิ์แล้ว' : s.stage === 'contracted' ? 'ทำสัญญาแล้ว' : s.stage === 'booked' ? 'วางเงินจองแปลงแล้ว' : s.stage === 'cancelled' ? 'Cancelled — ยกเลิกจอง' : 'กำลังติดตาม',
               sales_owner: s.ownerName || 'ทีมขาย',
               created_by_agent: s.ownerName || 'ทีมขาย',
               channel: 'Walk in',
@@ -532,7 +536,11 @@ export default function MySalesWorkspace({
     return null;
   }, [dbPlots]);
 
-  const getStageCategory = useCallback(getLeadStage, []);
+  const getStageCategory = useCallback((lead: any) => {
+    const stage = getLeadStage(lead);
+    if (stage === 'lost' && isCancelledBookingLead(lead)) return 'cancelled';
+    return stage;
+  }, []);
 
   // Available Years list
   const availableYears = useMemo(() => {
@@ -773,7 +781,7 @@ export default function MySalesWorkspace({
     }
   });
   const openBooking = (lead: any) => {
-    if (lead.saleId) { setStatusTarget(lead); return; }
+    if (lead.saleId || ['booked', 'transferred'].includes(getStageCategory(lead))) { setStatusTarget(lead); return; }
     setBookingTarget(lead);
   };
   const openRental = (lead: any) => {
@@ -1246,6 +1254,7 @@ export default function MySalesWorkspace({
                             <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md border mt-0.5 ${
                               stage === 'transferred' ? 'text-emerald-800 bg-emerald-50 border-emerald-200' :
                               stage === 'booked' ? 'text-amber-800 bg-amber-50 border-amber-200' :
+                              stage === 'cancelled' ? 'text-orange-800 bg-orange-50 border-orange-200' :
                               'text-blue-800 bg-blue-50 border-blue-200'
                             }`}>
                               <Tag size={10} /> แปลง {plotName}
@@ -1284,6 +1293,7 @@ export default function MySalesWorkspace({
                               stage === 'rented' ? 'bg-teal-100 text-teal-900 border-teal-300' :
                               stage === 'appointment' ? 'bg-purple-100 text-purple-900 border-purple-300' :
                               stage === 'loan' ? 'bg-indigo-100 text-indigo-900 border-indigo-300' :
+                              stage === 'cancelled' ? 'bg-orange-100 text-orange-900 border-orange-300' :
                               stage === 'lost' ? 'bg-rose-100 text-rose-900 border-rose-300' :
                               'bg-blue-100 text-blue-900 border-blue-300'
                             }`}>
@@ -1533,6 +1543,39 @@ export default function MySalesWorkspace({
                 ))}
               </div>
             </div>
+
+            {filteredLeads.some(l => getStageCategory(l) === 'cancelled') && (
+              <div
+                role="region"
+                aria-label="ลูกค้ายกเลิกจอง"
+                className={`bg-orange-50/80 rounded-2xl p-3 border border-orange-200 space-y-3 min-w-[280px] w-72 shrink-0 ${selectedStage === 'cancelled' ? 'order-first' : ''}`}
+              >
+                <div className="flex items-center justify-between pb-1 border-b border-orange-200">
+                  <span className="text-xs font-black text-orange-900 flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-orange-500"></span>
+                    🚫 ยกเลิกจอง
+                  </span>
+                  <span className="text-[11px] font-black text-orange-800 bg-orange-100 px-2 py-0.5 rounded-full">
+                    {filteredLeads.filter(l => getStageCategory(l) === 'cancelled').length}
+                  </span>
+                </div>
+                <div className="space-y-2.5 max-h-[70vh] overflow-y-auto pr-0.5">
+                  {filteredLeads.filter(l => getStageCategory(l) === 'cancelled').map(lead => (
+                    <LeadKanbanCard
+                      key={lead.id}
+                      lead={lead}
+                      isMine={isMyLead(lead)}
+                      plotName={getLeadPlotName(lead)}
+                      stage="cancelled"
+                      canWrite={canWrite} onBook={() => openBooking(lead)}
+                      onFollowUp={() => openFollowUp(lead)}
+                      onRent={() => openRental(lead)}
+                      onQuickStatus={(status, label) => handleQuickStatusChange(lead.id, status, label)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
 
             {filteredLeads.some(l => getStageCategory(l) === 'lost') && (
               <div

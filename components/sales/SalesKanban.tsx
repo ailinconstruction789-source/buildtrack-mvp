@@ -2,7 +2,7 @@
 import { customerActualTransferDay, customerBusinessDay, customerExpectedTransferDay } from '@/lib/sales/customerBusinessDate';
 
 import React, { useState, useEffect } from 'react';
-import { Search, Plus, Map as MapIcon, Users, ListFilter, Download, ChevronRight, Home, Phone, Calendar, ArrowRight, ArrowLeft, LogOut, UserCheck, User, Key, X, FileText, Clock, CheckCircle, XCircle, Banknote, Building2, FileSignature, Pickaxe, Loader2, TrendingUp, Upload, Trash2, PieChart, Lightbulb, Sun, Moon, AlertTriangle, Sparkles, CreditCard } from 'lucide-react';
+import { Search, Plus, Map as MapIcon, Users, ListFilter, Download, ChevronRight, Home, Phone, Calendar, ArrowRight, ArrowLeft, LogOut, UserCheck, User, Key, X, FileText, Clock, CheckCircle, XCircle, Banknote, Building2, FileSignature, Pickaxe, Loader2, TrendingUp, Upload, Trash2, PieChart, Lightbulb, Sun, Moon, AlertTriangle, Sparkles, CreditCard, BookmarkCheck } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import SalesMap from './SalesMap';
 import SalesPricing from './SalesPricing';
@@ -15,7 +15,7 @@ import CentralLeadBookingModal from './CentralLeadBookingModal';
 import SalesDealStatusModal, { type SalesDealEditorModel } from './SalesDealStatusModal';
 import { SALES_BANK_LOGOS as BANK_LOGOS } from '@/lib/sales/banks';
 import { salesDealStageOf, salesDealStages } from '@/lib/sales/dealStatus';
-import { customerDealDetails } from '@/lib/sales/customerDealDetails';
+import { customerDealDetails, extractExpectedTransferDate, updateExpectedTransferDateInNotes } from '@/lib/sales/customerDealDetails';
 import { crmSaleCustomer, SALES_WITH_CUSTOMER_SELECT } from '@/lib/sales/saleCustomer';
 import LeadPicker from './LeadPicker';
 import { RENTAL_PROGRAM_DETAILS } from '@/types/sales';
@@ -197,10 +197,49 @@ export default function SalesKanban({
     });
     return () => { cancelled = true; };
   }, [historyScope, historyLeadId, historySaleId, historyRetry]);
-  const timeline = mergeSalesTimeline(statusHistory.scope === historyScope ? statusHistory.rows.map(row => ({
-    id: row.id, status: STATUS_CONFIG[row.new_status] ? row.new_status : salesDealStages.some(stage => stage.id === row.new_status.toLowerCase()) ? stageToKanbanStatus(row.new_status) : row.new_status,
-    timestamp: row.created_at, note: row.changed_by || '',
-  })) : [], panelState.lead?.history || []);
+  const timeline = React.useMemo(() => {
+    const rawRows = statusHistory.scope === historyScope ? statusHistory.rows : [];
+    const leadBookingDate = panelState.lead?.booking_date || panelState.lead?.bookingDate || panelState.lead?.booked_at || null;
+    const contractDateMatch = typeof panelState.lead?.notes === 'string'
+      ? panelState.lead.notes.match(/\[วันที่ทำสัญญา:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})\]/)
+      : null;
+    const leadContractDate = contractDateMatch?.[1]
+      ? `${contractDateMatch[1]}T00:00:00.000Z`
+      : (panelState.lead?.rental_start_date ? `${panelState.lead.rental_start_date}T00:00:00.000Z` : null);
+
+    const mappedRows = rawRows.map(row => {
+      const canonicalStatus = STATUS_CONFIG[row.new_status]
+        ? row.new_status
+        : salesDealStages.some(stage => stage.id === row.new_status.toLowerCase())
+        ? stageToKanbanStatus(row.new_status)
+        : row.new_status;
+
+      let effectiveTimestamp = row.created_at;
+      if ((canonicalStatus === 'จองแล้ว' || row.new_status === 'Reserved') && leadBookingDate) {
+        effectiveTimestamp = leadBookingDate;
+      } else if ((canonicalStatus === 'สัญญาเช่า' || row.new_status === 'Rented') && leadContractDate) {
+        effectiveTimestamp = leadContractDate;
+      }
+
+      return {
+        id: row.id,
+        status: canonicalStatus,
+        timestamp: effectiveTimestamp,
+        note: row.changed_by || ''
+      };
+    });
+
+    const merged = mergeSalesTimeline(mappedRows, panelState.lead?.history || []);
+    const deduped: typeof merged = [];
+    for (const item of merged) {
+      const day = customerBusinessDay(item.timestamp);
+      const isDuplicate = deduped.some(prev => prev.status === item.status && customerBusinessDay(prev.timestamp) === day);
+      if (!isDuplicate) {
+        deduped.push(item);
+      }
+    }
+    return deduped;
+  }, [statusHistory.scope, historyScope, statusHistory.rows, panelState.lead]);
 
   // For Customer Editing
   const [editCustomerForm, setEditCustomerForm] = useState({ name: '', phone: '', occupation: '', status: '', plot: '', salePrice: '', bank: '', cancelReason: '', landOfficePrice: '', agentName: '', transactionDate: new Date().toISOString().split('T')[0], note: '' });
@@ -218,7 +257,7 @@ export default function SalesKanban({
   const [isTogglingSampleHouse, setIsTogglingSampleHouse] = useState(false);
 
   // Rental & Booking Modals State
-  const [showRentalModal, setShowRentalModal] = useState<{ isOpen: boolean; lead: any | null; plotId?: string | null }>({ isOpen: false, lead: null });
+  const [showRentalModal, setShowRentalModal] = useState<{ isOpen: boolean; lead: any | null; plotId?: string | null; defaultMode?: 'booking' | 'contract' }>({ isOpen: false, lead: null });
   const [showRentalActionModal, setShowRentalActionModal] = useState<{ isOpen: boolean; lead: any | null; plot?: any | null }>({ isOpen: false, lead: null });
   const [showRentalPaymentModal, setShowRentalPaymentModal] = useState<{ isOpen: boolean; plot: any | null; lead: any | null; contractId?: string | null }>({ isOpen: false, plot: null, lead: null });
   const [showBookingModal, setShowBookingModal] = useState<{ isOpen: boolean; lead: any | null; plotId?: string | null }>({ isOpen: false, lead: null });
@@ -329,7 +368,7 @@ export default function SalesKanban({
         const crmCustomer = crmSaleCustomer(s);
         const stage = salesDealStageOf(s);
         const kanbanStatus = stageToKanbanStatus(stage);
-        const bookDate = customerBusinessDay(s.booked_at) || customerBusinessDay(s.imported_history?.bookedDate || s.importedHistory?.bookedDate) || customerBusinessDay(matchingLead?.booking_date) || '';
+        const bookDate = customerBusinessDay(matchingLead?.booking_date) || customerBusinessDay(s.booked_at) || customerBusinessDay(s.imported_history?.bookedDate || s.importedHistory?.bookedDate) || '';
         const transferDate = customerBusinessDay(s.transferred_at) || customerBusinessDay(s.crm_transfer_date || s.imported_history?.transferredDate || s.importedHistory?.transferredDate) || customerBusinessDay(matchingLead?.transferred_date);
         const cancelDate = customerBusinessDay(s.cancelled_at) || customerBusinessDay(s.imported_history?.cancelledDate || s.importedHistory?.cancelledDate);
         const visitDate = customerBusinessDay(matchingLead?.actual_visit_date) || '';
@@ -351,15 +390,27 @@ export default function SalesKanban({
           cancelReason: s.cancellation_reason || '',
           landOfficePrice: s.land_office_price?.toString() || '',
           salePrice: Number(s.sale_price ?? matchingPlot?.selling_price ?? 0),
-          expectedTransferDate: customerExpectedTransferDay(s),
+          expectedTransferDate: customerExpectedTransferDay(s) || (matchingLead?.notes ? extractExpectedTransferDate(matchingLead.notes) : null) || (matchingLead?.expected_transfer_date ? customerBusinessDay(matchingLead.expected_transfer_date) : null),
+          notes: matchingLead?.notes || s.notes || '',
           visitDate,
           bookingDate: bookDate,
+          booking_date: matchingLead?.booking_date || s.booked_at || (bookDate ? `${bookDate}T00:00:00.000Z` : null),
           transferredDate: transferDate,
           cancelledDate: cancelDate,
           agentName: matchingLead?.agent_name || matchingLead?.sales_owner || s.agent_name || '',
           source: matchingLead?.source || matchingLead?.channel || 'Walk-in',
           bankStatus: s.bank_status || 'Pending',
-          stage,
+          deal_type: matchingLead?.deal_type || (s as any).deal_type || 'sale',
+          customer_name: matchingLead?.customer_name || crmCustomer?.name || (!s.project_interest_id ? s.customer_name || s.customerName : '') || 'ลูกค้าไม่ระบุชื่อ',
+          booking_amount: matchingLead?.booking_amount || s.booking_fee || 0,
+          rental_program: matchingLead?.rental_program || null,
+          rental_monthly_rent: matchingLead?.rental_monthly_rent !== undefined && matchingLead?.rental_monthly_rent !== null ? Number(matchingLead.rental_monthly_rent) : null,
+          rental_deposit: matchingLead?.rental_deposit !== undefined && matchingLead?.rental_deposit !== null ? Number(matchingLead.rental_deposit) : null,
+          rental_savings_per_month: matchingLead?.rental_savings_per_month !== undefined && matchingLead?.rental_savings_per_month !== null ? Number(matchingLead.rental_savings_per_month) : null,
+          rental_base_price: matchingLead?.rental_base_price !== undefined && matchingLead?.rental_base_price !== null ? Number(matchingLead.rental_base_price) : null,
+          rental_start_date: matchingLead?.rental_start_date ? String(matchingLead.rental_start_date).split('T')[0] : null,
+          rental_end_date: matchingLead?.rental_end_date ? String(matchingLead.rental_end_date).split('T')[0] : null,
+          rental_status: matchingLead?.rental_status || null,
           history: [
             ...(bookDate ? [{ status: 'Reserved', timestamp: bookDate, note: s.agent_name || '' }] : []),
             ...(transferDate ? [{ status: 'Transferred', timestamp: transferDate, note: s.agent_name || '' }] : []),
@@ -399,13 +450,26 @@ export default function SalesKanban({
               cancelReason: l.lost_reason || '',
               landOfficePrice: '',
               salePrice: customerDealDetails(l.notes).salePrice ?? (matchingPlot?.selling_price ? Number(matchingPlot.selling_price) : 0),
-              expectedTransferDate: null,
+              expectedTransferDate: extractExpectedTransferDate(l.notes) || (l.expected_transfer_date ? customerBusinessDay(l.expected_transfer_date) : null),
+              notes: l.notes || '',
               visitDate: visitDate,
               bookingDate: bookDate,
+              booking_date: l.booking_date || (bookDate ? `${bookDate}T00:00:00.000Z` : null),
               transferredDate: transferDate,
               agentName: l.agent_name || l.sales_owner || l.created_by_agent || '',
               source: l.source || l.channel || 'Walk-in',
               bankStatus: 'Pending',
+              deal_type: l.deal_type || (l.crm_status?.includes('เช่า') ? 'rent' : 'sale'),
+              customer_name: l.customer_name || '',
+              booking_amount: l.booking_amount || 0,
+              rental_program: l.rental_program || null,
+              rental_monthly_rent: l.rental_monthly_rent !== undefined && l.rental_monthly_rent !== null ? Number(l.rental_monthly_rent) : null,
+              rental_deposit: l.rental_deposit !== undefined && l.rental_deposit !== null ? Number(l.rental_deposit) : null,
+              rental_savings_per_month: l.rental_savings_per_month !== undefined && l.rental_savings_per_month !== null ? Number(l.rental_savings_per_month) : null,
+              rental_base_price: l.rental_base_price !== undefined && l.rental_base_price !== null ? Number(l.rental_base_price) : null,
+              rental_start_date: l.rental_start_date ? String(l.rental_start_date).split('T')[0] : null,
+              rental_end_date: l.rental_end_date ? String(l.rental_end_date).split('T')[0] : null,
+              rental_status: l.rental_status || null,
               history: [
                 ...(bookDate ? [{ status: 'Reserved', timestamp: bookDate, note: l.agent_name || '' }] : []),
                 ...(transferDate ? [{ status: 'Transferred', timestamp: transferDate, note: l.agent_name || '' }] : [])
@@ -758,6 +822,58 @@ export default function SalesKanban({
         await checkedResult(supabase.from('sales').insert([{ plot_id: panelState.plotId, ...salePayload }]));
       }
 
+      // 3. Update leads table
+      if (leadId) {
+        const leadUpdatePayload: any = {
+          customer_name: editCustomerForm.name.trim(),
+          phone: editCustomerForm.phone.trim() || null,
+          occupation: editCustomerForm.occupation.trim() || null,
+          status: newStatus,
+          updated_at: new Date().toISOString()
+        };
+        if (editCustomerForm.agentName) {
+          leadUpdatePayload.agent_name = editCustomerForm.agentName.trim();
+        }
+        if (newStatus === 'Cancelled') {
+          leadUpdatePayload.cancellation_reason = editCustomerForm.cancelReason || null;
+          leadUpdatePayload.cancelled_at = txDate;
+          if (panelState.lead?.deal_type === 'rent') {
+            leadUpdatePayload.rental_status = 'Cancelled';
+          }
+        }
+        await checkedResult(supabase.from('leads').update(leadUpdatePayload).eq('id', leadId));
+      }
+
+      if (panelState.lead?.deal_type === 'rent' && newStatus === 'Cancelled') {
+        try {
+          await supabase.from('rental_contracts')
+            .update({ status: 'Cancelled', cancellation_reason: editCustomerForm.cancelReason || 'ยกเลิกการจองเช่า' })
+            .eq('lead_id', leadId)
+            .in('status', ['Active', 'PendingContract']);
+        } catch (rcErr) {
+          console.warn('Could not cancel rental contracts:', rcErr);
+        }
+        const plotIdentifier = panelState.plotId || panelState.lead?.plot;
+        if (plotIdentifier) {
+          try {
+            await supabase.from('plots').update({
+              sale_status: 'available',
+              has_customer: false,
+              current_tenant_name: null,
+              current_tenant_phone: null,
+              rental_program: null,
+              monthly_rent: null,
+              security_deposit: null,
+              lease_start_date: null,
+              lease_end_date: null,
+              highlight_note: null
+            }).eq('id', plotIdentifier);
+          } catch (plotErr) {
+            console.warn('Could not release plot on cancellation:', plotErr);
+          }
+        }
+      }
+
       if (oldStatus !== newStatus || editCustomerForm.bank !== panelState.lead.bank || editCustomerForm.note) {
         let noteParts = [];
         if (oldStatus === newStatus && editCustomerForm.bank !== panelState.lead.bank) {
@@ -820,28 +936,79 @@ export default function SalesKanban({
 
   const handleUpdateTransferDate = async (leadId: string, newDate: string) => {
     const targetLead = leads.find(l => l.id === leadId);
-    const saleId = targetLead?.saleId;
-    if (!saleId || pendingForecasts.current.has(saleId)) return;
+    if (!targetLead) return;
+    if (pendingForecasts.current.has(leadId)) return;
     const day = customerBusinessDay(newDate);
     if (newDate && !day) return;
     const scope = forecastScope.current;
-    pendingForecasts.current.add(saleId);
+    pendingForecasts.current.add(leadId);
     setSavingForecasts([...pendingForecasts.current]);
 
     try {
-      const result = await checkedResult(supabase
-        .from('sales')
-        .update({ expected_transfer_date: day })
-        .eq('id', saleId)
-        .select('id,expected_transfer_date')
-        .single());
-      const saved = result.data;
-      if (!saved || saved.id !== saleId || customerExpectedTransferDay(saved) !== day) {
-        throw new Error('ไม่พบวันคาดโอนที่บันทึกได้ในรายการจองนี้');
+      let saleId = targetLead.saleId;
+      const actualLeadId = targetLead.leadId || (targetLead.sourceKind === 'lead' ? targetLead.id : null);
+
+      // 1. If saleId is not on the in-memory object, try looking up an existing sale by lead_id
+      if (!saleId && actualLeadId) {
+        try {
+          const { data: existingSale } = await supabase
+            .from('sales')
+            .select('id')
+            .eq('lead_id', actualLeadId)
+            .maybeSingle();
+          if (existingSale?.id) {
+            saleId = existingSale.id;
+          }
+        } catch (e) {
+          console.warn('Could not query sales table by lead_id', e);
+        }
       }
+
+      // 2. Update sales record if saleId exists
+      if (saleId) {
+        const result = await checkedResult(supabase
+          .from('sales')
+          .update({ expected_transfer_date: day || null })
+          .eq('id', saleId)
+          .select('id,expected_transfer_date')
+          .single());
+        const saved = result.data;
+        if (!saved || saved.id !== saleId || customerExpectedTransferDay(saved) !== (day || null)) {
+          throw new Error('ไม่พบวันคาดโอนที่บันทึกได้ในรายการจองนี้');
+        }
+      }
+
+      // 3. Update leads record notes if actualLeadId exists
+      if (actualLeadId) {
+        try {
+          const { data: currentLead } = await supabase
+            .from('leads')
+            .select('notes')
+            .eq('id', actualLeadId)
+            .maybeSingle();
+          const baseNotes = currentLead?.notes ?? targetLead.notes ?? '';
+          const updatedNotes = updateExpectedTransferDateInNotes(baseNotes, day);
+          const { error: leadError } = await supabase
+            .from('leads')
+            .update({ notes: updatedNotes })
+            .eq('id', actualLeadId);
+          if (leadError) console.warn('Leads update warning:', leadError.message);
+        } catch (leadErr) {
+          console.warn('Failed to update leads notes:', leadErr);
+        }
+      }
+
+      // 4. Update local state
       if (forecastScope.current === scope) {
-        setLeads(prev => prev.map(l => l.saleId === saleId
-          ? { ...l, expectedTransferDate: day } : l));
+        setLeads(prev => prev.map(l => l.id === leadId
+          ? { 
+              ...l, 
+              expectedTransferDate: day || null,
+              notes: updateExpectedTransferDateInNotes(l.notes, day),
+              saleId: saleId || l.saleId 
+            } 
+          : l
+        ));
       }
     } catch (err) {
       console.error("Failed to update transfer date", err);
@@ -849,7 +1016,7 @@ export default function SalesKanban({
         alert(`บันทึกวันคาดโอนไม่สำเร็จ: ${err instanceof Error ? err.message : 'กรุณาลองใหม่'}`);
       }
     } finally {
-      pendingForecasts.current.delete(saleId);
+      pendingForecasts.current.delete(leadId);
       setSavingForecasts([...pendingForecasts.current]);
     }
   };
@@ -1586,7 +1753,14 @@ export default function SalesKanban({
                                   {lead.name?.charAt(0) || '?'}
                                 </div>
                                 <div>
-                                  <div className="font-semibold text-slate-800">{lead.name}</div>
+                                  <div className="font-semibold text-slate-800 flex items-center gap-1.5 flex-wrap">
+                                    <span>{lead.name}</span>
+                                    {lead.deal_type === 'rent' && (
+                                      <span className="px-1.5 py-0.2 rounded-md bg-amber-100 text-amber-900 font-bold text-[10px] border border-amber-300">
+                                        🔑 จองเช่า
+                                      </span>
+                                    )}
+                                  </div>
                                   <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
                                     {formatPhoneNumber(lead.phone)}
                                     {lead.agentName && <span className="ml-2 px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded flex items-center gap-1 border border-blue-100"><User size={8} /> {lead.agentName}</span>}
@@ -1595,9 +1769,11 @@ export default function SalesKanban({
                               </div>
                             </td>
                             <td className="px-6 py-4">
-                              <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold ${statusCfg.bg} ${statusCfg.color} border border-white/50 shadow-sm`}>
-                                <StatusIcon size={12} />
-                                {statusCfg.label}
+                              <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold ${
+                                lead.deal_type === 'rent' ? 'bg-amber-100 text-amber-900 border-amber-300' : `${statusCfg.bg} ${statusCfg.color} border-white/50`
+                              } border shadow-sm`}>
+                                {lead.deal_type === 'rent' ? <BookmarkCheck size={12} className="text-amber-700" /> : <StatusIcon size={12} />}
+                                {lead.deal_type === 'rent' ? 'จองเช่า (รอทำสัญญา)' : statusCfg.label}
                               </div>
                             </td>
                             <td className="px-6 py-4">
@@ -1617,13 +1793,53 @@ export default function SalesKanban({
                               </div>
                             </td>
                             <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
-                              <input 
-                                type="date"
-                                value={lead.expectedTransferDate || ''}
-                                disabled={!lead.saleId || savingForecasts.includes(lead.saleId)}
-                                onChange={(e) => handleUpdateTransferDate(lead.id, e.target.value)}
-                                className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm font-semibold text-slate-700 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 bg-white shadow-sm"
-                              />
+                              <div className="flex items-center gap-2">
+                                <input 
+                                  type="date"
+                                  value={lead.expectedTransferDate || ''}
+                                  disabled={savingForecasts.includes(lead.id)}
+                                  onChange={(e) => handleUpdateTransferDate(lead.id, e.target.value)}
+                                  className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm font-semibold text-slate-700 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 bg-white shadow-sm disabled:opacity-50 cursor-pointer"
+                                />
+                                {savingForecasts.includes(lead.id) && (
+                                  <span className="text-xs text-blue-500 animate-pulse font-medium whitespace-nowrap">กำลังบันทึก...</span>
+                                )}
+                                {lead.deal_type === 'rent' ? (
+                                  <button
+                                    type="button"
+                                    title="ทำสัญญาเช่าจริง"
+                                    onClick={() => {
+                                      setShowRentalModal({
+                                        isOpen: true,
+                                        lead: lead,
+                                        plotId: lead.plot || null,
+                                        defaultMode: 'contract'
+                                      });
+                                    }}
+                                    className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-bold flex items-center gap-1 shadow-2xs transition-colors shrink-0 cursor-pointer"
+                                  >
+                                    <FileText size={12} />
+                                    <span>ทำสัญญาเช่า</span>
+                                  </button>
+                                ) : (user?.role === 'Admin' || user?.role === 'Owner') ? (
+                                  <button
+                                    type="button"
+                                    title="เปลี่ยนเป็นสัญญาเช่า (Admin Mode)"
+                                    onClick={() => {
+                                      setShowRentalModal({
+                                        isOpen: true,
+                                        lead: lead,
+                                        plotId: lead.plot || null,
+                                        defaultMode: 'contract'
+                                      });
+                                    }}
+                                    className="px-2.5 py-1.5 bg-teal-50 hover:bg-teal-100 text-teal-700 border border-teal-200 rounded-lg text-xs font-bold flex items-center gap-1 shadow-2xs transition-colors shrink-0 cursor-pointer"
+                                  >
+                                    <Key size={12} />
+                                    <span>เปลี่ยนเป็นเช่า</span>
+                                  </button>
+                                ) : null}
+                              </div>
                             </td>
                           </tr>
                         );
@@ -2297,7 +2513,19 @@ export default function SalesKanban({
                     await editor.save({ confirmedBySubmit: true });
                   };
                   const isSubmitting = editor ? editor.busy : panelSubmitting;
-                  const getNextStatuses = editor ? () => editor.choices.map(stageToKanbanStatus).filter(s => Boolean(STATUS_CONFIG[s])) : panelStatuses;
+                  const isRentalDeal = Boolean(
+                    panelState.lead?.deal_type === 'rent' ||
+                    panelState.lead?.rental_status === 'Active' ||
+                    panelState.lead?.rental_status === 'PendingContract' ||
+                    panelState.lead?.status === 'Rented' ||
+                    String(panelState.lead?.crm_status || '').includes('เช่า')
+                  );
+                  const rentalProgramLabel = panelState.lead?.rental_program === 'program_b'
+                    ? 'เช่าออม (แบบ B)'
+                    : panelState.lead?.rental_program === 'program_c'
+                    ? 'เช่าการันตีซื้อ (แบบ C)'
+                    : 'เช่าปกติ (แบบ A)';
+
                   return (
                 <div className="flex flex-col h-full animate-in fade-in duration-300">
                   <div className="flex justify-between items-center mb-6">
@@ -2380,133 +2608,300 @@ export default function SalesKanban({
                     </div>
 
                     <div className="pt-2 border-t border-slate-100">
-                      <label className="block text-sm font-semibold text-slate-700 mb-2">อัปเดตสถานะการขาย (Guided Workflow)</label>
-                      
-                      <div className="flex flex-wrap gap-2 mb-4">
-                        {getNextStatuses(panelState.lead?.status).map(s => {
-                          const config = STATUS_CONFIG[s] || STATUS_CONFIG['legacy_unclassified'] || {
-                            label: s || 'ไม่ระบุ',
-                            color: 'text-slate-600',
-                            bg: 'bg-slate-100',
-                            icon: Users
-                          };
-                          const Icon = config.icon || Users;
-                          const isSelected = editCustomerForm.status === s;
-                          return (
-                            <button 
-                              key={s} 
-                              aria-pressed={isSelected}
-                              disabled={editor?.locked}
-                              type="button"
-                              onClick={() => setEditCustomerForm({...editCustomerForm, status: s})}
-                              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold border transition-all ${isSelected ? 'bg-[#0f172a] text-white border-[#0f172a] shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400 hover:bg-slate-50'}`}
-                            >
-                              <Icon size={14} className={isSelected ? 'text-white' : (config.color || 'text-slate-600')} />
-                              {config.label || s}
-                            </button>
-                          );
-                        })}
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="block text-sm font-semibold text-slate-700">
+                          {isRentalDeal ? 'อัปเดตสถานะการเช่า (Rental Workflow)' : 'อัปเดตสถานะการขาย (Guided Workflow)'}
+                        </label>
+                        {isRentalDeal && (
+                          <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                            {rentalProgramLabel}
+                          </span>
+                        )}
                       </div>
+                      
+                      {isRentalDeal ? (
+                        <div className="space-y-3 mb-4">
+                          {/* 1. Status Workflow Buttons for Rental */}
+                          <div className="flex flex-wrap gap-2">
+                            {panelState.lead?.status !== 'Rented' ? (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={editor?.locked}
+                                  onClick={() => setEditCustomerForm({ ...editCustomerForm, status: 'Reserved' })}
+                                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold border transition-all ${
+                                    editCustomerForm.status === 'Reserved'
+                                      ? 'bg-amber-500 text-white border-amber-600 shadow-md'
+                                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                                  }`}
+                                >
+                                  <Home size={14} className={editCustomerForm.status === 'Reserved' ? 'text-white' : 'text-amber-500'} />
+                                  จองเช่าแล้ว
+                                </button>
 
-                      {(editCustomerForm.status === 'DocumentPrep' || editCustomerForm.status === 'LoanProcessing') && (
-                        <div className="mb-3 animate-in slide-in-from-top-2 duration-200">
-                          <label className="block text-xs font-semibold text-slate-700 mb-1">ระบุธนาคาร / วิธีชำระเงิน</label>
-                          <div className="relative">
-                            {editCustomerForm.bank && editCustomerForm.bank !== 'ซื้อเงินสด' && BANK_LOGOS[editCustomerForm.bank] && (
-                              <img src={BANK_LOGOS[editCustomerForm.bank]} alt="Bank Logo" className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 object-contain pointer-events-none" />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowRentalModal({
+                                      isOpen: true,
+                                      lead: panelState.lead,
+                                      plotId: panelState.lead.plot || panelState.plotId || null,
+                                      defaultMode: 'contract'
+                                    });
+                                  }}
+                                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-bold bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800 text-white shadow-md shadow-blue-500/20 cursor-pointer transition-all"
+                                >
+                                  <FileText size={14} /> ทำสัญญาเช่าจริง
+                                </button>
+
+                                <button
+                                  type="button"
+                                  disabled={editor?.locked}
+                                  onClick={() => setEditCustomerForm({ ...editCustomerForm, status: 'Cancelled' })}
+                                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold border transition-all ${
+                                    editCustomerForm.status === 'Cancelled'
+                                      ? 'bg-rose-600 text-white border-rose-700 shadow-md'
+                                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:text-rose-600'
+                                  }`}
+                                >
+                                  <XCircle size={14} className={editCustomerForm.status === 'Cancelled' ? 'text-white' : 'text-rose-500'} />
+                                  ยกเลิกจอง
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <div className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-bold bg-blue-600 text-white shadow-sm">
+                                  <Key size={14} /> สัญญาเช่า (Active)
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowRentalActionModal({
+                                      isOpen: true,
+                                      lead: panelState.lead,
+                                      plot: panelState.plotId || panelState.lead.plot
+                                    });
+                                  }}
+                                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-bold bg-gradient-to-r from-cyan-700 to-blue-800 hover:from-cyan-800 hover:to-blue-900 text-white shadow-sm cursor-pointer transition-all"
+                                >
+                                  <Key size={14} /> จัดการสัญญาเช่า
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowRentalPaymentModal({
+                                      isOpen: true,
+                                      lead: panelState.lead,
+                                      plot: plotInfo || (panelState.plotId || panelState.lead.plot ? { id: panelState.plotId || panelState.lead.plot } : null)
+                                    });
+                                  }}
+                                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm cursor-pointer transition-all"
+                                >
+                                  <Banknote size={14} /> ตารางค่างวด
+                                </button>
+                              </>
                             )}
-                            <select 
-                              className={`w-full border border-slate-200 rounded-xl py-2.5 focus:outline-none focus:border-cyan-500 font-medium text-slate-700 bg-cyan-50 text-sm appearance-none ${editCustomerForm.bank && editCustomerForm.bank !== 'ซื้อเงินสด' ? 'pl-11 pr-4' : 'px-4'}`}
-                              aria-label="ธนาคาร" disabled={editor?.locked}
-                          value={editCustomerForm.bank}
-                              onChange={e => setEditCustomerForm({...editCustomerForm, bank: e.target.value})}
-                              required
-                            >
-                              <option value="" disabled>-- เลือกธนาคาร/เงินสด --</option>
-                              {Object.keys(BANK_LOGOS).map(bank => (
-                                <option key={bank} value={bank}>{bank}</option>
-                              ))}
-                              <option value="ซื้อเงินสด">💵 ซื้อเงินสด</option>
-                            </select>
                           </div>
-                        </div>
-                      )}
 
-                      {['Reserved', 'Contracted', 'DownPayment', 'DocumentPrep', 'LoanProcessing', 'Approved', 'Transferred', 'Handover'].includes(editCustomerForm.status) && (
-                        <div className="grid grid-cols-2 gap-3 mb-3 animate-in slide-in-from-top-2 duration-200">
-                          <div>
-                            <label className="block text-xs font-semibold text-emerald-700 mb-1">ราคาขายที่ตกลงกัน (บาท)</label>
-                            <input 
-                              type="number"
-                              className="w-full border border-emerald-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-emerald-500 font-medium text-slate-700 bg-emerald-50 text-sm"
-                              aria-label="ราคาขายสุทธิ" disabled={editor?.locked}
-                          value={editCustomerForm.salePrice || ''}
-                              onChange={e => setEditCustomerForm({...editCustomerForm, salePrice: e.target.value})}
-                              placeholder="เช่น 3500000"
-                            />
+                          {/* 2. Rental Summary Card */}
+                          <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3.5 space-y-2">
+                            <div className="flex justify-between items-center text-xs">
+                              <span className="text-slate-500 font-medium">โปรแกรมเช่า:</span>
+                              <span className="font-bold text-slate-800">{rentalProgramLabel}</span>
+                            </div>
+                            <div className="flex justify-between items-center text-xs">
+                              <span className="text-slate-500 font-medium">ค่าเช่ารายเดือน:</span>
+                              <span className="font-bold text-blue-700 text-sm">
+                                {panelState.lead?.rental_monthly_rent
+                                  ? `฿${Number(panelState.lead.rental_monthly_rent).toLocaleString()} / เดือน`
+                                  : 'ตามที่ตกลงในสัญญา'}
+                              </span>
+                            </div>
+                            {panelState.lead?.booking_amount ? (
+                              <div className="flex justify-between items-center text-xs">
+                                <span className="text-slate-500 font-medium">เงินวางจองเช่า:</span>
+                                <span className="font-bold text-amber-700">
+                                  ฿{Number(panelState.lead.booking_amount).toLocaleString()}
+                                </span>
+                              </div>
+                            ) : null}
+                            {panelState.lead?.rental_start_date ? (
+                              <div className="flex justify-between items-center text-xs">
+                                <span className="text-slate-500 font-medium">วันเริ่มสัญญา / นัดเข้าอยู่:</span>
+                                <span className="font-bold text-slate-700">
+                                  {panelState.lead.rental_start_date}
+                                </span>
+                              </div>
+                            ) : null}
                           </div>
-                          {['Approved', 'Transferred', 'Handover'].includes(editCustomerForm.status) && (
-                            <div>
-                              <label className="block text-xs font-semibold text-blue-700 mb-1">ราคาประเมิน ท.ด. (บาท)</label>
-                              <input 
-                                type="number"
-                                className="w-full border border-blue-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-blue-500 font-medium text-slate-700 bg-blue-50 text-sm"
-                                aria-label="ราคาประเมิน" disabled={editor?.locked}
-                          value={editCustomerForm.landOfficePrice || ''}
-                                onChange={e => setEditCustomerForm({...editCustomerForm, landOfficePrice: e.target.value})}
-                                placeholder="เช่น 3500000"
+
+                          {/* 3. Reason if Cancelled is selected */}
+                          {editCustomerForm.status === 'Cancelled' && (
+                            <div className="animate-in slide-in-from-top-2 duration-200">
+                              <label className="block text-xs font-semibold text-rose-700 mb-1">เหตุผลที่ยกเลิกจองเช่า</label>
+                              <textarea
+                                className="w-full border border-rose-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-rose-500 font-medium text-slate-700 bg-rose-50 text-sm min-h-[80px]"
+                                aria-label="เหตุผล"
+                                disabled={editor?.locked}
+                                value={editCustomerForm.cancelReason}
+                                onChange={e => setEditCustomerForm({ ...editCustomerForm, cancelReason: e.target.value })}
+                                placeholder="ระบุเหตุผลในการยกเลิกจอง..."
                                 required
                               />
                             </div>
                           )}
-                        </div>
-                      )}
 
-                      {['Cancelled', 'LoanRejected'].includes(editCustomerForm.status) && (
-                        <div className="mb-3 animate-in slide-in-from-top-2 duration-200">
-                          <label className="block text-xs font-semibold text-red-700 mb-1">{editCustomerForm.status === 'Cancelled' ? 'เหตุผลที่ยกเลิกจอง' : 'เหตุผลที่สินเชื่อไม่ผ่าน'}</label>
-                          <textarea 
-                            className="w-full border border-red-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-red-500 font-medium text-slate-700 bg-red-50 text-sm min-h-[80px]"
-                            aria-label="เหตุผล" disabled={editor?.locked}
-                          value={editCustomerForm.cancelReason}
-                            onChange={e => setEditCustomerForm({...editCustomerForm, cancelReason: e.target.value})}
-                            placeholder="ระบุเหตุผล..."
-                            required
-                          />
+                          {/* 4. Plot dropdown */}
+                          {editCustomerForm.status !== 'Cancelled' && (
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-700 mb-1">แปลงที่จอง/เช่า</label>
+                              <select
+                                className="w-full border border-emerald-300 rounded-xl px-4 py-2.5 focus:outline-none focus:border-emerald-500 font-bold text-emerald-800 bg-emerald-50 text-sm"
+                                aria-label="แปลงที่จอง"
+                                disabled={editor?.locked}
+                                value={editCustomerForm.plot}
+                                onChange={e => setEditCustomerForm({ ...editCustomerForm, plot: e.target.value })}
+                                required
+                              >
+                                <option value="" disabled>-- กรุณาเลือกแปลง --</option>
+                                {panelState.lead.plot && <option value={panelState.lead.plot}>{panelState.lead.plot} (แปลงปัจจุบัน)</option>}
+                                {availablePlots.map(p => (
+                                  <option key={p} value={p}>{p} (ว่าง)</option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
                         </div>
-                      )}
+                      ) : (
+                        <>
+                          <div className="flex flex-wrap gap-2 mb-4">
+                            {getNextStatuses(panelState.lead?.status).map(s => {
+                              const config = STATUS_CONFIG[s] || STATUS_CONFIG['legacy_unclassified'] || {
+                                label: s || 'ไม่ระบุ',
+                                color: 'text-slate-600',
+                                bg: 'bg-slate-100',
+                                icon: Users
+                              };
+                              const Icon = config.icon || Users;
+                              const isSelected = editCustomerForm.status === s;
+                              return (
+                                <button 
+                                  key={s} 
+                                  aria-pressed={isSelected}
+                                  disabled={editor?.locked}
+                                  type="button"
+                                  onClick={() => setEditCustomerForm({...editCustomerForm, status: s})}
+                                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold border transition-all ${isSelected ? 'bg-[#0f172a] text-white border-[#0f172a] shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400 hover:bg-slate-50'}`}
+                                >
+                                  <Icon size={14} className={isSelected ? 'text-white' : (config.color || 'text-slate-600')} />
+                                  {config.label || s}
+                                </button>
+                              );
+                            })}
+                          </div>
 
-                      {['DocumentPrep', 'LoanProcessing', 'Approved', 'Transferred'].includes(editCustomerForm.status) && (
-                        <div className="mb-3 animate-in slide-in-from-top-2 duration-200">
-                          <label className="block text-xs font-semibold text-slate-700 mb-1">หมายเหตุเพิ่มเติม (ถ้ามี)</label>
-                          <textarea 
-                            className="w-full border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-slate-500 text-slate-700 bg-white text-sm min-h-[60px]"
-                            aria-label="หมายเหตุสถานะ" disabled={editor?.locked}
-                          value={editCustomerForm.note || ''}
-                            onChange={e => setEditCustomerForm({...editCustomerForm, note: e.target.value})}
-                            placeholder="ระบุหมายเหตุเพิ่มเติม (ไม่บังคับ)"
-                          />
-                        </div>
-                      )}
+                          {(editCustomerForm.status === 'DocumentPrep' || editCustomerForm.status === 'LoanProcessing') && (
+                            <div className="mb-3 animate-in slide-in-from-top-2 duration-200">
+                              <label className="block text-xs font-semibold text-slate-700 mb-1">ระบุธนาคาร / วิธีชำระเงิน</label>
+                              <div className="relative">
+                                {editCustomerForm.bank && editCustomerForm.bank !== 'ซื้อเงินสด' && BANK_LOGOS[editCustomerForm.bank] && (
+                                  <img src={BANK_LOGOS[editCustomerForm.bank]} alt="Bank Logo" className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 object-contain pointer-events-none" />
+                                )}
+                                <select 
+                                  className={`w-full border border-slate-200 rounded-xl py-2.5 focus:outline-none focus:border-cyan-500 font-medium text-slate-700 bg-cyan-50 text-sm appearance-none ${editCustomerForm.bank && editCustomerForm.bank !== 'ซื้อเงินสด' ? 'pl-11 pr-4' : 'px-4'}`}
+                                  aria-label="ธนาคาร" disabled={editor?.locked}
+                                  value={editCustomerForm.bank}
+                                  onChange={e => setEditCustomerForm({...editCustomerForm, bank: e.target.value})}
+                                  required
+                                >
+                                  <option value="" disabled>-- เลือกธนาคาร/เงินสด --</option>
+                                  {Object.keys(BANK_LOGOS).map(bank => (
+                                    <option key={bank} value={bank}>{bank}</option>
+                                  ))}
+                                  <option value="ซื้อเงินสด">💵 ซื้อเงินสด</option>
+                                </select>
+                              </div>
+                            </div>
+                          )}
 
-                      {editCustomerForm.status !== 'Visit' && editCustomerForm.status !== 'Negotiation' && editCustomerForm.status !== 'Cancelled' && (
-                        <div>
-                          <label className="block text-xs font-semibold text-emerald-700 mb-1">แปลงที่จอง (เลือกได้เฉพาะแปลงว่าง)</label>
-                          <select 
-                            className="w-full border border-emerald-300 rounded-xl px-4 py-2.5 focus:outline-none focus:border-emerald-500 font-bold text-emerald-800 bg-emerald-50 text-sm"
-                            aria-label="แปลงที่จอง" disabled={editor?.locked}
-                          value={editCustomerForm.plot}
-                            onChange={e => setEditCustomerForm({...editCustomerForm, plot: e.target.value})}
-                            required
-                          >
-                            <option value="" disabled>-- กรุณาเลือกแปลง --</option>
-                            {/* If they already own a plot, include it */}
-                            {panelState.lead.plot && <option value={panelState.lead.plot}>{panelState.lead.plot} (แปลงปัจจุบัน)</option>}
-                            {availablePlots.map(p => (
-                              <option key={p} value={p}>{p} (ว่าง)</option>
-                            ))}
-                          </select>
-                        </div>
+                          {['Reserved', 'Contracted', 'DownPayment', 'DocumentPrep', 'LoanProcessing', 'Approved', 'Transferred', 'Handover'].includes(editCustomerForm.status) && (
+                            <div className="grid grid-cols-2 gap-3 mb-3 animate-in slide-in-from-top-2 duration-200">
+                              <div>
+                                <label className="block text-xs font-semibold text-emerald-700 mb-1">ราคาขายที่ตกลงกัน (บาท)</label>
+                                <input 
+                                  type="number"
+                                  className="w-full border border-emerald-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-emerald-500 font-medium text-slate-700 bg-emerald-50 text-sm"
+                                  aria-label="ราคาขายสุทธิ" disabled={editor?.locked}
+                                  value={editCustomerForm.salePrice || ''}
+                                  onChange={e => setEditCustomerForm({...editCustomerForm, salePrice: e.target.value})}
+                                  placeholder="เช่น 3500000"
+                                />
+                              </div>
+                              {['Approved', 'Transferred', 'Handover'].includes(editCustomerForm.status) && (
+                                <div>
+                                  <label className="block text-xs font-semibold text-blue-700 mb-1">ราคาประเมิน ท.ด. (บาท)</label>
+                                  <input 
+                                    type="number"
+                                    className="w-full border border-blue-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-blue-500 font-medium text-slate-700 bg-blue-50 text-sm"
+                                    aria-label="ราคาประเมิน" disabled={editor?.locked}
+                                    value={editCustomerForm.landOfficePrice || ''}
+                                    onChange={e => setEditCustomerForm({...editCustomerForm, landOfficePrice: e.target.value})}
+                                    placeholder="เช่น 3500000"
+                                    required
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {['Cancelled', 'LoanRejected'].includes(editCustomerForm.status) && (
+                            <div className="mb-3 animate-in slide-in-from-top-2 duration-200">
+                              <label className="block text-xs font-semibold text-red-700 mb-1">{editCustomerForm.status === 'Cancelled' ? 'เหตุผลที่ยกเลิกจอง' : 'เหตุผลที่สินเชื่อไม่ผ่าน'}</label>
+                              <textarea 
+                                className="w-full border border-red-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-red-500 font-medium text-slate-700 bg-red-50 text-sm min-h-[80px]"
+                                aria-label="เหตุผล" disabled={editor?.locked}
+                                value={editCustomerForm.cancelReason}
+                                onChange={e => setEditCustomerForm({...editCustomerForm, cancelReason: e.target.value})}
+                                placeholder="ระบุเหตุผล..."
+                                required
+                              />
+                            </div>
+                          )}
+
+                          {['DocumentPrep', 'LoanProcessing', 'Approved', 'Transferred'].includes(editCustomerForm.status) && (
+                            <div className="mb-3 animate-in slide-in-from-top-2 duration-200">
+                              <label className="block text-xs font-semibold text-slate-700 mb-1">หมายเหตุเพิ่มเติม (ถ้ามี)</label>
+                              <textarea 
+                                className="w-full border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-slate-500 text-slate-700 bg-white text-sm min-h-[60px]"
+                                aria-label="หมายเหตุสถานะ" disabled={editor?.locked}
+                                value={editCustomerForm.note || ''}
+                                onChange={e => setEditCustomerForm({...editCustomerForm, note: e.target.value})}
+                                placeholder="ระบุหมายเหตุเพิ่มเติม (ไม่บังคับ)"
+                              />
+                            </div>
+                          )}
+
+                          {editCustomerForm.status !== 'Visit' && editCustomerForm.status !== 'Negotiation' && editCustomerForm.status !== 'Cancelled' && (
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-700 mb-1">แปลงที่จอง (เลือกได้เฉพาะแปลงว่าง)</label>
+                              <select 
+                                className="w-full border border-emerald-300 rounded-xl px-4 py-2.5 focus:outline-none focus:border-emerald-500 font-bold text-emerald-800 bg-emerald-50 text-sm"
+                                aria-label="แปลงที่จอง" disabled={editor?.locked}
+                                value={editCustomerForm.plot}
+                                onChange={e => setEditCustomerForm({...editCustomerForm, plot: e.target.value})}
+                                required
+                              >
+                                <option value="" disabled>-- กรุณาเลือกแปลง --</option>
+                                {panelState.lead.plot && <option value={panelState.lead.plot}>{panelState.lead.plot} (แปลงปัจจุบัน)</option>}
+                                {availablePlots.map(p => (
+                                  <option key={p} value={p}>{p} (ว่าง)</option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
                     
@@ -2517,6 +2912,23 @@ export default function SalesKanban({
                       <button type="button" disabled={isSubmitting} onClick={() => setPanelState({ type: 'default', plotId: '', lead: null })} className="w-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold py-3 rounded-xl transition-colors">
                         ปิดหน้าต่าง
                       </button>
+                      {!isRentalDeal && (user?.role === 'Admin' || user?.role === 'Owner') && panelState.lead?.status !== 'Rented' && (
+                        <button
+                          type="button"
+                          disabled={isSubmitting}
+                          onClick={() => {
+                            setShowRentalModal({
+                              isOpen: true,
+                              lead: panelState.lead,
+                              plotId: panelState.lead.plot || panelState.plotId || null,
+                              defaultMode: 'contract'
+                            });
+                          }}
+                          className="w-full bg-gradient-to-r from-teal-600 to-cyan-700 hover:from-teal-700 hover:to-cyan-800 text-white font-bold py-3 rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 mt-1 cursor-pointer text-xs"
+                        >
+                          <Key size={16} /> 🔑 เปลี่ยนเป็นสัญญาเช่า (Admin Mode)
+                        </button>
+                      )}
                       {user?.role === 'Admin' && (
                         <button type="button" disabled={isSubmitting || Boolean(editor && !editor.resolved?.leadId)} onClick={() => handleDeleteCustomer(editor?.resolved?.leadId || panelState.lead.id)} className="w-full bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 hover:text-red-700 font-bold py-3 rounded-xl transition-colors mt-2 flex items-center justify-center gap-2">
                           <Trash2 size={18} /> ลบข้อมูลลูกค้า
@@ -2537,9 +2949,19 @@ export default function SalesKanban({
                         {timeline.map((h, i) => {
                           const config = STATUS_CONFIG[h.status] || STATUS_CONFIG['legacy_unclassified'];
                           const Icon = config.icon;
-                          const dateObj = new Date(h.timestamp);
-                          const dateStr = dateObj.toLocaleDateString('th-TH', { year: '2-digit', month: 'short', day: 'numeric' });
-                          const timeStr = dateObj.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+                          const bDay = customerBusinessDay(h.timestamp);
+                          let dateStr = '';
+                          if (bDay) {
+                            const [year, month, day] = bDay.split('-').map(Number);
+                            const thaiYear = (year + 543) % 100;
+                            const thaiMonths = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+                            dateStr = `${day} ${thaiMonths[month - 1]} ${thaiYear}`;
+                          } else {
+                            const dateObj = new Date(h.timestamp);
+                            dateStr = dateObj.toLocaleDateString('th-TH', { year: '2-digit', month: 'short', day: 'numeric' });
+                          }
+                          const isDateOnly = typeof h.timestamp === 'string' && (/^\d{4}-\d{2}-\d{2}$/.test(h.timestamp) || h.timestamp.includes('T00:00:00') || h.timestamp.includes('T12:00:00'));
+                          const timeStr = isDateOnly ? '' : new Date(h.timestamp).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
                           
                           return (
                             <div key={h.id || `milestone-${i}`} className="flex gap-3 relative">
@@ -2554,7 +2976,7 @@ export default function SalesKanban({
                                   <div className="flex items-center gap-2">
                                     <span className={`text-sm font-bold ${config.color}`}>{config.label}</span>
                                   </div>
-                                  <span className="text-[10px] text-slate-400 font-medium bg-slate-50 px-2 py-0.5 rounded-full">{dateStr} {timeStr}</span>
+                                  <span className="text-[10px] text-slate-400 font-medium bg-slate-50 px-2 py-0.5 rounded-full">{timeStr ? `${dateStr} ${timeStr}` : dateStr}</span>
                                 </div>
                                 <p className="text-xs text-slate-500 font-medium mt-1">ผู้ทำรายการ: {h.note || 'System'}</p>
                               </div>
@@ -2567,7 +2989,14 @@ export default function SalesKanban({
                 </div>
                   );
                 };
-                return ['booked', 'transferred'].includes(getLeadStage(panelState.lead)) ? <SalesDealStatusModal
+                const isRentalDeal = Boolean(
+                  panelState.lead?.deal_type === 'rent' ||
+                  panelState.lead?.rental_status === 'Active' ||
+                  panelState.lead?.rental_status === 'PendingContract' ||
+                  panelState.lead?.status === 'Rented' ||
+                  String(panelState.lead?.crm_status || '').includes('เช่า')
+                );
+                return (!isRentalDeal && ['booked', 'transferred'].includes(getLeadStage(panelState.lead))) ? <SalesDealStatusModal
                   lead={panelState.lead} currentUser={user}
                   onClose={() => setPanelState({ type: 'default', plotId: '', lead: null })}
                   onSaved={async notice => {
@@ -2809,6 +3238,7 @@ export default function SalesKanban({
           plotId={showRentalModal.plotId}
           projectName={project?.name || 'ไอลิน สันทราย 2'}
           user={user}
+          defaultMode={showRentalModal.defaultMode}
           onSaved={fetchData}
         />
       )}

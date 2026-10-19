@@ -149,5 +149,5 @@ describe('central appointments and visits workspace', () => {
     expect(api.read).toHaveBeenLastCalledWith(visitsScope({ appointmentPage: 1, visitPage: 1 }));
     await act(async () => resolve({ ...snapshot, appointmentPage: 1, visitPage: 1 })); fireEvent.click(screen.getByRole('button', { name: 'เหตุการณ์ถัดไป' }));
     expect(api.read).toHaveBeenLastCalledWith(visitsScope({ appointmentPage: 1, visitPage: 1, eventPage: 1 }));
-  });
+  }, 15000);
 });

@@ -13,6 +13,7 @@ export const CRM_STATUS_OPTIONS: CRMStatus[] = [
   'Loan Approved — สินเชื่อผ่าน',
   'Transfer Pending — รอโอน',
   'Transferred / Won — โอนกรรมสิทธิ์สำเร็จ',
+  'Cancelled — ยกเลิกจอง',
   'Lost — ยุติการซื้อ / ไม่จอง',
   'Unreachable — ติดต่อไม่ได้',
   'Not Ready — ยังไม่พร้อมซื้อ รอในอนาคต',
@@ -141,8 +142,27 @@ export function mapToCRMStatus(rawCrmStatus?: string, rawLegacyStatus?: string):
 
   const s = check.toLowerCase();
 
-  // Lost / Cancelled (Must check BEFORE booked/reserve to avoid matching 'ยกเลิกจอง' as 'จอง')
-  if (s.includes('lost') || s.includes('cancel') || s.includes('ยกเลิก') || s.includes('ไม่ซื้อ') || s.includes('ไม่จอง') || s.includes('หลุดจอง')) {
+  // Cancelled Booking (post-booking cancellation — must check BEFORE booked/reserve to avoid matching 'ยกเลิกจอง' as 'จอง')
+  if (
+    s.includes('cancel') ||
+    s.includes('ยกเลิกจอง') ||
+    s.includes('หลุดจอง') ||
+    s.includes('ยกเลิกสัญญา') ||
+    (s.includes('ยกเลิก') && !s.includes('ยกเลิกติดตาม') && !s.includes('ยกเลิกการติดตาม'))
+  ) {
+    return 'Cancelled — ยกเลิกจอง';
+  }
+
+  // Pre-booking Lost (followed up from lead, customer not interested / never booked)
+  if (
+    s.includes('lost') ||
+    s.includes('ยุติ') ||
+    s.includes('ไม่สนใจ') ||
+    s.includes('ไม่ซื้อ') ||
+    s.includes('ไม่จอง') ||
+    s.includes('ยกเลิกติดตาม') ||
+    s.includes('ยกเลิกการติดตาม')
+  ) {
     return 'Lost — ยุติการซื้อ / ไม่จอง';
   }
 
@@ -213,7 +233,8 @@ export function mapCRMStatusToLegacyStatus(crmStatus: string): string {
   if (crmStatus.includes('จองแล้ว')) return 'Reserved';
   if (crmStatus.includes('สินเชื่อผ่าน')) return 'Approved';
   if (crmStatus.includes('Pre-Approve')) return 'LoanProcessing';
-  if (crmStatus.includes('Lost') || crmStatus.includes('ยุติ') || crmStatus.includes('ยกเลิก')) return 'Cancelled';
+  if (crmStatus.includes('Cancelled') || crmStatus.includes('ยกเลิกจอง') || crmStatus.includes('หลุดจอง')) return 'Cancelled';
+  if (crmStatus.includes('Lost') || crmStatus.includes('ยุติ') || crmStatus.includes('ไม่สนใจ')) return 'Lost';
   return 'Visit';
 }
 
@@ -325,12 +346,16 @@ export function parseExcelRowToLead(
   // CRM Status
   const rawCrm = String(getVal('โอนเเล้ว', 'CRM Status (เลือก)', 'CRM Status', 'สถานะ CRM', 'CRM')).trim();
   const rawStatus = String(getVal('Status', 'สถานะ', 'สถานะการขาย')).trim();
-  const crmStatus = mapToCRMStatus(rawCrm, rawStatus || (cancelDate ? 'Lost' : transferredDate ? 'Transferred' : bookingDate ? 'Reserved' : 'Visit'));
+  let crmStatus = mapToCRMStatus(rawCrm, rawStatus || (cancelDate ? 'Cancelled' : transferredDate ? 'Transferred' : bookingDate ? 'Reserved' : 'Visit'));
+  if ((cancelDate || bookingDate) && crmStatus === 'Lost — ยุติการซื้อ / ไม่จอง') {
+    crmStatus = 'Cancelled — ยกเลิกจอง';
+  }
   const legacyStatus = mapCRMStatusToLegacyStatus(crmStatus);
 
   // Auto Status text for badges
   let autoStatus = 'Lead เข้า';
-  if (cancelDate || crmStatus.includes('ยกเลิก') || crmStatus.includes('Lost')) autoStatus = 'ยกเลิกจอง';
+  if (cancelDate || crmStatus.includes('Cancelled') || crmStatus.includes('ยกเลิกจอง')) autoStatus = 'ยกเลิกจอง';
+  else if (crmStatus.includes('Lost') || crmStatus.includes('ยุติ')) autoStatus = 'ยุติการซื้อ';
   else if (transferredDate || crmStatus.includes('โอน')) autoStatus = 'โอนแล้ว';
   else if (loanApprovedDate || crmStatus.includes('สินเชื่อผ่าน')) autoStatus = 'สินเชื่อผ่าน';
   else if (loanSubmissionDate || crmStatus.includes('Pre-Approve')) autoStatus = 'ยื่นกู้แล้ว';
@@ -343,7 +368,9 @@ export function parseExcelRowToLead(
   const rawOccupation = String(getVal('อาชีพ', 'Occupation')).trim();
   const rawLandSize = String(getVal('ที่ดิน', 'Land Size')).trim();
   const landNote = rawLandSize && rawLandSize !== '-' ? `ที่ดิน ${rawLandSize} ตร.ว.` : '';
-  const notes = [rawNotes, landNote].filter(Boolean).join(' · ');
+  const cancelDateShort = cancelDate ? cancelDate.split('T')[0] : null;
+  const cancelNote = cancelDateShort ? `วันที่ยกเลิก: ${cancelDateShort}` : '';
+  const notes = [rawNotes, landNote, cancelNote].filter(Boolean).join(' · ');
 
   const occupation = rawOccupation && rawOccupation !== '-' ? rawOccupation : '';
   const interest = String(getVal('ความสนใจ', 'Interest', 'แบบบ้าน', 'แบบบ้านที่สนใจ')).trim() || 'Any';
@@ -372,7 +399,7 @@ export function parseExcelRowToLead(
     transferred_date: transferredDate,
     cancelled_date: cancelDate,
     lost_reason: lostReason,
-    lost_reason_detail: lostReasonDetail,
+    lost_reason_detail: lostReasonDetail || (cancelNote || null),
     crm_status: crmStatus,
     auto_status: autoStatus,
     notes,

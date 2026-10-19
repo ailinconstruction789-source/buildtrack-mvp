@@ -14,7 +14,9 @@ export type CRMStatus =
   | 'Rent-to-Own / Active — สัญญาเช่าซื้อ/เช่าออม (สะสมเงินดาวน์)'
   | 'Lease Ended / Moved Out — สิ้นสุดสัญญาเช่า (ย้ายออก)'
   | 'Converted from Rent to Buy — เปลี่ยนจากเช่าเป็นซื้อ'
+  | 'Cancelled — ยกเลิกจอง'
   | 'Lost — ยุติการซื้อ / ไม่จอง'
+  | 'Lost — ไม่สนใจ / ยุติการติดตาม'
   | 'Unreachable — ติดต่อไม่ได้'
   | 'Not Ready — ยังไม่พร้อมซื้อ รอในอนาคต'
   | 'Nurture — เก็บไว้ติดตามระยะยาว';
@@ -168,7 +170,14 @@ export interface Lead {
   interested_plot_id?: string | null;
   interested_plot_name?: string | null;
   booking_date?: string | null;
+  bookingDate?: string | null;
+  booked_at?: string | null;
+  bookedAt?: string | null;
   booking_amount?: number | null;
+  bookingAmount?: number | null;
+  leadId?: string | null;
+  saleId?: string | null;
+  sourceKind?: string | null;
   
   // Rental Fields
   deal_type?: 'buy' | 'rent' | 'rent_to_own' | null;

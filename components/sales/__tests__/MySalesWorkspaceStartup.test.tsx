@@ -157,7 +157,7 @@ describe('Sales Hub startup sharing', () => {
     await act(async () => { reject(new Error('old account failed')); });
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
-  it('keeps all stages visible in Kanban and includes lost leads in the selected project', async () => {
+  it('keeps all stages visible in Kanban and separates cancelled bookings from pre-booking lost leads', async () => {
     const stages = ['Active', 'Visit', 'Loan', 'Booked', 'Transferred', 'Rented', 'Lost', 'Cancelled', 'Closed_Lost'];
     const leads = stages.map((status, index) => ({ ...base.leads[0],
       id: `stage-${index}`, customer_name: `Customer ${status}`, status,
@@ -168,9 +168,13 @@ describe('Sales Hub startup sharing', () => {
     await screen.findByText('Customer Active');
     fireEvent.click(screen.getByTitle('มุมมองการ์ดบอร์ด (Kanban View)'));
     for (const lead of leads) expect(screen.getByText(lead.customer_name)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '❌ ยุติการซื้อ 3' }));
+    fireEvent.click(screen.getByRole('button', { name: '🚫 ยกเลิกจอง 1' }));
+    const cancelled = screen.getByRole('region', { name: 'ลูกค้ายกเลิกจอง' });
+    expect(within(cancelled).getByText('Customer Cancelled')).toBeInTheDocument();
+    expect(cancelled.className).toContain('order-first');
+    fireEvent.click(screen.getByRole('button', { name: '❌ ยุติการซื้อ 2' }));
     const lost = screen.getByRole('region', { name: 'ลูกค้ายุติการซื้อ' });
-    expect(within(lost).getAllByRole('button', { name: 'ตาม' })).toHaveLength(3);
+    expect(within(lost).getAllByRole('button', { name: 'ตาม' })).toHaveLength(2);
     expect(lost.className).toContain('order-first');
     fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: 'Project A' } });
     expect(within(lost).getAllByRole('button', { name: 'ตาม' })).toHaveLength(2);

@@ -55,11 +55,39 @@ vi.mock('@/lib/sales/fetchWithoutLimit', () => ({
           interested_plot_id: 'plot-ailin6-15',
           interested_plot_name: '15',
           notes: 'เตรียมเอกสาร · ที่ดิน 55.3 ตร.ว. · ราคา: 2,899,000 บ. · คาดโอน: ต.ค. 2569'
+        },
+        {
+          id: 'lead-kredkaew',
+          customer_name: 'นางสาวเกร็ดแก้ว อ่อนสกุล',
+          project_name: 'ไอลิน 4',
+          status: 'Cancelled',
+          crm_status: 'Cancelled — ยกเลิกจอง',
+          auto_status: 'ยกเลิกจอง',
+          booking_date: '2026-09-03T05:00:00+00:00',
+          interested_plot_id: 'plot-ailin4-68',
+          interested_plot_name: '68',
+          lost_reason: 'ยกเลิกจอง',
+          lost_reason_detail: 'วันที่ยกเลิก: 2026-10-07',
+          notes: 'ราคา: 4,184,000 บ. · วันที่ยกเลิก: 2026-10-07'
         }
       ];
     }
     if (table === 'sales') {
-      return [];
+      return [
+        {
+          id: 'legacy-cancelled-sale',
+          lead_id: null,
+          plot_id: 'plot-ailin6-6',
+          sale_price: 4657000,
+          contract_status: 'Cancelled',
+          crm_stage: 'cancelled',
+          booking_route: 'legacy_import',
+          booked_at: null,
+          transferred_at: null,
+          cancelled_at: null,
+          created_at: '2026-09-29T10:12:41.314157+00:00'
+        }
+      ];
     }
     return [];
   })
@@ -212,5 +240,12 @@ describe('SalesDashboard and WaitingForTransferDetails Price & Transfer Sync', (
     expect(screen.getByText('ยอดโอน ปี 2023 - 2026 (หลัง)')).toBeInTheDocument();
     expect(screen.getByText('ยอดจอง ปี 2023 - 2026 (หลัง)')).toBeInTheDocument();
     expect(screen.getByText('ยอดเข้าชม ปี 2023 - 2026 (ครั้ง)')).toBeInTheDocument();
+
+    // Cancelled lead (2026-10-07) is counted in ยอดลูกค้ายกเลิกสะสม (1)
+    const cancelLabel = screen.getByText('ยอดลูกค้ายกเลิกสะสม');
+    expect(cancelLabel.parentElement?.textContent).toContain('1');
+    // Gross bookings in 2026 includes all bookings occurred in 2026 (2 active + 1 cancelled with booking_date in 2026 = 3)
+    const bookedLabel = screen.getByText('ยอดลูกค้าจองสะสม');
+    expect(bookedLabel.parentElement?.textContent).toContain('3');
   });
 });

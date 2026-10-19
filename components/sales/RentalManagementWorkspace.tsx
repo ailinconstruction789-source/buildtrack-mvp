@@ -31,7 +31,12 @@ import {
   List,
   Sparkles,
   ArrowRight,
-  Receipt
+  Receipt,
+  BookmarkCheck,
+  FileCheck,
+  X,
+  Info,
+  User
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { 
@@ -47,6 +52,267 @@ import RentalMaintenanceModal from './RentalMaintenanceModal';
 import TenantPortalModal from './TenantPortalModal';
 import AdminDeleteCustomerModal from './AdminDeleteCustomerModal';
 import RentalReceiptModal from './RentalReceiptModal';
+import { parseRentalInceptionDetails, RentalInceptionDetails } from '@/lib/rentalHelper';
+
+export interface RentalInceptionDetailModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  details: RentalInceptionDetails | null;
+}
+
+export const RentalInceptionDetailModal = React.memo(function RentalInceptionDetailModal({
+  isOpen,
+  onClose,
+  details
+}: RentalInceptionDetailModalProps) {
+  if (!isOpen || !details) return null;
+
+  const formatDateDisplay = (dateStr?: string | null): string => {
+    if (!dateStr || dateStr === '-') return '-';
+    try {
+      const cleanDate = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
+      const parts = cleanDate.split('-');
+      if (parts.length === 3 && parts[0].length === 4) {
+        return `${parts[2]}/${parts[1]}/${parts[0]}`;
+      }
+      return cleanDate;
+    } catch {
+      return dateStr;
+    }
+  };
+
+  const programInfo = details.programType 
+    ? (RENTAL_PROGRAM_DETAILS[details.programType] || RENTAL_PROGRAM_DETAILS.program_a)
+    : RENTAL_PROGRAM_DETAILS.program_a;
+
+  // Total cash collected at inception
+  const bookingAmt = details.bookingAmount || 0;
+  const contractFeeAmt = details.contractFee || 0;
+  const depositAmt = details.securityDeposit || 0;
+  const advanceRentAmt = details.advanceRent || 0;
+  const contractDayCash = contractFeeAmt + depositAmt + advanceRentAmt;
+  const totalInceptionCash = bookingAmt + contractDayCash;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+      <div 
+        className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="px-6 py-5 bg-gradient-to-r from-amber-600 via-amber-700 to-amber-800 text-white flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-white/10 rounded-2xl backdrop-blur-md">
+              <FileCheck size={22} className="text-amber-200" />
+            </div>
+            <div>
+              <h2 className="text-lg font-black tracking-tight">ข้อมูลการเช่า & การเงินตั้งต้น</h2>
+              <p className="text-xs text-amber-100 font-medium">
+                สรุปประวัติวันจอง สัญญา และยอดเงินแรกเข้าครบ 7 รายการ
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 rounded-xl text-white/80 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Content Body */}
+        <div className="p-6 space-y-5 overflow-y-auto">
+          
+          {/* Identity Header Card */}
+          <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-1.5 text-xs font-bold text-slate-500">
+                <Building2 size={14} className="text-slate-400" /> {details.projectName || 'ไม่ระบุโครงการ'}
+              </span>
+              <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black border ${
+                details.programType === 'program_a'
+                  ? 'bg-blue-50 text-blue-800 border-blue-200'
+                  : details.programType === 'program_b'
+                  ? 'bg-amber-50 text-amber-900 border-amber-300'
+                  : 'bg-purple-50 text-purple-800 border-purple-200'
+              }`}>
+                {programInfo.name}
+              </span>
+            </div>
+            
+            <div className="flex items-baseline justify-between pt-1 border-t border-slate-200/60">
+              <div className="text-xl font-black text-slate-900 flex items-center gap-2">
+                <Home size={18} className="text-amber-600" />
+                แปลง {details.plotName || '-'}
+              </div>
+              <div className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                <User size={14} className="text-slate-400" />
+                {details.tenantName || 'ไม่ระบุผู้เช่า'}
+              </div>
+            </div>
+          </div>
+
+          {/* 7 Key Financial Inception Items */}
+          <div className="space-y-3">
+            <div className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+              <Info size={14} className="text-amber-600" />
+              สรุปเงื่อนไขการเงิน 7 รายการหลัก
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              
+              {/* 1. แปลงที่ */}
+              <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-200/70 space-y-0.5">
+                <div className="text-[11px] text-slate-500 font-bold flex items-center gap-1">
+                  <Home size={13} className="text-slate-400" /> 1. แปลงที่ & โครงการ
+                </div>
+                <div className="text-sm font-black text-slate-900 font-mono">
+                  แปลง {details.plotName || '-'}
+                </div>
+                <div className="text-[10px] text-slate-400">{details.projectName || '-'}</div>
+              </div>
+
+              {/* 2. วันที่จอง */}
+              <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-200/70 space-y-0.5">
+                <div className="text-[11px] text-slate-500 font-bold flex items-center gap-1">
+                  <Calendar size={13} className="text-amber-600" /> 2. วันที่จองเช่า
+                </div>
+                <div className="text-sm font-black text-slate-900 font-mono">
+                  {formatDateDisplay(details.bookingDate)}
+                </div>
+                <div className="text-[10px] text-slate-400">วันชำระเงินจอง</div>
+              </div>
+
+              {/* 3. ค่าจองเท่าไหร่ */}
+              <div className="p-3 bg-amber-50/50 rounded-xl border border-amber-200 space-y-0.5">
+                <div className="text-[11px] text-amber-800 font-bold flex items-center gap-1">
+                  <DollarSign size={13} className="text-amber-600" /> 3. ค่าจอง (เงินจองเช่า)
+                </div>
+                <div className="text-base font-black text-amber-950 font-mono">
+                  {details.bookingAmount !== null && details.bookingAmount !== undefined
+                    ? `฿${details.bookingAmount.toLocaleString()} บ.`
+                    : '-'}
+                </div>
+                <div className="text-[10px] text-amber-700">ถือครองสิทธิ์แปลง</div>
+              </div>
+
+              {/* 4. วันที่ทำสัญญา */}
+              <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-200/70 space-y-0.5">
+                <div className="text-[11px] text-slate-500 font-bold flex items-center gap-1">
+                  <Clock size={13} className="text-blue-600" /> 4. วันที่ทำสัญญา
+                </div>
+                <div className="text-sm font-black text-slate-900 font-mono">
+                  {formatDateDisplay(details.contractDate)}
+                </div>
+                <div className="text-[10px] text-slate-400">วันลงนามสัญญาเช่าจริง</div>
+              </div>
+
+              {/* 5. ค่าทำสัญญาเท่าไหร่ */}
+              <div className="p-3 bg-purple-50/60 rounded-xl border border-purple-200 space-y-0.5">
+                <div className="text-[11px] text-purple-900 font-bold flex items-center gap-1">
+                  <FileCheck size={13} className="text-purple-600" /> 5. ค่าทำสัญญา (Contract Fee)
+                </div>
+                <div className="text-base font-black text-purple-950 font-mono">
+                  {details.contractFee !== null && details.contractFee !== undefined
+                    ? details.contractFee === 0
+                      ? '฿0 บ. (ไม่มีค่าสัญญา - เฉพาะแบบ C)'
+                      : `฿${details.contractFee.toLocaleString()} บ.`
+                    : details.programType !== 'program_c'
+                    ? '฿0 บ. (ไม่มีค่าสัญญา - เฉพาะแบบ C)'
+                    : '-'}
+                </div>
+                <div className="text-[10px] text-purple-700">
+                  {details.programType === 'program_c' ? 'ค่าธรรมเนียมสัญญาเช่าออมบ้าน' : 'เงื่อนไขเฉพาะ Program C'}
+                </div>
+              </div>
+
+              {/* 6. เงินประกันเท่าไหร่ */}
+              <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-200/70 space-y-0.5">
+                <div className="text-[11px] text-slate-500 font-bold flex items-center gap-1">
+                  <ShieldCheck size={13} className="text-emerald-600" /> 6. เงินประกันความเสียหาย
+                </div>
+                <div className="text-base font-black text-slate-900 font-mono">
+                  {details.securityDeposit !== null && details.securityDeposit !== undefined
+                    ? `฿${details.securityDeposit.toLocaleString()} บ.`
+                    : '-'}
+                </div>
+                <div className="text-[10px] text-slate-400">เงินประกันคืนเมื่อย้ายออก</div>
+              </div>
+
+              {/* 7. ค่าล่วงหน้าเท่าไหร่ */}
+              <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-200/70 space-y-0.5 sm:col-span-2">
+                <div className="text-[11px] text-slate-500 font-bold flex items-center gap-1">
+                  <CreditCard size={13} className="text-indigo-600" /> 7. ค่าเช่าล่วงหน้า
+                </div>
+                <div className="text-base font-black text-slate-900 font-mono">
+                  {details.advanceRent !== null && details.advanceRent !== undefined
+                    ? details.advanceRent === 0
+                      ? '฿0 บ. (ไม่เก็บค่าเช่าล่วงหน้า)'
+                      : `฿${details.advanceRent.toLocaleString()} บ.`
+                    : '-'}
+                </div>
+                <div className="text-[10px] text-slate-400">
+                  {details.monthlyRent ? `(ค่าเช่ารายเดือน: ฿${details.monthlyRent.toLocaleString()} บ./ด.)` : ''}
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+          {/* Bottom Total Inception Cash Banner */}
+          {totalInceptionCash > 0 && (
+            <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <span className="text-xs font-bold text-amber-900 flex items-center gap-1">
+                    <CheckCircle2 size={14} className="text-amber-600" /> รวมเงินรับวันแรกเข้าทั้งหมด
+                  </span>
+                  <span className="text-[10px] text-amber-700 block">
+                    (เงินจอง + ค่าสัญญา + เงินประกัน + ค่าเช่าล่วงหน้า)
+                  </span>
+                </div>
+                <div className="text-xl font-black text-amber-950 font-mono">
+                  ฿{totalInceptionCash.toLocaleString()} <span className="text-xs font-normal text-amber-800">บ.</span>
+                </div>
+              </div>
+
+              {/* Sub-breakdown: เงินจอง vs ยอดชำระวันสัญญา */}
+              <div className="pt-2 border-t border-amber-200/80 grid grid-cols-2 gap-2 text-[11px] font-semibold">
+                <div className="bg-amber-100/70 p-2 rounded-xl text-amber-900 flex flex-col">
+                  <span className="text-[10px] text-amber-700 font-normal">ชำระแล้ว (เงินจอง):</span>
+                  <span className="font-black font-mono text-xs">฿{bookingAmt.toLocaleString()} บ.</span>
+                </div>
+                <div className="bg-amber-200/60 p-2 rounded-xl text-amber-950 flex flex-col">
+                  <span className="text-[10px] text-amber-800 font-normal">ยอดชำระวันสัญญา:</span>
+                  <span className="font-black font-mono text-xs">฿{contractDayCash.toLocaleString()} บ.</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end">
+          <button
+            onClick={onClose}
+            className="px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs transition-colors cursor-pointer"
+          >
+            ปิดหน้าต่าง
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+export type RentalWorkspaceItem = RentalContract & {
+  isPendingBooking?: boolean;
+  booking_amount?: number;
+  booking_date?: string | null;
+  rawLead?: Lead;
+  inception?: RentalInceptionDetails;
+};
 
 interface RentalManagementWorkspaceProps {
   projects?: any[];
@@ -66,10 +332,11 @@ export default function RentalManagementWorkspace({
   onNavigateToAlerts
 }: RentalManagementWorkspaceProps) {
   const [contracts, setContracts] = useState<RentalContract[]>([]);
+  const [bookedLeads, setBookedLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedProject, setSelectedProject] = useState<string>(selectedProjectName || 'all');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'Active' | 'expiring' | 'overdue' | 'ConvertedToBuy' | 'MovedOut' | 'Cancelled'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'Active' | 'PendingContract' | 'expiring' | 'overdue' | 'ConvertedToBuy' | 'MovedOut' | 'Cancelled'>('all');
   const [programFilter, setProgramFilter] = useState<'all' | RentalProgramType>('all');
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
 
@@ -131,6 +398,14 @@ export default function RentalManagementWorkspace({
     lead: null
   });
 
+  const [inceptionModal, setInceptionModal] = useState<{
+    isOpen: boolean;
+    details: RentalInceptionDetails | null;
+  }>({
+    isOpen: false,
+    details: null
+  });
+
   const isAdmin = !user?.role || 
     user?.role?.toLowerCase() === 'admin' || 
     user?.role?.toLowerCase() === 'owner' || 
@@ -171,6 +446,32 @@ export default function RentalManagementWorkspace({
       }
       setOverdueMap(ovMap);
 
+      // 3. Fetch rental booking leads (PendingContract or rental deal in Reserved)
+      try {
+        let bookedLeadsQuery = supabase
+          .from('leads')
+          .select('*')
+          .or('rental_status.eq.PendingContract,and(deal_type.eq.rent,status.eq.Reserved)')
+          .order('booking_date', { ascending: false, nullsFirst: false });
+
+        if (selectedProject && selectedProject !== 'all') {
+          bookedLeadsQuery = bookedLeadsQuery.eq('project_name', selectedProject);
+        }
+
+        const { data: leadsData } = await bookedLeadsQuery;
+        const activeLeadIds = new Set(
+          (contractList || [])
+            .filter((c: any) => ['Active', 'Renewed'].includes(c.status))
+            .map((c: any) => c.lead_id)
+            .filter(Boolean)
+        );
+        const pendingList = (leadsData || []).filter((l: any) => !activeLeadIds.has(l.id));
+        setBookedLeads(pendingList as Lead[]);
+      } catch (leadErr) {
+        console.warn('Could not fetch booked rental leads:', leadErr);
+        setBookedLeads([]);
+      }
+
     } catch (err) {
       console.error('Error fetching rental contracts:', err);
     } finally {
@@ -192,9 +493,78 @@ export default function RentalManagementWorkspace({
     return Math.ceil((end.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
   };
 
+  // Helper to format ISO dates to readable DD/MM/YYYY
+  const formatDateDisplay = (dateStr?: string | null): string => {
+    if (!dateStr || dateStr === '-') return '-';
+    try {
+      const cleanDate = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
+      const parts = cleanDate.split('-');
+      if (parts.length === 3 && parts[0].length === 4) {
+        return `${parts[2]}/${parts[1]}/${parts[0]}`;
+      }
+      return cleanDate;
+    } catch {
+      return dateStr;
+    }
+  };
+
+  // Map pending rental booking leads into workspace items with precomputed inception
+  const bookedItems = useMemo<RentalWorkspaceItem[]>(() => {
+    return bookedLeads.map((lead) => {
+      const inception = parseRentalInceptionDetails(lead);
+      const fee = inception.contractFee !== null && inception.contractFee !== undefined
+        ? inception.contractFee
+        : (lead.rental_program === 'program_c' ? (Number((lead as any).rental_contract_fee || 20000)) : 0);
+
+      return {
+        id: `lead-booking-${lead.id}`,
+        lead_id: lead.id,
+        plot_id: lead.interested_plot_id || '',
+        plot_name: lead.interested_plot_name || lead.interested_plot_id || 'N/A',
+        project_name: lead.project_name || '',
+        tenant_name: lead.customer_name || 'ไม่ระบุชื่อ',
+        tenant_phone: lead.phone || '',
+        agent_name: lead.agent_name || lead.sales_owner || lead.salesOwner || '',
+        program_type: (lead.rental_program as RentalProgramType) || 'program_a',
+        monthly_rent: Number(lead.rental_monthly_rent || 0),
+        security_deposit: Number(lead.rental_deposit || 0),
+        advance_rent: 0,
+        contract_fee: fee,
+        booking_amount: Number(lead.booking_amount || 0),
+        booking_date: lead.booking_date || null,
+        lease_duration_months: 12,
+        lease_start_date: lead.rental_start_date || lead.booking_date || '-',
+        lease_end_date: '-',
+        status: 'PendingContract' as any,
+        accumulated_savings: 0,
+        created_at: (lead as any).created_at || new Date().toISOString(),
+        isPendingBooking: true,
+        rawLead: lead,
+        inception
+      };
+    });
+  }, [bookedLeads]);
+
+  // Memoized enriched contracts with inception pre-parsed to eliminate regex overhead in render & filter loops
+  const enrichedContracts = useMemo<RentalWorkspaceItem[]>(() => {
+    return contracts.map((c) => ({
+      ...c,
+      inception: parseRentalInceptionDetails(c)
+    }));
+  }, [contracts]);
+
   // Filtered Contracts
-  const filteredContracts = useMemo(() => {
-    return contracts.filter((c) => {
+  const filteredContracts = useMemo<RentalWorkspaceItem[]>(() => {
+    let sourceItems: RentalWorkspaceItem[] = [];
+    if (statusFilter === 'PendingContract') {
+      sourceItems = bookedItems;
+    } else if (statusFilter === 'all') {
+      sourceItems = [...enrichedContracts, ...bookedItems];
+    } else {
+      sourceItems = enrichedContracts;
+    }
+
+    return sourceItems.filter((c) => {
       // 1. Search Query
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -212,6 +582,7 @@ export default function RentalManagementWorkspace({
 
       // 3. Status Filter
       if (statusFilter === 'all') return true;
+      if (statusFilter === 'PendingContract') return !!c.isPendingBooking;
       if (statusFilter === 'Active') return ['Active', 'Renewed'].includes(c.status);
       if (statusFilter === 'ConvertedToBuy') return c.status === 'ConvertedToBuy';
       if (statusFilter === 'MovedOut') return c.status === 'MovedOut';
@@ -227,21 +598,27 @@ export default function RentalManagementWorkspace({
 
       return true;
     });
-  }, [contracts, searchQuery, programFilter, statusFilter, overdueMap]);
+  }, [enrichedContracts, bookedItems, searchQuery, programFilter, statusFilter, overdueMap]);
 
   // Aggregate KPI summary
   const summary = useMemo(() => {
     let activeCount = 0;
     let totalMonthlyRevenue = 0;
     let totalSavingsPool = 0;
+    let totalContractFees = 0;
     let expiringCount = 0;
     let overdueCount = 0;
 
-    contracts.forEach((c) => {
+    enrichedContracts.forEach((c) => {
       if (['Active', 'Renewed'].includes(c.status)) {
         activeCount++;
         totalMonthlyRevenue += Number(c.monthly_rent || 0);
         totalSavingsPool += Number(c.accumulated_savings || 0);
+        const inception = c.inception;
+        const fee = inception?.contractFee !== null && inception?.contractFee !== undefined
+          ? Number(inception.contractFee)
+          : (Number(c.contract_fee || 0) > 0 ? Number(c.contract_fee) : (c.program_type === 'program_c' ? 20000 : 0));
+        totalContractFees += fee;
 
         const days = getRemainingDays(c.lease_end_date);
         if (days <= 60 && days >= 0) expiringCount++;
@@ -249,14 +626,20 @@ export default function RentalManagementWorkspace({
       }
     });
 
+    const pendingCount = bookedLeads.length;
+    const totalBookingDeposits = bookedLeads.reduce((s, l) => s + Number(l.booking_amount || 0), 0);
+
     return {
       activeCount,
       totalMonthlyRevenue,
       totalSavingsPool,
+      totalContractFees,
       expiringCount,
-      overdueCount
+      overdueCount,
+      pendingCount,
+      totalBookingDeposits
     };
-  }, [contracts, overdueMap]);
+  }, [enrichedContracts, overdueMap, bookedLeads]);
 
   // Open Portal with fetched payments
   const handleOpenPortal = async (contract: RentalContract) => {
@@ -335,7 +718,7 @@ export default function RentalManagementWorkspace({
       </div>
 
       {/* 🚀 KPI Summary Ribbon */}
-      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3.5">
         
         {/* Active Leases */}
         <div className="bg-white p-4.5 rounded-2xl border border-slate-200/90 shadow-2xs space-y-1.5">
@@ -355,6 +738,34 @@ export default function RentalManagementWorkspace({
           </p>
         </div>
 
+        {/* Pending Rental Bookings */}
+        <div 
+          onClick={() => setStatusFilter(statusFilter === 'PendingContract' ? 'all' : 'PendingContract')}
+          className={`bg-white p-4.5 rounded-2xl border transition-all cursor-pointer space-y-1.5 ${
+            statusFilter === 'PendingContract'
+              ? 'border-amber-500 bg-amber-50/50 ring-2 ring-amber-500/20 shadow-xs'
+              : 'border-amber-200/90 bg-amber-50/20 shadow-2xs hover:border-amber-400'
+          }`}
+          title="คลิกเพื่อกรองเฉพาะรายการจองเช่ารอทำสัญญา"
+        >
+          <div className="flex items-center justify-between text-xs font-bold">
+            <span className="flex items-center gap-1.5 text-amber-900">
+              <BookmarkCheck size={16} className="text-amber-600" /> จองเช่ารอทำสัญญา
+            </span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 font-mono font-bold">
+              Pending
+            </span>
+          </div>
+          <div className="text-2xl sm:text-3xl font-black text-amber-950 font-mono">
+            {summary.pendingCount} <span className="text-xs font-normal text-amber-800">แปลง</span>
+          </div>
+          <p className="text-[11px] text-amber-700 font-mono">
+            {summary.totalBookingDeposits > 0 
+              ? `เงินจอง ฿${summary.totalBookingDeposits.toLocaleString()} บ.` 
+              : 'รอแปลงสัญญา'}
+          </p>
+        </div>
+
         {/* Monthly Recurring Rent */}
         <div className="bg-white p-4.5 rounded-2xl border border-slate-200/90 shadow-2xs space-y-1.5">
           <div className="flex items-center justify-between text-slate-500 text-xs font-bold">
@@ -370,6 +781,24 @@ export default function RentalManagementWorkspace({
           </div>
           <p className="text-[11px] text-slate-500">
             ประมาณการ ฿{(summary.totalMonthlyRevenue * 12).toLocaleString()} บ./ปี
+          </p>
+        </div>
+
+        {/* Total Contract Fees */}
+        <div className="bg-white p-4.5 rounded-2xl border border-purple-200 bg-purple-50/20 shadow-2xs space-y-1.5">
+          <div className="flex items-center justify-between text-purple-900 text-xs font-bold">
+            <span className="flex items-center gap-1.5">
+              <FileCheck size={16} className="text-purple-600" /> รวมค่าทำสัญญา
+            </span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-900 font-bold">
+              Fees
+            </span>
+          </div>
+          <div className="text-2xl sm:text-3xl font-black text-purple-950 font-mono">
+            ฿{summary.totalContractFees.toLocaleString()} <span className="text-xs font-normal text-purple-800">บาท</span>
+          </div>
+          <p className="text-[11px] text-purple-700">
+            ค่าธรรมเนียมสัญญาเช่าที่จัดเก็บ
           </p>
         </div>
 
@@ -487,6 +916,11 @@ export default function RentalManagementWorkspace({
             {[
               { id: 'all', label: 'ทั้งหมด' },
               { id: 'Active', label: 'กำลังเช่า' },
+              { 
+                id: 'PendingContract', 
+                label: summary.pendingCount > 0 ? `🟡 จองเช่า (${summary.pendingCount})` : 'จองเช่า', 
+                color: 'text-amber-800 bg-amber-50 border-amber-300' 
+              },
               { id: 'expiring', label: `ใกล้หมดอายุ (${summary.expiringCount})`, color: 'text-amber-700 bg-amber-50 border-amber-200' },
               { id: 'overdue', label: `ค้างชำระ (${summary.overdueCount})`, color: 'text-rose-700 bg-rose-50 border-rose-200' },
               { id: 'ConvertedToBuy', label: 'เปลี่ยนเป็นซื้อแล้ว' },
@@ -597,6 +1031,154 @@ export default function RentalManagementWorkspace({
                   const isExpiring = ['Active', 'Renewed'].includes(contract.status) && daysRemaining <= 60 && daysRemaining >= 0;
                   const overdueAmount = overdueMap[contract.id] || overdueMap[contract.plot_id] || 0;
                   const isOverdue = ['Active', 'Renewed'].includes(contract.status) && overdueAmount > 0;
+                  const inception = contract.inception || parseRentalInceptionDetails(contract.rawLead || contract);
+                  const effectiveContractFee = inception.contractFee !== null && inception.contractFee !== undefined
+                    ? Number(inception.contractFee)
+                    : (Number(contract.contract_fee || 0) > 0 ? Number(contract.contract_fee) : (contract.program_type === 'program_c' ? 20000 : 0));
+
+                  if (contract.isPendingBooking) {
+                    return (
+                      <tr key={contract.id} className="hover:bg-amber-50/60 bg-amber-50/20 transition-colors border-l-4 border-l-amber-500">
+                        {/* Plot & Project */}
+                        <td className="py-3.5 px-4">
+                          <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                            <Home size={14} className="text-amber-600" />
+                            <span>แปลง {contract.plot_name || contract.plot_id}</span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-900 font-bold">
+                              จองเช่า
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-slate-400">
+                            {contract.project_name}
+                          </div>
+                        </td>
+
+                        {/* Tenant Info */}
+                        <td className="py-3.5 px-4">
+                          <div className="font-bold text-slate-900">
+                            {contract.tenant_name}
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-0.5">
+                            {contract.tenant_phone && (
+                              <a 
+                                href={`tel:${contract.tenant_phone}`}
+                                className="text-emerald-700 hover:underline flex items-center gap-0.5 font-mono"
+                              >
+                                <Phone size={11} /> {contract.tenant_phone}
+                              </a>
+                            )}
+                            {contract.agent_name && (
+                              <span className="text-slate-400">
+                                (เซลล์: {contract.agent_name})
+                              </span>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* Program Badge */}
+                        <td className="py-3.5 px-4">
+                          <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold border ${
+                            contract.program_type === 'program_a'
+                              ? 'bg-blue-50 text-blue-800 border-blue-200'
+                              : contract.program_type === 'program_b'
+                              ? 'bg-amber-50 text-amber-800 border-amber-300'
+                              : 'bg-purple-50 text-purple-800 border-purple-200'
+                          }`}>
+                            {programInfo.name}
+                          </span>
+                          {(contract.booking_amount || 0) > 0 && (
+                            <div className="text-[10px] text-amber-800 font-mono mt-1 font-bold">
+                              เงินจอง: ฿{(contract.booking_amount || 0).toLocaleString()} บ.
+                            </div>
+                          )}
+                        </td>
+
+                        {/* Monthly Rent */}
+                        <td className="py-3.5 px-4 text-right">
+                          <div className="font-bold font-mono text-slate-900 text-sm">
+                            ฿{Number(contract.monthly_rent || 0).toLocaleString()}
+                          </div>
+                          <div className="text-[10px] text-slate-400">
+                            มัดจำตกลง: ฿{Number(contract.security_deposit || 0).toLocaleString()}
+                          </div>
+                          {contract.program_type === 'program_c' && (
+                            <button
+                              type="button"
+                              onClick={() => setInceptionModal({
+                                isOpen: true,
+                                details: inception
+                              })}
+                              className="text-[10px] text-purple-700 font-mono font-bold mt-0.5 hover:underline cursor-pointer flex items-center justify-end gap-1 ml-auto"
+                              title="คลิกดูข้อมูลการเช่า & การเงินตั้งต้น (7 รายการ)"
+                            >
+                              <FileCheck size={11} className="text-purple-600" />
+                              ค่าสัญญา: ฿{(contract.contract_fee || 20000).toLocaleString()}
+                            </button>
+                          )}
+                        </td>
+
+                        {/* Booking Date / Start Date */}
+                        <td className="py-3.5 px-4">
+                          <div className="text-slate-700 font-mono text-[11px]">
+                            จอง: {formatDateDisplay(contract.booking_date)}
+                          </div>
+                          <div className="text-[10px] text-slate-400">
+                            เริ่มเช่า: {formatDateDisplay(contract.lease_start_date)}
+                          </div>
+                        </td>
+
+                        {/* Status */}
+                        <td className="py-3.5 px-4 text-center">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                            🟡 จองเช่า (รอทำสัญญา)
+                          </span>
+                        </td>
+
+                        {/* Actions */}
+                        <td className="py-3.5 px-4 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              aria-label="ดูข้อมูลการเงินตั้งต้น"
+                              onClick={() => setInceptionModal({
+                                isOpen: true,
+                                details: inception
+                              })}
+                              className="p-1.5 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold transition-colors cursor-pointer border border-purple-200/60"
+                              title="ดูข้อมูลการเงินตั้งต้น 7 รายการ (วันจอง เงินจอง วันสัญญา ค่าสัญญา ประกัน ล่วงหน้า)"
+                            >
+                              <FileCheck size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setContractModal({
+                                isOpen: true,
+                                lead: contract.rawLead || null,
+                                plotId: contract.plot_id
+                              })}
+                              className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white font-bold text-xs flex items-center gap-1 shadow-xs transition-all cursor-pointer"
+                              title="ทำสัญญาเช่าจริงจากข้อมูลจอง"
+                            >
+                              <FileText size={13} /> ทำสัญญาเช่าจริง
+                            </button>
+                            {isAdmin && contract.lead_id && (
+                              <button
+                                type="button"
+                                onClick={() => setDeleteModal({
+                                  isOpen: true,
+                                  lead: contract.rawLead || null
+                                })}
+                                className="p-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 transition-colors cursor-pointer"
+                                title="ลบข้อมูลการจอง (Admin)"
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  }
 
                   return (
                     <tr key={contract.id} className="hover:bg-slate-50/80 transition-colors">
@@ -661,12 +1243,26 @@ export default function RentalManagementWorkspace({
                         <div className="text-[10px] text-slate-400">
                           ประกัน: ฿{Number(contract.security_deposit || 0).toLocaleString()}
                         </div>
+                        {((effectiveContractFee > 0) || contract.program_type === 'program_c') && (
+                          <button
+                            type="button"
+                            onClick={() => setInceptionModal({
+                              isOpen: true,
+                              details: inception
+                            })}
+                            className="text-[10px] text-purple-700 font-mono font-bold mt-0.5 hover:underline cursor-pointer flex items-center justify-end gap-1 ml-auto"
+                            title="คลิกดูข้อมูลการเช่า & การเงินตั้งต้น (7 รายการ)"
+                          >
+                            <FileCheck size={11} className="text-purple-600" />
+                            ค่าสัญญา: ฿{effectiveContractFee.toLocaleString()}
+                          </button>
+                        )}
                       </td>
 
                       {/* Lease Duration & Expiry */}
                       <td className="py-3.5 px-4">
                         <div className="text-slate-700 font-mono text-[11px]">
-                          {contract.lease_start_date} <span className="text-slate-400">ถึง</span> {contract.lease_end_date}
+                          {formatDateDisplay(contract.lease_start_date)} <span className="text-slate-400">ถึง</span> {formatDateDisplay(contract.lease_end_date)}
                         </div>
                         {['Active', 'Renewed'].includes(contract.status) && (
                           <div className={`text-[10px] font-bold mt-0.5 ${
@@ -712,6 +1308,20 @@ export default function RentalManagementWorkspace({
                       <td className="py-3.5 px-4 text-right">
                         <div className="flex items-center justify-end gap-1.5">
                           
+                          {/* 📋 ข้อมูลการเช่า & การเงินตั้งต้น 7 รายการ */}
+                          <button
+                            type="button"
+                            aria-label="ดูข้อมูลการเงินตั้งต้น"
+                            onClick={() => setInceptionModal({
+                              isOpen: true,
+                              details: inception
+                            })}
+                            className="p-1.5 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold transition-colors cursor-pointer border border-purple-200/60"
+                            title="ดูข้อมูลการเงินตั้งต้น 7 รายการ (Inception Details)"
+                          >
+                            <FileCheck size={15} />
+                          </button>
+
                           {/* 💳 ตารางค่างวด & รับเงิน */}
                           <button
                             type="button"
@@ -813,6 +1423,130 @@ export default function RentalManagementWorkspace({
             const isExpiring = ['Active', 'Renewed'].includes(contract.status) && daysRemaining <= 60 && daysRemaining >= 0;
             const overdueAmount = overdueMap[contract.id] || overdueMap[contract.plot_id] || 0;
             const isOverdue = ['Active', 'Renewed'].includes(contract.status) && overdueAmount > 0;
+            const inception = contract.inception || parseRentalInceptionDetails(contract.rawLead || contract);
+            const effectiveContractFee = inception.contractFee !== null && inception.contractFee !== undefined
+              ? Number(inception.contractFee)
+              : (Number(contract.contract_fee || 0) > 0 ? Number(contract.contract_fee) : (contract.program_type === 'program_c' ? 20000 : 0));
+
+            if (contract.isPendingBooking) {
+              return (
+                <div
+                  key={contract.id}
+                  className="bg-white rounded-3xl border border-amber-300 shadow-xs p-5 space-y-4 hover:shadow-md transition-shadow relative overflow-hidden flex flex-col justify-between border-t-4 border-t-amber-500"
+                >
+                  {/* Top Program Banner */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black border ${
+                        contract.program_type === 'program_a'
+                          ? 'bg-blue-50 text-blue-800 border-blue-200'
+                          : contract.program_type === 'program_b'
+                          ? 'bg-amber-50 text-amber-900 border-amber-300'
+                          : 'bg-purple-50 text-purple-800 border-purple-200'
+                      }`}>
+                        {programInfo.name}
+                      </span>
+                      <h3 className="font-black text-slate-900 text-base mt-1.5 flex items-center gap-1.5">
+                        <Home size={16} className="text-amber-600" />
+                        แปลง {contract.plot_name || contract.plot_id}
+                      </h3>
+                      <p className="text-xs text-slate-400">{contract.project_name}</p>
+                    </div>
+
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                      🟡 จองเช่า
+                    </span>
+                  </div>
+
+                  {/* Tenant Details Box */}
+                  <div className="p-3 bg-amber-50/40 rounded-2xl space-y-1.5 border border-amber-100">
+                    <div className="flex items-center justify-between text-xs font-bold text-slate-800">
+                      <span>{contract.tenant_name}</span>
+                      {contract.tenant_phone && (
+                        <a href={`tel:${contract.tenant_phone}`} className="text-emerald-700 hover:underline flex items-center gap-1 font-mono text-[11px]">
+                          <Phone size={12} /> {contract.tenant_phone}
+                        </a>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-amber-200/60 font-mono">
+                      <span>วันที่จอง: {formatDateDisplay(contract.booking_date)}</span>
+                      <span>เริ่มเช่า: {formatDateDisplay(contract.lease_start_date)}</span>
+                    </div>
+                  </div>
+
+                  {/* Financial Overview */}
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="p-2.5 bg-slate-50/80 rounded-xl border border-slate-100">
+                      <span className="text-[10px] text-slate-400 block">ค่าเช่าตกลง</span>
+                      <span className="font-black text-slate-900 font-mono text-sm">
+                        ฿{Number(contract.monthly_rent || 0).toLocaleString()}
+                      </span>
+                      {contract.program_type === 'program_c' && (
+                        <button
+                          type="button"
+                          onClick={() => setInceptionModal({
+                            isOpen: true,
+                            details: inception
+                          })}
+                          className="text-[10px] text-purple-700 font-mono font-bold block mt-1 hover:underline cursor-pointer text-left"
+                          title="คลิกดูข้อมูลการเช่า & การเงินตั้งต้น (7 รายการ)"
+                        >
+                          ค่าสัญญา: ฿{(contract.contract_fee || 20000).toLocaleString()}
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="p-2.5 bg-amber-50/80 rounded-xl border border-amber-200">
+                      <span className="text-[10px] text-amber-700 font-bold block">เงินจองเช่าที่ชำระ</span>
+                      <span className="font-black font-mono text-sm text-amber-950">
+                        ฿{Number(contract.booking_amount || 0).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Action Button Strip */}
+                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-1.5 text-xs">
+                    <button
+                      type="button"
+                      aria-label="ดูข้อมูลการเงินตั้งต้น"
+                      onClick={() => setInceptionModal({
+                        isOpen: true,
+                        details: inception
+                      })}
+                      className="p-2 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 transition-colors cursor-pointer"
+                      title="ดูข้อมูลการเงินตั้งต้น 7 รายการ (Inception Details)"
+                    >
+                      <FileCheck size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setContractModal({
+                        isOpen: true,
+                        lead: contract.rawLead || null,
+                        plotId: contract.plot_id
+                      })}
+                      className="flex-1 py-2 px-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white font-bold flex items-center justify-center gap-1 transition-colors cursor-pointer shadow-xs"
+                    >
+                      <FileText size={14} /> ทำสัญญาเช่าจริง
+                    </button>
+                    {isAdmin && contract.lead_id && (
+                      <button
+                        type="button"
+                        onClick={() => setDeleteModal({
+                          isOpen: true,
+                          lead: contract.rawLead || null
+                        })}
+                        className="p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 transition-colors cursor-pointer"
+                        title="ลบข้อมูลการจอง (Admin)"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            }
 
             return (
               <div
@@ -868,7 +1602,7 @@ export default function RentalManagementWorkspace({
                   </div>
 
                   <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-200/60 font-mono">
-                    <span>สัญญา: {contract.lease_start_date} ~ {contract.lease_end_date}</span>
+                    <span>สัญญา: {formatDateDisplay(contract.lease_start_date)} ~ {formatDateDisplay(contract.lease_end_date)}</span>
                     <span>({contract.lease_duration_months} ด.)</span>
                   </div>
                 </div>
@@ -880,6 +1614,19 @@ export default function RentalManagementWorkspace({
                     <span className="font-black text-slate-900 font-mono text-sm">
                       ฿{Number(contract.monthly_rent || 0).toLocaleString()}
                     </span>
+                    {((effectiveContractFee > 0) || contract.program_type === 'program_c') && (
+                      <button
+                        type="button"
+                        onClick={() => setInceptionModal({
+                          isOpen: true,
+                          details: inception
+                        })}
+                        className="text-[10px] text-purple-700 font-mono font-bold block mt-1 hover:underline cursor-pointer text-left"
+                        title="คลิกดูข้อมูลการเช่า & การเงินตั้งต้น (7 รายการ)"
+                      >
+                        ค่าสัญญา: ฿{effectiveContractFee.toLocaleString()}
+                      </button>
+                    )}
                   </div>
 
                   <div className="p-2.5 bg-slate-50/80 rounded-xl border border-slate-100">
@@ -896,6 +1643,19 @@ export default function RentalManagementWorkspace({
 
                 {/* Action Button Strip */}
                 <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-1.5 text-xs">
+                  <button
+                    type="button"
+                    aria-label="ดูข้อมูลการเงินตั้งต้น"
+                    onClick={() => setInceptionModal({
+                      isOpen: true,
+                      details: inception
+                    })}
+                    className="p-2 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 transition-colors cursor-pointer"
+                    title="ดูข้อมูลการเงินตั้งต้น 7 รายการ (Inception Details)"
+                  >
+                    <FileCheck size={15} />
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => setLedgerModal({
@@ -964,7 +1724,7 @@ export default function RentalManagementWorkspace({
           onClose={() => setContractModal({ isOpen: false, lead: null, plotId: null })}
           lead={contractModal.lead}
           plotId={contractModal.plotId}
-          projectName={selectedProject !== 'all' ? selectedProject : 'ไอลิน สันทราย 2'}
+          projectName={selectedProject !== 'all' ? selectedProject : (contractModal.lead?.project_name || 'ไอลิน สันทราย 2')}
           user={user}
           onSaved={fetchContractsData}
         />
@@ -1041,6 +1801,15 @@ export default function RentalManagementWorkspace({
           lead={deleteModal.lead}
           user={user}
           onDeleted={fetchContractsData}
+        />
+      )}
+
+      {/* 🌟 Modal 7: Rental Inception Financial Details */}
+      {inceptionModal.isOpen && (
+        <RentalInceptionDetailModal
+          isOpen={inceptionModal.isOpen}
+          onClose={() => setInceptionModal({ isOpen: false, details: null })}
+          details={inceptionModal.details}
         />
       )}
 

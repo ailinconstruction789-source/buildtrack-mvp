@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { customerDealDetails, customerDealSummary, extractAgreedPrices, extractExpectedTransferDate } from '../customerDealDetails';
+import { customerDealDetails, customerDealSummary, extractAgreedPrices, extractExpectedTransferDate, updateExpectedTransferDateInNotes } from '../customerDealDetails';
 describe('customer deal history values', () => {
   it('reads the latest customer-specific price and bank ahead of older booking history', () => {
     const notes = customerDealSummary(2650000, 'New bank') + '\n\n' + customerDealSummary(2793000, 'Old bank');
@@ -44,6 +44,32 @@ describe('customer deal history values', () => {
     it('returns null when no expected transfer date is present', () => {
       expect(extractExpectedTransferDate('ไม่มีข้อมูล')).toBeNull();
       expect(extractExpectedTransferDate(null)).toBeNull();
+    });
+  });
+  describe('updateExpectedTransferDateInNotes', () => {
+    it('appends expected transfer date when notes has no prior date', () => {
+      const notes = '• ราคาขายสุทธิ: ฿2,793,000 บาท\n• ธนาคาร: SCB';
+      const updated = updateExpectedTransferDateInNotes(notes, '2026-11-15');
+      expect(updated).toBe('• ราคาขายสุทธิ: ฿2,793,000 บาท\n• ธนาคาร: SCB\n• คาดโอน: 2026-11-15');
+      expect(extractExpectedTransferDate(updated)).toBe('2026-11-15');
+    });
+    it('replaces existing expected transfer date in line format', () => {
+      const notes = '• ราคาขายสุทธิ: ฿2,793,000 บาท\n• คาดโอน: 2026-10-15';
+      const updated = updateExpectedTransferDateInNotes(notes, '2026-12-01');
+      expect(updated).toBe('• ราคาขายสุทธิ: ฿2,793,000 บาท\n• คาดโอน: 2026-12-01');
+      expect(extractExpectedTransferDate(updated)).toBe('2026-12-01');
+    });
+    it('replaces existing expected transfer date in dot format', () => {
+      const notes = 'เช่าซื้อ · ราคา: 4,657,000 บ. · คาดโอน: ต.ค. 2569';
+      const updated = updateExpectedTransferDateInNotes(notes, '2026-11-20');
+      expect(updated).toBe('เช่าซื้อ · ราคา: 4,657,000 บ. · คาดโอน: 2026-11-20');
+      expect(extractExpectedTransferDate(updated)).toBe('2026-11-20');
+    });
+    it('clears expected transfer date when newDateStr is null', () => {
+      const notes = '• ราคาขายสุทธิ: ฿2,793,000 บาท\n• คาดโอน: 2026-10-15';
+      const updated = updateExpectedTransferDateInNotes(notes, null);
+      expect(updated).toBe('• ราคาขายสุทธิ: ฿2,793,000 บาท');
+      expect(extractExpectedTransferDate(updated)).toBeNull();
     });
   });
 });

@@ -49,6 +49,25 @@ const mockContracts = [
   }
 ];
 
+const mockLeads = [
+  {
+    id: 'lead-booking-99',
+    customer_name: 'คุณพงษ์ศักดิ์ จองเช่า',
+    phone: '0855555555',
+    project_name: 'ไอลิน สันทราย 2',
+    interested_plot_name: 'C05',
+    interested_plot_id: 'plot-c05',
+    deal_type: 'rent',
+    status: 'Reserved',
+    rental_status: 'PendingContract',
+    rental_program: 'program_c',
+    rental_monthly_rent: 20000,
+    rental_deposit: 40000,
+    booking_amount: 10000,
+    booking_date: '2026-03-10'
+  }
+];
+
 // Mock Supabase
 vi.mock('@/lib/supabase', () => {
   const createQueryBuilder = (resultData: any) => {
@@ -70,6 +89,9 @@ vi.mock('@/lib/supabase', () => {
       from: vi.fn((table: string) => {
         if (table === 'rental_contracts') {
           return createQueryBuilder(mockContracts);
+        }
+        if (table === 'leads') {
+          return createQueryBuilder(mockLeads);
         }
         if (table === 'rental_payments') {
           return createQueryBuilder([
@@ -149,5 +171,62 @@ describe('RentalManagementWorkspace Component', () => {
     fireEvent.click(gridBtn);
 
     expect(screen.getAllByText(/ค่าเช่ารายเดือน/i).length).toBeGreaterThan(0);
+  });
+
+  it('displays booked rental leads with pending booking badge, deposit, and allows filtering', async () => {
+    render(
+      <RentalManagementWorkspace
+        projects={mockProjects}
+        user={mockUser}
+        selectedProjectName="all"
+      />
+    );
+
+    // Verify pending booking lead is displayed
+    await waitFor(() => {
+      expect(screen.getByText(/คุณพงษ์ศักดิ์ จองเช่า/i)).toBeDefined();
+      expect(screen.getByText(/เงินจอง: ฿10,000 บ./i)).toBeDefined();
+      expect(screen.getAllByText(/ทำสัญญาเช่าจริง/i).length).toBeGreaterThan(0);
+    });
+
+    // Filter by PendingContract tab
+    const pendingTab = screen.getByRole('button', { name: /จองเช่า/i });
+    fireEvent.click(pendingTab);
+
+    await waitFor(() => {
+      expect(screen.getByText(/คุณพงษ์ศักดิ์ จองเช่า/i)).toBeDefined();
+      expect(screen.queryByText(/สมชาย ใจดี/i)).toBeNull();
+    });
+  });
+
+  it('opens RentalInceptionDetailModal and shows financial inception breakdown correctly', async () => {
+    render(
+      <RentalManagementWorkspace
+        projects={mockProjects}
+        user={mockUser}
+        selectedProjectName="all"
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/สมชาย ใจดี/i)).toBeDefined();
+    });
+
+    const infoBtns = screen.getAllByLabelText('ดูข้อมูลการเงินตั้งต้น');
+    fireEvent.click(infoBtns[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText(/ข้อมูลการเช่า & การเงินตั้งต้น/i)).toBeDefined();
+      expect(screen.getByText(/สรุปเงื่อนไขการเงิน 7 รายการหลัก/i)).toBeDefined();
+      expect(screen.getByText(/รวมเงินรับวันแรกเข้าทั้งหมด/i)).toBeDefined();
+    });
+
+    // Close modal
+    const closeBtn = screen.getByRole('button', { name: /ปิดหน้าต่าง/i });
+    fireEvent.click(closeBtn);
+
+    await waitFor(() => {
+      expect(screen.queryByText(/สรุปเงื่อนไขการเงิน 7 รายการหลัก/i)).toBeNull();
+    });
   });
 });

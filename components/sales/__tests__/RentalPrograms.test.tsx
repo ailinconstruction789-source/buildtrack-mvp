@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calculateRentalTerms, calculateConversionCredit } from '@/lib/rentalHelper';
+import { calculateRentalTerms, calculateConversionCredit, parseRentalInceptionDetails } from '@/lib/rentalHelper';
 import { RENTAL_PROGRAM_DETAILS } from '@/types/sales';
 
 describe('Ailin Rental Programs Helper & Calculations', () => {
@@ -140,6 +140,22 @@ describe('Ailin Rental Programs Helper & Calculations', () => {
       expect(result.year4InterestAmount).toBe(1600);
       expect(result.year4MonthlyRent).toBe(21600); // 20,000 + 1,600
     });
+
+    it('calculates 8% interest with financial 2-decimal precision for decimal rents', () => {
+      const result = calculateRentalTerms({
+        programType: 'program_c',
+        monthlyRent: 31258.0278,
+        basePrice: 3000000,
+        durationMonths: 48,
+        startDate: '2026-01-01'
+      });
+
+      // 31,258.0278 * 8% = 2,500.642224 -> 2,500.64
+      expect(result.year4BaseRent).toBe(31258.0278);
+      expect(result.year4InterestAmount).toBe(2500.64);
+      // 31,258.0278 * 1.08 = 33,758.670024 -> 33,758.67
+      expect(result.year4MonthlyRent).toBe(33758.67);
+    });
   });
 
   describe('Advance Rent Options & Program C Contract Fee', () => {
@@ -256,6 +272,64 @@ describe('Ailin Rental Programs Helper & Calculations', () => {
 
       expect(sorted[0].customer_name).toBe('คุณสมศักดิ์');
       expect(sorted[0].interested_plot_name).toBe('A-05');
+    });
+  });
+
+  describe('Rental Inception Details Parser (7-point Financials)', () => {
+    it('accurately parses Plot 26 legacy contract notes with 240,200 THB contract fee', () => {
+      const plot26Contract = {
+        id: '89f660fb-78cb-4488-af23-32542a0734e6',
+        plot_name: '26',
+        project_name: 'ไอลิน 4',
+        tenant_name: 'คุณวิ',
+        program_type: 'program_c',
+        monthly_rent: 25000,
+        notes: '[เงินจอง: 5,000 บ.] [วันที่จอง: 2026-06-27] [วันที่ทำสัญญา: 2026-07-01] [ราคาบ้านตกลง: 4,699,000 บ.] [เงินประกัน 1 เดือน: 25,000 บ.] [ค่าทำสัญญา: 240,200 บ.] [ไม่เก็บค่าเช่าล่วงหน้า] [ปีที่ 4+: ค่างวดตกลง 31,258.0278 บ. + ดอกเบี้ย 8% รวม 33,758.67 บ./ด.]'
+      };
+
+      const details = parseRentalInceptionDetails(plot26Contract);
+
+      expect(details.plotName).toBe('26');
+      expect(details.projectName).toBe('ไอลิน 4');
+      expect(details.tenantName).toBe('คุณวิ');
+      expect(details.bookingDate).toBe('2026-06-27');
+      expect(details.bookingAmount).toBe(5000);
+      expect(details.contractDate).toBe('2026-07-01');
+      expect(details.contractFee).toBe(240200); // User requested 240,200 THB!
+      expect(details.securityDeposit).toBe(25000);
+      expect(details.advanceRent).toBe(0); // [ไม่เก็บค่าเช่าล่วงหน้า]
+    });
+
+    it('falls back to program_c default of 20,000 THB when no custom fee is in notes or column', () => {
+      const standardProgramC = {
+        plot_name: '12',
+        program_type: 'program_c',
+        monthly_rent: 20000,
+        notes: ''
+      };
+
+      const details = parseRentalInceptionDetails(standardProgramC);
+      expect(details.contractFee).toBe(20000);
+    });
+
+    it('handles structured lead booking records properly', () => {
+      const bookedLead = {
+        customer_name: 'คุณณัฐพงษ์',
+        interested_plot_name: '15',
+        project_name: 'ไอลิน สันทราย 2',
+        booking_date: '2026-10-15',
+        booking_amount: 10000,
+        rental_program: 'program_b',
+        rental_monthly_rent: 18000,
+        rental_deposit: 36000
+      };
+
+      const details = parseRentalInceptionDetails(bookedLead);
+      expect(details.plotName).toBe('15');
+      expect(details.projectName).toBe('ไอลิน สันทราย 2');
+      expect(details.bookingDate).toBe('2026-10-15');
+      expect(details.bookingAmount).toBe(10000);
+      expect(details.securityDeposit).toBe(36000);
     });
   });
 });

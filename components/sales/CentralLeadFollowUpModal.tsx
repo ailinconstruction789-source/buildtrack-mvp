@@ -522,7 +522,7 @@ function FollowUpSession({
                     <option value="Follow Up">🟢 Follow Up (กำลังติดตามงาน)</option>
                     <option value="Contacted">🟢 Contacted (ติดต่อแล้ว)</option>
                     <option value="Interested">🔥 Interested (สนใจมาก)</option>
-                    <option value="Lost">Lost — ไม่สนใจ / ยุติการติดตาม</option>
+                    <option value="Lost">❌ Lost — ยุติการซื้อ / ไม่สนใจ (ยังไม่จอง)</option>
                     <option value="Unqualified">💤 Unqualified (ไม่สนใจ / ยกเลิกติดตาม)</option>
                     <option value="Nurture">💤 Nurture (พักการติดต่อ / Cold Lead)</option>
                   </select>

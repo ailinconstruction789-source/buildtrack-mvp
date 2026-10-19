@@ -43,6 +43,7 @@ function builder(table: string) {
     insert: (payload: Record<string, unknown>[]) => { q.action = 'insert'; q.payload = payload; return api; },
     update: (payload: Record<string, unknown>) => { q.action = 'update'; q.payload = payload; return api; },
     eq: (key: string, value: unknown) => { q.filters.push([key, value]); return api; },
+    neq: (key: string, value: unknown) => { q.filters.push([`neq:${key}`, value]); return api; },
     in: (key: string, value: unknown) => { q.filters.push([key, value]); return api; },
     is: (key: string, value: unknown) => { q.filters.push([key, value]); return api; },
     or: (value: unknown) => { q.filters.push(['or', value]); return api; },

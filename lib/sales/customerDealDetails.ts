@@ -101,3 +101,75 @@ export function extractExpectedTransferDate(notes: unknown): string | null {
   return null;
 }
 
+/** Updates or appends expected transfer date in lead notes */
+export function updateExpectedTransferDateInNotes(notes: unknown, newDateStr: string | null): string {
+  let text = typeof notes === 'string' ? notes : '';
+  
+  // 1. If text has dot-separated tokens like: " · คาดโอน: ..."
+  const dotPattern = /\s*·\s*คาด(?:ว่าจะ|การณ์)?โอน:[^·\n]*/;
+  // 2. Line pattern like: "• คาดโอน: ..." or "คาดโอน: ..."
+  const linePattern = /(?:^|\n)[ \t]*(?:[•·\-\*]\s*)?คาด(?:ว่าจะ|การณ์)?โอน:[^\n]*/;
+
+  if (!newDateStr) {
+    if (dotPattern.test(text)) {
+      return text.replace(dotPattern, '').trim();
+    }
+    if (linePattern.test(text)) {
+      return text.replace(linePattern, '').trim();
+    }
+    return text.trim();
+  }
+
+  const formattedLine = `• คาดโอน: ${newDateStr}`;
+
+  if (dotPattern.test(text)) {
+    return text.replace(dotPattern, ` · คาดโอน: ${newDateStr}`);
+  }
+  if (linePattern.test(text)) {
+    return text.replace(linePattern, (m) => m.startsWith('\n') ? `\n${formattedLine}` : formattedLine);
+  }
+
+  if (!text.trim()) {
+    return formattedLine;
+  }
+  return `${text.trim()}\n${formattedLine}`;
+}
+
+/** Extracts cancellation date (YYYY-MM-DD) from lead notes, lost_reason_detail, or status log */
+export function extractCancelledDate(notes: unknown, lostReasonDetail?: unknown): string | null {
+  const combined = [
+    typeof lostReasonDetail === 'string' ? lostReasonDetail : '',
+    typeof notes === 'string' ? notes : ''
+  ].filter(Boolean).join('\n');
+
+  if (!combined) return null;
+
+  // 1. Explicit ISO date: "วันที่ยกเลิก: 2026-10-07" or "ยกเลิก: 2026-10-07"
+  const isoMatch = combined.match(/(?:วันที่)?ยกเลิก(?:จอง)?:\s*(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    let year = parseInt(isoMatch[1], 10);
+    if (year > 2400) year -= 543;
+    return `${year}-${isoMatch[2]}-${isoMatch[3]}`;
+  }
+
+  // 2. Explicit DD/MM/YYYY date: "วันที่ยกเลิก: 07/10/2026" or "07/10/2569"
+  const dmyMatch = combined.match(/(?:วันที่)?ยกเลิก(?:จอง)?:\s*(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  if (dmyMatch) {
+    const day = dmyMatch[1].padStart(2, '0');
+    const month = dmyMatch[2].padStart(2, '0');
+    let year = parseInt(dmyMatch[3], 10);
+    if (year > 2400) year -= 543;
+    return `${year}-${month}-${day}`;
+  }
+
+  // 3. Audit log timestamp when status changed to Cancelled: "[2026-10-16T... ] Cancelled — ยกเลิกจอง"
+  const logMatch = combined.match(/\[(\d{4}-\d{2}-\d{2})T[^\]]*\]\s*(?:Cancelled|ยกเลิกจอง)/i);
+  if (logMatch) {
+    return logMatch[1];
+  }
+
+  return null;
+}
+
+
+

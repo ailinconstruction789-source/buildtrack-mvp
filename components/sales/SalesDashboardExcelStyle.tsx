@@ -1,6 +1,6 @@
 "use client";
 import { customerExpectedTransferDay } from '@/lib/sales/customerBusinessDate';
-import { extractAgreedPrices, extractExpectedTransferDate } from '@/lib/sales/customerDealDetails';
+import { extractAgreedPrices, extractCancelledDate, extractExpectedTransferDate } from '@/lib/sales/customerDealDetails';
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
@@ -181,28 +181,41 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
         let fallbackSales: any[] = [];
         if (allSalesRows.length === 0) {
           const directSales = await fetchSalesWithoutLimit('sales', { select: '*', orderBy: 'created_at', ascending: false });
-          fallbackSales = directSales || [];
-          if (directSales && directSales.length > 0) {
-            allSalesRows = directSales.map((s: any) => {
+          const hasAuthoritativeLeads = (lData || []).some((l: any) =>
+            l.booking_date || l.transferred_date ||
+            ['transferred', 'reserved', 'booked', 'contracted', 'cancelled'].includes((l.status || '').toLowerCase())
+          );
+          const usableDirectSales = hasAuthoritativeLeads
+            ? (directSales || []).filter((s: any) =>
+                !(s.booking_route === 'legacy_import' && !s.lead_id && !s.customer_name && !s.customerName && !s.booked_at && !s.transferred_at && !s.cancelled_at)
+              )
+            : (directSales || []);
+          fallbackSales = usableDirectSales;
+          if (usableDirectSales && usableDirectSales.length > 0) {
+            allSalesRows = usableDirectSales.map((s: any) => {
               const matchedPlot = (pData || []).find((p: any) => p.id === s.plot_id || (p.plot_name === s.plot_id && (!s.project_name || p.project_name === s.project_name)));
               const proj = s.project_name || matchedPlot?.project_name;
-              const matchedLead = (lData || []).find((l: any) =>
-                (s.lead_id && l.id === s.lead_id) ||
-                (l.customer_name && s.customer_name && l.customer_name.trim() === s.customer_name.trim()) ||
-                (matchedPlot?.highlight_note && l.customer_name && matchedPlot.highlight_note.includes(l.customer_name.trim())) ||
-                (proj && l.project_name === proj && (
-                  (s.plot_id && (l.interested_plot_id === s.plot_id || (l.interested_plot_name && (s.plot_id === `${proj}-${l.interested_plot_name}` || matchedPlot?.plot_name === l.interested_plot_name))))
-                ))
-              );
+              const matchedLead =
+                (s.lead_id ? (lData || []).find((l: any) => l.id === s.lead_id) : undefined) ||
+                (s.customer_name ? (lData || []).find((l: any) => l.customer_name && l.customer_name.trim() === s.customer_name.trim()) : undefined) ||
+                (lData || []).find((l: any) =>
+                  (matchedPlot?.highlight_note && l.customer_name && matchedPlot.highlight_note.includes(l.customer_name.trim())) ||
+                  (proj && l.project_name === proj && (
+                    (s.plot_id && (l.interested_plot_id === s.plot_id || (l.interested_plot_name && (s.plot_id === `${proj}-${l.interested_plot_name}` || matchedPlot?.plot_name === l.interested_plot_name))))
+                  ))
+                );
               const stageRaw = (s.contract_status || s.crm_stage || s.status || '').toLowerCase();
               const { salePrice: notesSalePrice, landAppraisalPrice: notesTdPrice } = extractAgreedPrices(matchedLead?.notes);
               const salePrice = Number(s.sale_price) || notesSalePrice || Number(matchedPlot?.selling_price || 0);
               const tdPrice = Number(s.land_office_price) || notesTdPrice || Number(matchedPlot?.land_appraisal_price || 0) || salePrice;
               const expectedTransferDate = s.expected_transfer_date || extractExpectedTransferDate(matchedLead?.notes) || customerExpectedTransferDay(s) || null;
 
-              const isTransferred = stageRaw === 'transferred' || stageRaw === 'handover' ||
+              const isCancelled = stageRaw === 'cancelled' || Boolean(s.cancelled_at);
+              const isTransferred = !isCancelled && (
+                stageRaw === 'transferred' || stageRaw === 'handover' ||
                 Boolean(s.transferred_at) || Boolean(matchedLead?.transferred_date) ||
-                (matchedPlot?.sale_status || '').toLowerCase() === 'transferred';
+                (matchedPlot?.sale_status || '').toLowerCase() === 'transferred'
+              );
 
               return {
                 saleId: s.id,
@@ -212,14 +225,14 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
                 plotId: s.plot_id || matchedPlot?.id,
                 plotName: matchedPlot?.plot_name || s.plot_id,
                 projectName: proj || 'ไม่ระบุโครงการ',
-                stage: isTransferred ? 'transferred'
+                stage: isCancelled ? 'cancelled'
+                  : isTransferred ? 'transferred'
                   : stageRaw === 'contracted' ? 'contracted'
-                  : stageRaw === 'cancelled' ? 'cancelled'
                   : 'booked',
-                bookedAt: s.booked_at || matchedLead?.booking_date || s.created_at,
+                bookedAt: s.booked_at || matchedLead?.booking_date || (!isCancelled ? s.created_at : null),
                 transferredAt: s.transferred_at || matchedLead?.transferred_date || null,
                 leadDate: matchedLead?.actual_visit_date || matchedLead?.lead_date || matchedLead?.created_at || null,
-                cancelledAt: s.cancelled_at,
+                cancelledAt: s.cancelled_at || (isCancelled ? extractCancelledDate(matchedLead?.notes, matchedLead?.lost_reason_detail) : null),
                 ownerName: s.agent_name || s.owner_name || matchedLead?.agent_name,
                 salePrice,
                 tdPrice,
@@ -233,36 +246,45 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
         allSalesRows = allSalesRows.map((s: any) => {
           const matchedPlot = (pData || []).find((p: any) => p.id === s.plotId || (p.plot_name === s.plotName && (!s.projectName || p.project_name === s.projectName)));
           const proj = s.projectName || matchedPlot?.project_name;
-          const matchedLead = (lData || []).find((l: any) =>
-            (s.customerId && l.id === s.customerId) ||
-            (l.customer_name && s.customerName && l.customer_name.trim() === s.customerName.trim()) ||
-            (matchedPlot?.highlight_note && l.customer_name && matchedPlot.highlight_note.includes(l.customer_name.trim())) ||
-            (proj && l.project_name === proj && (
-              (s.plotId && (l.interested_plot_id === s.plotId || (l.interested_plot_name && (s.plotId === `${proj}-${l.interested_plot_name}` || matchedPlot?.plot_name === l.interested_plot_name))))
-            ))
-          );
+          const matchedLead =
+            (s.customerId ? (lData || []).find((l: any) => l.id === s.customerId) : undefined) ||
+            (s.customerName ? (lData || []).find((l: any) => l.customer_name && l.customer_name.trim() === s.customerName.trim() && (!proj || !l.project_name || l.project_name === proj)) : undefined) ||
+            (s.customerName ? (lData || []).find((l: any) => l.customer_name && l.customer_name.trim() === s.customerName.trim()) : undefined) ||
+            (lData || []).find((l: any) =>
+              (matchedPlot?.highlight_note && l.customer_name && matchedPlot.highlight_note.includes(l.customer_name.trim())) ||
+              (proj && l.project_name === proj && (
+                (s.plotId && (l.interested_plot_id === s.plotId || (l.interested_plot_name && (s.plotId === `${proj}-${l.interested_plot_name}` || matchedPlot?.plot_name === l.interested_plot_name))))
+              ))
+            );
           const { salePrice: notesSalePrice, landAppraisalPrice: notesTdPrice } = extractAgreedPrices(matchedLead?.notes);
           const resolvedSalePrice = Number(s.salePrice) || notesSalePrice || Number(matchedPlot?.selling_price || 0);
           const resolvedTdPrice = Number(s.tdPrice) || notesTdPrice || Number(matchedPlot?.land_appraisal_price || 0) || resolvedSalePrice;
           const resolvedExpTransfer = s.expectedTransferDate || extractExpectedTransferDate(matchedLead?.notes) || customerExpectedTransferDay(s) || null;
 
           const stageRaw = (s.stage || '').toLowerCase();
-          const isTransferred = stageRaw === 'transferred' || stageRaw === 'handover' ||
+          const isCancelled = stageRaw === 'cancelled' ||
+            (matchedLead?.status || '').toLowerCase() === 'cancelled' ||
+            /cancelled|ยกเลิกจอง|หลุดจอง/i.test(matchedLead?.crm_status || matchedLead?.auto_status || '');
+          const isTransferred = !isCancelled && (
+            stageRaw === 'transferred' || stageRaw === 'handover' ||
             Boolean(s.transferredAt) || Boolean(s.transferred_at) || Boolean(matchedLead?.transferred_date) ||
-            (matchedPlot?.sale_status || '').toLowerCase() === 'transferred';
+            (matchedPlot?.sale_status || '').toLowerCase() === 'transferred'
+          );
 
-          const resolvedBookedAt = s.booked_at || matchedLead?.booking_date || s.bookedAt || s.created_at;
+          const resolvedBookedAt = s.booked_at || matchedLead?.booking_date || s.bookedAt || (!isCancelled ? s.created_at : null);
           const resolvedTransferredAt = s.transferredAt || s.transferred_at || matchedLead?.transferred_date || null;
           const resolvedLeadDate = s.leadDate || matchedLead?.actual_visit_date || matchedLead?.lead_date || matchedLead?.created_at || null;
+          const resolvedCancelledAt = s.cancelledAt || s.cancelled_at || (isCancelled ? (extractCancelledDate(matchedLead?.notes, matchedLead?.lost_reason_detail) || matchedLead?.booking_date || null) : null);
 
           return {
             ...s,
             customerName: s.customerName || matchedLead?.customer_name || matchedPlot?.customer_name,
             phone: s.phone || matchedLead?.phone || '',
             ownerName: s.ownerName || matchedLead?.agent_name,
-            stage: isTransferred ? 'transferred' : s.stage,
+            stage: isCancelled ? 'cancelled' : isTransferred ? 'transferred' : s.stage,
             bookedAt: resolvedBookedAt,
             transferredAt: resolvedTransferredAt,
+            cancelledAt: resolvedCancelledAt,
             leadDate: resolvedLeadDate,
             salePrice: resolvedSalePrice,
             tdPrice: resolvedTdPrice,
@@ -270,52 +292,83 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
           };
         });
 
-        // Append active booked/contracted leads from lData not yet in allSalesRows
-        const existingPlotKeys = new Set(allSalesRows.map((s: any) => `${s.projectName}-${s.plotName}`));
-        const existingCustomerNames = new Set(allSalesRows.map((s: any) => s.customerName).filter(Boolean));
-
+        // Append sale-stage leads (transferred, booked, contracted, cancelled) from lData not yet in allSalesRows
         (lData || []).forEach((l: any) => {
-          const isBookedOrContracted = l.booking_date ||
-            ['reserved', 'booked', 'contracted'].includes((l.status || '').toLowerCase()) ||
-            /booked|contracted|reserved|จอง|สัญญา/i.test(l.crm_status || l.auto_status || '');
-          if (!isBookedOrContracted) return;
+          const statusLower = (l.status || '').toLowerCase();
+          const crmText = `${l.crm_status || ''} ${l.auto_status || ''} ${l.lost_reason || ''}`;
+          const isCancelled = statusLower === 'cancelled' || /cancelled|ยกเลิกจอง|หลุดจอง/i.test(crmText);
+          const isPreBookingLost = !isCancelled && (statusLower === 'lost' || /lost|ยุติการซื้อ|ไม่สนใจ|ไม่ซื้อ|ไม่จอง/i.test(crmText));
+          if (isPreBookingLost && !l.booking_date && !l.transferred_date) return;
 
-          const matchedPlot = (pData || []).find((p: any) =>
-            (l.project_name && p.project_name === l.project_name && (p.id === l.interested_plot_id || p.plot_name === (l.interested_plot_name || l.interested_plot_id))) ||
-            (l.interested_plot_id && p.id === l.interested_plot_id) ||
-            (l.customer_name && p.highlight_note && p.highlight_note.includes(l.customer_name.trim()))
+          const isTransferred = !isCancelled && (
+            statusLower === 'transferred' ||
+            Boolean(l.transferred_date) ||
+            /transferred|won|โอนแล้ว|โอนกรรมสิทธิ์/i.test(crmText)
+          );
+          const isContracted = !isCancelled && !isTransferred && (
+            statusLower === 'contracted' ||
+            /contracted|ทำสัญญา|ชำระเงินดาวน์|เตรียมเอกสาร|pre-approval|ยื่นกู้|สินเชื่อผ่าน|รอโอน/i.test(crmText)
+          );
+          const isBooked = !isCancelled && !isTransferred && !isContracted && (
+            Boolean(l.booking_date) ||
+            ['reserved', 'booked'].includes(statusLower) ||
+            /booked|reserved|จองแล้ว|วางเงินจอง/i.test(crmText)
           );
 
-          const plotKey = `${l.project_name}-${matchedPlot?.plot_name || l.interested_plot_name || l.interested_plot_id}`;
-          if (existingPlotKeys.has(plotKey) || (l.customer_name && existingCustomerNames.has(l.customer_name))) {
-            return;
-          }
+          if (!isCancelled && !isTransferred && !isContracted && !isBooked) return;
+
+          const matchedPlot = (pData || []).find((p: any) =>
+            l.project_name && p.project_name === l.project_name && p.id === l.interested_plot_id
+          ) || (pData || []).find((p: any) =>
+            l.project_name && p.project_name === l.project_name && p.plot_name === (l.interested_plot_name || l.interested_plot_id)
+          ) || (pData || []).find((p: any) =>
+            l.interested_plot_id && p.id === l.interested_plot_id
+          ) || (!isCancelled ? (pData || []).find((p: any) =>
+            l.customer_name && (!l.project_name || p.project_name === l.project_name) && p.highlight_note && p.highlight_note.includes(l.customer_name.trim())
+          ) : undefined);
+
+          const stage = isCancelled ? 'cancelled'
+            : isTransferred ? 'transferred'
+            : isContracted ? 'contracted'
+            : 'booked';
+
+          const resolvedPlotId = matchedPlot?.id || l.interested_plot_id;
+          const resolvedPlotName = matchedPlot?.plot_name || l.interested_plot_name || l.interested_plot_id;
+          const resolvedProj = l.project_name || matchedPlot?.project_name || 'ไม่ระบุโครงการ';
+
+          const alreadyExists = allSalesRows.some((s: any) =>
+            (s.customerId && s.customerId === l.id) ||
+            (l.customer_name && s.customerName && s.customerName.trim() === l.customer_name.trim() && s.stage === stage && (s.projectName === resolvedProj || s.plotId === resolvedPlotId)) ||
+            (!s.customerId && !s.customerName && s.plotId && s.plotId === resolvedPlotId && s.stage === stage)
+          );
+          if (alreadyExists) return;
 
           const { salePrice: notesSalePrice, landAppraisalPrice: notesTdPrice } = extractAgreedPrices(l.notes);
           const salePrice = notesSalePrice || Number(matchedPlot?.selling_price || 0);
           const tdPrice = notesTdPrice || Number(matchedPlot?.land_appraisal_price || 0) || salePrice;
           const expectedTransferDate = extractExpectedTransferDate(l.notes);
-          const stage = /contract/i.test(l.crm_status || l.status || '') ? 'contracted' : 'booked';
+          const cancelledAt = isCancelled
+            ? (l.cancelled_at || l.cancelled_date || extractCancelledDate(l.notes, l.lost_reason_detail) || l.booking_date || null)
+            : null;
 
           allSalesRows.push({
             saleId: `lead-${l.id}`,
             customerId: l.id,
             customerName: l.customer_name,
             phone: l.phone || '',
-            plotId: matchedPlot?.id || l.interested_plot_id,
-            plotName: matchedPlot?.plot_name || l.interested_plot_name || l.interested_plot_id,
-            projectName: l.project_name || matchedPlot?.project_name || 'ไม่ระบุโครงการ',
+            plotId: resolvedPlotId,
+            plotName: resolvedPlotName,
+            projectName: resolvedProj,
             stage,
-            bookedAt: l.booking_date || l.created_at,
+            bookedAt: l.booking_date || (!isCancelled ? l.created_at : null),
             transferredAt: l.transferred_date || null,
             leadDate: l.actual_visit_date || l.lead_date || l.created_at || null,
-            cancelledAt: null,
+            cancelledAt,
             ownerName: l.agent_name || l.created_by_agent,
             salePrice,
             tdPrice,
             expectedTransferDate
           });
-          existingPlotKeys.add(plotKey);
         });
 
         if (isCurrentRequest()) {
@@ -427,19 +480,22 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
     if (data.sales && data.sales.length > 0) {
       records = data.sales.map((s: any) => {
         const matchingPlot = data.plots.find((p: any) => p.id === s.plotId || (p.plot_name === s.plotName && p.project_name === s.projectName));
-        const matchingLead = data.leads?.find((l: any) =>
-          (s.customerId && l.id === s.customerId) ||
-          (l.customer_name && s.customerName && l.customer_name.trim() === s.customerName.trim()) ||
-          (matchingPlot?.highlight_note && l.customer_name && matchingPlot.highlight_note.includes(l.customer_name.trim()))
-        );
+        const matchingLead =
+          (s.customerId ? data.leads?.find((l: any) => l.id === s.customerId) : undefined) ||
+          (s.customerName ? data.leads?.find((l: any) => l.customer_name && l.customer_name.trim() === s.customerName.trim() && (!s.projectName || !l.project_name || l.project_name === s.projectName)) : undefined) ||
+          (s.customerName ? data.leads?.find((l: any) => l.customer_name && l.customer_name.trim() === s.customerName.trim()) : undefined) ||
+          data.leads?.find((l: any) =>
+            matchingPlot?.highlight_note && l.customer_name && matchingPlot.highlight_note.includes(l.customer_name.trim())
+          );
         const salePrice = data.canonical ? s.salePrice : s.salePrice ? Number(s.salePrice) : Number(matchingPlot?.selling_price || 0);
         const bookDate = s.importedHistory?.bookedDate || s.bookedAt?.split('T')[0] || matchingLead?.booking_date?.split('T')[0] || null;
-        const isTransferred = ['transferred', 'handover'].includes(s.stage) || Boolean(s.transferredAt) || Boolean(matchingLead?.transferred_date);
+        const isCancelled = s.stage === 'cancelled' || (matchingLead?.status || '').toLowerCase() === 'cancelled' || /cancelled|ยกเลิกจอง|หลุดจอง/i.test(matchingLead?.crm_status || matchingLead?.auto_status || '');
+        const isTransferred = !isCancelled && (['transferred', 'handover'].includes(s.stage) || Boolean(s.transferredAt) || Boolean(matchingLead?.transferred_date));
         const transferDate = isTransferred 
           ? (s.importedHistory?.transferredDate || s.transferredAt?.split('T')[0] || matchingLead?.transferred_date?.split('T')[0] || null) 
           : null;
-        const cancelDate = s.stage === 'cancelled' 
-          ? (s.importedHistory?.cancelledDate || s.cancelledAt?.split('T')[0] || null) 
+        const cancelDate = isCancelled 
+          ? (s.importedHistory?.cancelledDate || s.cancelledAt?.split('T')[0] || s.cancelled_at?.split('T')[0] || extractCancelledDate(matchingLead?.notes, matchingLead?.lost_reason_detail) || null) 
           : null;
         const customerLeadDate = s.customerId ? (leadDates.get(s.customerId) || (s.customerName ? leadDates.get(`name:${s.customerName.trim()}`) : null)) : null;
         const leadVisitDate = matchingLead?.actual_visit_date?.split('T')[0] || matchingLead?.lead_date?.split('T')[0] || null;
@@ -448,7 +504,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
         const resolvedTdPrice = tdPrice ?? s.tdPrice ?? matchingPlot?.land_appraisal_price ?? salePrice;
         const expectedTransfer = customerExpectedTransferDay(s) || s.expectedTransferDate || null;
 
-        const effectiveStage = s.stage === 'cancelled' ? 'cancelled' 
+        const effectiveStage = isCancelled ? 'cancelled' 
           : isTransferred ? 'transferred' 
           : s.stage;
 
@@ -488,10 +544,13 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
     } else if (data.fallbackSales && data.fallbackSales.length > 0) {
       records = data.fallbackSales.map((s: any) => {
         const matchingPlot = data.plots.find((p: any) => p.id === s.plot_id);
-        const matchingLead = data.leads?.find((l: any) => l.id === s.lead_id || (l.customer_name && s.customer_name && l.customer_name.trim() === s.customer_name.trim()));
+        const matchingLead =
+          (s.lead_id ? data.leads?.find((l: any) => l.id === s.lead_id) : undefined) ||
+          data.leads?.find((l: any) => l.customer_name && s.customer_name && l.customer_name.trim() === s.customer_name.trim());
         const salePrice = s.sale_price ? Number(s.sale_price) : Number(matchingPlot?.selling_price || 0);
-        const isTransferred = s.contract_status === 'Transferred' || s.crm_stage === 'transferred' || Boolean(s.transferred_at) || Boolean(matchingLead?.transferred_date);
-        const status = s.contract_status === 'Cancelled' || s.crm_stage === 'cancelled' ? 'Cancelled' 
+        const isCancelled = s.contract_status === 'Cancelled' || s.crm_stage === 'cancelled';
+        const isTransferred = !isCancelled && (s.contract_status === 'Transferred' || s.crm_stage === 'transferred' || Boolean(s.transferred_at) || Boolean(matchingLead?.transferred_date));
+        const status = isCancelled ? 'Cancelled' 
           : isTransferred ? 'Transferred' 
           : 'Reserved';
         return {
@@ -504,10 +563,10 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
           agent_name: matchingLead?.agent_name || s.agent_name || '-',
           salePrice,
           status,
-          stage: isTransferred ? 'transferred' : (s.crm_stage || s.contract_status),
-          bookDate: s.booked_at?.split('T')[0] || matchingLead?.booking_date?.split('T')[0] || s.created_at?.split('T')[0] || null,
+          stage: isCancelled ? 'cancelled' : isTransferred ? 'transferred' : (s.crm_stage || s.contract_status),
+          bookDate: s.booked_at?.split('T')[0] || matchingLead?.booking_date?.split('T')[0] || (!isCancelled ? s.created_at?.split('T')[0] : null) || null,
           transferDate: isTransferred ? (s.transferred_at?.split('T')[0] || matchingLead?.transferred_date?.split('T')[0] || null) : null,
-          cancelDate: s.cancelled_at?.split('T')[0] || null,
+          cancelDate: s.cancelled_at?.split('T')[0] || (isCancelled ? extractCancelledDate(matchingLead?.notes, matchingLead?.lost_reason_detail) : null) || null,
           createdDate: matchingLead?.actual_visit_date?.split('T')[0] || matchingLead?.lead_date?.split('T')[0] || s.created_at?.split('T')[0] || '2025-01-01',
           expectedTransfer: customerExpectedTransferDay(s),
           plot: matchingPlot,
@@ -527,23 +586,25 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       price: filteredRecords.filter((r: any) => r.salePrice == null).length,
     } : null;
 
-    const validRecords = filteredRecords.filter((r: any) => (r.createdDate || r.bookDate || '') <= targetDate.toISOString().split('T')[0]);
+    const validRecords = filteredRecords.filter((r: any) => (r.createdDate || r.bookDate || r.cancelDate || '') <= targetDate.toISOString().split('T')[0]);
 
     // Annual and monthly KPIs
     const viewsAcc = hasRealVisits
       ? filteredVisits.filter((v: any) => v.visitDate && v.visitDate.startsWith(selectedYear) && v.visitDate <= targetDate.toISOString().split('T')[0]).length
       : validRecords.filter((r: any) => r.createdDate && r.createdDate.startsWith(selectedYear) && r.createdDate <= targetDate.toISOString().split('T')[0]).length;
 
-    const bookedAcc = filteredRecords.filter((r: any) => r.bookDate && r.bookDate.startsWith(selectedYear) && r.bookDate <= targetDate.toISOString().split('T')[0] && (!r.cancelDate || r.cancelDate > targetDate.toISOString().split('T')[0]));
+    // Gross bookings in selectedYear up to targetDate (includes active, transferred, and later cancelled bookings)
+    const bookedAcc = filteredRecords.filter((r: any) => r.bookDate && r.bookDate.startsWith(selectedYear) && r.bookDate <= targetDate.toISOString().split('T')[0]);
     const cancelAcc = filteredRecords.filter((r: any) => r.cancelDate && r.cancelDate.startsWith(selectedYear) && r.cancelDate <= targetDate.toISOString().split('T')[0]);
     const transferAcc = filteredRecords.filter((r: any) => r.transferDate && r.transferDate.startsWith(selectedYear) && r.transferDate <= targetDate.toISOString().split('T')[0]);
 
     const viewsMonth = hasRealVisits
       ? filteredVisits.filter((v: any) => v.visitDate && v.visitDate.startsWith(targetMonthPrefix) && v.visitDate <= targetDate.toISOString().split('T')[0])
       : validRecords.filter((r: any) => r.createdDate?.startsWith(targetMonthPrefix));
-    const bookedMonth = filteredRecords.filter((r: any) => r.bookDate?.startsWith(targetMonthPrefix));
-    const transferMonth = filteredRecords.filter((r: any) => r.transferDate?.startsWith(targetMonthPrefix));
-    const cancelMonth = filteredRecords.filter((r: any) => r.cancelDate?.startsWith(targetMonthPrefix));
+    // Gross bookings in targetMonth up to targetDate (includes active, transferred, and later cancelled bookings)
+    const bookedMonth = filteredRecords.filter((r: any) => r.bookDate?.startsWith(targetMonthPrefix) && r.bookDate <= targetDate.toISOString().split('T')[0]);
+    const transferMonth = filteredRecords.filter((r: any) => r.transferDate?.startsWith(targetMonthPrefix) && r.transferDate <= targetDate.toISOString().split('T')[0]);
+    const cancelMonth = filteredRecords.filter((r: any) => r.cancelDate?.startsWith(targetMonthPrefix) && r.cancelDate <= targetDate.toISOString().split('T')[0]);
 
     const expectingTransfer = filteredRecords.filter((r: any) => r.expectedTransfer && r.expectedTransfer.startsWith(targetMonthPrefix) && !r.transferDate && (!r.cancelDate || r.cancelDate > targetMonthPrefix));
     const carriedOverTransfers = filteredRecords.filter((r: any) => r.expectedTransfer && r.expectedTransfer < targetMonthPrefix && !r.transferDate && (!r.cancelDate || r.cancelDate > targetMonthPrefix));
@@ -733,11 +794,11 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
     const months = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
     const years = ['2023', '2024', '2025', '2026'];
 
-    const buildLineData = (dateField: string) => months.map((m, idx) => {
+    const buildLineData = (dateField: string, excludeCancelled = false) => months.map((m, idx) => {
       const obj: any = { month: m };
       years.forEach(y => {
         const prefix = `${y}-${String(idx + 1).padStart(2, '0')}`;
-        obj[`y${y}`] = filteredRecords.filter((r: any) => r[dateField]?.startsWith(prefix)).length;
+        obj[`y${y}`] = filteredRecords.filter((r: any) => (!excludeCancelled || r.stage !== 'cancelled') && r[dateField]?.startsWith(prefix)).length;
       });
       return obj;
     });

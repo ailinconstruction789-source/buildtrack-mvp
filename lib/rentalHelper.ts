@@ -133,8 +133,9 @@ export function calculateRentalTerms(input: RentalCalculationInput): RentalCalcu
   const year4BaseRent = customYear4MonthlyRent !== undefined && customYear4MonthlyRent > 0
     ? customYear4MonthlyRent
     : monthlyRent;
-  const year4InterestAmount = Math.round((year4BaseRent * year4InterestPct) / 100);
-  const year4MonthlyRent = year4BaseRent + year4InterestAmount;
+  // Direct 8% calculation with standard 2-decimal financial precision (avoid premature whole-integer rounding)
+  const year4InterestAmount = Math.round(((year4BaseRent * year4InterestPct) / 100) * 100) / 100;
+  const year4MonthlyRent = Math.round((year4BaseRent * (1 + year4InterestPct / 100)) * 100) / 100;
 
   return {
     programType,
@@ -413,5 +414,114 @@ export function generateReceiptNumber(type: 'receipt' | 'invoice', periodMonth: 
   const prefix = type === 'receipt' ? 'RCP' : 'INV';
   const cleanPlot = plotName.replace(/\D/g, '') || '01';
   return `${prefix}-${yyyy}${mm}-P${cleanPlot.padStart(2, '0')}-M${String(periodMonth).padStart(2, '0')}`;
+}
+
+export interface RentalInceptionDetails {
+  plotName?: string | null;
+  projectName?: string | null;
+  tenantName?: string | null;
+  bookingDate?: string | null;
+  bookingAmount?: number | null;
+  contractDate?: string | null;
+  contractFee?: number | null;
+  securityDeposit?: number | null;
+  advanceRent?: number | null;
+  monthlyRent?: number | null;
+  programType?: RentalProgramType | null;
+}
+
+/**
+ * Extracts comprehensive 7-point financial inception details from contract/lead
+ */
+export function parseRentalInceptionDetails(contractOrLead: any): RentalInceptionDetails {
+  if (!contractOrLead) return {};
+
+  const notes = String(contractOrLead.notes || '');
+
+  const extractMatch = (pattern: RegExp) => {
+    const m = notes.match(pattern);
+    return m ? m[1].trim() : null;
+  };
+
+  // 1. Booking Date
+  const rawBookingDate =
+    contractOrLead.booking_date ||
+    contractOrLead.bookingDate ||
+    contractOrLead.booked_at ||
+    contractOrLead.bookedAt ||
+    extractMatch(/\[วันที่จอง:\s*([^\]]+)\]/);
+
+  // 2. Booking Amount (Prefer positive column value, then notes regex, then column fallback)
+  const feeNotesBooking = extractMatch(/\[เงินจอง:\s*([\d,.]+)\s*บ\.?\]/);
+  const rawBookingAmount =
+    contractOrLead.booking_amount !== undefined && contractOrLead.booking_amount !== null && Number(contractOrLead.booking_amount) > 0
+      ? Number(contractOrLead.booking_amount)
+      : contractOrLead.bookingAmount !== undefined && contractOrLead.bookingAmount !== null && Number(contractOrLead.bookingAmount) > 0
+      ? Number(contractOrLead.bookingAmount)
+      : feeNotesBooking
+      ? Number(feeNotesBooking.replace(/,/g, ''))
+      : contractOrLead.booking_amount !== undefined && contractOrLead.booking_amount !== null
+      ? Number(contractOrLead.booking_amount)
+      : null;
+
+  // 3. Contract Date
+  const rawContractDate =
+    contractOrLead.contract_date ||
+    contractOrLead.contractDate ||
+    contractOrLead.contracted_at ||
+    extractMatch(/\[วันที่ทำสัญญา:\s*([^\]]+)\]/) ||
+    contractOrLead.lease_start_date;
+
+  // 4. Contract Fee (Parse notes first, or direct positive column, or program C fallback, else 0 for A/B)
+  const isProgramC = contractOrLead.program_type === 'program_c' || contractOrLead.rental_program === 'program_c';
+  const feeNotesContract = extractMatch(/\[ค่าทำสัญญา:\s*([\d,.]+)\s*บ\.?\]/);
+  const rawContractFee =
+    feeNotesContract
+      ? Number(feeNotesContract.replace(/,/g, ''))
+      : contractOrLead.contract_fee !== undefined && contractOrLead.contract_fee !== null && Number(contractOrLead.contract_fee) > 0
+      ? Number(contractOrLead.contract_fee)
+      : isProgramC
+      ? 20000
+      : 0;
+
+  // 5. Security Deposit (Prefer positive column, then notes regex, then column fallback)
+  const feeNotesDeposit = extractMatch(/\[เงินประกัน(?:\s*\d+\s*เดือน)?:\s*([\d,.]+)\s*บ\.?\]/);
+  const rawSecurityDeposit =
+    contractOrLead.security_deposit !== undefined && contractOrLead.security_deposit !== null && Number(contractOrLead.security_deposit) > 0
+      ? Number(contractOrLead.security_deposit)
+      : contractOrLead.rental_deposit !== undefined && contractOrLead.rental_deposit !== null && Number(contractOrLead.rental_deposit) > 0
+      ? Number(contractOrLead.rental_deposit)
+      : feeNotesDeposit
+      ? Number(feeNotesDeposit.replace(/,/g, ''))
+      : contractOrLead.security_deposit !== undefined && contractOrLead.security_deposit !== null
+      ? Number(contractOrLead.security_deposit)
+      : null;
+
+  // 6. Advance Rent (Check no-advance note, then positive column, then notes regex, then column fallback)
+  const isNoAdvance = notes.includes('[ไม่เก็บค่าเช่าล่วงหน้า]');
+  const feeNotesAdvance = extractMatch(/\[ค่าเช่าล่วงหน้า(?:\s*\d+\s*เดือน)?:\s*([\d,.]+)\s*บ\.?\]/);
+  const rawAdvanceRent = isNoAdvance
+    ? 0
+    : contractOrLead.advance_rent !== undefined && contractOrLead.advance_rent !== null && Number(contractOrLead.advance_rent) > 0
+    ? Number(contractOrLead.advance_rent)
+    : feeNotesAdvance
+    ? Number(feeNotesAdvance.replace(/,/g, ''))
+    : contractOrLead.advance_rent !== undefined && contractOrLead.advance_rent !== null
+    ? Number(contractOrLead.advance_rent)
+    : null;
+
+  return {
+    plotName: contractOrLead.plot_name || contractOrLead.plot_id || contractOrLead.interested_plot_name || contractOrLead.interested_plot_id || null,
+    projectName: contractOrLead.project_name || null,
+    tenantName: contractOrLead.tenant_name || contractOrLead.customer_name || null,
+    bookingDate: rawBookingDate ? String(rawBookingDate).split('T')[0] : null,
+    bookingAmount: rawBookingAmount,
+    contractDate: rawContractDate ? String(rawContractDate).split('T')[0] : null,
+    contractFee: rawContractFee,
+    securityDeposit: rawSecurityDeposit,
+    advanceRent: rawAdvanceRent,
+    monthlyRent: Number(contractOrLead.monthly_rent || contractOrLead.rental_monthly_rent || 0),
+    programType: contractOrLead.program_type || contractOrLead.rental_program || null
+  };
 }
 

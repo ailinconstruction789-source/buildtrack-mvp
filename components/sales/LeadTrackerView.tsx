@@ -293,8 +293,8 @@ export default function LeadTrackerView({
         lost_reason: reason,
         lost_reason_detail: detail,
         crm_status: 'Lost — ยุติการซื้อ / ไม่จอง',
-        auto_status: 'Lost',
-        status: 'Cancelled'
+        auto_status: 'ยุติการซื้อ',
+        status: 'Lost'
       }).eq('id', lead.id);
       if (error) throw error;
 

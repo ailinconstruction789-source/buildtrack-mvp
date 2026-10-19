@@ -104,13 +104,16 @@ describe('per-booking forecast and actual transfer dates', () => {
     await waitFor(() => expect(input).not.toBeDisabled());
     expect(input.value).toBe('2026-10-30');
   });
-  it('does not allow a Lead ID to masquerade as a sale ID', async () => {
+  it('does not allow a Lead ID to masquerade as a sale ID and saves forecast to lead', async () => {
     mocks.read.mockImplementation(async (table: string) => table === 'plots' ? [plot] : table === 'leads'
       ? [{ id: 'lead-only', customer_name: 'Customer A', status: 'Reserved', interested_plot_id: plot.id }] : []);
     const input = await openBooked();
-    expect(input).toBeDisabled();
+    expect(input).not.toBeDisabled();
     fireEvent.change(input, { target: { value: '2026-10-30' } });
-    expect(mocks.update).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(mocks.update).toHaveBeenCalledWith('leads', expect.objectContaining({ notes: expect.stringContaining('2026-10-30') }));
+    });
+    expect(mocks.update).not.toHaveBeenCalledWith('sales', expect.anything());
   });
   it('shows no actual transfer date when only a forecast is known', async () => {
     mocks.read.mockImplementation(async (table: string) => table === 'plots' ? [plot] : table === 'sales'

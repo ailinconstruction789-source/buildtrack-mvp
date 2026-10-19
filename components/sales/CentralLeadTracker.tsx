@@ -18,7 +18,7 @@ import RentalActionModal from './RentalActionModal';
 import SalesOverlay from './SalesOverlay';
 import { getLeadStage, canStartSalesDeal } from '@/lib/sales/leadStage';
 import SalesDealStatusModal from './SalesDealStatusModal';
-import { isPreBookingLost, nativeLeadId } from '@/lib/sales/leadLifecycle';
+import { isCancelledBookingLead, isPreBookingLost, nativeLeadId } from '@/lib/sales/leadLifecycle';
 import { readLeadActivitySnapshot, writeLeadActivitySummary } from '@/lib/sales/leadActivity';
 import { salesDealActionLabel } from '@/lib/sales/dealStatus';
 
@@ -320,6 +320,7 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
         )}
         {displayedCustomers.map((customer, index) => {
           const stage = getCustomerStageCategory(customer);
+          const isCancelledDeal = stage === 'lost' && isCancelledBookingLead(customer);
           return (
             <tr key={customer.id} onClick={(e) => {
               if (disabled || (e.target as HTMLElement).closest('a, button')) return;
@@ -351,11 +352,13 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
                       ? 'bg-blue-100 text-blue-900 border border-blue-200'
                       : stage === 'booked'
                       ? 'bg-orange-100 text-orange-800 border border-orange-200'
+                      : isCancelledDeal
+                      ? 'bg-orange-100 text-orange-900 border border-orange-300'
                       : stage === 'lost'
                       ? 'bg-slate-200 text-slate-700 border border-slate-300'
                       : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
                   }`}>
-                    {stage === 'transferred' ? '🏡 โอนแล้ว' : stage === 'rented' ? '🔑 สัญญาเช่า' : stage === 'booked' ? '🏷️ จองแล้ว' : stage === 'lost' ? '💤 พักติดตาม/ไม่สนใจ' : `🟢 ${trackerStatusLabel(customer.intakeStatus)}`}
+                    {stage === 'transferred' ? '🏡 โอนแล้ว' : stage === 'rented' ? '🔑 สัญญาเช่า' : stage === 'booked' ? '🏷️ จองแล้ว' : isCancelledDeal ? '🚫 ยกเลิกจอง' : stage === 'lost' ? '💤 พักติดตาม/ไม่สนใจ' : `🟢 ${trackerStatusLabel(customer.intakeStatus)}`}
                   </span>
                 </p>
                 {customer.interests.map(interest => <p key={interest.id} className="text-[11px] text-slate-600">{interest.projectName}: <span className="font-semibold text-blue-700">{trackerStatusLabel(interest.engagementStatus)}</span></p>)}
@@ -418,6 +421,8 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
                   ? 'bg-blue-50 border-blue-200 text-blue-900'
                   : getCustomerStageCategory(selectedCustomer) === 'booked'
                   ? 'bg-orange-50 border-orange-200 text-orange-800'
+                  : getCustomerStageCategory(selectedCustomer) === 'lost' && isCancelledBookingLead(selectedCustomer)
+                  ? 'bg-orange-50 border-orange-200 text-orange-900'
                   : getCustomerStageCategory(selectedCustomer) === 'lost'
                   ? 'bg-slate-100 border-slate-200 text-slate-800'
                   : 'bg-emerald-50 border-emerald-200 text-emerald-800'
@@ -425,7 +430,8 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
                 <span className="font-bold">
                   {getCustomerStageCategory(selectedCustomer) === 'rented' && '🔑 สถานะ: สัญญาเช่า (Rental Contract)'}
                   {getCustomerStageCategory(selectedCustomer) === 'booked' && '🏷️ สถานะ: จองแปลงแล้ว (Booked)'}
-                  {getCustomerStageCategory(selectedCustomer) === 'lost' && '💤 สถานะ: พักการติดตาม / ไม่สนใจ'}
+                  {getCustomerStageCategory(selectedCustomer) === 'lost' && isCancelledBookingLead(selectedCustomer) && '🚫 สถานะ: ยกเลิกจอง (Cancelled Booking)'}
+                  {getCustomerStageCategory(selectedCustomer) === 'lost' && !isCancelledBookingLead(selectedCustomer) && '💤 สถานะ: พักการติดตาม / ไม่สนใจ'}
                   {getCustomerStageCategory(selectedCustomer) === 'active' && `🟢 สถานะ: กำลังติดตาม (${trackerStatusLabel(selectedCustomer.intakeStatus)})`}
                 </span>
                 {canManage && nativeLeadId(selectedCustomer) && isPreBookingLost(selectedCustomer) && (

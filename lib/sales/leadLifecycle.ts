@@ -2,12 +2,14 @@ import { getLeadStage, type LeadStageInput } from './leadStage';
 
 export interface LifecycleLead extends LeadStageInput {
   id?: unknown; customer_name?: unknown; leadId?: unknown; notes?: unknown;
-  contract_status?: unknown; crm_stage?: unknown; crmStage?: unknown;
+  contract_status?: unknown; crm_stage?: unknown; crmStage?: unknown; auto_status?: unknown;
   contracted_at?: unknown; saleId?: unknown; active_rental_contract_id?: unknown;
   project_interest_id?: unknown; crmCustomerId?: unknown; sourceKind?: unknown;
   actual_visit_date?: unknown; rental_end_date?: unknown;
 }
 const text = (value: unknown) => typeof value === 'string' ? value.trim().toLowerCase() : '';
+const cleanDealStatusText = (value: unknown) =>
+  text(value).replace(/ไม่จอง|ยกเลิกการติดตาม|ยกเลิกติดตาม/g, '');
 /** The CRM customer's ID is not automatically a public.leads ID. */
 export function nativeLeadId(lead: LifecycleLead): string | null {
   if (typeof lead.leadId === 'string' && lead.leadId.trim()) return lead.leadId;
@@ -19,9 +21,14 @@ export function nativeLeadId(lead: LifecycleLead): string | null {
 export function hasDealHistory(lead: LifecycleLead): boolean {
   if (lead.saleId || lead.active_rental_contract_id || lead.booking_date || lead.booking_amount != null
     || lead.contracted_at || lead.transferred_date || lead.transferredAt || lead.rental_status || lead.rental_end_date) return true;
-  if ([lead.status, lead.crm_status, lead.intakeStatus, lead.contract_status, lead.crm_stage, lead.crmStage]
-    .some(value => /book|reserv|contract|downpayment|document.?prep|loan|approved|transfer|handover|cancel|rent|moved.?out|จอง|สัญญา|สินเชื่อ|ยื่นกู้|โอน|ส่งมอบ|ยกเลิก|เช่า|ย้ายออก/.test(text(value)))) return true;
+  if ([lead.status, lead.crm_status, lead.auto_status, lead.intakeStatus, lead.contract_status, lead.crm_stage, lead.crmStage]
+    .some(value => /book|reserv|contract|downpayment|document.?prep|loan|approved|transfer|handover|cancel|rent|moved.?out|จอง|สัญญา|สินเชื่อ|ยื่นกู้|โอน|ส่งมอบ|ยกเลิก|เช่า|ย้ายออก/.test(cleanDealStatusText(value)))) return true;
   return /🏷️ บันทึกการจอง|สัญญาเช่า|ผู้เช่า/.test(String(lead.notes || ''));
+}
+export function isCancelledBookingLead(lead: LifecycleLead): boolean {
+  if (getLeadStage(lead) !== 'lost') return false;
+  return [lead.status, lead.crm_status, lead.auto_status, lead.intakeStatus, lead.contract_status, lead.crm_stage, lead.crmStage]
+    .some(value => /\b(cancelled|canceled)\b|ยกเลิกจอง|หลุดจอง|ยกเลิกสัญญา|ยกเลิกการซื้อ/i.test(cleanDealStatusText(value)));
 }
 export function isPreBookingLost(lead: LifecycleLead): boolean {
   return getLeadStage(lead) === 'lost' && !hasDealHistory(lead);

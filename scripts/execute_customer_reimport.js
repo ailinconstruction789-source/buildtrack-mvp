@@ -192,11 +192,16 @@ async function runReimport() {
     let autoStatus = 'Lead เข้า';
     let lostReason = null;
 
-    if (rawStatus.includes('ยกเลิก') || cancelDate) {
-      crmStatus = 'Lost — ยุติการซื้อ / ไม่จอง';
+    if (rawStatus.includes('ยกเลิก') || rawStatus.includes('หลุดจอง') || cancelDate) {
+      crmStatus = 'Cancelled — ยกเลิกจอง';
       legacyStatus = 'Cancelled';
       autoStatus = 'ยกเลิกจอง';
       lostReason = 'ยกเลิกจอง';
+    } else if (rawStatus.includes('ไม่สนใจ') || rawStatus.includes('ยุติ') || rawStatus.includes('ไม่ซื้อ') || rawStatus.includes('ไม่จอง') || rawStatus.includes('lost')) {
+      crmStatus = 'Lost — ยุติการซื้อ / ไม่จอง';
+      legacyStatus = 'Lost';
+      autoStatus = 'ยุติการซื้อ';
+      lostReason = 'ยุติการซื้อ';
     } else if (rawStatus.includes('โอน') || transferredDate) {
       crmStatus = 'Transferred / Won — โอนกรรมสิทธิ์สำเร็จ';
       legacyStatus = 'Transferred';
@@ -225,8 +230,10 @@ async function runReimport() {
     const expNote = expectedTransferDate ? `คาดโอน: ${new Date(expectedTransferDate).toLocaleDateString('th-TH', { month: 'short', year: 'numeric' })}` : '';
     const priceNote = salePrice ? `ราคา: ${salePrice.toLocaleString()} บ.` : '';
     const landPriceNote = landPrice ? `ราคาทด13: ${landPrice.toLocaleString()} บ.` : '';
+    const cancelDateShort = (cancelDate || (legacyStatus === 'Cancelled' ? bookingDate : null))?.split('T')[0] || null;
+    const cancelNote = cancelDateShort ? `วันที่ยกเลิก: ${cancelDateShort}` : '';
     
-    const notes = [rawNotes, landNote, priceNote, landPriceNote, expNote].filter(Boolean).join(' · ');
+    const notes = [rawNotes, landNote, priceNote, landPriceNote, expNote, cancelNote].filter(Boolean).join(' · ');
     const occupation = rawOccupation && rawOccupation !== '-' ? rawOccupation : '';
 
     // Match plot in DB
@@ -269,7 +276,7 @@ async function runReimport() {
       loan_approved_date: null,
       transferred_date: transferredDate,
       lost_reason: lostReason,
-      lost_reason_detail: null,
+      lost_reason_detail: cancelNote || null,
       crm_status: crmStatus,
       auto_status: autoStatus,
       notes: notes || null,

@@ -770,7 +770,7 @@ export default function CentralLeadBookingModal({
               <div className="px-5 sm:px-6 py-2 bg-gradient-to-r from-blue-50 via-indigo-50 to-blue-50 border-t border-b border-indigo-100 flex items-center justify-between gap-2">
                 <span className="text-xs font-bold text-indigo-900 flex items-center gap-1.5">
                   <Sparkles size={14} className="text-indigo-600" />
-                  ลูกค้าต้องการ <b className="text-blue-700">"เช่า"</b> หรือ <b className="text-amber-700">"เช่าออม (Rent to Own)"</b> แทนใช่ไหม?
+                  ลูกค้าต้องการ <b className="text-amber-700">"จองเช่า"</b> หรือ <b className="text-blue-700">"ทำสัญญาเช่า/เช่าออม"</b> แทนใช่ไหม?
                 </span>
                 <button
                   type="button"
@@ -778,9 +778,9 @@ export default function CentralLeadBookingModal({
                     onClose();
                     onSwitchToRental();
                   }}
-                  className="px-3 py-1 bg-gradient-to-r from-blue-700 to-indigo-700 hover:from-blue-800 hover:to-indigo-800 text-white rounded-lg font-bold text-xs shadow-2xs flex items-center gap-1 cursor-pointer transition-all shrink-0"
+                  className="px-3 py-1 bg-gradient-to-r from-amber-600 via-amber-700 to-indigo-700 hover:from-amber-700 hover:to-indigo-800 text-white rounded-lg font-bold text-xs shadow-2xs flex items-center gap-1 cursor-pointer transition-all shrink-0"
                 >
-                  🔑 สลับไปทำสัญญาเช่า (แบบ A, B, C) →
+                  🔑 สลับไปจองเช่า / สัญญาเช่า (แบบ A, B, C) →
                 </button>
               </div>
             )}
