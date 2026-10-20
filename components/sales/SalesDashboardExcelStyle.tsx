@@ -799,8 +799,9 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
         projectGroups[proj].transferredPlots.push({ ...p, activeSale: transferInYear, price, appraisal });
       } else if (isPlotRentedActive) {
         const rentedSale = plotSales.find((s: any) => s.isRental);
-        price = data.canonical ? Number(rentedSale?.salePrice ?? 0) : rentedSale?.salePrice ? Number(rentedSale.salePrice) : price;
-        appraisal = rentedSale?.tdPrice || rentedSale?.sale?.tdPrice || appraisal || price;
+        // Prioritize selling_price from plots table (Pricing tab), fallback to activeSale or p.selling_price
+        price = Number(p.selling_price || 0) || (rentedSale?.salePrice ? Number(rentedSale.salePrice) : price);
+        appraisal = Number(p.land_appraisal_price || 0) || rentedSale?.tdPrice || rentedSale?.sale?.tdPrice || price;
         if (appraisal <= 0) appraisal = price;
 
         projectGroups[proj].rented++;
@@ -847,13 +848,14 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       return !isClosed && yearTotal > 0;
     });
 
-    let sumYearTransVal = 0, sumYearWaitVal = 0, sumAvailVal = 0, sumPriorTransVal = 0;
+    let sumYearTransVal = 0, sumYearWaitVal = 0, sumAvailVal = 0, sumPriorTransVal = 0, sumRentedVal = 0;
     let sumYearTransAppraisal = 0, sumYearWaitAppraisal = 0, sumPriorTransAppraisal = 0;
     let sumYearTransCnt = 0, sumYearWaitCnt = 0, sumAvailCnt = 0, sumPriorTransCnt = 0, sumTotalCnt = 0, sumRentedCnt = 0;
 
     allProjectsList.forEach(([_, stats]) => {
       sumYearTransVal += stats.transVal; 
       sumYearWaitVal += stats.waitVal; 
+      sumRentedVal += (stats.rentVal || 0);
       sumAvailVal += stats.availVal;
       sumPriorTransVal += stats.priorTransVal;
 
@@ -872,7 +874,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
     const sumYearSalesVal = sumYearTransVal + sumYearWaitVal;
     const sumYearSalesCnt = sumYearTransCnt + sumYearWaitCnt;
     const sumYearSalesAppraisal = sumYearTransAppraisal + sumYearWaitAppraisal;
-    const sumYearTotalVal = sumYearTransVal + sumYearWaitVal + sumAvailVal;
+    const sumYearTotalVal = sumYearTransVal + sumYearWaitVal + sumRentedVal + sumAvailVal;
     const sumYearTotalCnt = sumYearTransCnt + sumYearWaitCnt + sumRentedCnt + sumAvailCnt;
 
     // Extract all active waiting plots from allProjectsList (connecting 100% to CRM V2 sales/plots)
@@ -1097,7 +1099,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       sumYearTransVal, sumYearWaitVal, sumAvailVal, sumPriorTransVal, sumYearTotalVal,
       sumYearTransAppraisal, sumYearWaitAppraisal, sumPriorTransAppraisal,
       sumYearTransCnt, sumYearWaitCnt, sumAvailCnt, sumPriorTransCnt, sumYearTotalCnt, sumTotalCnt,
-      sumRentedCnt,
+      sumRentedCnt, sumRentedVal,
       sumYearSalesVal, sumYearSalesCnt, sumYearSalesAppraisal,
       sumTransVal: sumYearTransVal, sumWaitVal: sumYearWaitVal,
       sumTransAppraisal: sumYearTransAppraisal, sumWaitAppraisal: sumYearWaitAppraisal,
@@ -1446,7 +1448,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
             <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
               <div className="bg-white text-gray-400 p-1.5 rounded-lg shadow-sm border border-gray-100"><BarChart size={16} /></div>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-gray-100 gap-4 md:gap-0">
+            <div className="grid grid-cols-2 lg:grid-cols-5 divide-y lg:divide-y-0 lg:divide-x divide-gray-100 gap-4 lg:gap-0">
               <div className="px-3">
                 <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1 group-hover:text-gray-700 transition-colors">บ้านทั้งหมด (ปี {selectedYear})</div>
                 <div className="text-xl font-black text-gray-800">{fmtM(metrics.sumYearTotalVal)}</div>
@@ -1456,7 +1458,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
                 </div>
               </div>
 
-              <div className="px-3 pt-3 md:pt-0">
+              <div className="px-3 pt-3 lg:pt-0">
                 <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">ยอดโอนสะสม (ปี {selectedYear})</div>
                 <div className="text-xl font-black text-emerald-600">{fmtM(metrics.sumYearTransVal)}</div>
                 <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
@@ -1465,7 +1467,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
                 </div>
               </div>
 
-              <div className="px-3 pt-3 md:pt-0">
+              <div className="px-3 pt-3 lg:pt-0">
                 <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">ยอดรอโอน (ปี {selectedYear})</div>
                 <div className="text-xl font-black text-blue-600">{fmtM(metrics.sumYearWaitVal)}</div>
                 <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
@@ -1474,7 +1476,16 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
                 </div>
               </div>
 
-              <div className="px-3 pt-3 md:pt-0">
+              <div className="px-3 pt-3 lg:pt-0">
+                <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">ยอดเช่า (ปี {selectedYear})</div>
+                <div className="text-xl font-black text-teal-600">{fmtM(metrics.sumRentedVal || 0)}</div>
+                <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
+                  <span>{metrics.sumRentedCnt || 0} หลัง</span>
+                  <span>เฉลี่ย {fmtM((metrics.sumRentedVal || 0) / (metrics.sumRentedCnt || 1))}/หลัง</span>
+                </div>
+              </div>
+
+              <div className="px-3 pt-3 lg:pt-0">
                 <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">ยอดคงเหลือ (ว่าง)</div>
                 <div className="text-xl font-black text-gray-800">{fmtM(metrics.sumAvailVal)}</div>
                 <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
