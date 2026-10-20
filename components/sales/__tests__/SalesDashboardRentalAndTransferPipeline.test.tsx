@@ -16,6 +16,22 @@ vi.mock('@/lib/sales/fetchWithoutLimit', () => ({
           sale_status: 'ready_for_sale'
         },
         {
+          id: 'plot-sale-waiting-november',
+          plot_name: '63',
+          selling_price: 3000000,
+          land_appraisal_price: 2800000,
+          project_name: 'ไอลิน 4',
+          sale_status: 'ready_for_sale'
+        },
+        {
+          id: 'plot-sale-waiting-unscheduled',
+          plot_name: '42',
+          selling_price: 3800000,
+          land_appraisal_price: 3500000,
+          project_name: 'ไอลิน6',
+          sale_status: 'ready_for_sale'
+        },
+        {
           id: 'plot-yorio-35',
           plot_name: '35',
           selling_price: 2500000,
@@ -54,6 +70,28 @@ vi.mock('@/lib/sales/fetchWithoutLimit', () => ({
           interested_plot_name: '10',
           expected_transfer_date: '2026-10-28',
           notes: 'รอโอนปลายเดือน ต.ค. 2569'
+        },
+        {
+          id: 'lead-sale-november',
+          customer_name: 'คุณเทพวรรณ ขยันทำ',
+          project_name: 'ไอลิน 4',
+          status: 'Booked',
+          deal_type: 'sale',
+          booking_date: '2026-10-15T05:00:00+00:00',
+          interested_plot_id: 'plot-sale-waiting-november',
+          interested_plot_name: '63',
+          notes: '• คาดโอน: 2026-11-30'
+        },
+        {
+          id: 'lead-sale-unscheduled',
+          customer_name: 'คุณมธุริยา เชื้อนุ่น',
+          project_name: 'ไอลิน6',
+          status: 'Reserved',
+          deal_type: 'sale',
+          booking_date: '2026-09-26T05:00:00+00:00',
+          interested_plot_id: 'plot-sale-waiting-unscheduled',
+          interested_plot_name: '42',
+          notes: 'รอยื่นสินเชื่อ'
         },
         {
           id: 'lead-rent-oct-contracted',
@@ -105,12 +143,12 @@ vi.mock('@/lib/supabase', () => ({
       select: vi.fn(() => ({
         in: vi.fn(() => Promise.resolve({ data: [], error: null })),
         order: vi.fn(() => Promise.resolve({
-          data: table === 'projects' ? [{ id: 'p1', name: 'ไอลิน6', is_closed: false }, { id: 'p2', name: 'โยริว', is_closed: false }] : [],
+          data: table === 'projects' ? [{ id: 'p1', name: 'ไอลิน6', is_closed: false }, { id: 'p2', name: 'โยริว', is_closed: false }, { id: 'p3', name: 'ไอลิน 4', is_closed: false }] : [],
           error: null
         })),
         then: vi.fn((resolve: (val: any) => void) => {
           if (table === 'projects') {
-            resolve({ data: [{ id: 'p1', name: 'ไอลิน6', is_closed: false }, { id: 'p2', name: 'โยริว', is_closed: false }], error: null });
+            resolve({ data: [{ id: 'p1', name: 'ไอลิน6', is_closed: false }, { id: 'p2', name: 'โยริว', is_closed: false }, { id: 'p3', name: 'ไอลิน 4', is_closed: false }], error: null });
           } else if (table === 'rental_contracts') {
             resolve({
               data: [
@@ -182,6 +220,9 @@ describe('SalesDashboard Card 3 Pipeline - Sales vs Rental Separation', () => {
       expect(screen.getByText(/โอนแล้ว \(0\)/)).toBeInTheDocument();
       expect(screen.getByText(/รอโอน \(1\)/)).toBeInTheDocument();
       expect(screen.getByText(/• ไอลิน6-10/)).toBeInTheDocument();
+      // Plots scheduled for November (ไอลิน 4-63) or unscheduled (ไอลิน6-42) must NOT appear in October's waiting list
+      expect(screen.queryByText(/• ไอลิน 4-63/)).toBeNull();
+      expect(screen.queryByText(/• ไอลิน6-42/)).toBeNull();
     });
 
     // 2. Rental Side: 1 contract signed this month (โยริว-35), 1 pending booking (โยริว-42)

@@ -66,8 +66,16 @@ export function extractExpectedTransferDate(notes: unknown): string | null {
     'ธ.ค.': '12', 'ธันวา': '12', 'ธันวาคม': '12'
   };
 
-  // 1. Specific date: "คาดโอน: 15 ต.ค. 2569" or "คาดโอน: 15/10/2569"
-  const fullDateMatch = notes.match(/คาด(?:ว่าจะ|การณ์)?โอน:\s*(\d{1,2})[\/\s-]([^\s·\n\/]+)[\/\s-](\d{4})/);
+  // 1. ISO format: "คาดโอน: 2026-11-30" or "นัดทำสัญญา/เข้าอยู่: 2026-10-17"
+  const isoMatch = notes.match(/(?:คาด(?:ว่าจะ|การณ์)?โอน|รอ(?:การ)?โอน|นัดทำสัญญา(?:\/เข้าอยู่)?|กำหนดทำสัญญา):\s*(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    let year = parseInt(isoMatch[1], 10);
+    if (year > 2400) year -= 543;
+    return `${year}-${isoMatch[2]}-${isoMatch[3]}`;
+  }
+
+  // 2. Specific date: "คาดโอน: 15 ต.ค. 2569" or "คาดโอน: 15/10/2569"
+  const fullDateMatch = notes.match(/(?:คาด(?:ว่าจะ|การณ์)?โอน|รอ(?:การ)?โอน|นัดทำสัญญา(?:\/เข้าอยู่)?|กำหนดทำสัญญา):\s*(\d{1,2})[\/\s-]([^\s·\n\/]+)[\/\s-](\d{4})/);
   if (fullDateMatch) {
     const day = fullDateMatch[1].padStart(2, '0');
     const m = fullDateMatch[2];
@@ -77,8 +85,8 @@ export function extractExpectedTransferDate(notes: unknown): string | null {
     if (month) return `${year}-${month}-${day}`;
   }
 
-  // 2. Month format: "คาดโอน: ต.ค. 2569"
-  const monthMatch = notes.match(/คาด(?:ว่าจะ|การณ์)?โอน:\s*([^\s·\n]+)\s*(\d{4})/);
+  // 3. Month format: "คาดโอน: ต.ค. 2569" or "รอโอนปลายเดือน ต.ค. 2569"
+  const monthMatch = notes.match(/(?:คาด(?:ว่าจะ|การณ์)?โอน|รอ(?:การ)?โอน)[^\d\n·]*\s*([^\s·\n]+)\s*(\d{4})/);
   if (monthMatch) {
     const m = monthMatch[1];
     let year = parseInt(monthMatch[2], 10);
@@ -88,14 +96,6 @@ export function extractExpectedTransferDate(notes: unknown): string | null {
       const lastDay = new Date(year, parseInt(month, 10), 0).getDate();
       return `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
     }
-  }
-
-  // 3. ISO / YYYY-MM-DD
-  const isoMatch = notes.match(/คาด(?:ว่าจะ|การณ์)?โอน:\s*(\d{4})-(\d{2})-(\d{2})/);
-  if (isoMatch) {
-    let year = parseInt(isoMatch[1], 10);
-    if (year > 2400) year -= 543;
-    return `${year}-${isoMatch[2]}-${isoMatch[3]}`;
   }
 
   return null;

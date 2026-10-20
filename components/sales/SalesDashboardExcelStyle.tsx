@@ -364,7 +364,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
           const { salePrice: notesSalePrice, landAppraisalPrice: notesTdPrice } = extractAgreedPrices(l.notes);
           const salePrice = notesSalePrice || Number(matchedPlot?.selling_price || 0);
           const tdPrice = notesTdPrice || Number(matchedPlot?.land_appraisal_price || 0) || salePrice;
-          const expectedTransferDate = extractExpectedTransferDate(l.notes);
+          const expectedTransferDate = l.expected_transfer_date || l.expectedTransferDate || extractExpectedTransferDate(l.notes);
           const cancelledAt = isCancelled
             ? (l.cancelled_at || l.cancelled_date || extractCancelledDate(l.notes, l.lost_reason_detail) || l.booking_date || null)
             : null;
@@ -526,7 +526,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
         const createdDate = data.canonical ? customerLeadDate ?? null : customerLeadDate || leadVisitDate || s.leadDate?.split('T')[0] || bookDate || s.created_at?.split('T')[0] || '2025-01-01';
         const tdPrice = s.saleId ? tdPriceMap.get(s.saleId) : null;
         const resolvedTdPrice = tdPrice ?? s.tdPrice ?? matchingPlot?.land_appraisal_price ?? salePrice;
-        const expectedTransfer = customerExpectedTransferDay(s) || s.expectedTransferDate || null;
+        const expectedTransfer = customerExpectedTransferDay(s) || s.expectedTransferDate || extractExpectedTransferDate(s.notes) || extractExpectedTransferDate(matchingLead?.notes) || extractExpectedTransferDate(matchingPlot?.highlight_note) || null;
 
         const matchingContract = (data.rentalContracts || []).find((c: any) =>
           (s.customerId && c.lead_id === s.customerId) ||
@@ -877,12 +877,35 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
     // Extract all active waiting plots from allProjectsList (connecting 100% to CRM V2 sales/plots)
     const allWaitingPlots = allProjectsList.flatMap(([_, stats]) => stats.waitingPlots);
 
+    const getPlotExpectedTransferDate = (plot: any): string | null => {
+      const sale = plot.activeSale || plot.sale || plot;
+      const direct = customerExpectedTransferDay(sale ?? {}) || sale?.expectedTransferDate || sale?.expectedTransfer || sale?.expected_transfer_date || sale?.rentalStartDate;
+      if (direct) return direct;
+      const leadNotesExp = extractExpectedTransferDate(sale?.notes) ||
+        extractExpectedTransferDate(sale?.crm_status) ||
+        extractExpectedTransferDate(plot.highlight_note);
+      return leadNotesExp || null;
+    };
+
+    const isPlotExpectingThisMonth = (plot: any) => {
+      const expDate = getPlotExpectedTransferDate(plot);
+      return Boolean(expDate && expDate.startsWith(targetMonthPrefix));
+    };
+
+    const isRentalWaitingThisMonth = (plot: any) => {
+      const sale = plot.activeSale || plot.sale || plot;
+      const expDate = getPlotExpectedTransferDate(plot);
+      if (expDate) return expDate.startsWith(targetMonthPrefix);
+      const bDate = sale?.bookDate || sale?.bookedAt;
+      return Boolean(bDate && bDate.startsWith(targetMonthPrefix));
+    };
+
     const carriedOverPlots: any[] = [];
     const expectingThisMonthPlots: any[] = [];
     const unscheduledPlots: any[] = [];
 
     allWaitingPlots.forEach(plot => {
-      const expDate = customerExpectedTransferDay(plot.activeSale ?? {});
+      const expDate = getPlotExpectedTransferDate(plot);
       if (expDate && expDate.startsWith(targetMonthPrefix)) {
         expectingThisMonthPlots.push(plot);
       } else if (expDate && expDate < targetMonthPrefix) {
@@ -956,8 +979,8 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
     });
     const rentContractedPlots = Array.from(rentContractedPlotsMap.values());
 
-    const saleWaitingPlots = allWaitingPlots.filter(p => !isPlotRental(p));
-    const rentWaitingPlots = allWaitingPlots.filter(p => isPlotRental(p));
+    const saleWaitingPlots = allWaitingPlots.filter(p => !isPlotRental(p) && isPlotExpectingThisMonth(p));
+    const rentWaitingPlots = allWaitingPlots.filter(p => isPlotRental(p) && isRentalWaitingThisMonth(p));
 
     const saleTransferredVal = saleTransferredPlots.reduce((sum: number, r: any) => sum + (r.salePrice || 0), 0);
     const saleWaitingVal = saleWaitingPlots.reduce((sum: number, p: any) => sum + (p.price || 0), 0);
