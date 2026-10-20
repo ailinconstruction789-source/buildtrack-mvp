@@ -281,7 +281,7 @@ describe('protected CRM details and bounded server entry', () => {
     expect(screen.queryByRole('region', { name: 'รายละเอียดรายการขาย CRM' })).not.toBeInTheDocument(); expect(mocks.write).not.toHaveBeenCalled();
   });
   it('resolves legacy unlinked sale via plot fallback and allows saving transferred stage', async () => {
-    const legacySale = { id: 'legacy-S99', lead_id: null, plot_id: 'plot-21', crm_stage: 'booked', contract_status: 'Reserved', sale_price: 2899000, bank_name: 'ธอส.', updated_at: 'legacy-1' };
+    const legacySale = { id: 'legacy-S99', lead_id: null, plot_id: 'plot-21', booking_route: 'legacy_import', project_interest_id: 'pi-1', external_booking_id: 'eb-1', crm_stage: 'booked', contract_status: 'Reserved', sale_price: 2899000, bank_name: 'ธอส.', updated_at: 'legacy-1' };
     const leadWithPlot = { id: 'L99', customer_name: 'Legacy KFC', phone: '0812345678', occupation: 'ผจก KFC', status: 'Contracted', crm_status: 'Transfer Pending — รอโอน', notes: 'deal notes', interested_plot_id: 'plot-21', project_name: 'ไอลิน6', updated_at: 'lead-v1' };
     mocks.read.mockImplementation((table: string, filters: Record<string, unknown>) => {
       if (table === 'leads') return Promise.resolve({ error: null, data: { ...leadWithPlot } });

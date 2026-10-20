@@ -39,13 +39,13 @@ export interface SalesDealEditorModel {
   save: (options?: { confirmedBySubmit?: boolean }) => Promise<void>;
 }
 const leadColumns = 'id,customer_name,phone,occupation,agent_name,status,crm_status,notes,project_name,interested_plot_id,interested_plot_name,updated_at';
-const saleColumns = 'id,lead_id,plot_id,crm_stage,contract_status,sale_price,land_office_price,bank_name,payment_method,project_interest_id,external_booking_id,updated_at';
+const saleColumns = 'id,lead_id,plot_id,booking_route,crm_stage,contract_status,sale_price,land_office_price,bank_name,payment_method,project_interest_id,external_booking_id,updated_at';
 const str = (value: unknown) => value == null ? '' : String(value);
 function draftOf(lead: Row | null, sale: Row | null): Draft {
   const details = customerDealDetails(lead?.notes);
   const crm = sale ? crmSaleCustomer(sale) : null;
   return { name: str(lead?.customer_name ?? crm?.name), phone: str(lead?.phone ?? crm?.phone), occupation: str(lead?.occupation),
-    price: str(sale?.sale_price ?? details.salePrice), bank: sale ? str(sale.bank_name) : details.bank, method: salesDealPaymentMethodOf(sale || { notes: lead?.notes, bank_name: details.bank }),
+    price: str(sale?.sale_price ?? details.salePrice), bank: str(sale?.bank_name) || details.bank, method: salesDealPaymentMethodOf(sale?.payment_method ? sale : { notes: lead?.notes, bank_name: str(sale?.bank_name) || details.bank }),
     agentName: str(lead?.agent_name), landOfficePrice: str(sale?.land_office_price) };
 }
 
@@ -143,7 +143,9 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
           }
         }
         if (cancelled) return;
-        if (currentSale && (currentSale.project_interest_id || currentSale.external_booking_id)) {
+        const isLegacyUnlinkedSale = Boolean(currentSale && !currentSale.lead_id && leadId);
+        const isProtected = Boolean(currentSale && !isLegacyUnlinkedSale && currentSale.booking_route !== 'legacy_import' && (currentSale.project_interest_id || currentSale.external_booking_id));
+        if (currentSale && isProtected) {
           setProtectedSale({ id: str(currentSale.id), stage: stageOf(currentSale),
             details: draftOf(currentSale.lead_id === leadId ? currentLead : null, currentSale), method: currentSale.payment_method });
           try {
@@ -159,7 +161,6 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         }
         if (currentSale && (!['booked', 'transferred'].includes(getLeadStage({ status: currentSale.contract_status }))
           || (leadId && currentSale.lead_id && currentSale.lead_id !== leadId))) throw new Error('รายการขายไม่ตรงกับลูกค้าหรือสถานะล่าสุด กรุณาโหลดใหม่');
-        const isLegacyUnlinkedSale = Boolean(currentSale && !currentSale.lead_id && leadId);
         const stage = stageOf((isLegacyUnlinkedSale && currentLead) ? currentLead : (currentSale || currentLead || lead));
         leadInitial.current = currentLead ? stageOf(currentLead) : null;
         const values = draftOf(currentLead, currentSale);
@@ -210,7 +211,8 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         if (result.error) throw result.error;
         currentSale = result.data;
         const isLegacySale = Boolean(!currentSale?.lead_id && resolved.leadId);
-        if (!currentSale || currentSale.project_interest_id || currentSale.external_booking_id || currentSale.id !== resolved.saleId || !['booked', 'transferred'].includes(getLeadStage({ status: currentSale.contract_status })) || (!isLegacySale && stageOf(currentSale) !== initial)
+        const isProtectedSale = Boolean(currentSale && !isLegacySale && currentSale.booking_route !== 'legacy_import' && (currentSale.project_interest_id || currentSale.external_booking_id));
+        if (!currentSale || isProtectedSale || currentSale.id !== resolved.saleId || !['booked', 'transferred'].includes(getLeadStage({ status: currentSale.contract_status })) || (!isLegacySale && stageOf(currentSale) !== initial)
           || (resolved.leadId && currentSale.lead_id && currentSale.lead_id !== resolved.leadId)) throw new Error('สถานะรายการขายเปลี่ยนแล้ว กรุณาปิดและโหลดข้อมูลล่าสุด');
         const latest = draftOf(null, currentSale);
         if (latest.price !== baseline.price || latest.bank !== baseline.bank || latest.method !== baseline.method || latest.landOfficePrice !== baseline.landOfficePrice) throw new Error('ราคา/ธนาคารเปลี่ยนแล้ว กรุณาปิดและโหลดข้อมูลล่าสุด');
