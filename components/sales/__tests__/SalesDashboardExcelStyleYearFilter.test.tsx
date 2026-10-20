@@ -192,7 +192,7 @@ describe('SalesDashboardExcelStyle - Year Scoped Metrics', () => {
     expect(screen.queryByText('โครงการเก่า B')).not.toBeInTheDocument();
 
     // In 'โครงการ A' row:
-    // โอน = 1, รอโอน = 1, ว่าง = 1, ทั้งหมด = 3 (not 4)
+    // โอน = 1, รอโอน = 1, เช่า = 0, ว่าง = 1, ทั้งหมด = 3 (not 4)
     // Grand Total row:
     // Grand Total = 3
     const grandTotalRow = screen.getByText('Grand Total').closest('tr');
@@ -200,8 +200,9 @@ describe('SalesDashboardExcelStyle - Year Scoped Metrics', () => {
     const cells = grandTotalRow?.querySelectorAll('td');
     expect(cells?.[1]?.textContent?.trim()).toBe('1'); // โอน
     expect(cells?.[2]?.textContent?.trim()).toBe('1'); // รอโอน
-    expect(cells?.[3]?.textContent?.trim()).toBe('1'); // ว่าง
-    expect(cells?.[4]?.textContent?.trim()).toBe('3'); // ทั้งหมด (1 + 1 + 1 = 3)
+    expect(cells?.[3]?.textContent?.trim()).toBe('0'); // เช่า
+    expect(cells?.[4]?.textContent?.trim()).toBe('1'); // ว่าง
+    expect(cells?.[5]?.textContent?.trim()).toBe('3'); // ทั้งหมด (1 + 1 + 0 + 1 = 3)
 
     // Test row expansion: clicking on project row reveals plots
     const projRow = screen.getByText('โครงการ A', { selector: 'td' });

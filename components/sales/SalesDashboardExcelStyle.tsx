@@ -849,7 +849,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
 
     let sumYearTransVal = 0, sumYearWaitVal = 0, sumAvailVal = 0, sumPriorTransVal = 0;
     let sumYearTransAppraisal = 0, sumYearWaitAppraisal = 0, sumPriorTransAppraisal = 0;
-    let sumYearTransCnt = 0, sumYearWaitCnt = 0, sumAvailCnt = 0, sumPriorTransCnt = 0, sumTotalCnt = 0;
+    let sumYearTransCnt = 0, sumYearWaitCnt = 0, sumAvailCnt = 0, sumPriorTransCnt = 0, sumTotalCnt = 0, sumRentedCnt = 0;
 
     allProjectsList.forEach(([_, stats]) => {
       sumYearTransVal += stats.transVal; 
@@ -863,6 +863,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
 
       sumYearTransCnt += stats.transferred; 
       sumYearWaitCnt += stats.waiting; 
+      sumRentedCnt += (stats.rented || 0);
       sumAvailCnt += stats.available; 
       sumPriorTransCnt += stats.priorTransferred;
       sumTotalCnt += stats.total;
@@ -872,7 +873,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
     const sumYearSalesCnt = sumYearTransCnt + sumYearWaitCnt;
     const sumYearSalesAppraisal = sumYearTransAppraisal + sumYearWaitAppraisal;
     const sumYearTotalVal = sumYearTransVal + sumYearWaitVal + sumAvailVal;
-    const sumYearTotalCnt = sumYearTransCnt + sumYearWaitCnt + sumAvailCnt;
+    const sumYearTotalCnt = sumYearTransCnt + sumYearWaitCnt + sumRentedCnt + sumAvailCnt;
 
     // Extract all active waiting plots from allProjectsList (connecting 100% to CRM V2 sales/plots)
     const allWaitingPlots = allProjectsList.flatMap(([_, stats]) => stats.waitingPlots);
@@ -1096,6 +1097,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       sumYearTransVal, sumYearWaitVal, sumAvailVal, sumPriorTransVal, sumYearTotalVal,
       sumYearTransAppraisal, sumYearWaitAppraisal, sumPriorTransAppraisal,
       sumYearTransCnt, sumYearWaitCnt, sumAvailCnt, sumPriorTransCnt, sumYearTotalCnt, sumTotalCnt,
+      sumRentedCnt,
       sumYearSalesVal, sumYearSalesCnt, sumYearSalesAppraisal,
       sumTransVal: sumYearTransVal, sumWaitVal: sumYearWaitVal,
       sumTransAppraisal: sumYearTransAppraisal, sumWaitAppraisal: sumYearWaitAppraisal,
@@ -1515,6 +1517,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
                       <th className="p-3 text-left font-bold text-gray-700">โครงการ</th>
                       <th className="p-3 text-right font-bold text-emerald-600">โอน</th>
                       <th className="p-3 text-right font-bold text-blue-600">รอโอน</th>
+                      <th className="p-3 text-right font-bold text-teal-600">เช่า</th>
                       <th className="p-3 text-right font-bold text-gray-500">ว่าง</th>
                       <th className="p-3 text-right font-bold text-gray-900 bg-gray-100">ทั้งหมด</th>
                     </tr>
@@ -1522,7 +1525,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
                   <tbody>
                     {metrics.activeProjects.map(([proj, stats]: [string, any]) => {
                       const isExpanded = expandedProjects.has(proj);
-                      const yearTotal = stats.transferred + stats.waiting + stats.available;
+                      const yearTotal = stats.transferred + stats.waiting + (stats.rented || 0) + stats.available;
                       return (
                         <React.Fragment key={proj}>
                           <tr 
@@ -1535,6 +1538,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
                             </td>
                             <td className="p-3 text-right font-medium text-emerald-600">{stats.transferred}</td>
                             <td className="p-3 text-right font-medium text-blue-600">{stats.waiting}</td>
+                            <td className="p-3 text-right font-medium text-teal-600">{stats.rented || 0}</td>
                             <td className="p-3 text-right text-gray-500">{stats.available}</td>
                             <td className="p-3 text-right font-bold bg-gray-50 text-gray-900">{yearTotal}</td>
                           </tr>
@@ -1548,6 +1552,11 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
                               </td>
                               <td className="p-3 text-xs text-blue-600 align-top text-right pt-4 space-y-1">
                                 {[...stats.waitingPlots].sort((a: any, b: any) => (a.plot_name || '').localeCompare(b.plot_name || '', 'th', { numeric: true })).map((p: any) => (
+                                  <div key={p.id}>{p.plot_name}</div>
+                                ))}
+                              </td>
+                              <td className="p-3 text-xs text-teal-600 align-top text-right pt-4 space-y-1">
+                                {[...(stats.rentedPlots || [])].sort((a: any, b: any) => (a.plot_name || '').localeCompare(b.plot_name || '', 'th', { numeric: true })).map((p: any) => (
                                   <div key={p.id}>{p.plot_name}</div>
                                 ))}
                               </td>
@@ -1566,6 +1575,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
                       <td className="p-3 font-black text-blue-900">Grand Total</td>
                       <td className="p-3 text-right font-black text-emerald-700">{metrics.sumTransCnt}</td>
                       <td className="p-3 text-right font-black text-blue-700">{metrics.sumWaitCnt}</td>
+                      <td className="p-3 text-right font-black text-teal-700">{metrics.sumRentedCnt || 0}</td>
                       <td className="p-3 text-right font-bold text-gray-700">{metrics.sumAvailCnt}</td>
                       <td className="p-3 text-right font-black text-blue-900">{metrics.sumYearTotalCnt}</td>
                     </tr>
