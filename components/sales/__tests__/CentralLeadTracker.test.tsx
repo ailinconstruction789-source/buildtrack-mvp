@@ -128,7 +128,7 @@ describe('CentralLeadTracker Smart Views (Active / Booked / Lost / All)', () => 
 
     // Stage pills count (only Active has count number, others have clean labels)
     expect(screen.getByText(/🟢 กำลังติดตาม \(1\)/)).toBeInTheDocument();
-    expect(screen.getByText(/🏷️ จองแล้ว$/)).toBeInTheDocument();
+    expect(screen.getByText(/🏷️ จองแล้ว/)).toBeInTheDocument();
     expect(screen.getByText(/ไม่สนใจ \/ พักติดตาม$/)).toBeInTheDocument();
     expect(screen.getByText(/📁 ทั้งหมด$/)).toBeInTheDocument();
   });

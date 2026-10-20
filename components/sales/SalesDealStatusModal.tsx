@@ -38,8 +38,8 @@ export interface SalesDealEditorModel {
   error: string; resolved: { leadId: string | null; saleId: string | null } | null;
   save: (options?: { confirmedBySubmit?: boolean }) => Promise<void>;
 }
-const leadColumns = 'id,customer_name,phone,occupation,agent_name,status,crm_status,notes,updated_at';
-const saleColumns = 'id,lead_id,crm_stage,contract_status,sale_price,land_office_price,bank_name,payment_method,project_interest_id,external_booking_id,updated_at';
+const leadColumns = 'id,customer_name,phone,occupation,agent_name,status,crm_status,notes,project_name,interested_plot_id,interested_plot_name,updated_at';
+const saleColumns = 'id,lead_id,plot_id,crm_stage,contract_status,sale_price,land_office_price,bank_name,payment_method,project_interest_id,external_booking_id,updated_at';
 const str = (value: unknown) => value == null ? '' : String(value);
 function draftOf(lead: Row | null, sale: Row | null): Draft {
   const details = customerDealDetails(lead?.notes);
@@ -107,6 +107,40 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
           if (result.error) throw result.error;
           if ((result.data?.length || 0) > 1) throw new Error('พบหลายรายการขาย กรุณาเลือกรายการที่ต้องการจาก Project Map');
           currentSale = result.data?.[0] || null;
+          if (!currentSale) {
+            const rawPlot = str(
+              lead.plot || lead.plotId || lead.plot_id ||
+              (Array.isArray(lead.interests) ? (lead.interests[0] as Row)?.plotId : null) ||
+              currentLead?.interested_plot_id || currentLead?.interested_plot_name
+            );
+            const cleanPlot = rawPlot ? rawPlot.replace(/^(AL\d+|YR|K\d+พิเศษ|K\d+|ไอลิน\s*\d+|โยริว|กานต์รวี\s*\d+)-?/i, '').trim() : '';
+            const candidatePlotName = str(currentLead?.interested_plot_name || lead.plotName || cleanPlot || rawPlot);
+            const proj = projectName || str(currentLead?.project_name);
+            let plotSaleRes = rawPlot
+              ? await supabase.from('sales').select(saleColumns).eq('plot_id', rawPlot).neq('contract_status', 'Cancelled').limit(2)
+              : null;
+            if (cancelled) return;
+            if ((!plotSaleRes?.data || plotSaleRes.data.length === 0) && cleanPlot && cleanPlot !== rawPlot) {
+              plotSaleRes = await supabase.from('sales').select(saleColumns).eq('plot_id', cleanPlot).neq('contract_status', 'Cancelled').limit(2);
+              if (cancelled) return;
+            }
+            if ((!plotSaleRes?.data || plotSaleRes.data.length === 0) && candidatePlotName && proj) {
+              const pRes = await supabase.from('plots').select('id').eq('plot_name', candidatePlotName).eq('project_name', proj).maybeSingle();
+              if (cancelled) return;
+              if (pRes?.data?.id && pRes.data.id !== rawPlot && pRes.data.id !== cleanPlot) {
+                plotSaleRes = await supabase.from('sales').select(saleColumns).eq('plot_id', pRes.data.id).neq('contract_status', 'Cancelled').limit(2);
+                if (cancelled) return;
+              }
+            }
+            if (plotSaleRes?.error) throw plotSaleRes.error;
+            if ((plotSaleRes?.data?.length || 0) > 1) throw new Error('พบหลายรายการขาย กรุณาเลือกรายการที่ต้องการจาก Project Map');
+            if (plotSaleRes?.data?.length === 1) {
+              const candidateSale = plotSaleRes.data[0];
+              if (!candidateSale.lead_id || candidateSale.lead_id === leadId) {
+                currentSale = candidateSale;
+              }
+            }
+          }
         }
         if (cancelled) return;
         if (currentSale && (currentSale.project_interest_id || currentSale.external_booking_id)) {
@@ -124,8 +158,9 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
           return;
         }
         if (currentSale && (!['booked', 'transferred'].includes(getLeadStage({ status: currentSale.contract_status }))
-          || (leadId && currentSale.lead_id !== leadId))) throw new Error('รายการขายไม่ตรงกับลูกค้าหรือสถานะล่าสุด กรุณาโหลดใหม่');
-        const stage = stageOf(currentSale || currentLead || lead);
+          || (leadId && currentSale.lead_id && currentSale.lead_id !== leadId))) throw new Error('รายการขายไม่ตรงกับลูกค้าหรือสถานะล่าสุด กรุณาโหลดใหม่');
+        const isLegacyUnlinkedSale = Boolean(currentSale && !currentSale.lead_id && leadId);
+        const stage = stageOf((isLegacyUnlinkedSale && currentLead) ? currentLead : (currentSale || currentLead || lead));
         leadInitial.current = currentLead ? stageOf(currentLead) : null;
         const values = draftOf(currentLead, currentSale);
         setDraft(values); setBaseline(values); setInitial(stage); setTarget(stage); setCancelCategory(stage === 'loan_rejected' ? 'final_loan_rejection' : stage === 'downpayment' ? 'downpayment_abandoned' : 'booking_cancelled');
@@ -174,8 +209,9 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         const result = await supabase.from('sales').select(saleColumns).eq('id', resolved.saleId).single();
         if (result.error) throw result.error;
         currentSale = result.data;
-        if (!currentSale || currentSale.project_interest_id || currentSale.external_booking_id || currentSale.id !== resolved.saleId || !['booked', 'transferred'].includes(getLeadStage({ status: currentSale.contract_status })) || stageOf(currentSale) !== initial
-          || (resolved.leadId && currentSale.lead_id !== resolved.leadId)) throw new Error('สถานะรายการขายเปลี่ยนแล้ว กรุณาปิดและโหลดข้อมูลล่าสุด');
+        const isLegacySale = Boolean(!currentSale?.lead_id && resolved.leadId);
+        if (!currentSale || currentSale.project_interest_id || currentSale.external_booking_id || currentSale.id !== resolved.saleId || !['booked', 'transferred'].includes(getLeadStage({ status: currentSale.contract_status })) || (!isLegacySale && stageOf(currentSale) !== initial)
+          || (resolved.leadId && currentSale.lead_id && currentSale.lead_id !== resolved.leadId)) throw new Error('สถานะรายการขายเปลี่ยนแล้ว กรุณาปิดและโหลดข้อมูลล่าสุด');
         const latest = draftOf(null, currentSale);
         if (latest.price !== baseline.price || latest.bank !== baseline.bank || latest.method !== baseline.method || latest.landOfficePrice !== baseline.landOfficePrice) throw new Error('ราคา/ธนาคารเปลี่ยนแล้ว กรุณาปิดและโหลดข้อมูลล่าสุด');
       }

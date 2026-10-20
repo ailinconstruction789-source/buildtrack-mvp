@@ -575,7 +575,7 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
                 </div>
               )}
 
-              {['booked', 'transferred'].includes(getCustomerStageCategory(selectedCustomer)) && <button type="button" onClick={() => setStatusTarget({ ...selectedCustomer, project_name: selectedCustomer.interests?.[0]?.projectName })} className="w-full py-2.5 rounded-xl bg-amber-50 text-amber-900 text-sm font-bold">{salesDealActionLabel(selectedCustomer, canManage)}</button>}
+              {['booked', 'transferred'].includes(getCustomerStageCategory(selectedCustomer)) && <button type="button" onClick={() => setStatusTarget({ ...selectedCustomer, project_name: selectedCustomer.interests?.[0]?.projectName, plot: selectedCustomer.interests?.[0]?.plotId, plotId: selectedCustomer.interests?.[0]?.plotId, plotName: selectedCustomer.interests?.[0]?.plotId })} className="w-full py-2.5 rounded-xl bg-amber-50 text-amber-900 text-sm font-bold">{salesDealActionLabel(selectedCustomer, canManage)}</button>}
               <button type="button" onClick={() => setSelectedCustomer(null)}
                 className="w-full py-2 sm:py-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs transition-colors cursor-pointer">
                 ปิดแผงข้อมูล
