@@ -194,6 +194,7 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
     progress.current.payload = submitted;
     try {
       let currentLead: Row | null = null, currentSale: Row | null = null;
+      let isLegacySale = false;
       if (resolved.leadId && !progress.current.lead) {
         const result = await supabase.from('leads').select(leadColumns).eq('id', resolved.leadId).single();
         if (result.error) throw result.error;
@@ -210,7 +211,7 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         const result = await supabase.from('sales').select(saleColumns).eq('id', resolved.saleId).single();
         if (result.error) throw result.error;
         currentSale = result.data;
-        const isLegacySale = Boolean(!currentSale?.lead_id && resolved.leadId);
+        isLegacySale = Boolean(!currentSale?.lead_id && resolved.leadId);
         const isProtectedSale = Boolean(currentSale && !isLegacySale && currentSale.booking_route !== 'legacy_import' && (currentSale.project_interest_id || currentSale.external_booking_id));
         if (!currentSale || isProtectedSale || currentSale.id !== resolved.saleId || !['booked', 'transferred'].includes(getLeadStage({ status: currentSale.contract_status })) || (!isLegacySale && stageOf(currentSale) !== initial)
           || (resolved.leadId && currentSale.lead_id && currentSale.lead_id !== resolved.leadId)) throw new Error('สถานะรายการขายเปลี่ยนแล้ว กรุณาปิดและโหลดข้อมูลล่าสุด');
@@ -233,9 +234,14 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         if (Object.keys(patch).length) {
           let query = supabase.from('sales').update(patch).eq('id', resolved.saleId);
           for (const key of ['crm_stage', 'contract_status', 'updated_at'] as const) query = currentSale?.[key] == null ? query.is(key, null) : query.eq(key, currentSale[key]);
-          const { data, error: failure } = await query.select('id').single();
-          if (failure) throw failure;
-          if (!data?.id) throw new Error('ไม่พบรายการขายที่สามารถอัปเดตได้');
+          if (isLegacySale || currentSale?.booking_route === 'legacy_import') {
+            const { error: failure } = await query;
+            if (failure) throw failure;
+          } else {
+            const { data, error: failure } = await query.select('id').single();
+            if (failure) throw failure;
+            if (!data?.id) throw new Error('ไม่พบรายการขายที่สามารถอัปเดตได้');
+          }
           progress.current.sale = true;
         }
         if (!mounted.current) return;

@@ -15,7 +15,7 @@ vi.mock('@/lib/supabase', () => ({ supabase: { from: (table: string) => {
     neq: (key: string, value: unknown) => { filters['neq:' + key] = value; return query; },
     limit: () => query,
     single: () => payload ? mocks.write(table, payload, filters) : mocks.read(table, filters),
-    then: (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) => Promise.resolve(mocks.read(table, filters)).then(resolve, reject),
+    then: (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) => Promise.resolve(payload ? mocks.write(table, payload, filters) : mocks.read(table, filters)).then(resolve, reject),
   }; return query;
 } } }));
 const lead = { leadId: 'L1', saleId: 'S1', status: 'Booked', crmStage: 'booked', customer_name: 'Customer', notes: 'stale snapshot' };
