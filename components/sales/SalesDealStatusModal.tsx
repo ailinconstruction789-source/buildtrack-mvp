@@ -214,7 +214,7 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         const isProtectedSale = Boolean(currentSale && !isLegacySale && currentSale.booking_route !== 'legacy_import' && (currentSale.project_interest_id || currentSale.external_booking_id));
         if (!currentSale || isProtectedSale || currentSale.id !== resolved.saleId || !['booked', 'transferred'].includes(getLeadStage({ status: currentSale.contract_status })) || (!isLegacySale && stageOf(currentSale) !== initial)
           || (resolved.leadId && currentSale.lead_id && currentSale.lead_id !== resolved.leadId)) throw new Error('สถานะรายการขายเปลี่ยนแล้ว กรุณาปิดและโหลดข้อมูลล่าสุด');
-        const latest = draftOf(null, currentSale);
+        const latest = draftOf(currentLead, currentSale);
         if (latest.price !== baseline.price || latest.bank !== baseline.bank || latest.method !== baseline.method || latest.landOfficePrice !== baseline.landOfficePrice) throw new Error('ราคา/ธนาคารเปลี่ยนแล้ว กรุณาปิดและโหลดข้อมูลล่าสุด');
       }
       if (!mounted.current) return;
