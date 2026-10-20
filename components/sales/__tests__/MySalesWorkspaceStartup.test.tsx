@@ -54,6 +54,27 @@ describe('Sales Hub startup sharing', () => {
     expect(await screen.findByText(/บันทึก Lead ใหม่ "New Native Customer" สำเร็จ/)).toBeInTheDocument();
   });
 
+  it('supports retroactive lead date entry and sets lead_date and created_at accordingly', async () => {
+    const insert = vi.fn().mockReturnValue({ select: () => ({ single: async () => ({ data: { id: 'new-backdated-lead' }, error: null }) }) });
+    mocks.from.mockImplementation((table: string) => table === 'leads' ? { insert } : { select: mocks.select });
+    render(<MySalesWorkspace currentUser={user} projects={projects} />);
+    await screen.findByText('Startup Customer');
+    fireEvent.click(screen.getByRole('button', { name: '+ เพิ่ม Lead ใหม่' }));
+    fireEvent.change(screen.getByPlaceholderText('เช่น คุณสมชาย รักดี'), { target: { value: 'Backdated Customer' } });
+    
+    const dateInput = screen.getByLabelText(/วันที่ได้ Lead/);
+    fireEvent.change(dateInput, { target: { value: '2026-01-15' } });
+    expect(screen.getByText('บันทึกย้อนหลัง')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'บันทึก Lead ใหม่' }));
+    await waitFor(() => expect(insert).toHaveBeenCalledOnce());
+    const payload = insert.mock.calls[0][0][0];
+    expect(payload.customer_name).toBe('Backdated Customer');
+    expect(payload.lead_date).toContain('2026-01-15');
+    expect(payload.created_at).toContain('2026-01-15');
+    expect(payload.notes).toContain('วันที่ได้ Lead (ย้อนหลัง)');
+  });
+
   it('does not report successful intake when the database returns no created Lead ID', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});

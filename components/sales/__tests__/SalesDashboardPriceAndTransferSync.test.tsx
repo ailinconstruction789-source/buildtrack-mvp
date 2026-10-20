@@ -247,5 +247,8 @@ describe('SalesDashboard and WaitingForTransferDetails Price & Transfer Sync', (
     // Gross bookings in 2026 includes all bookings occurred in 2026 (2 active + 1 cancelled with booking_date in 2026 = 3)
     const bookedLabel = screen.getByText('ยอดลูกค้าจองสะสม');
     expect(bookedLabel.parentElement?.textContent).toContain('3');
+    expect(screen.getByText(/จองซื้อบ้าน/)).toBeInTheDocument();
+    expect(screen.getByText(/จองเช่า \(Rental\)/)).toBeInTheDocument();
+    expect(screen.getByText(/ภาพรวมการโอน & สัญญาเดือนนี้/)).toBeInTheDocument();
   });
 });

@@ -107,7 +107,7 @@ export default function MySalesWorkspace({
   // 🎛️ Navigation & Filter States
   const [scopeMode, setScopeMode] = useState<'my_leads' | 'all_leads'>('my_leads');
   const [viewMode, setViewMode] = useState<'table' | 'kanban'>('table');
-  const [selectedYear, setSelectedYear] = useState<string>('all');
+  const [selectedYear, setSelectedYear] = useState<string>(() => new Date().getFullYear().toString());
   const [selectedProject, setSelectedProject] = useState<string>('all');
   const [selectedStage, setSelectedStage] = useState<string>('all');
   const [actionFilter, setActionFilter] = useState<'due' | 'upcoming' | null>(null);
@@ -143,6 +143,7 @@ export default function MySalesWorkspace({
   const [newPlotName, setNewPlotName] = useState('');
   const [newChannel, setNewChannel] = useState('Facebook');
   const [newNotes, setNewNotes] = useState('');
+  const [newLeadDate, setNewLeadDate] = useState(() => bangkokToday());
   const [isSavingLead, setIsSavingLead] = useState(false);
 
   useEffect(() => {
@@ -722,8 +723,15 @@ export default function MySalesWorkspace({
     setIsSavingLead(true);
     try {
       const now = new Date();
+      const todayKeyNow = bangkokToday();
+      const leadDay = /^\d{4}-\d{2}-\d{2}$/.test(newLeadDate) && newLeadDate <= todayKeyNow ? newLeadDate : todayKeyNow;
+      const isBackdated = leadDay !== todayKeyNow;
+      const leadTimestamp = isBackdated ? new Date(`${leadDay}T12:00:00+07:00`).toISOString() : now.toISOString();
       const timeStr = now.toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-      const initialNote = `[${timeStr} 👤 บันทึก Lead ใหม่ โดย ${myDisplayName}]\n` +
+      const backdateLabel = isBackdated
+        ? `• วันที่ได้ Lead (ย้อนหลัง): ${new Date(`${leadDay}T12:00:00+07:00`).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })}\n`
+        : '';
+      const initialNote = `[${timeStr} 👤 บันทึก Lead ใหม่ โดย ${myDisplayName}]\n` + backdateLabel +
         (newNotes.trim() ? `• รายละเอียด: ${newNotes.trim()}` : '• สร้าง Lead ใหม่เข้าระบบ');
 
       const { data, error } = await supabase
@@ -740,7 +748,8 @@ export default function MySalesWorkspace({
           agent_name: myDisplayName,
           created_by_agent: myDisplayName,
           notes: initialNote,
-          created_at: now.toISOString(),
+          lead_date: leadTimestamp,
+          created_at: leadTimestamp,
           updated_at: now.toISOString()
         }])
         .select()
@@ -755,6 +764,7 @@ export default function MySalesWorkspace({
       setNewPhone('');
       setNewPlotName('');
       setNewNotes('');
+      setNewLeadDate(bangkokToday());
       fetchData(true);
     } catch (err: any) {
       console.error('Error creating lead:', err);
@@ -1654,6 +1664,24 @@ export default function MySalesWorkspace({
                 <span className="text-[10px] bg-amber-200/80 px-2 py-0.5 rounded-full font-black text-amber-900">
                   Auto-Assigned
                 </span>
+              </div>
+
+              <div>
+                <label htmlFor="new-lead-date" className="block text-xs font-bold text-slate-700 mb-1">
+                  วันที่ได้ Lead <span className="text-rose-500">*</span>
+                  {newLeadDate && newLeadDate < bangkokToday() && (
+                    <span className="ml-2 text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-black">บันทึกย้อนหลัง</span>
+                  )}
+                </label>
+                <input
+                  id="new-lead-date"
+                  type="date"
+                  required
+                  value={newLeadDate}
+                  max={bangkokToday()}
+                  onChange={e => setNewLeadDate(e.target.value)}
+                  className="w-full text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 focus:bg-white focus:ring-2 focus:ring-amber-500"
+                />
               </div>
 
               <div>

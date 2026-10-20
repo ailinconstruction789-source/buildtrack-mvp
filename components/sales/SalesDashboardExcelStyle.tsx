@@ -31,7 +31,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [retryRevision, setRetryRevision] = useState(0);
-  const [data, setData] = useState<any>({ plots: [], sales: [], fallbackSales: [], leads: [], projects: [], houseTypes: [], evidence: [] });
+  const [data, setData] = useState<any>({ plots: [], sales: [], fallbackSales: [], leads: [], rentalContracts: [], projects: [], houseTypes: [], evidence: [] });
   
   const [selectedDateStr, setSelectedDateStr] = useState<string>(getTodayDateStr);
   const [userSelectedDate, setUserSelectedDate] = useState(false);
@@ -124,11 +124,12 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
             evidence: report.projects.map(project => project.evidence), canonical: true });
           return;
         }
-        const [pData, hTypeData, projList, lData] = await Promise.all([
+        const [pData, hTypeData, projList, lData, rContracts] = await Promise.all([
           fetchSalesWithoutLimit('plots', { select: '*, house_types(type_name, is_infrastructure)', orderBy: 'id', ascending: true }),
           supabase.from('house_types').select('*').then(r => r.data || []),
           supabase.from('projects').select('name, is_closed').order('name').then(r => r.data || []),
-          fetchSalesWithoutLimit('leads', { orderBy: 'created_at', ascending: false })
+          fetchSalesWithoutLimit('leads', { orderBy: 'created_at', ascending: false }),
+          Promise.resolve(supabase.from('rental_contracts').select('*')).then(r => r.data || []).catch(() => [])
         ]);
         if (!isCurrentRequest()) return;
         
@@ -236,7 +237,12 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
                 ownerName: s.agent_name || s.owner_name || matchedLead?.agent_name,
                 salePrice,
                 tdPrice,
-                expectedTransferDate
+                expectedTransferDate,
+                dealType: s.deal_type || matchedLead?.deal_type || null,
+                rentalProgram: s.rental_program || matchedLead?.rental_program || null,
+                rentalStatus: s.rental_status || matchedLead?.rental_status || null,
+                rentalStartDate: s.rental_start_date || matchedLead?.rental_start_date || null,
+                contractDate: s.contract_date || matchedLead?.contract_date || null
               };
             });
           }
@@ -288,7 +294,12 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
             leadDate: resolvedLeadDate,
             salePrice: resolvedSalePrice,
             tdPrice: resolvedTdPrice,
-            expectedTransferDate: resolvedExpTransfer
+            expectedTransferDate: resolvedExpTransfer,
+            dealType: s.dealType || s.deal_type || matchedLead?.deal_type || null,
+            rentalProgram: s.rentalProgram || s.rental_program || matchedLead?.rental_program || null,
+            rentalStatus: s.rentalStatus || s.rental_status || matchedLead?.rental_status || null,
+            rentalStartDate: s.rentalStartDate || s.rental_start_date || matchedLead?.rental_start_date || null,
+            contractDate: s.contractDate || s.contract_date || matchedLead?.contract_date || null
           };
         });
 
@@ -305,17 +316,23 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
             Boolean(l.transferred_date) ||
             /transferred|won|โอนแล้ว|โอนกรรมสิทธิ์/i.test(crmText)
           );
-          const isContracted = !isCancelled && !isTransferred && (
+          const isRented = !isCancelled && !isTransferred && (
+            statusLower === 'rented' ||
+            l.rental_status === 'Active' ||
+            /rented|ทำสัญญาเช่าแล้ว|อยู่ระหว่างเช่า/i.test(crmText)
+          );
+          const isContracted = !isCancelled && !isTransferred && !isRented && (
             statusLower === 'contracted' ||
             /contracted|ทำสัญญา|ชำระเงินดาวน์|เตรียมเอกสาร|pre-approval|ยื่นกู้|สินเชื่อผ่าน|รอโอน/i.test(crmText)
           );
-          const isBooked = !isCancelled && !isTransferred && !isContracted && (
+          const isBooked = !isCancelled && !isTransferred && !isRented && !isContracted && (
             Boolean(l.booking_date) ||
             ['reserved', 'booked'].includes(statusLower) ||
-            /booked|reserved|จองแล้ว|วางเงินจอง/i.test(crmText)
+            l.rental_status === 'PendingContract' ||
+            /booked|reserved|จองแล้ว|วางเงินจอง|จองเช่า/i.test(crmText)
           );
 
-          if (!isCancelled && !isTransferred && !isContracted && !isBooked) return;
+          if (!isCancelled && !isTransferred && !isRented && !isContracted && !isBooked) return;
 
           const matchedPlot = (pData || []).find((p: any) =>
             l.project_name && p.project_name === l.project_name && p.id === l.interested_plot_id
@@ -329,6 +346,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
 
           const stage = isCancelled ? 'cancelled'
             : isTransferred ? 'transferred'
+            : isRented ? 'rented'
             : isContracted ? 'contracted'
             : 'booked';
 
@@ -367,7 +385,12 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
             ownerName: l.agent_name || l.created_by_agent,
             salePrice,
             tdPrice,
-            expectedTransferDate
+            expectedTransferDate,
+            dealType: l.deal_type || (isRented || l.rental_status ? 'rent' : null),
+            rentalProgram: l.rental_program || null,
+            rentalStatus: l.rental_status || null,
+            rentalStartDate: l.rental_start_date || null,
+            contractDate: l.contract_date || null
           });
         });
 
@@ -378,6 +401,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
             sales: allSalesRows,
             fallbackSales: fallbackSales,
             leads: lData || [],
+            rentalContracts: rContracts || [],
             projects: projList || [],
             houseTypes: hTypeData || [],
             evidence: allEvidence
@@ -504,16 +528,46 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
         const resolvedTdPrice = tdPrice ?? s.tdPrice ?? matchingPlot?.land_appraisal_price ?? salePrice;
         const expectedTransfer = customerExpectedTransferDay(s) || s.expectedTransferDate || null;
 
+        const matchingContract = (data.rentalContracts || []).find((c: any) =>
+          (s.customerId && c.lead_id === s.customerId) ||
+          (c.plot_id && (c.plot_id === s.plotId || c.plot_id === matchingPlot?.id)) ||
+          (c.plot_name && c.project_name && c.plot_name === s.plotName && c.project_name === s.projectName)
+        );
+
+        const dealType = s.dealType || s.deal_type || matchingLead?.deal_type || (matchingContract ? 'rent' : null);
+        const rentalProgram = s.rentalProgram || s.rental_program || matchingLead?.rental_program || matchingContract?.rental_program || null;
+        const rentalStatus = s.rentalStatus || s.rental_status || matchingLead?.rental_status || matchingContract?.status || null;
+        const rentalStartDate = matchingContract?.lease_start_date?.split('T')[0] || s.rentalStartDate?.split('T')[0] || matchingLead?.rental_start_date?.split('T')[0] || null;
+        const contractDate = s.contractDate?.split('T')[0] || matchingLead?.contract_date?.split('T')[0] || matchingContract?.created_at?.split('T')[0] || null;
+
+        const crmNotesText = `${matchingLead?.crm_status || ''} ${matchingLead?.notes || ''} ${s.notes || ''} ${matchingPlot?.highlight_note || ''}`;
+        const isRental = dealType === 'rent' || dealType === 'rent_to_own' ||
+          Boolean(rentalProgram) ||
+          Boolean(rentalStatus) ||
+          Boolean(matchingContract) ||
+          /จองเช่า|เช่าออม|สัญญาเช่า|Rent \(เช่า\)|^เช่า:/i.test(crmNotesText);
+
+        const isRentalContracted = isRental && (
+          s.stage === 'rented' ||
+          (matchingLead?.status || '').toLowerCase() === 'rented' ||
+          rentalStatus === 'Active' ||
+          matchingContract?.status === 'Active' ||
+          /Rented|ทำสัญญาเช่าแล้ว|อยู่ระหว่างเช่า/i.test(crmNotesText)
+        );
+
         const effectiveStage = isCancelled ? 'cancelled' 
           : isTransferred ? 'transferred' 
+          : isRentalContracted ? 'rented'
           : s.stage;
 
         const status = effectiveStage === 'cancelled' ? 'Cancelled' 
           : ['transferred', 'handover'].includes(effectiveStage) ? 'Transferred' 
+          : effectiveStage === 'rented' ? 'Rented'
           : 'Reserved';
 
         const statusLabel = effectiveStage === 'transferred' ? 'โอนแล้ว' 
           : effectiveStage === 'cancelled' ? 'ยกเลิก' 
+          : effectiveStage === 'rented' ? 'ทำสัญญาแล้ว'
           : ['booked', 'contracted'].includes(effectiveStage) ? 'จองแล้ว' 
           : 'รอโอน';
 
@@ -537,8 +591,15 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
           createdDate,
           expectedTransfer,
           expectedTransferDate: expectedTransfer,
+          dealType,
+          rentalProgram,
+          rentalStatus,
+          rentalStartDate,
+          contractDate,
+          isRental,
+          isRentalContracted,
           plot: matchingPlot || { id: s.plotId, plot_name: s.plotName, project_name: s.projectName, selling_price: salePrice, land_appraisal_price: resolvedTdPrice },
-          sale: { ...s, stage: effectiveStage, tdPrice: resolvedTdPrice, expectedTransferDate: expectedTransfer }
+          sale: { ...s, stage: effectiveStage, tdPrice: resolvedTdPrice, expectedTransferDate: expectedTransfer, dealType, rentalProgram, rentalStatus, rentalStartDate, contractDate, isRental, isRentalContracted }
         };
       });
     } else if (data.fallbackSales && data.fallbackSales.length > 0) {
@@ -550,9 +611,44 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
         const salePrice = s.sale_price ? Number(s.sale_price) : Number(matchingPlot?.selling_price || 0);
         const isCancelled = s.contract_status === 'Cancelled' || s.crm_stage === 'cancelled';
         const isTransferred = !isCancelled && (s.contract_status === 'Transferred' || s.crm_stage === 'transferred' || Boolean(s.transferred_at) || Boolean(matchingLead?.transferred_date));
-        const status = isCancelled ? 'Cancelled' 
+        
+        const matchingContract = (data.rentalContracts || []).find((c: any) =>
+          (s.lead_id && c.lead_id === s.lead_id) ||
+          (c.plot_id && (c.plot_id === s.plot_id || c.plot_id === matchingPlot?.id)) ||
+          (c.plot_name && c.project_name && c.plot_name === matchingPlot?.plot_name && c.project_name === matchingPlot?.project_name)
+        );
+
+        const dealType = s.deal_type || matchingLead?.deal_type || (matchingContract ? 'rent' : null);
+        const rentalProgram = s.rental_program || matchingLead?.rental_program || matchingContract?.rental_program || null;
+        const rentalStatus = s.rental_status || matchingLead?.rental_status || matchingContract?.status || null;
+        const rentalStartDate = matchingContract?.lease_start_date?.split('T')[0] || matchingLead?.rental_start_date?.split('T')[0] || null;
+        const contractDate = matchingLead?.contract_date?.split('T')[0] || matchingContract?.created_at?.split('T')[0] || null;
+
+        const crmNotesText = `${matchingLead?.crm_status || ''} ${matchingLead?.notes || ''} ${s.notes || ''} ${matchingPlot?.highlight_note || ''}`;
+        const isRental = dealType === 'rent' || dealType === 'rent_to_own' ||
+          Boolean(rentalProgram) ||
+          Boolean(rentalStatus) ||
+          Boolean(matchingContract) ||
+          /จองเช่า|เช่าออม|สัญญาเช่า|Rent \(เช่า\)|^เช่า:/i.test(crmNotesText);
+
+        const isRentalContracted = isRental && (
+          (s.crm_stage || '').toLowerCase() === 'rented' ||
+          (matchingLead?.status || '').toLowerCase() === 'rented' ||
+          rentalStatus === 'Active' ||
+          matchingContract?.status === 'Active' ||
+          /Rented|ทำสัญญาเช่าแล้ว|อยู่ระหว่างเช่า/i.test(crmNotesText)
+        );
+
+        const effectiveStage = isCancelled ? 'cancelled' 
+          : isTransferred ? 'transferred' 
+          : isRentalContracted ? 'rented'
+          : (s.crm_stage || s.contract_status);
+
+        const status = effectiveStage === 'cancelled' ? 'Cancelled' 
           : isTransferred ? 'Transferred' 
+          : effectiveStage === 'rented' ? 'Rented'
           : 'Reserved';
+
         return {
           id: s.id,
           plot_id: s.plot_id,
@@ -563,14 +659,21 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
           agent_name: matchingLead?.agent_name || s.agent_name || '-',
           salePrice,
           status,
-          stage: isCancelled ? 'cancelled' : isTransferred ? 'transferred' : (s.crm_stage || s.contract_status),
+          stage: effectiveStage,
           bookDate: s.booked_at?.split('T')[0] || matchingLead?.booking_date?.split('T')[0] || (!isCancelled ? s.created_at?.split('T')[0] : null) || null,
           transferDate: isTransferred ? (s.transferred_at?.split('T')[0] || matchingLead?.transferred_date?.split('T')[0] || null) : null,
           cancelDate: s.cancelled_at?.split('T')[0] || (isCancelled ? extractCancelledDate(matchingLead?.notes, matchingLead?.lost_reason_detail) : null) || null,
           createdDate: matchingLead?.actual_visit_date?.split('T')[0] || matchingLead?.lead_date?.split('T')[0] || s.created_at?.split('T')[0] || '2025-01-01',
           expectedTransfer: customerExpectedTransferDay(s),
+          dealType,
+          rentalProgram,
+          rentalStatus,
+          rentalStartDate,
+          contractDate,
+          isRental,
+          isRentalContracted,
           plot: matchingPlot,
-          sale: s
+          sale: { ...s, dealType, rentalProgram, rentalStatus, rentalStartDate, contractDate, isRental, isRentalContracted }
         };
       });
     }
@@ -595,6 +698,8 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
 
     // Gross bookings in selectedYear up to targetDate (includes active, transferred, and later cancelled bookings)
     const bookedAcc = filteredRecords.filter((r: any) => r.bookDate && r.bookDate.startsWith(selectedYear) && r.bookDate <= targetDate.toISOString().split('T')[0]);
+    const bookedAccRent = bookedAcc.filter((r: any) => r.isRental).length;
+    const bookedAccBuy = bookedAcc.length - bookedAccRent;
     const cancelAcc = filteredRecords.filter((r: any) => r.cancelDate && r.cancelDate.startsWith(selectedYear) && r.cancelDate <= targetDate.toISOString().split('T')[0]);
     const transferAcc = filteredRecords.filter((r: any) => r.transferDate && r.transferDate.startsWith(selectedYear) && r.transferDate <= targetDate.toISOString().split('T')[0]);
 
@@ -603,6 +708,8 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       : validRecords.filter((r: any) => r.createdDate?.startsWith(targetMonthPrefix));
     // Gross bookings in targetMonth up to targetDate (includes active, transferred, and later cancelled bookings)
     const bookedMonth = filteredRecords.filter((r: any) => r.bookDate?.startsWith(targetMonthPrefix) && r.bookDate <= targetDate.toISOString().split('T')[0]);
+    const bookedMonthRent = bookedMonth.filter((r: any) => r.isRental).length;
+    const bookedMonthBuy = bookedMonth.length - bookedMonthRent;
     const transferMonth = filteredRecords.filter((r: any) => r.transferDate?.startsWith(targetMonthPrefix) && r.transferDate <= targetDate.toISOString().split('T')[0]);
     const cancelMonth = filteredRecords.filter((r: any) => r.cancelDate?.startsWith(targetMonthPrefix) && r.cancelDate <= targetDate.toISOString().split('T')[0]);
 
@@ -622,10 +729,10 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
     const targetDateStr = targetDate.toISOString().split('T')[0];
 
     const projectGroups: Record<string, {
-      total: number, transferred: number, waiting: number, available: number, priorTransferred: number,
-      transVal: number, waitVal: number, availVal: number, priorTransVal: number,
+      total: number, transferred: number, waiting: number, available: number, priorTransferred: number, rented: number,
+      transVal: number, waitVal: number, availVal: number, priorTransVal: number, rentVal: number,
       transAppraisal: number, waitAppraisal: number, priorTransAppraisal: number,
-      transferredPlots: any[], waitingPlots: any[], availablePlots: any[], priorTransferredPlots: any[]
+      transferredPlots: any[], waitingPlots: any[], availablePlots: any[], priorTransferredPlots: any[], rentedPlots: any[]
     }> = {};
 
     activePlots.forEach((p: any) => {
@@ -635,10 +742,10 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       const proj = p.project_name || 'ไม่ระบุ';
       if (!projectGroups[proj]) {
         projectGroups[proj] = {
-          total: 0, transferred: 0, waiting: 0, available: 0, priorTransferred: 0,
-          transVal: 0, waitVal: 0, availVal: 0, priorTransVal: 0,
+          total: 0, transferred: 0, waiting: 0, available: 0, priorTransferred: 0, rented: 0,
+          transVal: 0, waitVal: 0, availVal: 0, priorTransVal: 0, rentVal: 0,
           transAppraisal: 0, waitAppraisal: 0, priorTransAppraisal: 0,
-          transferredPlots: [], waitingPlots: [], availablePlots: [], priorTransferredPlots: []
+          transferredPlots: [], waitingPlots: [], availablePlots: [], priorTransferredPlots: [], rentedPlots: []
         };
       }
 
@@ -656,10 +763,18 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
         s.transferDate && s.transferDate < `${selectedYear}-01-01`
       );
 
-      // 3. Active waiting sale (booked on or before targetDateStr, not cancelled, not transferred yet)
+      // Check if plot is an already-contracted active rental (occupied, not waiting and not available)
+      const isPlotRentedActive = plotSales.some((s: any) =>
+        s.isRental && (s.isRentalContracted || s.rentalStatus === 'Active' || s.stage === 'rented' || s.status === 'Rented')
+      ) || (data.rentalContracts || []).some((c: any) =>
+        c.status === 'Active' && (c.plot_id === p.id || (c.project_name === p.project_name && c.plot_name === p.plot_name))
+      );
+
+      // 3. Active waiting sale (booked on or before targetDateStr, not cancelled, not transferred yet, not an active rental)
       const waitingSale = plotSales.find((s: any) => 
         s.stage !== 'cancelled' && s.status !== 'Cancelled' &&
         !['transferred', 'handover'].includes((s.stage || s.status || '').toLowerCase()) &&
+        !(s.isRental && (s.isRentalContracted || s.rentalStatus === 'Active' || s.stage === 'rented' || s.status === 'Rented')) &&
         (!s.bookDate || s.bookDate <= targetDateStr) &&
         (!s.cancelDate || s.cancelDate > targetDateStr)
       );
@@ -682,7 +797,16 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
         projectGroups[proj].transVal += price;
         projectGroups[proj].transAppraisal += appraisal;
         projectGroups[proj].transferredPlots.push({ ...p, activeSale: transferInYear, price, appraisal });
-      } else if (waitingSale || (!data.canonical && !transferPrior && ['booked', 'contracted', 'reserved'].includes((p.sale_status || '').toLowerCase()))) {
+      } else if (isPlotRentedActive) {
+        const rentedSale = plotSales.find((s: any) => s.isRental);
+        price = data.canonical ? Number(rentedSale?.salePrice ?? 0) : rentedSale?.salePrice ? Number(rentedSale.salePrice) : price;
+        appraisal = rentedSale?.tdPrice || rentedSale?.sale?.tdPrice || appraisal || price;
+        if (appraisal <= 0) appraisal = price;
+
+        projectGroups[proj].rented++;
+        projectGroups[proj].rentVal += price;
+        projectGroups[proj].rentedPlots.push({ ...p, activeSale: rentedSale, price, appraisal });
+      } else if (waitingSale || (!data.canonical && !transferPrior && !isPlotRentedActive && ['booked', 'contracted', 'reserved'].includes((p.sale_status || '').toLowerCase()))) {
         const sale = waitingSale || plotSales.find((s: any) => s.stage !== 'cancelled' && s.status !== 'Cancelled');
         price = data.canonical ? Number(sale?.salePrice ?? 0) : sale?.salePrice ? Number(sale.salePrice) : price;
         appraisal = sale?.tdPrice || sale?.sale?.tdPrice || appraisal || price;
@@ -719,7 +843,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
         return proj === selectedProjectFilter;
       }
       const isClosed = closedProjects.has(proj);
-      const yearTotal = stats.transferred + stats.waiting + stats.available;
+      const yearTotal = stats.transferred + stats.waiting + stats.available + (stats.rented || 0);
       return !isClosed && yearTotal > 0;
     });
 
@@ -774,6 +898,72 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       project_name: r.project_name,
       selling_price: r.salePrice
     }).filter(Boolean);
+
+    const isPlotRental = (plot: any) => {
+      const sale = plot.activeSale || plot.sale || plot;
+      if (sale?.isRental || sale?.sale?.isRental) return true;
+      const dt = sale?.dealType || sale?.deal_type || sale?.sale?.dealType || sale?.sale?.deal_type;
+      if (dt === 'rent' || dt === 'rent_to_own') return true;
+      if (sale?.rentalProgram || sale?.rental_program || sale?.rentalStatus || sale?.rental_status) return true;
+      const crm = `${sale?.statusLabel || ''} ${sale?.status || ''} ${sale?.stage || ''} ${sale?.crm_status || ''} ${sale?.notes || ''} ${plot.highlight_note || ''}`;
+      return /จองเช่า|เช่าออม|สัญญาเช่า|Rent \(เช่า\)|^เช่า:/i.test(crm);
+    };
+
+    const saleTransferredPlots = transferMonth.filter((r: any) => !r.isRental);
+    const rentFromTransfers = transferMonth.filter((r: any) => r.isRental);
+
+    // Rental contracts active/started lease in targetMonth
+    const rentContractedPlotsMap = new Map<string, any>();
+    filteredRecords.forEach((r: any) => {
+      if (!r.isRental) return;
+      const isContracted = r.isRentalContracted || r.stage === 'rented' || r.status === 'Rented' || r.rentalStatus === 'Active';
+      if (!isContracted) return;
+      const d = r.rentalStartDate || r.contractDate || r.transferDate || r.bookDate;
+      if (!d || !d.startsWith(targetMonthPrefix)) return;
+      const key = r.plot_id || r.plot?.id || r.plotName || r.id;
+      if (key && !rentContractedPlotsMap.has(key)) {
+        rentContractedPlotsMap.set(key, r);
+      }
+    });
+
+    (data.rentalContracts || []).forEach((c: any) => {
+      const leaseStart = c.lease_start_date?.split('T')[0];
+      if (c.status === 'Active' && leaseStart && leaseStart.startsWith(targetMonthPrefix)) {
+        const key = c.plot_id || `${c.project_name}-${c.plot_name}`;
+        if (key && !rentContractedPlotsMap.has(key)) {
+          const matchingPlot = (data.plots || []).find((p: any) => p.id === c.plot_id || (p.project_name === c.project_name && p.plot_name === c.plot_name));
+          if (!activeProjectName || c.project_name === activeProjectName) {
+            rentContractedPlotsMap.set(key, {
+              id: `contract-${c.id}`,
+              saleId: `contract-${c.id}`,
+              plot_id: c.plot_id,
+              plot_name: c.plot_name,
+              project_name: c.project_name,
+              customer_name: c.tenant_name || 'ลูกค้าเช่า',
+              salePrice: Number(matchingPlot?.selling_price || 0),
+              rentalStartDate: leaseStart,
+              isRental: true,
+              isRentalContracted: true,
+              plot: matchingPlot || { id: c.plot_id, plot_name: c.plot_name, project_name: c.project_name }
+            });
+          }
+        }
+      }
+    });
+    rentFromTransfers.forEach((r: any) => {
+      const key = r.plot_id || r.plot?.id || r.id;
+      if (key && !rentContractedPlotsMap.has(key)) rentContractedPlotsMap.set(key, r);
+    });
+    const rentContractedPlots = Array.from(rentContractedPlotsMap.values());
+
+    const saleWaitingPlots = allWaitingPlots.filter(p => !isPlotRental(p));
+    const rentWaitingPlots = allWaitingPlots.filter(p => isPlotRental(p));
+
+    const saleTransferredVal = saleTransferredPlots.reduce((sum: number, r: any) => sum + (r.salePrice || 0), 0);
+    const saleWaitingVal = saleWaitingPlots.reduce((sum: number, p: any) => sum + (p.price || 0), 0);
+    const salePipelineVal = saleTransferredVal + saleWaitingVal;
+    const salePipelineCount = saleTransferredPlots.length + saleWaitingPlots.length;
+    const rentPipelineCount = rentContractedPlots.length + rentWaitingPlots.length;
 
     const transferMonthVal = transferMonth.reduce((sum: number, r: any) => sum + (r.salePrice || 0), 0);
     const waitingTotalVal = allWaitingPlots.reduce((sum: number, p: any) => sum + (p.price || 0), 0);
@@ -844,7 +1034,9 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
     return {
       unknownHistory,
       viewsAcc, bookedAcc, cancelAcc, transferAcc,
+      bookedAccBuy, bookedAccRent,
       viewsMonth, bookedMonth, transferMonth, cancelMonth,
+      bookedMonthBuy, bookedMonthRent,
       expectingTransfer: expectingThisMonthPlots,
       carriedOverTransfers: carriedOverPlots,
       allWaitingPlots,
@@ -854,6 +1046,13 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       transferMonthPlots,
       totalTransferPipelineCount,
       totalTransferPipelineVal,
+      saleTransferredPlots,
+      saleWaitingPlots,
+      rentContractedPlots,
+      rentWaitingPlots,
+      salePipelineVal,
+      salePipelineCount,
+      rentPipelineCount,
       activeProjects: allProjectsList,
       sumYearTransVal, sumYearWaitVal, sumAvailVal, sumPriorTransVal, sumYearTotalVal,
       sumYearTransAppraisal, sumYearWaitAppraisal, sumPriorTransAppraisal,
@@ -989,9 +1188,25 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
               <span className="font-bold text-gray-600 text-sm">ยอดลูกค้าเข้าชมสะสม</span>
               <span className="text-2xl font-black text-blue-900">{metrics.viewsAcc}</span>
             </div>
-            <div className="flex justify-between items-center">
-              <span className="font-bold text-gray-600 text-sm">ยอดลูกค้าจองสะสม</span>
-              <span className="text-2xl font-black text-blue-900">{metrics.bookedAcc.length}</span>
+            <div>
+              <div className="flex justify-between items-center">
+                <span className="font-bold text-gray-600 text-sm">ยอดลูกค้าจองสะสม</span>
+                <span className="text-2xl font-black text-blue-900">{metrics.bookedAcc.length}</span>
+              </div>
+              <div className="mt-2 pl-3 border-l-2 border-indigo-200 ml-1.5 space-y-1.5">
+                <div className="flex justify-between items-center bg-slate-50/80 px-2.5 py-1 rounded-xl">
+                  <span className="font-bold text-slate-700 text-sm flex items-center gap-1.5">
+                    🏡 จองซื้อบ้าน
+                  </span>
+                  <span className="text-lg font-black text-slate-800">{metrics.bookedAccBuy}</span>
+                </div>
+                <div className="flex justify-between items-center bg-teal-50/80 px-2.5 py-1 rounded-xl border border-teal-100/70">
+                  <span className="font-bold text-teal-800 text-sm flex items-center gap-1.5">
+                    🔑 จองเช่า (Rental)
+                  </span>
+                  <span className="text-lg font-black text-teal-700">{metrics.bookedAccRent}</span>
+                </div>
+              </div>
             </div>
             <div className="flex justify-between items-center bg-red-50 p-3 -mx-3 rounded-lg border border-red-100">
               <span className="font-bold text-red-600 text-sm">ยอดลูกค้ายกเลิกสะสม</span>
@@ -1026,105 +1241,205 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
             </div>
           </div>
 
-          <div className="bg-gradient-to-br from-blue-900 to-indigo-900 p-5 rounded-2xl shadow-md text-white flex flex-col">
-            <div className="text-blue-100 text-sm font-medium mb-1">ภาพรวมการโอนเดือนนี้ (สำเร็จ + คาดการณ์)</div>
-            <div className="flex items-end gap-2 mb-2">
-              <span className="text-4xl font-black">{metrics.totalTransferPipelineCount}</span>
-              <span className="text-blue-200 font-medium mb-1">หลัง</span>
-            </div>
-            <div className="text-sm text-blue-200 font-medium bg-white/10 p-2 rounded inline-block mt-2 self-start">
-              {fmtM(metrics.totalTransferPipelineVal)}
-            </div>
-            
-            <div className="mt-4 pt-4 border-t border-white/20">
-              <div className="grid grid-cols-2 gap-4">
-                {/* โอนแล้ว */}
-                <div>
-                  <div className="text-emerald-400 text-xs font-bold mb-2 flex items-center gap-1">
-                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-400"></div>
-                    โอนแล้ว ({metrics.transferMonth.length})
-                  </div>
-                  <div className="text-blue-200 text-xs font-medium space-y-1 max-h-36 overflow-y-auto custom-scrollbar">
-                    {metrics.transferMonth.length > 0 ? [...metrics.transferMonth].sort((a: any, b: any) => {
-                      const nameA = a.plot?.project_name && a.plot?.plot_name ? `${a.plot.project_name}-${a.plot.plot_name}` : (a.project_name && a.plot_name ? `${a.project_name}-${a.plot_name}` : '-');
-                      const nameB = b.plot?.project_name && b.plot?.plot_name ? `${b.plot.project_name}-${b.plot.plot_name}` : (b.project_name && b.plot_name ? `${b.project_name}-${b.plot_name}` : '-');
-                      return nameA.localeCompare(nameB, 'th', { numeric: true });
-                    }).map((r: any) => {
-                      const label = r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : `${r.project_name}-${r.plot_name}`;
-                      return (
-                        <div key={r.id || r.saleId} className="truncate text-emerald-100/90" title={label}>
-                          • {label}
-                        </div>
-                      );
-                    }) : <div className="text-blue-300/50 italic">- ไม่มี -</div>}
-                  </div>
+          {/* Card 3: ภาพรวมการโอน & สัญญาเดือนนี้ */}
+          <div className="bg-gradient-to-br from-blue-900 to-indigo-950 p-5 rounded-2xl shadow-md text-white flex flex-col justify-between col-span-1 md:col-span-2 xl:col-span-2">
+            {/* Header: Title + Big Totals */}
+            <div className="flex flex-wrap items-start justify-between gap-3 mb-2">
+              <div>
+                <div className="text-blue-200 text-xs font-bold uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-blue-400"></span>
+                  ภาพรวมการโอน & สัญญาเดือนนี้ (สำเร็จ + คาดการณ์)
                 </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-3xl sm:text-4xl font-black text-white">{metrics.salePipelineCount}</span>
+                  <span className="text-blue-200 text-xs font-semibold">หลัง (โอนขาย)</span>
+                  <span className="text-xs font-bold text-white bg-white/15 px-2.5 py-1 rounded-lg ml-1 border border-white/10">
+                    {fmtM(metrics.salePipelineVal)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Rental summary badge */}
+              <div className="bg-teal-900/60 border border-teal-500/30 rounded-xl px-3 py-1.5 text-right">
+                <div className="text-teal-200 text-[11px] font-bold flex items-center gap-1 justify-end">
+                  <span className="w-1.5 h-1.5 rounded-full bg-teal-400"></span>
+                  พอร์ตบ้านเช่าเดือนนี้
+                </div>
+                <div className="text-xl font-black text-teal-300">
+                  {metrics.rentPipelineCount} <span className="text-xs font-semibold text-teal-200">หลัง</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Split Section: Left (Sales) vs Right (Rentals) with sub Left/Right in each */}
+            <div className="mt-3 pt-3 border-t border-white/15">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 
-                {/* คาดว่าจะโอน */}
-                <div>
-                  <div className="text-amber-400 text-xs font-bold mb-2 flex items-center gap-1">
-                    <div className="w-1.5 h-1.5 rounded-full bg-amber-400"></div>
-                    รอโอน ({metrics.allWaitingPlots.length})
+                {/* 🏡 Main Left: ฝั่งขายบ้าน (โอนกรรมสิทธิ์) */}
+                <div className="space-y-2">
+                  <div className="text-blue-100 text-xs font-black flex items-center justify-between pb-1.5 border-b border-white/15">
+                    <span className="flex items-center gap-1.5">
+                      🏡 ฝั่งขายบ้าน (กรรมสิทธิ์)
+                    </span>
+                    <span className="text-[11px] font-bold text-blue-200 bg-blue-800/60 px-2 py-0.5 rounded-md">
+                      รวม {metrics.salePipelineCount} หลัง
+                    </span>
                   </div>
-                  <div className="text-blue-200 text-xs font-medium space-y-1 max-h-36 overflow-y-auto custom-scrollbar">
-                    {metrics.allWaitingPlots.length > 0 ? [...metrics.allWaitingPlots].sort((a: any, b: any) => {
-                      const nameA = a.project_name && a.plot_name ? `${a.project_name}-${a.plot_name}` : (a.plot?.project_name ? `${a.plot.project_name}-${a.plot.plot_name}` : '-');
-                      const nameB = b.project_name && b.plot_name ? `${b.project_name}-${b.plot_name}` : (b.plot?.project_name ? `${b.plot.project_name}-${b.plot.plot_name}` : '-');
-                      return nameA.localeCompare(nameB, 'th', { numeric: true });
-                    }).map((p: any) => {
-                      const label = p.project_name && p.plot_name ? `${p.project_name}-${p.plot_name}` : (p.plot?.project_name ? `${p.plot.project_name}-${p.plot.plot_name}` : '-');
-                      return (
-                        <div key={p.id} className="truncate text-amber-100/90" title={label}>
-                          • {label}
-                        </div>
-                      );
-                    }) : <div className="text-blue-300/50 italic">- ไม่มี -</div>}
+
+                  {/* Sub-division: ซ้าย [โอนแล้ว] vs ขวา [รอโอน] */}
+                  <div className="grid grid-cols-2 gap-3 pt-1">
+                    {/* ซ้ายในซ้าย: โอนแล้ว */}
+                    <div>
+                      <div className="text-emerald-400 text-xs font-bold mb-1.5 flex items-center gap-1">
+                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-400"></div>
+                        โอนแล้ว ({metrics.saleTransferredPlots.length})
+                      </div>
+                      <div className="text-blue-100 text-xs font-medium space-y-1 max-h-40 overflow-y-auto custom-scrollbar pr-1">
+                        {metrics.saleTransferredPlots.length > 0 ? [...metrics.saleTransferredPlots].sort((a: any, b: any) => {
+                          const nameA = a.plot?.project_name && a.plot?.plot_name ? `${a.plot.project_name}-${a.plot.plot_name}` : (a.project_name && a.plot_name ? `${a.project_name}-${a.plot_name}` : '-');
+                          const nameB = b.plot?.project_name && b.plot?.plot_name ? `${b.plot.project_name}-${b.plot.plot_name}` : (b.project_name && b.plot_name ? `${b.project_name}-${b.plot_name}` : '-');
+                          return nameA.localeCompare(nameB, 'th', { numeric: true });
+                        }).map((r: any) => {
+                          const label = r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : `${r.project_name}-${r.plot_name}`;
+                          return (
+                            <div key={r.id || r.saleId} className="truncate text-emerald-100/90 hover:text-white transition-colors" title={label}>
+                              • {label}
+                            </div>
+                          );
+                        }) : <div className="text-blue-300/50 italic text-[11px]">- ไม่มี -</div>}
+                      </div>
+                    </div>
+
+                    {/* ขวาในซ้าย: รอโอน */}
+                    <div>
+                      <div className="text-amber-400 text-xs font-bold mb-1.5 flex items-center gap-1">
+                        <div className="w-1.5 h-1.5 rounded-full bg-amber-400"></div>
+                        รอโอน ({metrics.saleWaitingPlots.length})
+                      </div>
+                      <div className="text-blue-100 text-xs font-medium space-y-1 max-h-40 overflow-y-auto custom-scrollbar pr-1">
+                        {metrics.saleWaitingPlots.length > 0 ? [...metrics.saleWaitingPlots].sort((a: any, b: any) => {
+                          const nameA = a.project_name && a.plot_name ? `${a.project_name}-${a.plot_name}` : (a.plot?.project_name ? `${a.plot.project_name}-${a.plot.plot_name}` : '-');
+                          const nameB = b.project_name && b.plot_name ? `${b.project_name}-${b.plot_name}` : (b.plot?.project_name ? `${b.plot.project_name}-${b.plot.plot_name}` : '-');
+                          return nameA.localeCompare(nameB, 'th', { numeric: true });
+                        }).map((p: any) => {
+                          const label = p.project_name && p.plot_name ? `${p.project_name}-${p.plot_name}` : (p.plot?.project_name ? `${p.plot.project_name}-${p.plot.plot_name}` : '-');
+                          return (
+                            <div key={p.id} className="truncate text-amber-100/90 hover:text-white transition-colors" title={label}>
+                              • {label}
+                            </div>
+                          );
+                        }) : <div className="text-blue-300/50 italic text-[11px]">- ไม่มี -</div>}
+                      </div>
+                    </div>
                   </div>
                 </div>
+
+                {/* 🔑 Main Right: ฝั่งบ้านเช่า (Ailin Rental) */}
+                <div className="space-y-2 border-t md:border-t-0 md:border-l border-white/15 md:pl-4 pt-3 md:pt-0">
+                  <div className="text-teal-200 text-xs font-black flex items-center justify-between pb-1.5 border-b border-white/15">
+                    <span className="flex items-center gap-1.5">
+                      🔑 ฝั่งบ้านเช่า (Ailin Rental)
+                    </span>
+                    <span className="text-[11px] font-bold text-teal-200 bg-teal-800/60 px-2 py-0.5 rounded-md">
+                      รวม {metrics.rentPipelineCount} หลัง
+                    </span>
+                  </div>
+
+                  {/* Sub-division: ซ้าย [ทำสัญญาเช่าแล้ว] vs ขวา [จองเช่า] */}
+                  <div className="grid grid-cols-2 gap-3 pt-1">
+                    {/* ซ้ายในขวา: ทำสัญญาเช่าแล้ว */}
+                    <div>
+                      <div className="text-emerald-400 text-xs font-bold mb-1.5 flex items-center gap-1">
+                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-400"></div>
+                        ทำสัญญา ({metrics.rentContractedPlots.length})
+                      </div>
+                      <div className="text-teal-100 text-xs font-medium space-y-1 max-h-40 overflow-y-auto custom-scrollbar pr-1">
+                        {metrics.rentContractedPlots.length > 0 ? [...metrics.rentContractedPlots].sort((a: any, b: any) => {
+                          const nameA = a.plot?.project_name && a.plot?.plot_name ? `${a.plot.project_name}-${a.plot.plot_name}` : (a.project_name && a.plot_name ? `${a.project_name}-${a.plot_name}` : '-');
+                          const nameB = b.plot?.project_name && b.plot?.plot_name ? `${b.plot.project_name}-${b.plot.plot_name}` : (b.project_name && b.plot_name ? `${b.project_name}-${b.plot_name}` : '-');
+                          return nameA.localeCompare(nameB, 'th', { numeric: true });
+                        }).map((r: any) => {
+                          const label = r.plot?.project_name && r.plot?.plot_name ? `${r.plot.project_name}-${r.plot.plot_name}` : `${r.project_name}-${r.plot_name}`;
+                          return (
+                            <div key={r.id || r.saleId} className="truncate text-teal-100/90 hover:text-white transition-colors" title={label}>
+                              • {label}
+                            </div>
+                          );
+                        }) : <div className="text-teal-300/50 italic text-[11px]">- ไม่มี -</div>}
+                      </div>
+                    </div>
+
+                    {/* ขวาในขวา: จองเช่า */}
+                    <div>
+                      <div className="text-amber-400 text-xs font-bold mb-1.5 flex items-center gap-1">
+                        <div className="w-1.5 h-1.5 rounded-full bg-amber-400"></div>
+                        จองเช่า ({metrics.rentWaitingPlots.length})
+                      </div>
+                      <div className="text-teal-100 text-xs font-medium space-y-1 max-h-40 overflow-y-auto custom-scrollbar pr-1">
+                        {metrics.rentWaitingPlots.length > 0 ? [...metrics.rentWaitingPlots].sort((a: any, b: any) => {
+                          const nameA = a.project_name && a.plot_name ? `${a.project_name}-${a.plot_name}` : (a.plot?.project_name ? `${a.plot.project_name}-${a.plot.plot_name}` : '-');
+                          const nameB = b.project_name && b.plot_name ? `${b.project_name}-${b.plot_name}` : (b.plot?.project_name ? `${b.plot.project_name}-${b.plot.plot_name}` : '-');
+                          return nameA.localeCompare(nameB, 'th', { numeric: true });
+                        }).map((p: any) => {
+                          const label = p.project_name && p.plot_name ? `${p.project_name}-${p.plot_name}` : (p.plot?.project_name ? `${p.plot.project_name}-${p.plot.plot_name}` : '-');
+                          return (
+                            <div key={p.id} className="truncate text-amber-100/90 hover:text-white transition-colors" title={label}>
+                              • {label}
+                            </div>
+                          );
+                        }) : <div className="text-teal-300/50 italic text-[11px]">- ไม่มี -</div>}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
               </div>
             </div>
           </div>
 
+          {/* Card 4: บ้านทั้งหมด */}
           <div 
-            className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between h-full cursor-pointer hover:bg-slate-50 transition-colors relative group"
+            className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between cursor-pointer hover:bg-slate-50 transition-colors relative group col-span-1 md:col-span-2 xl:col-span-4"
             onClick={() => setShowTotalBreakdown(true)}
           >
             <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
               <div className="bg-white text-gray-400 p-1.5 rounded-lg shadow-sm border border-gray-100"><BarChart size={16} /></div>
             </div>
-            <div className="px-2">
-              <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1 group-hover:text-gray-700 transition-colors">บ้านทั้งหมด (ปี {selectedYear})</div>
-              <div className="text-xl font-black text-gray-800">{fmtM(metrics.sumYearTotalVal)}</div>
-              <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
-                <span>{metrics.sumYearTotalCnt} หลัง</span>
-                <span>เฉลี่ย {fmtM(metrics.sumYearTotalVal / (metrics.sumYearTotalCnt || 1))}/หลัง</span>
+            <div className="grid grid-cols-2 md:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-gray-100 gap-4 md:gap-0">
+              <div className="px-3">
+                <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1 group-hover:text-gray-700 transition-colors">บ้านทั้งหมด (ปี {selectedYear})</div>
+                <div className="text-xl font-black text-gray-800">{fmtM(metrics.sumYearTotalVal)}</div>
+                <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
+                  <span>{metrics.sumYearTotalCnt} หลัง</span>
+                  <span>เฉลี่ย {fmtM(metrics.sumYearTotalVal / (metrics.sumYearTotalCnt || 1))}/หลัง</span>
+                </div>
               </div>
-            </div>
 
-            <div className="px-2">
-              <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">ยอดโอนสะสม (ปี {selectedYear})</div>
-              <div className="text-xl font-black text-emerald-600">{fmtM(metrics.sumYearTransVal)}</div>
-              <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
-                <span>{metrics.sumYearTransCnt} หลัง</span>
-                <span className="text-rose-500">ท.ด. {fmtM(metrics.sumYearTransAppraisal)}</span>
+              <div className="px-3 pt-3 md:pt-0">
+                <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">ยอดโอนสะสม (ปี {selectedYear})</div>
+                <div className="text-xl font-black text-emerald-600">{fmtM(metrics.sumYearTransVal)}</div>
+                <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
+                  <span>{metrics.sumYearTransCnt} หลัง</span>
+                  <span className="text-rose-500">ท.ด. {fmtM(metrics.sumYearTransAppraisal)}</span>
+                </div>
               </div>
-            </div>
 
-            <div className="px-2">
-              <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">ยอดรอโอน (ปี {selectedYear})</div>
-              <div className="text-xl font-black text-blue-600">{fmtM(metrics.sumYearWaitVal)}</div>
-              <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
-                <span>{metrics.sumYearWaitCnt} หลัง</span>
-                <span className="text-rose-500">ท.ด. {fmtM(metrics.sumYearWaitAppraisal)}</span>
+              <div className="px-3 pt-3 md:pt-0">
+                <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">ยอดรอโอน (ปี {selectedYear})</div>
+                <div className="text-xl font-black text-blue-600">{fmtM(metrics.sumYearWaitVal)}</div>
+                <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
+                  <span>{metrics.sumYearWaitCnt} หลัง</span>
+                  <span className="text-rose-500">ท.ด. {fmtM(metrics.sumYearWaitAppraisal)}</span>
+                </div>
               </div>
-            </div>
 
-            <div className="px-2">
-              <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">ยอดคงเหลือ (ว่าง)</div>
-              <div className="text-xl font-black text-gray-800">{fmtM(metrics.sumAvailVal)}</div>
-              <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
-                <span>{metrics.sumAvailCnt} หลัง</span>
-                <span>เฉลี่ย {fmtM(metrics.sumAvailVal / (metrics.sumAvailCnt || 1))}/หลัง</span>
+              <div className="px-3 pt-3 md:pt-0">
+                <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">ยอดคงเหลือ (ว่าง)</div>
+                <div className="text-xl font-black text-gray-800">{fmtM(metrics.sumAvailVal)}</div>
+                <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
+                  <span>{metrics.sumAvailCnt} หลัง</span>
+                  <span>เฉลี่ย {fmtM(metrics.sumAvailVal / (metrics.sumAvailCnt || 1))}/หลัง</span>
+                </div>
               </div>
             </div>
           </div>
@@ -1559,6 +1874,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
               {metrics.activeProjects.map(([proj, group]: [string, any]) => {
                 const allPlots = [
                   ...group.transferredPlots.map((p: any) => ({...p, __status: `โอนแล้ว (ปี ${selectedYear})`})), 
+                  ...(group.rentedPlots || []).map((p: any) => ({...p, __status: 'ทำสัญญาเช่าแล้ว'})),
                   ...group.waitingPlots.map((p: any) => ({...p, __status: 'รอโอน'})), 
                   ...group.availablePlots.map((p: any) => ({...p, __status: 'ว่าง'}))
                 ];
@@ -1571,8 +1887,8 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
                       </div>
                       <h4 className="text-lg font-bold text-gray-800">{proj}</h4>
                       <div className="ml-auto text-right">
-                        <div className="text-lg font-black text-slate-800">{fmtM(group.transVal + group.waitVal + group.availVal)}</div>
-                        <div className="text-xs text-slate-500 font-medium">{group.transferred + group.waiting + group.available} แปลง</div>
+                        <div className="text-lg font-black text-slate-800">{fmtM(group.transVal + (group.rentVal || 0) + group.waitVal + group.availVal)}</div>
+                        <div className="text-xs text-slate-500 font-medium">{group.transferred + (group.rented || 0) + group.waiting + group.available} แปลง</div>
                       </div>
                     </div>
                     <div className="bg-white border border-gray-100 rounded-xl overflow-hidden shadow-sm">
@@ -1591,6 +1907,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
                               <td className="px-4 py-3">
                                 <span className={`px-2 py-1 rounded text-[10px] font-bold ${
                                   p.__status.startsWith('โอนแล้ว (ปี') ? 'bg-emerald-100 text-emerald-700' : 
+                                  p.__status === 'ทำสัญญาเช่าแล้ว' ? 'bg-teal-100 text-teal-800' :
                                   p.__status === 'รอโอน' ? 'bg-blue-100 text-blue-700' : 
                                   p.__status === 'ว่าง' ? 'bg-gray-100 text-gray-700' : 
                                   'bg-purple-100 text-purple-700'
