@@ -96,6 +96,16 @@ const formatPhoneNumber = (value: string | null | undefined) => {
   return val;
 };
 
+export const normalizePlotKey = (name?: string | null): string => {
+  if (!name) return '';
+  return String(name)
+    .trim()
+    .toLowerCase()
+    .replace(/^(al\d+|yr|k\d+พิเศษ|k\d+|ไอลิน\s*\d+|โยริว|กานต์รวี\s*\d+)[-_/\s]*/i, '')
+    .replace(/^0+/, '')
+    .trim();
+};
+
 export const stageToKanbanStatus = (stage: string): string => {
   switch (stage?.toLowerCase()) {
     case 'visit': return 'Visit';
@@ -362,12 +372,90 @@ export default function SalesKanban({
       );
 
       // 2. Format sales into Kanban lead structure
+      const claimedLeadIds = new Set<string>();
+
       let formattedLeads: any[] = projectSales.map((s: any) => {
         const matchingPlot = plotsData?.find((p: any) => p.id === s.plot_id || p.plot_name === s.plots?.plot_name);
-        const matchingLead = s.lead_id ? leadsData?.find((l: any) => l.id === s.lead_id) : undefined;
-        const crmCustomer = crmSaleCustomer(s);
         const stage = salesDealStageOf(s);
         const kanbanStatus = stageToKanbanStatus(stage);
+
+        // 1. Direct lead_id match
+        let matchingLead = s.lead_id ? leadsData?.find((l: any) => l.id === s.lead_id) : undefined;
+
+        // 2. Fallback plot-based & customer-name matching for legacy import records without lead_id
+        if (!matchingLead && leadsData && leadsData.length > 0) {
+          const sPlotKeys = new Set([
+            s.plot_id,
+            matchingPlot?.id,
+            matchingPlot?.plot_name,
+            s.plots?.plot_name,
+            normalizePlotKey(matchingPlot?.plot_name),
+            normalizePlotKey(s.plots?.plot_name),
+            normalizePlotKey(s.plot_id),
+          ].filter(Boolean));
+
+          const candidateLeads = leadsData.filter((l: any) => {
+            if (!l.id || claimedLeadIds.has(l.id)) return false;
+
+            const lPlotKeys = [
+              l.interested_plot_id,
+              l.interested_plot_name,
+              normalizePlotKey(l.interested_plot_name),
+              normalizePlotKey(l.interested_plot_id),
+            ].filter(Boolean);
+
+            const plotMatches = lPlotKeys.some(k => sPlotKeys.has(k)) ||
+              (l.interested_plot_name && (s.plot_id === `${projName}-${l.interested_plot_name}` || (matchingPlot?.plot_name && l.interested_plot_name === matchingPlot.plot_name)));
+
+            if (plotMatches) return true;
+
+            const leadName = (l.customer_name || '').trim();
+            if (leadName) {
+              if (matchingPlot?.highlight_note && matchingPlot.highlight_note.includes(leadName)) return true;
+              const saleCustName = (s.customer_name || s.customerName || '').trim();
+              if (saleCustName && (saleCustName.includes(leadName) || leadName.includes(saleCustName))) return true;
+            }
+
+            return false;
+          });
+
+          if (candidateLeads.length > 0) {
+            candidateLeads.sort((a: any, b: any) => {
+              const score = (lead: any) => {
+                let sc = 0;
+                const st = lead.status || '';
+                const isTransferred = st === 'Transferred' || Boolean(lead.transferred_date);
+                const isBooked = ['Reserved', 'Booked', 'Contracted', 'DownPayment', 'Approved'].includes(st) || Boolean(lead.booking_date);
+                const isActive = !['Cancelled', 'Lost'].includes(st);
+
+                if (kanbanStatus === 'Transferred' || stage === 'transferred') {
+                  if (isTransferred) sc += 100;
+                  else if (isBooked) sc += 40;
+                  else if (isActive) sc += 20;
+                } else if (kanbanStatus === 'Reserved' || stage === 'booked') {
+                  if (isBooked) sc += 100;
+                  else if (isTransferred) sc += 40;
+                  else if (isActive) sc += 20;
+                } else if (kanbanStatus === 'Cancelled' || stage === 'cancelled') {
+                  if (st === 'Cancelled' || st === 'Lost') sc += 100;
+                  else sc += 10;
+                } else {
+                  if (isActive) sc += 50;
+                }
+                return sc;
+              };
+              return score(b) - score(a);
+            });
+
+            matchingLead = candidateLeads[0];
+          }
+        }
+
+        if (matchingLead?.id) {
+          claimedLeadIds.add(matchingLead.id);
+        }
+
+        const crmCustomer = crmSaleCustomer(s);
         const bookDate = customerBusinessDay(matchingLead?.booking_date) || customerBusinessDay(s.booked_at) || customerBusinessDay(s.imported_history?.bookedDate || s.importedHistory?.bookedDate) || '';
         const transferDate = customerBusinessDay(s.transferred_at) || customerBusinessDay(s.crm_transfer_date || s.imported_history?.transferredDate || s.importedHistory?.transferredDate) || customerBusinessDay(matchingLead?.transferred_date);
         const cancelDate = customerBusinessDay(s.cancelled_at) || customerBusinessDay(s.imported_history?.cancelledDate || s.importedHistory?.cancelledDate);
@@ -376,7 +464,7 @@ export default function SalesKanban({
         return {
           id: s.id,
           saleId: s.id,
-          leadId: s.lead_id || null,
+          leadId: matchingLead?.id || s.lead_id || null,
           crmStage: s.crm_stage,
           project_name: projName,
           name: matchingLead?.customer_name || crmCustomer?.name || (!s.project_interest_id ? s.customer_name || s.customerName : '') || 'ลูกค้าไม่ระบุชื่อ',
@@ -386,7 +474,7 @@ export default function SalesKanban({
           status: kanbanStatus,
           plot: s.plot_id || matchingPlot?.id || null,
           plotName: s.plots?.plot_name || matchingPlot?.plot_name || s.plot_id || null,
-          bank: s.bank_name || '',
+          bank: s.bank_name || (matchingLead?.notes ? customerDealDetails(matchingLead.notes).bank : '') || '',
           cancelReason: s.cancellation_reason || '',
           landOfficePrice: s.land_office_price?.toString() || '',
           salePrice: Number(s.sale_price ?? matchingPlot?.selling_price ?? 0),
@@ -400,7 +488,7 @@ export default function SalesKanban({
           agentName: matchingLead?.agent_name || matchingLead?.sales_owner || s.agent_name || '',
           source: matchingLead?.source || matchingLead?.channel || 'Walk-in',
           bankStatus: s.bank_status || 'Pending',
-          deal_type: matchingLead?.deal_type || (s as any).deal_type || 'sale',
+          deal_type: matchingLead?.deal_type || (s as any).deal_type || (matchingLead?.crm_status?.includes('เช่า') ? 'rent' : 'sale'),
           customer_name: matchingLead?.customer_name || crmCustomer?.name || (!s.project_interest_id ? s.customer_name || s.customerName : '') || 'ลูกค้าไม่ระบุชื่อ',
           booking_amount: matchingLead?.booking_amount || s.booking_fee || 0,
           rental_program: matchingLead?.rental_program || null,
@@ -423,7 +511,7 @@ export default function SalesKanban({
       if (leadsData && leadsData.length > 0) {
         const existingLeadIds = new Set(formattedLeads.map(l => l.leadId).filter(Boolean));
         leadsData.forEach((l: any) => {
-          if (l.id && !existingLeadIds.has(l.id)) {
+          if (l.id && !existingLeadIds.has(l.id) && !claimedLeadIds.has(l.id)) {
             const matchingPlot = plotsData?.find((p: any) =>
               p.id === l.interested_plot_id ||
               p.plot_name === l.interested_plot_name ||
@@ -432,6 +520,73 @@ export default function SalesKanban({
             const bookDate = l.booking_date ? l.booking_date.split('T')[0] : '';
             const transferDate = l.transferred_date ? l.transferred_date.split('T')[0] : null;
             const visitDate = l.actual_visit_date?.split('T')[0] || '';
+
+            const lPlotKeys = [
+              l.interested_plot_id,
+              l.interested_plot_name,
+              matchingPlot?.id,
+              matchingPlot?.plot_name,
+              normalizePlotKey(l.interested_plot_name),
+              normalizePlotKey(l.interested_plot_id),
+            ].filter(Boolean);
+
+            // 1. If an unnamed entry for this plot already exists, merge this lead into it
+            const unnamedMatchIndex = formattedLeads.findIndex(fl => {
+              if (fl.name !== 'ลูกค้าไม่ระบุชื่อ') return false;
+              const flPlotKeys = new Set([
+                fl.plot,
+                fl.plotName,
+                normalizePlotKey(fl.plotName),
+                normalizePlotKey(fl.plot),
+              ].filter(Boolean));
+              return lPlotKeys.some(k => flPlotKeys.has(k));
+            });
+
+            if (unnamedMatchIndex !== -1) {
+              const target = formattedLeads[unnamedMatchIndex];
+              target.leadId = l.id;
+              target.name = l.customer_name || target.name;
+              target.customer_name = l.customer_name || target.customer_name;
+              target.phone = l.phone || target.phone;
+              target.agentName = l.agent_name || l.sales_owner || target.agentName;
+              if (!target.transferredDate && transferDate) {
+                target.transferredDate = transferDate;
+              }
+              if (!target.bookingDate && bookDate) {
+                target.bookingDate = bookDate;
+                target.booking_date = l.booking_date;
+              }
+              if (!target.bank && l.notes) {
+                target.bank = customerDealDetails(l.notes).bank;
+              }
+              if (l.deal_type) target.deal_type = l.deal_type;
+              existingLeadIds.add(l.id);
+              claimedLeadIds.add(l.id);
+              return;
+            }
+
+            // 2. Prevent duplicate deal (Transferred or Booked) for the same plot
+            const hasDuplicateDeal = formattedLeads.some(fl => {
+              const flPlotKeys = new Set([
+                fl.plot,
+                fl.plotName,
+                normalizePlotKey(fl.plotName),
+                normalizePlotKey(fl.plot),
+              ].filter(Boolean));
+              const samePlot = lPlotKeys.some(k => flPlotKeys.has(k));
+              if (!samePlot) return false;
+              const flIsTransferred = ['Transferred', 'Handover'].includes(fl.status);
+              const lIsTransferred = l.status === 'Transferred' || Boolean(transferDate);
+              if (flIsTransferred && lIsTransferred) return true;
+              const flIsBooked = ['Reserved', 'Contracted', 'DownPayment', 'DocumentPrep', 'LoanProcessing', 'LoanRejected', 'Approved', 'TransferPending'].includes(fl.status);
+              const lIsBooked = ['Reserved', 'Booked', 'Contracted'].includes(l.status) || Boolean(bookDate);
+              if (flIsBooked && lIsBooked) return true;
+              return false;
+            });
+
+            if (hasDuplicateDeal) {
+              return; // Skip duplicate deal row for the same plot
+            }
 
             formattedLeads.push({
               id: l.id,
