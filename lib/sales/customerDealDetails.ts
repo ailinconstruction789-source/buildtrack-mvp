@@ -86,7 +86,7 @@ export function extractExpectedTransferDate(notes: unknown): string | null {
   }
 
   // 3. Month format: "คาดโอน: ต.ค. 2569" or "รอโอนปลายเดือน ต.ค. 2569"
-  const monthMatch = notes.match(/(?:คาด(?:ว่าจะ|การณ์)?โอน|รอ(?:การ)?โอน)[^\d\n·]*\s*([^\s·\n]+)\s*(\d{4})/);
+  const monthMatch = notes.match(/(?:คาด(?:ว่าจะ|การณ์)?โอน|รอ(?:การ)?โอน)[:\s]*(?:(?:ปลาย|ต้น|กลาง)เดือน\s*)?([^\s·\n]+)\s*(\d{4})/);
   if (monthMatch) {
     const m = monthMatch[1];
     let year = parseInt(monthMatch[2], 10);

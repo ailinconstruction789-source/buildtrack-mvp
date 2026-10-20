@@ -884,7 +884,23 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       const leadNotesExp = extractExpectedTransferDate(sale?.notes) ||
         extractExpectedTransferDate(sale?.crm_status) ||
         extractExpectedTransferDate(plot.highlight_note);
-      return leadNotesExp || null;
+      if (leadNotesExp) return leadNotesExp;
+
+      // Fallback: look up matched lead directly from data.leads
+      const matchedLead = (data.leads || []).find((l: any) =>
+        !['Cancelled', 'cancelled'].includes(l.status) && (
+          (plot.id && (l.interested_plot_id === plot.id || l.interested_plot_name === plot.plot_name)) ||
+          (plot.plot_name && plot.project_name && l.project_name === plot.project_name && l.interested_plot_name === plot.plot_name) ||
+          (sale?.customerId && l.id === sale.customerId) ||
+          (sale?.customerName && l.customer_name && l.customer_name.trim() === sale.customerName.trim()) ||
+          (plot.highlight_note && l.customer_name && plot.highlight_note.includes(l.customer_name.trim()))
+        )
+      );
+      if (matchedLead) {
+        const leadExp = matchedLead.expected_transfer_date || matchedLead.expectedTransferDate || extractExpectedTransferDate(matchedLead.notes);
+        if (leadExp) return leadExp;
+      }
+      return null;
     };
 
     const isPlotExpectingThisMonth = (plot: any) => {
