@@ -125,4 +125,45 @@ describe('SalesKanban legacy sales & leads deduplication', () => {
     const plotBadges = screen.getAllByText('2');
     expect(plotBadges).toHaveLength(1);
   });
+
+  it('renders the ลูกค้าที่เช่า tab before ลูกค้าที่โอนแล้ว and displays rental customers correctly', async () => {
+    const rentalLead = {
+      id: 'lead-3',
+      customer_name: 'นายสมชาย เช่าดี',
+      phone: '0855555555',
+      project_name: 'โยริว',
+      interested_plot_name: '3',
+      interested_plot_id: 'plot-3',
+      status: 'Rented',
+      deal_type: 'rent',
+      rental_status: 'Active',
+      rental_program: 'program_a',
+      rental_monthly_rent: 12000,
+      rental_deposit: 24000,
+      rental_start_date: '2026-01-01',
+      rental_end_date: '2027-01-01',
+    };
+    const plot3 = { id: 'plot-3', project_name: 'โยริว', plot_name: '3' };
+
+    mock.read.mockImplementation(async (table: string) => {
+      if (table === 'plots') return [plot1, plot2, plot3];
+      if (table === 'sales') return legacySales;
+      if (table === 'leads') return [...leads, rentalLead];
+      return [];
+    });
+
+    render(<SalesKanban project={{ name: 'โยริว' }} initialTab="rented" />);
+
+    // Verify tab button exists
+    expect(screen.getByText('ลูกค้าที่เช่า')).toBeInTheDocument();
+
+    // Verify tenant name is displayed
+    expect(await screen.findByText('นายสมชาย เช่าดี')).toBeInTheDocument();
+
+    // Verify monthly rent is displayed
+    expect(screen.getByText(/฿12,000/)).toBeInTheDocument();
+
+    // Verify lease period is displayed
+    expect(screen.getByText(/2026-01-01 ถึง 2027-01-01/)).toBeInTheDocument();
+  });
 });

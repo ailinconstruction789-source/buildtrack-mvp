@@ -183,7 +183,7 @@ export default function SalesKanban({
   const forecastScope = React.useRef('');
   forecastScope.current = `${user?.id ?? user?.username ?? ''}:${internalProject?.name ?? ''}`;
   const [rawLeads, setRawLeads] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState<'daily_visits' | 'map' | 'booked' | 'transferred' | 'list' | 'pricing'>((initialTab as any) || 'daily_visits');
+  const [activeTab, setActiveTab] = useState<'daily_visits' | 'map' | 'booked' | 'rented' | 'transferred' | 'list' | 'pricing'>((initialTab as any) || 'daily_visits');
   const [search, setSearch] = useState('');
   
   const [panelState, setPanelState] = useState<{type: 'default' | 'booking' | 'customer' | 'new-customer', plotId: string, lead: any}>({ type: 'default', plotId: '', lead: null });
@@ -1066,13 +1066,76 @@ export default function SalesKanban({
     }
   };
 
-  const filteredLeads = sortLeadsByPlot(leads.filter(l => {
-    if (search && !(l.name ?? '').toLowerCase().includes(search.toLowerCase()) && !(l.phone ?? '').includes(search) && (!l.plot || !l.plot.toLowerCase().includes(search.toLowerCase()))) return false;
-    return true;
-  }));
+  const isSearchMatch = (l: any) => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return Boolean(
+      (l.name ?? '').toLowerCase().includes(q) ||
+      (l.phone ?? '').includes(search) ||
+      (l.plot && l.plot.toLowerCase().includes(q)) ||
+      (l.plotName && String(l.plotName).toLowerCase().includes(q))
+    );
+  };
 
-  const bookedLeads = sortLeadsByPlot(leads.filter(l => ['Reserved', 'Contracted', 'DownPayment', 'DocumentPrep', 'LoanProcessing', 'LoanRejected', 'Approved', 'TransferPending'].includes(l.status)));
-  const transferredLeads = sortLeadsByPlot(leads.filter(l => ['Transferred', 'Handover'].includes(l.status)));
+  const filteredLeads = sortLeadsByPlot(leads.filter(l => isSearchMatch(l)));
+
+  const bookedLeads = sortLeadsByPlot(leads.filter(l => 
+    ['Reserved', 'Contracted', 'DownPayment', 'DocumentPrep', 'LoanProcessing', 'LoanRejected', 'Approved', 'TransferPending'].includes(l.status) && isSearchMatch(l)
+  ));
+
+  const isRentalCustomer = (l: any) => Boolean(
+    l.deal_type === 'rent' ||
+    ['Rented', 'Rent'].includes(l.status) ||
+    ['Active', 'PendingContract', 'Renewed'].includes(l.rental_status) ||
+    String(l.crm_status || '').includes('เช่า') ||
+    l.rental_program
+  );
+
+  const rentedLeads = sortLeadsByPlot(leads.filter(l => 
+    isRentalCustomer(l) && !['Cancelled', 'Lost', 'MovedOut', 'Terminated'].includes(l.status) && l.rental_status !== 'Cancelled' && isSearchMatch(l)
+  ));
+
+  const transferredLeads = sortLeadsByPlot(leads.filter(l => 
+    ['Transferred', 'Handover'].includes(l.status) && isSearchMatch(l)
+  ));
+
+  const getRentalBadge = (lead: any) => {
+    if (lead.rental_status === 'Active' || lead.status === 'Rented') {
+      return {
+        label: 'สัญญาเช่า (เช่าอยู่)',
+        color: 'text-teal-700',
+        bg: 'bg-teal-50',
+        border: 'border-teal-200',
+        icon: Key
+      };
+    }
+    if (lead.rental_status === 'PendingContract' || lead.status === 'Reserved') {
+      return {
+        label: 'จองเช่า (รอทำสัญญา)',
+        color: 'text-amber-800',
+        bg: 'bg-amber-50',
+        border: 'border-amber-300',
+        icon: BookmarkCheck
+      };
+    }
+    if (lead.rental_status === 'Renewed') {
+      return {
+        label: 'ต่อสัญญาเช่า',
+        color: 'text-blue-700',
+        bg: 'bg-blue-50',
+        border: 'border-blue-200',
+        icon: CheckCircle
+      };
+    }
+    const cfg = STATUS_CONFIG[lead.status] || STATUS_CONFIG['Reserved'];
+    return {
+      label: cfg.label,
+      color: cfg.color,
+      bg: cfg.bg,
+      border: 'border-white/50',
+      icon: cfg.icon
+    };
+  };
 
   // Count today's scheduled visits
   const todayVisitsCount = React.useMemo(() => {
@@ -1717,6 +1780,18 @@ export default function SalesKanban({
             ข้อมูลลูกค้าที่จอง
           </button>
           <button 
+            onClick={() => setActiveTab('rented')}
+            className={`pb-4 px-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'rented' ? 'border-[#d4af37] text-[#0f172a]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+          >
+            <Key size={18} className={activeTab === 'rented' ? 'text-[#d4af37]' : ''} />
+            <span>ลูกค้าที่เช่า</span>
+            {rentedLeads.length > 0 && (
+              <span className="bg-teal-50 text-teal-700 border border-teal-200 text-[10px] font-black px-1.5 py-0.2 rounded-full">
+                {rentedLeads.length}
+              </span>
+            )}
+          </button>
+          <button 
             onClick={() => setActiveTab('transferred')}
             className={`pb-4 px-2 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'transferred' ? 'border-[#d4af37] text-[#0f172a]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
           >
@@ -1739,8 +1814,8 @@ export default function SalesKanban({
           </button>
         </div>
         
-        {/* Search Bar for List/Booked/Transferred View */}
-        {(activeTab === 'list' || activeTab === 'booked' || activeTab === 'transferred') && (
+        {/* Search Bar for List/Booked/Rented/Transferred View */}
+        {(activeTab === 'list' || activeTab === 'booked' || activeTab === 'rented' || activeTab === 'transferred') && (
           <div className="relative pb-3">
             <Search className="absolute left-3 top-2.5 text-gray-400" size={16} />
             <input 
@@ -2003,6 +2078,185 @@ export default function SalesKanban({
                         <tr>
                           <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
                             ไม่พบข้อมูลลูกค้าที่มีการจอง
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* RENTED TAB */}
+            {activeTab === 'rented' && (
+              <div className="h-full flex flex-col overflow-hidden animate-in fade-in slide-in-from-bottom-2">
+                <div className="overflow-y-auto flex-1 p-0 custom-scrollbar">
+                  <table className="w-full text-left border-collapse">
+                    <thead className="bg-slate-50 sticky top-0 z-10 border-b border-slate-200">
+                      <tr>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">รหัสแปลง (Plot)</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">ลูกค้าผู้เช่า (Customer)</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">สถานะ (Status)</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">โปรแกรมเช่า (Program)</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">ค่าเช่า / เงินประกัน (Rent & Deposit)</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">ระยะเวลาสัญญา (Lease Period)</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">จัดการ (Actions)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {rentedLeads.map(lead => {
+                        const badge = getRentalBadge(lead);
+                        const BadgeIcon = badge.icon;
+                        const plotName = projectPlotsData.find(p => p.id === lead.plot)?.plot_name || lead.plot;
+                        const programInfo = lead.rental_program ? ((RENTAL_PROGRAM_DETAILS as any)[lead.rental_program] || null) : null;
+                        
+                        return (
+                          <tr key={lead.id} className="hover:bg-slate-50 transition-colors group cursor-pointer" onClick={() => handleEditLeadClick(lead)}>
+                            <td className="px-6 py-4">
+                              <span className="font-bold text-[#0f172a] bg-gray-100 px-2 py-1 rounded-md text-sm">{plotName || '-'}</span>
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-full bg-teal-50 flex items-center justify-center text-teal-700 font-bold border border-teal-200">
+                                  {lead.name?.charAt(0) || <Key size={16} />}
+                                </div>
+                                <div>
+                                  <div className="font-semibold text-slate-800 flex items-center gap-1.5 flex-wrap">
+                                    <span>{lead.name}</span>
+                                    <span className="px-1.5 py-0.2 rounded-md bg-teal-100 text-teal-900 font-bold text-[10px] border border-teal-300">
+                                      🔑 เช่า
+                                    </span>
+                                  </div>
+                                  <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
+                                    {formatPhoneNumber(lead.phone)}
+                                    {lead.agentName && <span className="ml-2 px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded flex items-center gap-1 border border-blue-100"><User size={8} /> {lead.agentName}</span>}
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold ${badge.bg} ${badge.color} border ${badge.border} shadow-2xs`}>
+                                <BadgeIcon size={12} />
+                                <span>{badge.label}</span>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              {programInfo ? (
+                                <div className="flex flex-col">
+                                  <span className="font-semibold text-slate-700 text-xs">
+                                    {programInfo.label}
+                                  </span>
+                                  {lead.rental_savings_per_month && Number(lead.rental_savings_per_month) > 0 ? (
+                                    <span className="text-[11px] text-teal-600 font-medium">
+                                      (ออม ฿{Number(lead.rental_savings_per_month).toLocaleString()}/ด.)
+                                    </span>
+                                  ) : null}
+                                </div>
+                              ) : (
+                                <span className="text-xs text-slate-600 font-medium">
+                                  {lead.rental_program || 'สัญญาเช่าทั่วไป'}
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="flex flex-col gap-0.5">
+                                {lead.rental_monthly_rent ? (
+                                  <div className="text-xs font-bold text-teal-700">
+                                    ค่าเช่า: ฿{Number(lead.rental_monthly_rent).toLocaleString()} / ด.
+                                  </div>
+                                ) : (
+                                  <div className="text-xs text-gray-400">ค่าเช่า: -</div>
+                                )}
+                                {lead.rental_deposit ? (
+                                  <div className="text-[11px] text-slate-500">
+                                    ประกัน: ฿{Number(lead.rental_deposit).toLocaleString()}
+                                  </div>
+                                ) : lead.booking_amount ? (
+                                  <div className="text-[11px] text-amber-700 font-medium">
+                                    เงินจอง: ฿{Number(lead.booking_amount).toLocaleString()}
+                                  </div>
+                                ) : null}
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="flex flex-col gap-0.5 text-xs text-slate-700">
+                                {lead.rental_start_date || lead.rental_end_date ? (
+                                  <div className="flex items-center gap-1 font-medium text-slate-800">
+                                    <Calendar size={12} className="text-slate-400 shrink-0" />
+                                    <span>{lead.rental_start_date || '-'} ถึง {lead.rental_end_date || '-'}</span>
+                                  </div>
+                                ) : lead.bookingDate ? (
+                                  <div className="text-xs text-slate-500">
+                                    วันที่จอง: {lead.bookingDate}
+                                  </div>
+                                ) : (
+                                  <span className="text-gray-400">-</span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 text-right" onClick={(e) => e.stopPropagation()}>
+                              <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                                {lead.rental_status === 'PendingContract' || lead.status === 'Reserved' ? (
+                                  <button
+                                    type="button"
+                                    title="ทำสัญญาเช่าจริง"
+                                    onClick={() => {
+                                      setShowRentalModal({
+                                        isOpen: true,
+                                        lead: lead,
+                                        plotId: lead.plot || null,
+                                        defaultMode: 'contract'
+                                      });
+                                    }}
+                                    className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-bold flex items-center gap-1 shadow-2xs transition-colors shrink-0 cursor-pointer"
+                                  >
+                                    <FileText size={12} />
+                                    <span>ทำสัญญาเช่า</span>
+                                  </button>
+                                ) : (
+                                  <>
+                                    <button
+                                      type="button"
+                                      title="จัดการสัญญาเช่า (เปลี่ยนเป็นซื้อ / ต่อสัญญา / สิ้นสุดสัญญา)"
+                                      onClick={() => {
+                                        const plotObj = projectPlotsData.find(p => p.id === lead.plot) || { id: lead.plot, plot_name: lead.plotName };
+                                        setShowRentalActionModal({
+                                          isOpen: true,
+                                          lead: lead,
+                                          plot: plotObj
+                                        });
+                                      }}
+                                      className="px-2.5 py-1.5 bg-teal-50 hover:bg-teal-100 text-teal-700 border border-teal-200 rounded-lg text-xs font-bold flex items-center gap-1 shadow-2xs transition-colors shrink-0 cursor-pointer"
+                                    >
+                                      <Key size={12} />
+                                      <span>จัดการสัญญา</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      title="บันทึก / ดูประวัติการชำระค่าเช่า"
+                                      onClick={() => {
+                                        const plotObj = projectPlotsData.find(p => p.id === lead.plot) || { id: lead.plot, plot_name: lead.plotName };
+                                        setShowRentalPaymentModal({
+                                          isOpen: true,
+                                          lead: lead,
+                                          plot: plotObj
+                                        });
+                                      }}
+                                      className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg text-xs font-semibold flex items-center gap-1 shadow-2xs transition-colors shrink-0 cursor-pointer"
+                                    >
+                                      <CreditCard size={13} />
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {rentedLeads.length === 0 && (
+                        <tr>
+                          <td colSpan={7} className="px-6 py-12 text-center text-gray-500">
+                            ไม่พบข้อมูลลูกค้าที่เช่า
                           </td>
                         </tr>
                       )}
