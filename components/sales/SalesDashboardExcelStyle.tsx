@@ -730,7 +730,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
 
     const projectGroups: Record<string, {
       total: number, transferred: number, waiting: number, available: number, priorTransferred: number, rented: number,
-      transVal: number, waitVal: number, availVal: number, priorTransVal: number, rentVal: number,
+      transVal: number, waitVal: number, availVal: number, priorTransVal: number, rentVal: number, baseVal: number,
       transAppraisal: number, waitAppraisal: number, priorTransAppraisal: number,
       transferredPlots: any[], waitingPlots: any[], availablePlots: any[], priorTransferredPlots: any[], rentedPlots: any[]
     }> = {};
@@ -743,7 +743,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       if (!projectGroups[proj]) {
         projectGroups[proj] = {
           total: 0, transferred: 0, waiting: 0, available: 0, priorTransferred: 0, rented: 0,
-          transVal: 0, waitVal: 0, availVal: 0, priorTransVal: 0, rentVal: 0,
+          transVal: 0, waitVal: 0, availVal: 0, priorTransVal: 0, rentVal: 0, baseVal: 0,
           transAppraisal: 0, waitAppraisal: 0, priorTransAppraisal: 0,
           transferredPlots: [], waitingPlots: [], availablePlots: [], priorTransferredPlots: [], rentedPlots: []
         };
@@ -795,6 +795,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
 
         projectGroups[proj].transferred++;
         projectGroups[proj].transVal += price;
+        projectGroups[proj].baseVal += Number(p.selling_price || 0);
         projectGroups[proj].transAppraisal += appraisal;
         projectGroups[proj].transferredPlots.push({ ...p, activeSale: transferInYear, price, appraisal });
       } else if (isPlotRentedActive) {
@@ -806,6 +807,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
 
         projectGroups[proj].rented++;
         projectGroups[proj].rentVal += price;
+        projectGroups[proj].baseVal += Number(p.selling_price || 0);
         projectGroups[proj].rentedPlots.push({ ...p, activeSale: rentedSale, price, appraisal });
       } else if (waitingSale || (!data.canonical && !transferPrior && !isPlotRentedActive && ['booked', 'contracted', 'reserved'].includes((p.sale_status || '').toLowerCase()))) {
         const sale = waitingSale || plotSales.find((s: any) => s.stage !== 'cancelled' && s.status !== 'Cancelled');
@@ -815,6 +817,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
 
         projectGroups[proj].waiting++;
         projectGroups[proj].waitVal += price;
+        projectGroups[proj].baseVal += Number(p.selling_price || 0);
         projectGroups[proj].waitAppraisal += appraisal;
         projectGroups[proj].waitingPlots.push({ ...p, activeSale: sale, price, appraisal });
       } else if (transferPrior || (!data.canonical && !transferInYear && (p.sale_status || '').toLowerCase() === 'transferred')) {
@@ -831,6 +834,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
         if (appraisal <= 0) appraisal = price;
         projectGroups[proj].available++;
         projectGroups[proj].availVal += price;
+        projectGroups[proj].baseVal += Number(p.selling_price || 0);
         projectGroups[proj].availablePlots.push({ ...p, price, appraisal });
       }
     });
@@ -851,6 +855,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
     let sumYearTransVal = 0, sumYearWaitVal = 0, sumAvailVal = 0, sumPriorTransVal = 0, sumRentedVal = 0;
     let sumYearTransAppraisal = 0, sumYearWaitAppraisal = 0, sumPriorTransAppraisal = 0;
     let sumYearTransCnt = 0, sumYearWaitCnt = 0, sumAvailCnt = 0, sumPriorTransCnt = 0, sumTotalCnt = 0, sumRentedCnt = 0;
+    let sumYearBaseVal = 0;
 
     allProjectsList.forEach(([_, stats]) => {
       sumYearTransVal += stats.transVal; 
@@ -858,6 +863,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       sumRentedVal += (stats.rentVal || 0);
       sumAvailVal += stats.availVal;
       sumPriorTransVal += stats.priorTransVal;
+      sumYearBaseVal += (stats.baseVal || 0);
 
       sumYearTransAppraisal += stats.transAppraisal; 
       sumYearWaitAppraisal += stats.waitAppraisal;
@@ -874,7 +880,8 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
     const sumYearSalesVal = sumYearTransVal + sumYearWaitVal;
     const sumYearSalesCnt = sumYearTransCnt + sumYearWaitCnt;
     const sumYearSalesAppraisal = sumYearTransAppraisal + sumYearWaitAppraisal;
-    const sumYearTotalVal = sumYearTransVal + sumYearWaitVal + sumRentedVal + sumAvailVal;
+    // Total gross value from baseline prices configured in the "ราคาบ้านและที่ดิน" tab
+    const sumYearTotalVal = sumYearBaseVal > 0 ? sumYearBaseVal : (sumYearTransVal + sumYearWaitVal + sumRentedVal + sumAvailVal);
     const sumYearTotalCnt = sumYearTransCnt + sumYearWaitCnt + sumRentedCnt + sumAvailCnt;
 
     // Extract all active waiting plots from allProjectsList (connecting 100% to CRM V2 sales/plots)
@@ -1096,7 +1103,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       salePipelineCount,
       rentPipelineCount,
       activeProjects: allProjectsList,
-      sumYearTransVal, sumYearWaitVal, sumAvailVal, sumPriorTransVal, sumYearTotalVal,
+      sumYearTransVal, sumYearWaitVal, sumAvailVal, sumPriorTransVal, sumYearTotalVal, sumYearBaseVal,
       sumYearTransAppraisal, sumYearWaitAppraisal, sumPriorTransAppraisal,
       sumYearTransCnt, sumYearWaitCnt, sumAvailCnt, sumPriorTransCnt, sumYearTotalCnt, sumTotalCnt,
       sumRentedCnt, sumRentedVal,
@@ -1924,7 +1931,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
             <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50 shrink-0">
               <div>
                 <h3 className="text-xl font-black text-gray-800">รายละเอียดรวมบ้านทั้งหมด (ปี {selectedYear})</h3>
-                <p className="text-sm text-gray-500 font-medium">ยอดรวมจากราคาขายตามสัญญาและราคาตั้งต้นของทุกสถานะ</p>
+                <p className="text-sm text-gray-500 font-medium">ยอดรวมจากราคาตั้งต้นของบ้านทั้งหมดตาม Tab ราคาบ้านและที่ดินในแต่ละโครงการ</p>
               </div>
               <button onClick={() => setShowTotalBreakdown(false)} className="w-10 h-10 rounded-full hover:bg-gray-200 flex items-center justify-center text-gray-500 transition-colors">
                 ✕
@@ -1947,7 +1954,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
                       </div>
                       <h4 className="text-lg font-bold text-gray-800">{proj}</h4>
                       <div className="ml-auto text-right">
-                        <div className="text-lg font-black text-slate-800">{fmtM(group.transVal + (group.rentVal || 0) + group.waitVal + group.availVal)}</div>
+                        <div className="text-lg font-black text-slate-800">{fmtM(group.baseVal || (group.transVal + (group.rentVal || 0) + group.waitVal + group.availVal))}</div>
                         <div className="text-xs text-slate-500 font-medium">{group.transferred + (group.rented || 0) + group.waiting + group.available} แปลง</div>
                       </div>
                     </div>
@@ -1957,7 +1964,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
                           <tr>
                             <th className="px-4 py-3 font-bold">แปลง</th>
                             <th className="px-4 py-3 font-bold">สถานะ</th>
-                            <th className="px-4 py-3 font-bold text-right">ราคาขาย / ราคาตั้ง</th>
+                            <th className="px-4 py-3 font-bold text-right">ราคาตั้งต้น (ราคาและที่ดิน)</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-50">
@@ -1973,7 +1980,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
                                   'bg-purple-100 text-purple-700'
                                 }`}>{p.__status}</span>
                               </td>
-                              <td className="px-4 py-3 font-bold text-right text-slate-700">{fmtM(p.price || p.selling_price || 0)}</td>
+                              <td className="px-4 py-3 font-bold text-right text-slate-700">{fmtM(p.selling_price || p.price || 0)}</td>
                             </tr>
                           ))}
                         </tbody>
