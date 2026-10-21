@@ -178,7 +178,8 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
   const reasonRequired = target !== initial && ['loan_rejected', 'cancelled'].includes(target);
   const changed = Boolean(baseline && (target !== initial || note.trim() || Object.keys(draft).some(key => draft[key as keyof Draft] !== baseline[key as keyof Draft])));
   async function save(options?: { confirmedBySubmit?: boolean }) {
-    if (!editable || !resolved || !baseline || inFlight.current || !choices.includes(target) || (!changed && !progress.current.payload)) return;
+    if (!editable || !resolved || !baseline || inFlight.current || (!changed && !progress.current.payload)) return;
+    if (!choices.includes(target)) { setError('ขั้นตอนนี้ไม่ตรงกับสถานะปัจจุบันหรือวิธีชำระเงิน'); return; }
     if (resolved.leadId && !draft.name.trim()) { setError('กรุณาระบุชื่อลูกค้า'); return; }
     const price = draft.price.trim() ? Number(draft.price.replace(/,/g, '')) : null;
     if ((price !== null && (!Number.isFinite(price) || price < 0)) || (baseline.price && price === null) || /[\r\n]/.test(draft.bank)) { setError('กรุณาระบุราคาขายเป็นตัวเลขที่ไม่ติดลบ และธนาคารในบรรทัดเดียว'); return; }
@@ -276,6 +277,9 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         if (result.error) throw result.error;
         if (!result.data?.id) throw new Error('บันทึกประวัติสถานะยังไม่สำเร็จ');
         progress.current.history = true;
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('buildtrack:sales_sync', { detail: { type: 'sales_deal_saved', timestamp: Date.now() } }));
       }
       if (mounted.current) onSaved(`อัปเดตข้อมูลลูกค้าและการขายแล้ว${stageChanged ? ` — ${option.label}` : ''}`);
     } catch (failure) {

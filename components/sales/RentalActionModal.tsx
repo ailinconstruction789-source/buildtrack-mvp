@@ -30,6 +30,7 @@ import { calculateConversionCredit } from '@/lib/rentalHelper';
 import SalesOverlay from './SalesOverlay';
 import { extendRentalLeaseEnd, rentalLifecycleActions } from '@/lib/sales/rentalLifecycle';
 import { canEditSalesRole } from '@/lib/sales/leadStage';
+import { salesDealStageOf } from '@/lib/sales/dealStatus';
 
 interface RentalActionModalProps {
   contractId?: string | null;
@@ -56,6 +57,15 @@ export default function RentalActionModal({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const actionProgress = useRef<{ kind: string; completed: number; steps: (() => Promise<void>)[]; message: string } | null>(null);
   const busy = useRef(false);
+  const isMounted = useRef(true);
+  useEffect(() => {
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+      currentScope.current = 'unmounted:' + Math.random();
+    };
+  }, []);
+
   const scope = `${isOpen}:${contractId || lead?.active_rental_contract_id || ''}:${lead?.id || ''}:${plot?.id || ''}:${user?.id || user?.username || ''}:${user?.role || ''}`;
   const currentScope = useRef(scope);
   currentScope.current = scope;
@@ -96,15 +106,63 @@ export default function RentalActionModal({
         const exactId = contractId || lead?.active_rental_contract_id;
         if (!exactId && !lead?.id && !plot?.id) throw new Error('กรุณาระบุสัญญา ลูกค้า หรือแปลง');
         let query = supabase.from('rental_contracts').select('*');
-        if (exactId) query = query.eq('id', exactId);
-        else {
-          query = query.in('status', ['Active', 'Renewed']);
+        if (exactId) {
+          query = query.eq('id', exactId);
+        } else {
+          const allowedStatuses = ['Active', 'Renewed'];
+          if (lead?.rental_status === 'MovedOut' || lead?.rental_status === 'ConvertedToBuy' || lead?.status === 'MovedOut') {
+            allowedStatuses.push('MovedOut', 'ConvertedToBuy');
+          } else if (lead?.id) {
+            allowedStatuses.push('MovedOut', 'ConvertedToBuy');
+          }
+          query = query.in('status', allowedStatuses);
           query = lead?.id ? query.eq('lead_id', lead.id) : query.eq('plot_id', plot.id);
         }
         const { data, error } = await query.order('created_at', { ascending: false }).limit(1);
         if (error) throw error;
         const contract = data?.[0] as RentalContract | undefined;
-        if (!contract || !['Active', 'Renewed'].includes(contract.status)) {
+
+        // Clean name helper for ownership checking
+        const clean = (val: unknown) =>
+          typeof val === 'string' ? val.trim().toLowerCase().replace(/^(นาย|นาง|นางสาว|คุณ)\s*/, '') : '';
+        const contractTenant = clean(contract?.tenant_name);
+        const plotTenant = clean(plot?.current_tenant_name);
+        const plotCustomer = clean(plot?.customer_name);
+
+        // Does the plot still appear to belong to this contract's tenant?
+        const isPlotStillHeldByTenant = Boolean(
+          plot && (
+            (plotTenant && plotTenant === contractTenant) ||
+            (plotCustomer && plotCustomer === contractTenant) ||
+            (plot.sale_status === 'Rented' && (!plotTenant || plotTenant === contractTenant))
+          )
+        );
+
+        // Check if contract is active/renewed, OR in incomplete transition (ConvertedToBuy/MovedOut but lead or plot not fully transitioned)
+        let isTransitioning = Boolean(contract && (
+          (contract.status === 'ConvertedToBuy' && (
+            (lead?.rental_status && lead.rental_status !== 'ConvertedToBuy') ||
+            (plot && (plot.sale_status === 'Rented' || isPlotStillHeldByTenant))
+          )) ||
+          (contract.status === 'MovedOut' && (
+            (lead?.rental_status && lead.rental_status !== 'MovedOut') ||
+            isPlotStillHeldByTenant
+          ))
+        ));
+
+        // Recovery: if contract is ConvertedToBuy, but there is NO active sales record created yet for this deal:
+        if (contract && contract.status === 'ConvertedToBuy' && !isTransitioning && contract.lead_id && contract.plot_id) {
+          const { data: salesData } = await supabase.from('sales')
+            .select('id')
+            .eq('lead_id', contract.lead_id)
+            .eq('plot_id', contract.plot_id)
+            .neq('contract_status', 'Cancelled');
+          if (!salesData || salesData.length === 0) {
+            isTransitioning = true;
+          }
+        }
+
+        if (!contract || (!['Active', 'Renewed'].includes(contract.status) && !isTransitioning)) {
           throw new Error('ไม่พบสัญญาเช่าที่ดำเนินการได้ สัญญาอาจสิ้นสุดแล้ว');
         }
         if ((lead?.id && contract.lead_id !== lead.id) || (plot?.id && contract.plot_id !== plot.id)) {
@@ -113,6 +171,8 @@ export default function RentalActionModal({
         if (!cancelled) {
           setActiveContract(contract);
           setNewMonthlyRent(String(contract.monthly_rent || 15000));
+          if (contract.status === 'ConvertedToBuy') setActiveTab('convert_to_buy');
+          else if (contract.status === 'MovedOut') setActiveTab('move_out');
         }
       } catch (error) {
         if (!cancelled) setErrorMsg(error instanceof Error ? error.message : 'โหลดสัญญาเช่าไม่สำเร็จ');
@@ -165,7 +225,12 @@ export default function RentalActionModal({
   };
   const runAction = async (kind: string, steps: (() => Promise<void>)[], message: string) => {
     if (busy.current || loading || !activeContract) return;
-    if ((user?.role != null && !canEditSalesRole(user.role)) || !rentalLifecycleActions(activeContract.status).includes(kind as 'renew' | 'convert_to_buy' | 'move_out')) {
+    const isResumingTransition = (activeContract.status === 'MovedOut' && kind === 'move_out') ||
+      (activeContract.status === 'ConvertedToBuy' && kind === 'convert_to_buy');
+    const allowedActions = rentalLifecycleActions(activeContract.status);
+    const actionAllowed = allowedActions.includes(kind as 'renew' | 'convert_to_buy' | 'move_out') || isResumingTransition;
+
+    if ((user?.role != null && !canEditSalesRole(user.role)) || !actionAllowed) {
       setErrorMsg('บัญชีหรือสถานะสัญญานี้ไม่สามารถดำเนินการได้'); return;
     }
     if (actionProgress.current && actionProgress.current.kind !== kind) {
@@ -176,21 +241,30 @@ export default function RentalActionModal({
     busy.current = true;
     setSubmitting(true);
     setErrorMsg(null);
+    if (actionProgress.current) {
+      actionProgress.current.steps = steps;
+      actionProgress.current.message = message;
+    }
     const progress = actionProgress.current || { kind, completed: 0, steps, message };
     actionProgress.current = progress;
     try {
       while (progress.completed < progress.steps.length) {
-        if (requestScope !== currentScope.current) return;
+        if (!isMounted.current || requestScope !== currentScope.current) return;
         await progress.steps[progress.completed]();
         progress.completed++;
       }
-      if (requestScope !== currentScope.current) return;
+      if (!isMounted.current || requestScope !== currentScope.current) return;
       actionProgress.current = null;
-      onSaved?.();
-      onClose();
-      alert(progress.message);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('buildtrack:sales_sync', { detail: { type: kind, timestamp: Date.now() } }));
+      }
+      if (isMounted.current && requestScope === currentScope.current) {
+        onSaved?.();
+        onClose();
+        alert(progress.message);
+      }
     } catch (error) {
-      if (requestScope === currentScope.current) {
+      if (isMounted.current && requestScope === currentScope.current) {
         const detail = error instanceof Error ? error.message : (error as { message?: string })?.message || 'บันทึกไม่สำเร็จ';
         if (progress.completed === 0) actionProgress.current = null;
         setErrorMsg(progress.completed > 0
@@ -198,7 +272,7 @@ export default function RentalActionModal({
           : detail);
       }
     } finally {
-      if (requestScope === currentScope.current) {
+      if (isMounted.current && requestScope === currentScope.current) {
         busy.current = false;
         setSubmitting(false);
       }
@@ -207,59 +281,235 @@ export default function RentalActionModal({
 
   const handleConvertToBuy = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeContract) return;
+    if (busy.current || submitting || loading || !activeContract || !isMounted.current) return;
     const c = activeContract;
     if (!c.lead_id) { setErrorMsg('ต้องเชื่อมสัญญาเช่ากับ Lead ก่อนเปลี่ยนเป็นซื้อ เพื่อเก็บประวัติลูกค้าคนเดิม'); return; }
-    const finalPrice = parseFloat(customPurchasePrice) || conversionInfo?.finalPurchasePrice || 0;
-    const bookingCredit = parseFloat(appliedBookingCredit) || 0;
-    const steps = [
-      () => updateRow('rental_contracts', c.id, {
-        status: 'ConvertedToBuy', conversion_date: purchaseDate,
-        notes: 'เปลี่ยนจากเช่าเป็นซื้อเมื่อ ' + purchaseDate + ' (หักเครดิต/เงินสะสม ' + bookingCredit.toLocaleString() + ' บาท)'
-      }, c.status),
-      () => updateRow('plots', c.plot_id, {
-        sale_status: 'Reserved', has_customer: true, current_tenant_name: null,
-        rental_program: null, highlight_note: 'จองซื้อ (เปลี่ยนจากเช่า ' + programMeta.name + ')'
-      })
-    ];
-    if (c.lead_id) {
-      steps.push(() => updateRow('leads', c.lead_id!, {
-        deal_type: 'buy', status: 'Booked', crm_status: 'Booked — จองแล้ว',
-        booking_date: purchaseDate, booking_amount: bookingCredit,
-        notes: ((lead?.notes || '') + '\n[เปลี่ยนจากเช่าเป็นซื้อ ' + purchaseDate + ']: ยอดหักสะสม ' + bookingCredit.toLocaleString() + ' บ. ราคาขายสุทธิ ' + finalPrice.toLocaleString() + ' บ.').trim(),
-        rental_status: 'ConvertedToBuy'
-      }));
-      steps.push(async () => {
-        const { data, error } = await supabase.from('sales').insert([{
-          lead_id: c.lead_id, plot_id: c.plot_id, contract_status: 'Reserved',
-          crm_stage: 'booked', sale_price: finalPrice, booked_at: purchaseDate + 'T12:00:00Z',
-          created_at: new Date().toISOString()
-        }]).select('id').single();
-        if (error) throw error;
-        if (!data?.id) throw new Error('บันทึกรายการขายไม่สำเร็จ');
-      });
+
+    const requestScope = currentScope.current;
+    setSubmitting(true);
+    setErrorMsg(null);
+
+    try {
+      const finalPrice = parseFloat(customPurchasePrice) || conversionInfo?.finalPurchasePrice || 0;
+      const bookingCredit = parseFloat(appliedBookingCredit) || 0;
+
+      // Fetch fresh state of sales, plots, and leads BEFORE committing steps
+      const { data: existingSales, error: selectErr } = await supabase.from('sales')
+        .select('id, contract_status, crm_stage, sale_price, booked_at')
+        .eq('lead_id', c.lead_id)
+        .eq('plot_id', c.plot_id)
+        .neq('contract_status', 'Cancelled');
+
+      if (!isMounted.current || requestScope !== currentScope.current) return;
+      if (selectErr) {
+        setErrorMsg('ตรวจสอบรายการขายไม่สำเร็จ: ' + selectErr.message);
+        return;
+      }
+
+      const { data: freshLead, error: leadErr } = await supabase.from('leads')
+        .select('id, status, rental_status, notes, customer_name')
+        .eq('id', c.lead_id)
+        .maybeSingle();
+
+      if (!isMounted.current || requestScope !== currentScope.current) return;
+      if (leadErr) {
+        setErrorMsg('ตรวจสอบข้อมูลลูกค้าไม่สำเร็จ: ' + leadErr.message);
+        return;
+      }
+
+      const { data: freshPlot, error: plotErr } = await supabase.from('plots')
+        .select('id, sale_status, has_customer, current_tenant_name, customer_name')
+        .eq('id', c.plot_id)
+        .maybeSingle();
+
+      if (!isMounted.current || requestScope !== currentScope.current) return;
+      if (plotErr) {
+        setErrorMsg('ตรวจสอบข้อมูลแปลงไม่สำเร็จ: ' + plotErr.message);
+        return;
+      }
+
+      if (!freshPlot) {
+        setErrorMsg('ไม่พบข้อมูลแปลงที่เกี่ยวข้อง');
+        return;
+      }
+      if (freshPlot.sale_status === 'Transferred') {
+        setErrorMsg('แปลงนี้ถูกโอนกรรมสิทธิ์แล้ว ไม่สามารถดำเนินการได้');
+        return;
+      }
+      const cleanName = (val: unknown) =>
+        typeof val === 'string' ? val.trim().toLowerCase().replace(/^(นาย|นาง|นางสาว|คุณ)\s*/, '') : '';
+      const cTenantClean = cleanName(c.tenant_name || freshLead?.customer_name);
+      const plotTenantClean = cleanName(freshPlot.current_tenant_name);
+      const plotCustClean = cleanName(freshPlot.customer_name);
+
+      if (plotTenantClean && cTenantClean && plotTenantClean !== cTenantClean) {
+        setErrorMsg(`แปลงนี้มีผู้เช่าอื่นถือสิทธิ์อยู่ (${freshPlot.current_tenant_name}) ไม่สามารถเปลี่ยนเป็นซื้อได้`);
+        return;
+      }
+      if (plotCustClean && cTenantClean && plotCustClean !== cTenantClean && freshPlot.sale_status !== 'Available') {
+        setErrorMsg(`แปลงนี้ไม่ได้ถูกผูกสิทธิ์กับลูกค้ารายนี้ (ผู้ถือสิทธิ์ปัจจุบัน: ${freshPlot.customer_name})`);
+        return;
+      }
+
+      const existingSale = existingSales && existingSales.length > 0 ? existingSales[0] : null;
+      if (existingSales && existingSales.length > 1) {
+        setErrorMsg('พบรายการขายมากกว่า 1 รายการ กรุณาตรวจสอบข้อมูล');
+        return;
+      }
+
+      // Canonical stage detection:
+      // A deal is in an advanced stage if its canonical sales deal stage is beyond initial booking.
+      const saleStage = existingSale ? salesDealStageOf(existingSale) : 'booked';
+      const leadStage = freshLead ? salesDealStageOf(freshLead) : 'booked';
+      const plotStage = freshPlot ? salesDealStageOf({ status: freshPlot.sale_status }) : 'booked';
+
+      const isSaleAdvanced = saleStage !== 'booked' && saleStage !== 'cancelled';
+      const isLeadAdvanced = leadStage !== 'booked' && leadStage !== 'cancelled';
+      const isPlotAdvanced = plotStage !== 'booked' && plotStage !== 'cancelled';
+
+      const steps: (() => Promise<void>)[] = [];
+
+      // 1. Contract update
+      if (c.status !== 'ConvertedToBuy') {
+        steps.push(() => updateRow('rental_contracts', c.id, {
+          status: 'ConvertedToBuy', conversion_date: purchaseDate,
+          notes: 'เปลี่ยนจากเช่าเป็นซื้อเมื่อ ' + purchaseDate + ' (หักเครดิต/เงินสะสม ' + bookingCredit.toLocaleString() + ' บาท)'
+        }, c.status));
+      }
+
+      // 2. Plot update: Do NOT downgrade if already advanced
+      if (isPlotAdvanced) {
+        steps.push(() => updateRow('plots', c.plot_id, {
+          current_tenant_name: null, current_tenant_phone: null, rental_program: null,
+          monthly_rent: null, security_deposit: null, lease_start_date: null, lease_end_date: null
+        }));
+      } else {
+        steps.push(() => updateRow('plots', c.plot_id, {
+          sale_status: 'Reserved', has_customer: true, current_tenant_name: null,
+          current_tenant_phone: null, rental_program: null, highlight_note: 'จองซื้อ (เปลี่ยนจากเช่า ' + programMeta.name + ')'
+        }));
+      }
+
+      // 3. Lead update: Do NOT downgrade if already advanced
+      if (c.lead_id) {
+        if (isLeadAdvanced) {
+          steps.push(() => updateRow('leads', c.lead_id!, {
+            deal_type: 'buy',
+            rental_status: 'ConvertedToBuy'
+          }));
+        } else {
+          steps.push(() => updateRow('leads', c.lead_id!, {
+            deal_type: 'buy', status: 'Booked', crm_status: 'Booked — จองแล้ว',
+            booking_date: purchaseDate, booking_amount: bookingCredit,
+            notes: (((freshLead?.notes || lead?.notes) || '') + '\n[เปลี่ยนจากเช่าเป็นซื้อ ' + purchaseDate + ']: ยอดหักสะสม ' + bookingCredit.toLocaleString() + ' บ. ราคาขายสุทธิ ' + finalPrice.toLocaleString() + ' บ.').trim(),
+            rental_status: 'ConvertedToBuy'
+          }));
+        }
+
+        // 4. Sales update/insert: Fresh query inside execution to guarantee idempotency on retries
+        steps.push(async () => {
+          const { data: currentSales, error: checkErr } = await supabase.from('sales')
+            .select('id, contract_status, crm_stage')
+            .eq('lead_id', c.lead_id)
+            .eq('plot_id', c.plot_id)
+            .neq('contract_status', 'Cancelled');
+
+          if (checkErr) throw checkErr;
+          const targetSale = (currentSales && currentSales.length > 0) ? currentSales[0] : null;
+
+          if (targetSale) {
+            const targetStage = salesDealStageOf(targetSale);
+            if (targetStage === 'booked') {
+              const updatePayload: Record<string, unknown> = {
+                contract_status: 'Reserved',
+                crm_stage: 'booked',
+                sale_price: finalPrice,
+                booked_at: purchaseDate + 'T12:00:00Z',
+                updated_at: new Date().toISOString()
+              };
+              const { error: updErr } = await supabase.from('sales').update(updatePayload).eq('id', targetSale.id);
+              if (updErr) throw updErr;
+            }
+          } else {
+            const { data, error } = await supabase.from('sales').insert([{
+              lead_id: c.lead_id, plot_id: c.plot_id, contract_status: 'Reserved',
+              crm_stage: 'booked', sale_price: finalPrice, booked_at: purchaseDate + 'T12:00:00Z',
+              created_at: new Date().toISOString()
+            }]).select('id').single();
+            if (error) throw error;
+            if (!data?.id) throw new Error('บันทึกรายการขายไม่สำเร็จ');
+          }
+        });
+      }
+      if (!isMounted.current || requestScope !== currentScope.current) return;
+      await runAction('convert_to_buy', steps, '🎉 เปลี่ยนสถานะสำเร็จ! คุณ ' + c.tenant_name + ' เปลี่ยนเป็นผู้จองซื้อแปลง ' + (c.plot_name || c.plot_id) + ' เรียบร้อยแล้ว');
+    } finally {
+      if (isMounted.current && requestScope === currentScope.current && (!actionProgress.current || actionProgress.current.completed === 0)) {
+        busy.current = false;
+        setSubmitting(false);
+      }
     }
-    await runAction('convert_to_buy', steps, '🎉 เปลี่ยนสถานะสำเร็จ! คุณ ' + c.tenant_name + ' เปลี่ยนเป็นผู้จองซื้อแปลง ' + (c.plot_name || c.plot_id) + ' เรียบร้อยแล้ว');
   };
 
   const handleMoveOut = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeContract) return;
     const c = activeContract;
-    const steps = [
-      () => updateRow('rental_contracts', c.id, {
+    const steps: (() => Promise<void>)[] = [];
+    if (c.status !== 'MovedOut') {
+      steps.push(() => updateRow('rental_contracts', c.id, {
         status: 'MovedOut', move_out_date: moveOutDate, deposit_refunded: moveOutRefund,
         notes: ('ย้ายออกเมื่อ ' + moveOutDate + ' (คืนเงินประกันสุทธิ ' + moveOutRefund.toLocaleString() + ' บาท) ' + moveOutNotes).trim()
-      }, c.status),
-      () => updateRow('plots', c.plot_id, {
-        sale_status: 'Available', has_customer: false, current_tenant_name: null,
-        current_tenant_phone: null, rental_program: null, monthly_rent: null,
-        security_deposit: null, lease_start_date: null, lease_end_date: null, highlight_note: null
-      })
-    ];
+      }, c.status));
+    }
+    steps.push(async () => {
+      // Query fresh plot state to guarantee we do NOT wipe another tenant
+      const { data: freshPlot, error: pErr } = await supabase
+        .from('plots')
+        .select('id, sale_status, has_customer, current_tenant_name, customer_name')
+        .eq('id', c.plot_id)
+        .maybeSingle();
+
+      if (pErr) throw pErr;
+      if (!freshPlot) return;
+
+      const clean = (val: unknown) =>
+        typeof val === 'string' ? val.trim().toLowerCase().replace(/^(นาย|นาง|นางสาว|คุณ)\s*/, '') : '';
+      const pTenant = clean(freshPlot.current_tenant_name);
+      const pCust = clean(freshPlot.customer_name);
+      const cTenant = clean(c.tenant_name);
+
+      // If plot is currently occupied by someone else, DO NOT wipe it
+      if ((pTenant && cTenant && pTenant !== cTenant) ||
+          (pCust && cTenant && pCust !== cTenant)) {
+        return;
+      }
+
+      // If plot is held by this tenant, release it
+      if (freshPlot.has_customer || freshPlot.sale_status !== 'Available') {
+        let upd = supabase
+          .from('plots')
+          .update({
+            sale_status: 'Available', has_customer: false, current_tenant_name: null,
+            current_tenant_phone: null, rental_program: null, monthly_rent: null,
+            security_deposit: null, lease_start_date: null, lease_end_date: null, highlight_note: null
+          }, { count: 'exact' })
+          .eq('id', c.plot_id);
+
+        if (freshPlot.current_tenant_name) {
+          upd = upd.eq('current_tenant_name', freshPlot.current_tenant_name);
+        }
+        const updRes: any = await upd.select('id');
+        if (updRes?.error) throw updRes.error;
+        if (updRes?.count === 0 || (Array.isArray(updRes?.data) && updRes.data.length === 0)) {
+          throw new Error('ไม่สามารถคืนแปลงได้ เนื่องจากข้อมูลแปลงมีการเปลี่ยนแปลงหรือไม่มีสิทธิ์ (0 rows updated)');
+        }
+      }
+    });
+
     if (c.lead_id) steps.push(() => updateRow('leads', c.lead_id!, {
       status: 'MovedOut', crm_status: 'Lease Ended / Moved Out — สิ้นสุดสัญญาเช่า (ย้ายออก)', rental_status: 'MovedOut',
-      notes: ((lead?.notes || '') + '\n[สิ้นสุดสัญญาเช่า ย้ายออก ' + moveOutDate + ']: คืนเงินประกัน ' + moveOutRefund.toLocaleString() + ' บ.').trim()
+      notes: (((lead?.notes) || '') + '\n[สิ้นสุดสัญญาเช่า ย้ายออก ' + moveOutDate + ']: คืนเงินประกัน ' + moveOutRefund.toLocaleString() + ' บ.').trim()
     }));
     await runAction('move_out', steps, '📦 สิ้นสุดสัญญาเรียบร้อย! ปลดแปลง ' + (c.plot_name || c.plot_id) + ' กลับมาเป็นแปลงว่างพร้อมขาย/เช่าแล้ว');
   };
@@ -324,12 +574,12 @@ export default function RentalActionModal({
         <div className="flex border-b border-slate-200 bg-slate-50 px-6 pt-3 gap-2 shrink-0">
           <button
             type="button"
-            disabled={submitting || (actionProgress.current?.completed || 0) > 0}
+            disabled={submitting || (actionProgress.current?.completed || 0) > 0 || activeContract?.status === 'MovedOut'}
             onClick={() => setActiveTab('convert_to_buy')}
             className={`pb-3 px-3 font-bold text-xs flex items-center gap-1.5 transition-all border-b-2 cursor-pointer ${
               activeTab === 'convert_to_buy'
                 ? 'border-emerald-600 text-emerald-700 font-black'
-                : 'border-transparent text-slate-500 hover:text-slate-700'
+                : 'border-transparent text-slate-500 hover:text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed'
             }`}
           >
             <ShoppingBag size={15} /> 🏡 1. เปลี่ยนเป็นซื้อ (Convert to Buy)
@@ -337,12 +587,12 @@ export default function RentalActionModal({
 
           <button
             type="button"
-            disabled={submitting || (actionProgress.current?.completed || 0) > 0}
+            disabled={submitting || (actionProgress.current?.completed || 0) > 0 || activeContract?.status === 'MovedOut' || activeContract?.status === 'ConvertedToBuy'}
             onClick={() => setActiveTab('renew')}
             className={`pb-3 px-3 font-bold text-xs flex items-center gap-1.5 transition-all border-b-2 cursor-pointer ${
               activeTab === 'renew'
                 ? 'border-blue-600 text-blue-700 font-black'
-                : 'border-transparent text-slate-500 hover:text-slate-700'
+                : 'border-transparent text-slate-500 hover:text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed'
             }`}
           >
             <RefreshCw size={15} /> 📝 2. ต่อสัญญาเช่า (Renew)
@@ -350,12 +600,12 @@ export default function RentalActionModal({
 
           <button
             type="button"
-            disabled={submitting || (actionProgress.current?.completed || 0) > 0}
+            disabled={submitting || (actionProgress.current?.completed || 0) > 0 || activeContract?.status === 'ConvertedToBuy'}
             onClick={() => setActiveTab('move_out')}
             className={`pb-3 px-3 font-bold text-xs flex items-center gap-1.5 transition-all border-b-2 cursor-pointer ${
               activeTab === 'move_out'
                 ? 'border-rose-600 text-rose-700 font-black'
-                : 'border-transparent text-slate-500 hover:text-slate-700'
+                : 'border-transparent text-slate-500 hover:text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed'
             }`}
           >
             <LogOut size={15} /> 📦 3. สิ้นสุดสัญญา / ย้ายออก

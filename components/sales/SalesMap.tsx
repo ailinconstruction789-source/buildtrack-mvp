@@ -50,7 +50,10 @@ export function matchingMapCustomer<T extends MapCustomerIdentity>(
   let selected: T | null = null;
   let selectedTime = -Infinity;
   for (const customer of customers) {
-    if (['Visit', 'Cancelled', 'Rejected', 'Lost'].includes(customer.status)) continue;
+    if (['Visit', 'Cancelled', 'Rejected', 'Lost', 'MovedOut', 'Terminated', 'Ended'].includes(customer.status)) continue;
+    const custAny = customer as any;
+    if (custAny.rental_status && ['MovedOut', 'Cancelled', 'Terminated', 'Ended'].includes(custAny.rental_status)) continue;
+    if (typeof customer.status === 'string' && (customer.status.includes('ย้ายออก') || customer.status.includes('สิ้นสุดสัญญา'))) continue;
     if (customer.project_name && customer.project_name !== projectName) continue;
     const authoritativeId = customer.plotId || customer.interested_plot_id;
     if (authoritativeId && authoritativeId !== plot.id) continue;
@@ -200,12 +203,18 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
 
   const getSalesStatus = (plotId: string) => {
     const lead = findMatchingLead(plotId);
-    if (lead) return lead.status;
+    if (lead) {
+      if (lead.deal_type === 'rent' || lead.rental_status === 'Active' || lead.status === 'Rented' || lead.rental_status === 'PendingContract') {
+        return lead.status === 'Rented' || lead.rental_status === 'Active' ? 'Rented' : 'Reserved';
+      }
+      return lead.status;
+    }
 
     // Check plot flags from DB
     const currentPlot = plots.find(p => p.id === plotId || p.plot_name === plotId);
     if (currentPlot) {
       if (currentPlot.sale_status === 'transferred') return 'Transferred';
+      if (currentPlot.sale_status === 'Rented' || currentPlot.current_tenant_name) return 'Rented';
       if (currentPlot.has_customer && currentPlot.sale_status !== 'ready_for_sale') return 'Reserved';
     }
 
@@ -217,6 +226,7 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
       case 'Transferred': return 'bg-violet-50 border-violet-500 text-violet-900 shadow-[0_0_15px_rgba(139,92,246,0.6)] border-[3px]';
       case 'Contracted': return 'bg-pink-50 border-pink-500 text-pink-900 shadow-[0_0_15px_rgba(236,72,153,0.6)] border-[3px]';
       case 'Reserved': return 'bg-emerald-50 border-emerald-500 text-emerald-900 shadow-[0_0_15px_rgba(16,185,129,0.6)] border-[3px]';
+      case 'Rented': return 'bg-teal-50 border-teal-500 text-teal-900 shadow-[0_0_15px_rgba(20,184,166,0.6)] border-[3px]';
       case 'DownPayment': return 'bg-yellow-50 border-yellow-500 text-yellow-900 shadow-[0_0_15px_rgba(234,179,8,0.6)] border-[3px]';
       case 'DocumentPrep': return 'bg-cyan-50 border-cyan-500 text-cyan-900 border-[3px]';
       case 'LoanProcessing': return 'bg-indigo-50 border-indigo-500 text-indigo-900 border-[3px]';
@@ -437,6 +447,7 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
             <div className="flex flex-col gap-2.5 text-[11px] font-semibold text-slate-600">
               <div className="flex items-center gap-3"><div className="w-3.5 h-3.5 rounded-full bg-slate-50 border border-slate-300 shadow-sm"></div> ว่าง (Available)</div>
               <div className="flex items-center gap-3"><div className="w-3.5 h-3.5 rounded-full bg-emerald-50 border-[2px] border-emerald-500 shadow-sm"></div> จองแล้ว (Reserved)</div>
+              <div className="flex items-center gap-3"><div className="w-3.5 h-3.5 rounded-full bg-teal-50 border-[2px] border-teal-500 shadow-sm"></div> สัญญาเช่า (Rented)</div>
               <div className="flex items-center gap-3"><div className="w-3.5 h-3.5 rounded-full bg-pink-50 border-[2px] border-pink-500 shadow-sm"></div> ทำสัญญา (Contracted)</div>
               <div className="flex items-center gap-3"><div className="w-3.5 h-3.5 rounded-full bg-yellow-50 border-[2px] border-yellow-500 shadow-sm"></div> ผ่อนดาวน์ (DownPayment)</div>
               <div className="flex items-center gap-3"><div className="w-3.5 h-3.5 rounded-full bg-cyan-50 border-[2px] border-cyan-500 shadow-sm"></div> รอยื่นเอกสาร (Doc Prep)</div>

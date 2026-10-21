@@ -274,4 +274,18 @@ describe('Sales Hub startup sharing', () => {
     expect(mocks.read.mock.calls.map(([table]) => table)).toEqual(['leads', 'plots', 'sales']);
     await waitFor(() => expect(mocks.from.mock.calls.map(([table]) => table)).toEqual(['users']));
   });
+
+  it('supports initialStage prop and starts at active stage tab when initialStage is active', async () => {
+    render(<MySalesWorkspace currentUser={user} projects={projects} initialStage="active" />);
+    const activeTab = await screen.findByRole('button', { name: /^🔥 กำลังติดตาม \/ สนใจ/ });
+    expect(activeTab).toHaveClass('bg-slate-900');
+    const allTab = screen.getByRole('button', { name: /^ทั้งหมด/ });
+    expect(allTab).not.toHaveClass('bg-slate-900');
+  });
+
+  it('starts at all tab by default when initialStage is not specified', async () => {
+    render(<MySalesWorkspace currentUser={user} projects={projects} />);
+    const allTab = await screen.findByRole('button', { name: /^ทั้งหมด/ });
+    expect(allTab).toHaveClass('bg-slate-900');
+  });
 });

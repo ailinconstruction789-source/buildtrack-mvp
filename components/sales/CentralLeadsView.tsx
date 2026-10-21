@@ -105,9 +105,25 @@ async function fetchCentralLeadsSnapshot(
       const ownerUserId = lead.agent_name || lead.sales_owner || lead.created_by_agent || lead.closing_agent || 'unassigned';
 
       return {
+        ...lead,
         id: lead.id,
-        leadId: lead.id, status: lead.status, crm_status: lead.crm_status,
-        booking_date: lead.booking_date, booking_amount: lead.booking_amount, transferred_date: lead.transferred_date,
+        leadId: lead.id,
+        status: lead.status,
+        crm_status: lead.crm_status,
+        deal_type: lead.deal_type,
+        rental_monthly_rent: lead.rental_monthly_rent,
+        rental_deposit: lead.rental_deposit,
+        rental_program: lead.rental_program,
+        rental_status: lead.rental_status,
+        rental_start_date: lead.rental_start_date,
+        rental_end_date: lead.rental_end_date,
+        rental_savings_per_month: lead.rental_savings_per_month,
+        rental_base_price: lead.rental_base_price,
+        interested_plot_id: lead.interested_plot_id,
+        interested_plot_name: lead.interested_plot_name,
+        booking_date: lead.booking_date,
+        booking_amount: lead.booking_amount,
+        transferred_date: lead.transferred_date,
         active_rental_contract_id: lead.active_rental_contract_id,
         name: lead.customer_name || 'ไม่ระบุชื่อ',
         phone: lead.phone || null,
@@ -123,7 +139,8 @@ async function fetchCentralLeadsSnapshot(
             ownerUserId,
             workspaceState: 'central_interest' as const,
             engagementStatus: intakeStatus,
-            plotId: lead.interested_plot_name || lead.interested_plot_id || lead.interest || null,
+            plotId: lead.interested_plot_id || lead.interested_plot_name || lead.interest || null,
+            plotName: lead.interested_plot_name || lead.interest || null,
           }
         ] : []
       };
@@ -145,11 +162,11 @@ async function fetchCentralLeadsSnapshot(
         (c.phone && c.phone.includes(q)) ||
         (c.notes && c.notes.toLowerCase().includes(q)) ||
         (c.channel && c.channel.toLowerCase().includes(q)) ||
-        c.interests.some(i => (i.plotId && i.plotId.toLowerCase().includes(q)) || i.projectName.toLowerCase().includes(q))
+        c.interests.some((i: any) => (i.plotId && i.plotId.toLowerCase().includes(q)) || i.projectName.toLowerCase().includes(q))
       );
     }
     if (filters.project) {
-      filtered = filtered.filter(c => c.interests.some(i => i.projectName === filters.project));
+      filtered = filtered.filter(c => c.interests.some((i: any) => i.projectName === filters.project));
     }
     if (filters.channel) {
       filtered = filtered.filter(c => c.channel?.toLowerCase() === filters.channel.toLowerCase());

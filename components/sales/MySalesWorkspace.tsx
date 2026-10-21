@@ -46,6 +46,7 @@ interface Props {
   plots?: any[];
   onBack?: () => void;
   loadStartupData?: LoadSalesStartupData;
+  initialStage?: string;
 }
 
 function formatAppointmentDate(value: any): string {
@@ -91,7 +92,8 @@ export default function MySalesWorkspace({
   projects = [],
   plots = [],
   onBack,
-  loadStartupData
+  loadStartupData,
+  initialStage
 }: Props) {
   // 👤 User identity determination
   const myUsername = currentUser?.username || '';
@@ -109,7 +111,7 @@ export default function MySalesWorkspace({
   const [viewMode, setViewMode] = useState<'table' | 'kanban'>('table');
   const [selectedYear, setSelectedYear] = useState<string>(() => new Date().getFullYear().toString());
   const [selectedProject, setSelectedProject] = useState<string>('all');
-  const [selectedStage, setSelectedStage] = useState<string>('all');
+  const [selectedStage, setSelectedStage] = useState<string>(() => initialStage || 'all');
   const [actionFilter, setActionFilter] = useState<'due' | 'upcoming' | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 

@@ -13,6 +13,7 @@ import { buildConstructionLiveFeed } from '@/lib/constructionLiveFeed';
 import { useTrustedAccountSession } from '@/hooks/useTrustedAccountSession';
 import { TRUSTED_AUTH_ENABLED, TRUSTED_AUTH_ERROR } from '@/lib/auth/trustedActor';
 import { GUARDED_ACCOUNT_COMMANDS_ENABLED, runGuardedAccountCommand } from '@/lib/auth/accountCommands';
+import { isSalesStaffRole } from '@/lib/sales/salesStaff';
 
 // Enable only with the reviewed actor grants, presence RPC and role mappings.
 // The existing account feature flag alone must not cut over the legacy shell.
@@ -4946,6 +4947,7 @@ export default function ConstructionApp() {
                     currentUser={loggedInUser}
                     projects={projects}
                     plots={plots}
+                    initialStage={isSalesStaffRole(loggedInUser?.role) || isSales ? 'active' : 'all'}
                     onBack={() => { setView('dashboard'); setSelectedProject(null); }}
                   />
                 </div>

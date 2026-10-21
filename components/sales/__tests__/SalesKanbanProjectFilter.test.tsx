@@ -6,13 +6,15 @@ import SalesKanban from '../SalesKanban';
 // Mock Supabase
 vi.mock('@/lib/supabase', () => ({
   supabase: {
-    from: (table: string) => ({
-      select: () => ({
+    from: (table: string) => {
+      const queryObj: any = {
         eq: () => ({
           maybeSingle: () => Promise.resolve({ data: null, error: null }),
           order: () => Promise.resolve({ data: [], error: null })
         }),
         in: () => Promise.resolve({ data: [], error: null }),
+        order: () => queryObj,
+        range: () => queryObj,
         then: (resolve: any) => {
           if (table === 'plots') {
             return resolve({
@@ -36,8 +38,11 @@ vi.mock('@/lib/supabase', () => ({
           }
           return resolve({ data: [], error: null });
         }
-      })
-    }),
+      };
+      return {
+        select: () => queryObj
+      };
+    },
     rpc: () => Promise.resolve({ data: { rows: [] }, error: null }),
     auth: {
       getSession: () => Promise.resolve({ data: { session: null } })

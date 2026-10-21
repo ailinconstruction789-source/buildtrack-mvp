@@ -72,11 +72,13 @@ const getNextStatuses = (current?: string | null) => {
     case 'Visit': statuses = ['Visit', 'Negotiation', 'Reserved', 'Cancelled']; break;
     case 'Negotiation': statuses = ['Negotiation', 'Reserved', 'Cancelled']; break;
     case 'Reserved': statuses = ['Reserved', 'Contracted', 'Cancelled']; break;
-    case 'Contracted': statuses = ['Contracted', 'DownPayment', 'DocumentPrep', 'Transferred', 'Cancelled']; break;
-    case 'DownPayment': statuses = ['DownPayment', 'DocumentPrep', 'Transferred', 'Cancelled']; break;
-    case 'DocumentPrep': statuses = ['DocumentPrep', 'LoanProcessing', 'Cancelled']; break;
-    case 'LoanProcessing': statuses = ['LoanProcessing', 'Approved', 'DocumentPrep', 'Cancelled']; break;
-    case 'Approved': statuses = ['Approved', 'Transferred', 'Cancelled']; break;
+    case 'Contracted': statuses = ['Contracted', 'DownPayment', 'DocumentPrep', 'TransferPending', 'Transferred', 'Cancelled']; break;
+    case 'DownPayment': statuses = ['DownPayment', 'DocumentPrep', 'TransferPending', 'Transferred', 'Cancelled']; break;
+    case 'DocumentPrep': statuses = ['DocumentPrep', 'LoanProcessing', 'TransferPending', 'Cancelled']; break;
+    case 'LoanProcessing': statuses = ['LoanProcessing', 'Approved', 'LoanRejected', 'DocumentPrep', 'Cancelled']; break;
+    case 'LoanRejected': statuses = ['LoanRejected', 'DocumentPrep', 'Cancelled']; break;
+    case 'Approved': statuses = ['Approved', 'TransferPending', 'Transferred', 'Cancelled']; break;
+    case 'TransferPending': statuses = ['TransferPending', 'Transferred', 'Cancelled']; break;
     case 'Transferred': statuses = ['Transferred', 'Handover', 'Cancelled']; break;
     case 'Handover': statuses = ['Handover']; break;
     case 'Cancelled': statuses = ['Cancelled', 'Visit', 'Reserved']; break;
@@ -397,6 +399,12 @@ export default function SalesKanban({
           const candidateLeads = leadsData.filter((l: any) => {
             if (!l.id || claimedLeadIds.has(l.id)) return false;
 
+            // If this sale is cancelled, do NOT claim leads that are active or rental leads!
+            if (s.contract_status === 'Cancelled' || kanbanStatus === 'Cancelled' || stage === 'cancelled') {
+              if (l.deal_type === 'rent' || ['PendingContract', 'Active', 'Renewed'].includes(l.rental_status)) return false;
+              if (l.status !== 'Cancelled' && l.status !== 'Lost') return false;
+            }
+
             const lPlotKeys = [
               l.interested_plot_id,
               l.interested_plot_name,
@@ -451,8 +459,14 @@ export default function SalesKanban({
           }
         }
 
+        const isSaleCancelled = s.contract_status === 'Cancelled' || kanbanStatus === 'Cancelled' || stage === 'cancelled';
         if (matchingLead?.id) {
-          claimedLeadIds.add(matchingLead.id);
+          const leadIsActiveOrRental = matchingLead.deal_type === 'rent' ||
+            ['PendingContract', 'Active', 'Renewed'].includes(matchingLead.rental_status) ||
+            (matchingLead.status !== 'Cancelled' && matchingLead.status !== 'Lost');
+          if (!isSaleCancelled || !leadIsActiveOrRental) {
+            claimedLeadIds.add(matchingLead.id);
+          }
         }
 
         const crmCustomer = crmSaleCustomer(s);
@@ -509,9 +523,27 @@ export default function SalesKanban({
 
       // 3. Append prospective leads from leads table that don't have sales
       if (leadsData && leadsData.length > 0) {
-        const existingLeadIds = new Set(formattedLeads.map(l => l.leadId).filter(Boolean));
+        const existingLeadIds = new Set(
+          formattedLeads
+            .filter(fl => fl.status !== 'Cancelled' && (fl as any).crmStage !== 'cancelled')
+            .map(l => l.leadId)
+            .filter(Boolean)
+        );
+        const cancelledLeadIds = new Set(
+          formattedLeads
+            .filter(fl => fl.status === 'Cancelled' || (fl as any).crmStage === 'cancelled')
+            .map(l => l.leadId)
+            .filter(Boolean)
+        );
+        const isLeadActiveOrRental = (lead: any) =>
+          lead.deal_type === 'rent' ||
+          ['PendingContract', 'Active', 'Renewed'].includes(lead.rental_status) ||
+          (lead.status !== 'Cancelled' && lead.status !== 'Lost');
         leadsData.forEach((l: any) => {
           if (l.id && !existingLeadIds.has(l.id) && !claimedLeadIds.has(l.id)) {
+            if (cancelledLeadIds.has(l.id) && !isLeadActiveOrRental(l)) {
+              return;
+            }
             const matchingPlot = plotsData?.find((p: any) =>
               p.id === l.interested_plot_id ||
               p.plot_name === l.interested_plot_name ||
@@ -533,6 +565,7 @@ export default function SalesKanban({
             // 1. If an unnamed entry for this plot already exists, merge this lead into it
             const unnamedMatchIndex = formattedLeads.findIndex(fl => {
               if (fl.name !== 'ลูกค้าไม่ระบุชื่อ') return false;
+              if (fl.status === 'Cancelled' && l.status !== 'Cancelled' && l.status !== 'Lost') return false;
               const flPlotKeys = new Set([
                 fl.plot,
                 fl.plotName,
@@ -567,6 +600,7 @@ export default function SalesKanban({
 
             // 2. Prevent duplicate deal (Transferred or Booked) for the same plot
             const hasDuplicateDeal = formattedLeads.some(fl => {
+              if (fl.status === 'Cancelled') return false;
               const flPlotKeys = new Set([
                 fl.plot,
                 fl.plotName,
@@ -645,7 +679,27 @@ export default function SalesKanban({
 
   useEffect(() => {
     fetchData();
-    return () => { dataRequest.current++; };
+    const handleSync = () => {
+      fetchData();
+    };
+    const handleVisibility = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        fetchData();
+      }
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('buildtrack:sales_sync', handleSync);
+      window.addEventListener('storage', handleSync);
+      document.addEventListener('visibilitychange', handleVisibility);
+    }
+    return () => {
+      dataRequest.current++;
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('buildtrack:sales_sync', handleSync);
+        window.removeEventListener('storage', handleSync);
+        document.removeEventListener('visibilitychange', handleVisibility);
+      }
+    };
   }, [internalProject?.name, user?.id, user?.username]);
 
   useEffect(() => {
@@ -3186,7 +3240,11 @@ export default function SalesKanban({
                       ) : (
                         <>
                           <div className="flex flex-wrap gap-2 mb-4">
-                            {getNextStatuses(panelState.lead?.status).map(s => {
+                            {Array.from(new Set(
+                              editor?.choices
+                                ? editor.choices.map(stageToKanbanStatus)
+                                : getNextStatuses(panelState.lead?.status)
+                            )).filter(s => Boolean(STATUS_CONFIG[s])).map(s => {
                               const config = STATUS_CONFIG[s] || STATUS_CONFIG['legacy_unclassified'] || {
                                 label: s || 'ไม่ระบุ',
                                 color: 'text-slate-600',

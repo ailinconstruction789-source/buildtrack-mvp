@@ -166,4 +166,47 @@ describe('SalesKanban legacy sales & leads deduplication', () => {
     // Verify lease period is displayed
     expect(screen.getByText(/2026-01-01 ถึง 2027-01-01/)).toBeInTheDocument();
   });
+
+  it('Bug E: displays active rental deal even when lead has a past cancelled sale with matching lead_id', async () => {
+    const plot4 = { id: 'plot-4', project_name: 'โยริว', plot_name: '4' };
+    const rentalLeadWithPastCancelledSale = {
+      id: 'lead-has-cancelled-sale',
+      customer_name: 'คุณกิตติศักดิ์ เช่าหลังยกเลิกซื้อ',
+      phone: '0877777777',
+      project_name: 'โยริว',
+      interested_plot_name: '4',
+      interested_plot_id: 'plot-4',
+      status: 'Rented',
+      deal_type: 'rent',
+      rental_status: 'Active',
+      rental_program: 'program_b',
+      rental_monthly_rent: 16000,
+      rental_deposit: 32000,
+      rental_start_date: '2026-03-01',
+      rental_end_date: '2027-03-01',
+    };
+
+    const pastCancelledSale = {
+      id: 'sale-cancelled-past',
+      plot_id: 'plot-4',
+      lead_id: 'lead-has-cancelled-sale',
+      customer_name: 'คุณกิตติศักดิ์ เช่าหลังยกเลิกซื้อ',
+      crm_stage: 'cancelled',
+      contract_status: 'Cancelled',
+      created_at: '2025-01-01',
+    };
+
+    mock.read.mockImplementation(async (table: string) => {
+      if (table === 'plots') return [plot1, plot2, plot4];
+      if (table === 'sales') return [...legacySales, pastCancelledSale];
+      if (table === 'leads') return [...leads, rentalLeadWithPastCancelledSale];
+      return [];
+    });
+
+    render(<SalesKanban project={{ name: 'โยริว' }} initialTab="rented" />);
+
+    // Verify tenant name is displayed in rented tab, not hidden by past cancelled sale!
+    expect(await screen.findByText('คุณกิตติศักดิ์ เช่าหลังยกเลิกซื้อ')).toBeInTheDocument();
+    expect(screen.getByText(/฿16,000/)).toBeInTheDocument();
+  });
 });

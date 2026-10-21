@@ -50,6 +50,78 @@ interface RentalContractModalProps {
   defaultMode?: 'booking' | 'contract';
 }
 
+function checkLeadPlotOwnership(targetLead: any, plotItem: any, _activePlotId?: string | null): boolean {
+  if (!targetLead || !plotItem) return false;
+
+  // 1. Project scope check: lead and plot must belong to the same project if specified
+  if (plotItem.project_name && targetLead.project_name) {
+    const cleanProject = (p: string) => p.trim().toLowerCase();
+    if (cleanProject(plotItem.project_name) !== cleanProject(targetLead.project_name)) {
+      return false;
+    }
+  }
+
+  // 2. Exact lead ID conflict check: if plot already points to a different lead ID, reject
+  if (plotItem.lead_id && targetLead.id && plotItem.lead_id !== targetLead.id) {
+    return false;
+  }
+
+  // 3. Customer name mismatch check: cannot claim plot if it explicitly names a different customer/tenant
+  const clean = (val: unknown) =>
+    typeof val === 'string' ? val.trim().toLowerCase().replace(/^(นาย|นาง|นางสาว|คุณ)\s*/, '') : '';
+  const leadCustName = clean(targetLead.customer_name || targetLead.name);
+  const plotCustName = clean(plotItem.customer_name);
+  const plotTenantName = clean(plotItem.current_tenant_name);
+
+  if (plotCustName && leadCustName && plotCustName !== leadCustName) {
+    return false;
+  }
+  if (plotTenantName && leadCustName && plotTenantName !== leadCustName) {
+    return false;
+  }
+
+  // 4. Target lead must currently hold an active booking or rental contract
+  // Note: Historical booking_date or booking_amount without current active status is NOT current authority!
+  const stage = getLeadStage(targetLead);
+  const rawStatus = String(targetLead.status || '').toLowerCase().trim();
+  const rawRentalStatus = String(targetLead.rental_status || '').toLowerCase().trim();
+  const leadHoldsActiveBookingOrContract = Boolean(
+    stage === 'booked' ||
+    stage === 'rented' ||
+    ['booked', 'reserved', 'rented'].includes(rawStatus) ||
+    ['active', 'pendingcontract', 'renewed'].includes(rawRentalStatus)
+  );
+
+  if (!leadHoldsActiveBookingOrContract) {
+    return false;
+  }
+
+  // 5. Must have verified linkage between targetLead and THIS plotItem
+  const leadPlotId = targetLead.interested_plot_id;
+  const leadPlotName = targetLead.interested_plot_name;
+
+  const matchesLeadId = Boolean(leadPlotId && (plotItem.id === leadPlotId || plotItem.plot_name === leadPlotId));
+  const matchesLeadName = Boolean(leadPlotName && (plotItem.plot_name === leadPlotName || plotItem.id === leadPlotName));
+  const matchesPlotLeadId = Boolean(plotItem.lead_id && targetLead.id && plotItem.lead_id === targetLead.id);
+  const matchesPlotCustomerName = Boolean(leadCustName && ((plotCustName && plotCustName === leadCustName) || (plotTenantName && plotTenantName === leadCustName)));
+
+  // If the plot is booked, reserved, rented, or has a customer:
+  // It cannot be claimed by interested_plot_id/interested_plot_name alone without an explicit lead_id match or matching customer/tenant name.
+  const isPlotCommitted = Boolean(
+    (plotItem.sale_status && !['available', 'ว่าง'].includes(String(plotItem.sale_status).toLowerCase())) ||
+    plotItem.has_customer ||
+    plotCustName ||
+    plotTenantName ||
+    plotItem.lead_id
+  );
+
+  if (isPlotCommitted) {
+    return matchesPlotLeadId || (matchesPlotCustomerName && (matchesLeadId || matchesLeadName));
+  }
+
+  return matchesPlotLeadId || matchesPlotCustomerName || matchesLeadId || matchesLeadName;
+}
+
 export default function RentalContractModal({
   isOpen,
   onClose,
@@ -308,8 +380,12 @@ export default function RentalContractModal({
           setPlotsList(sorted);
 
           // If a plot is already selected (or plotId passed), sync price/rent from DB if not provided by lead
-          const activePlot = sorted.find(p => p.id === (selectedPlotId || plotId));
+          const targetKey = selectedPlotId || plotId || initialLead?.interested_plot_id || initialLead?.interested_plot_name;
+          const activePlot = sorted.find(p => p.id === targetKey || p.plot_name === targetKey);
           if (activePlot) {
+            if (selectedPlotId !== activePlot.id) {
+              setSelectedPlotId(activePlot.id);
+            }
             const priceVal = activePlot.selling_price || activePlot.base_price || activePlot.price;
             if (priceVal && !initialLead?.rental_base_price) {
               setBasePrice(priceVal.toString());
@@ -345,13 +421,13 @@ export default function RentalContractModal({
 
   // Filter and naturally sort plots for the dropdown:
   // - Show Available plots (🟢 ว่าง)
-  // - Show Booked plots (🟡 ติดจอง)
   // - Keep current customer's plot
   // - Hide Transferred / Rented to someone else
+  // - Hide plots booked/reserved by someone else
   const availableAndBookedPlots = useMemo(() => {
     return [...plotsList]
       .filter(p => {
-        const isMyPlot = p.id === selectedPlotId || p.id === (selectedLead?.interested_plot_id || plotId) || (selectedLead?.customer_name && p.customer_name === selectedLead.customer_name);
+        const isMyPlot = checkLeadPlotOwnership(selectedLead, p, selectedPlotId || plotId);
         if (isMyPlot) return true;
         // Hide transferred plots
         if (p.sale_status === 'Transferred') return false;
@@ -462,6 +538,51 @@ export default function RentalContractModal({
         const effectiveLead = isNewLeadMode ? null : selectedLead || initialLead;
         if (!tenantName.trim()) throw new Error('กรุณาระบุชื่อผู้เช่า');
         if (!targetProject || !selectedPlotId) throw new Error('กรุณาเลือกโครงการและแปลงที่จะดำเนินการ');
+
+        // Resolve selectedPlotId to real plot UUID / record
+        let resolvedPlot = plotsList.find(p => p.id === selectedPlotId || p.plot_name === selectedPlotId);
+        if (!resolvedPlot) {
+          try {
+            const plotQuery: any = await supabase.from('plots').select('*').eq('project_name', targetProject);
+            const plotsData = plotQuery?.data;
+            if (Array.isArray(plotsData)) {
+              resolvedPlot = plotsData.find((p: any) => p.id === selectedPlotId || p.plot_name === selectedPlotId);
+            }
+          } catch {
+            // fallback
+          }
+        }
+        if (!resolvedPlot?.id) {
+          throw new Error('ไม่พบแปลงที่เลือกในโครงการ กรุณาเลือกแปลงใหม่');
+        }
+        const resolvedPlotId = resolvedPlot.id;
+
+        // Fresh check against concurrency collisions
+        let freshPlot = resolvedPlot;
+        const freshRes: any = await supabase.from('plots').select('*').eq('id', resolvedPlotId);
+        if (freshRes?.error) {
+          throw new Error('ไม่สามารถตรวจสอบสถานะแปลงล่าสุดได้: ' + freshRes.error.message);
+        }
+        const data = freshRes?.data;
+        if (Array.isArray(data) && data.length > 0) freshPlot = data[0];
+        else if (data && typeof data === 'object') freshPlot = data;
+        else if (!freshPlot) {
+          throw new Error('ไม่พบแปลงที่ต้องการทำรายการ');
+        }
+
+        if (freshPlot) {
+          if (freshPlot.sale_status === 'Transferred') {
+            throw new Error('แปลงนี้ถูกโอนกรรมสิทธิ์ไปแล้ว ไม่สามารถดำเนินการได้');
+          }
+          if (freshPlot.sale_status === 'Rented' && freshPlot.current_tenant_name && freshPlot.current_tenant_name !== tenantName.trim()) {
+            throw new Error(`แปลงนี้มีผู้เช่าอื่น (${freshPlot.current_tenant_name}) ทำสัญญาแล้ว`);
+          }
+          const isMyExistingBooking = checkLeadPlotOwnership(effectiveLead, freshPlot, resolvedPlotId);
+          if ((freshPlot.sale_status === 'Booked' || freshPlot.sale_status === 'Reserved' || (freshPlot.has_customer && !freshPlot.current_tenant_name)) && !isMyExistingBooking) {
+            throw new Error('แปลงนี้ถูกจองหรือมีลูกค้าอื่นถือสิทธิ์อยู่แล้ว กรุณาเลือกแปลงอื่น');
+          }
+        }
+
         const rentNum = parseFloat(monthlyRent) || 0;
         if (rentNum <= 0) throw new Error('กรุณาระบุค่าเช่าต่อเดือนให้ถูกต้อง');
         const now = new Date().toISOString();
@@ -477,7 +598,7 @@ export default function RentalContractModal({
           const bookingCrmStatus = `จองเช่า — รอทำสัญญา (${currentProgram.name})`;
           const bookingNote = [
             notes.trim() || null,
-            `[จองเช่า ${currentProgram.name}]: แปลง ${selectedPlot?.plot_name || selectedPlotId}`,
+            `[จองเช่า ${currentProgram.name}]: แปลง ${resolvedPlot.plot_name || resolvedPlotId}`,
             bookingAmountNum > 0 ? `เงินจอง: ${bookingAmountNum.toLocaleString()} บ.` : null,
             bookingDate ? `วันที่จอง: ${bookingDate}` : null,
             startDate ? `นัดทำสัญญา/เข้าอยู่: ${startDate}` : null,
@@ -489,8 +610,8 @@ export default function RentalContractModal({
             rental_program: selectedProgram,
             crm_status: bookingCrmStatus,
             status: 'Reserved',
-            interested_plot_id: selectedPlotId,
-            interested_plot_name: selectedPlot?.plot_name || selectedPlotId,
+            interested_plot_id: resolvedPlotId,
+            interested_plot_name: resolvedPlot.plot_name || resolvedPlotId,
             rental_monthly_rent: rentNum,
             rental_deposit: depositNum,
             rental_savings_per_month: savingsNum,
@@ -539,12 +660,12 @@ export default function RentalContractModal({
                   booking_amount: bookingAmountNum,
                   booking_fee: bookingAmountNum
                 }).eq('lead_id', targetLeadId);
-              } else if (selectedPlotId) {
+              } else if (resolvedPlotId) {
                 await salesTable.update({
                   booked_at: bookingIso,
                   booking_amount: bookingAmountNum,
                   booking_fee: bookingAmountNum
-                }).eq('plot_id', selectedPlotId);
+                }).eq('plot_id', resolvedPlotId);
               }
             }
           } catch (saleSyncErr) {
@@ -559,17 +680,16 @@ export default function RentalContractModal({
             monthly_rent: rentNum,
             highlight_note: `จองเช่า: ${currentProgram.name} (${tenantName.trim()})`
           };
-          const { error: plotUpdateErr } = await supabase.from('plots').update({
+          const plotUpdateRes: any = await supabase.from('plots').update({
             sale_status: 'Booked',
             has_customer: true,
             ...bookingPlotFields
-          }).eq('id', selectedPlotId);
-          if (plotUpdateErr) {
-            if (plotUpdateErr.message?.includes('EXTERNAL_WRITER_STOCK_COMMAND_REQUIRED')) {
-              await supabase.from('plots').update(bookingPlotFields).eq('id', selectedPlotId);
-            } else {
-              console.warn('Error updating plot to Booked:', plotUpdateErr);
-            }
+          }, { count: 'exact' }).eq('id', resolvedPlotId);
+          if (plotUpdateRes?.error) {
+            throw plotUpdateRes.error;
+          }
+          if (plotUpdateRes?.count === 0) {
+            throw new Error('ไม่พบแปลงที่ต้องการอัปเดต หรือไม่มีสิทธิ์ในการแก้ไขแปลงนี้ (0 rows updated)');
           }
 
           // บันทึกประวัติใน status_history
@@ -586,6 +706,9 @@ export default function RentalContractModal({
             console.warn('Could not log status history for booking:', histErr);
           }
 
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('buildtrack:sales_sync', { detail: { type: 'rental_booking_saved', timestamp: Date.now() } }));
+          }
           onSaved?.();
           onClose();
           return;
@@ -607,7 +730,7 @@ export default function RentalContractModal({
         const leadPayload = {
           deal_type: 'rent', rental_program: selectedProgram, crm_status: crmStatus,
           status: 'Rented',
-          interested_plot_id: selectedPlotId, interested_plot_name: selectedPlot?.plot_name || selectedPlotId,
+          interested_plot_id: resolvedPlotId, interested_plot_name: resolvedPlot.plot_name || resolvedPlotId,
           rental_monthly_rent: rentNum, rental_deposit: depositNum, rental_savings_per_month: savingsNum,
           rental_base_price: priceNum, rental_start_date: startDate, rental_end_date: calcResults.endDate,
           rental_status: 'Active',
@@ -659,8 +782,8 @@ export default function RentalContractModal({
           ].filter(Boolean).join(' ') || null;
 
           const payload: Partial<RentalContract> & { created_at?: string } = {
-            lead_id: targetLeadId, project_name: targetProject, plot_id: selectedPlotId,
-            plot_name: selectedPlot?.plot_name || selectedPlotId, tenant_name: tenantName.trim(),
+            lead_id: targetLeadId, project_name: targetProject, plot_id: resolvedPlotId,
+            plot_name: resolvedPlot.plot_name || resolvedPlotId, tenant_name: tenantName.trim(),
             tenant_phone: tenantPhone.trim() || null, agent_name: agentName.trim(), program_type: selectedProgram,
             monthly_rent: rentNum, security_deposit: depositNum, advance_rent: calcResults.advanceRent,
             savings_per_month: savingsNum, accumulated_savings: 0, base_price: priceNum,
@@ -707,14 +830,14 @@ export default function RentalContractModal({
               console.warn('Could not cancel sales by lead_id:', e);
             }
           }
-          if (selectedPlotId) {
+          if (resolvedPlotId) {
             try {
               await supabase.from('sales')
                 .update({
                   contract_status: 'Cancelled',
                   cancellation_reason: 'เปลี่ยนเป็นสัญญาเช่า'
                 })
-                .eq('plot_id', selectedPlotId)
+                .eq('plot_id', resolvedPlotId)
                 .neq('contract_status', 'Cancelled');
             } catch (e) {
               console.warn('Could not cancel sales by plot_id:', e);
@@ -723,8 +846,8 @@ export default function RentalContractModal({
           if (targetLeadId) {
             try {
               const contractLogLabel = effectiveLead?.deal_type === 'rent'
-                ? `ทำสัญญาเช่า (${agentName.trim() || 'Sales'}) - ${currentProgram.name} แปลง ${selectedPlot?.plot_name || selectedPlotId}`
-                : `Admin (${agentName.trim() || 'Admin'}) - เปลี่ยนสถานะเป็นสัญญาเช่า แปลง ${selectedPlot?.plot_name || selectedPlotId}`;
+                ? `ทำสัญญาเช่า (${agentName.trim() || 'Sales'}) - ${currentProgram.name} แปลง ${resolvedPlot.plot_name || resolvedPlotId}`
+                : `Admin (${agentName.trim() || 'Admin'}) - เปลี่ยนสถานะเป็นสัญญาเช่า แปลง ${resolvedPlot.plot_name || resolvedPlotId}`;
               await supabase.from('status_history').insert([{
                 entity_type: 'lead',
                 entity_id: targetLeadId,
@@ -749,22 +872,18 @@ export default function RentalContractModal({
             lease_end_date: calcResults.endDate,
             highlight_note: 'เช่า: ' + currentProgram.name + ' (' + tenantName.trim() + ')'
           };
-          const { data, error } = await supabase.from('plots').update({
+          const plotUpdateRes: any = await supabase.from('plots').update({
             sale_status: 'Rented',
             has_customer: true,
             ...rentalPlotFields
-          }).eq('id', selectedPlotId).select('id').maybeSingle();
+          }, { count: 'exact' }).eq('id', resolvedPlotId);
 
-          if (error) {
-            if (error.message?.includes('EXTERNAL_WRITER_STOCK_COMMAND_REQUIRED')) {
-              const { error: fallbackErr } = await supabase.from('plots').update(rentalPlotFields)
-                .eq('id', selectedPlotId);
-              if (fallbackErr) throw fallbackErr;
-              return;
-            }
-            throw error;
+          if (plotUpdateRes?.error) {
+            throw plotUpdateRes.error;
           }
-          if (!data?.id) throw new Error('ไม่พบแปลงที่อัปเดตได้');
+          if (plotUpdateRes?.count === 0) {
+            throw new Error('ไม่พบแปลงที่ต้องการอัปเดต หรือไม่มีสิทธิ์ในการแก้ไขแปลงนี้ (0 rows updated)');
+          }
         });
         progress = { completed: 0, steps };
         saveProgress.current = progress;
@@ -776,6 +895,9 @@ export default function RentalContractModal({
       }
       if (requestScope !== currentScope.current) return;
       saveProgress.current = null;
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('buildtrack:sales_sync', { detail: { type: 'rental_contract_saved', timestamp: Date.now() } }));
+      }
       onSaved?.();
       onClose();
     } catch (error) {
@@ -1076,7 +1198,7 @@ export default function RentalContractModal({
                 >
                   <option value="">-- เลือกแปลงบ้าน (เรียงตามลำดับเลขแปลง) --</option>
                   {availableAndBookedPlots.map(p => {
-                    const isMyPlot = p.id === selectedPlotId || p.id === (effectiveLead?.interested_plot_id || plotId) || (effectiveLead?.customer_name && p.customer_name === effectiveLead.customer_name);
+                    const isMyPlot = checkLeadPlotOwnership(effectiveLead, p, selectedPlotId || plotId);
                     const isBooked = p.sale_status === 'Booked' || p.sale_status === 'Reserved' || (p.has_customer && !p.current_tenant_name);
                     
                     let tag = '🟢 ว่าง';
