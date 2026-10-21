@@ -45,4 +45,14 @@ describe('construction QC report', () => {
     rerender(<QCPerformanceDashboard {...props} allUpdatesRecord={rows.slice(0, 4)} />);
     expect(screen.getAllByText('5 นาที')).toHaveLength(2);
   });
+
+  it('displays both date and time for QC passed in daily QC details modal', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-08T12:00:00Z'));
+    render(<QCPerformanceDashboard {...props} />);
+    const detailButton = screen.getByRole('button', { name: /ดูรายละเอียด/ });
+    fireEvent.click(detailButton);
+    expect(screen.getByText('รายละเอียดการตรวจงาน QC')).toBeInTheDocument();
+    expect(screen.getByText(/QC ตรวจผ่าน: \d{1,2} ต\.ค\. \d{2}:\d{2}/)).toBeInTheDocument();
+  });
 });

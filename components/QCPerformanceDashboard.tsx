@@ -1094,7 +1094,7 @@ export default function QCPerformanceDashboard({
                                     Site Engineer ส่ง: {item.seSubmitFullStr}
                                   </div>
                                 )}
-                                <div className="text-xs font-bold bg-emerald-200/50 text-emerald-700 px-2 py-1 rounded-md self-end whitespace-nowrap">QC ตรวจผ่าน: {item.time}</div>
+                                <div className="text-xs font-bold bg-emerald-200/50 text-emerald-700 px-2 py-1 rounded-md self-end whitespace-nowrap">QC ตรวจผ่าน: {item.qcTimeFullStr || item.time}</div>
                               </div>
                             </div>
                             {item.imageUrl && (
@@ -1142,7 +1142,7 @@ export default function QCPerformanceDashboard({
                                     Site Engineer ส่ง: {item.seSubmitFullStr}
                                   </div>
                                 )}
-                                <div className="text-xs font-bold bg-rose-200/50 text-rose-700 px-2 py-1 rounded-md self-end whitespace-nowrap">QC ตีกลับ: {item.time}</div>
+                                <div className="text-xs font-bold bg-rose-200/50 text-rose-700 px-2 py-1 rounded-md self-end whitespace-nowrap">QC ตีกลับ: {item.qcTimeFullStr || item.time}</div>
                               </div>
                             </div>
                             {item.imageUrl && (
@@ -1203,7 +1203,7 @@ export default function QCPerformanceDashboard({
                                       </div>
                                     )}
                                     <div className={`text-xs font-bold ${isPassed ? 'bg-emerald-200/50 text-emerald-700' : 'bg-rose-200/50 text-rose-700'} px-2 py-1 rounded-md self-end whitespace-nowrap`}>
-                                      QC ตรวจ: {item.time}
+                                      QC {isPassed ? 'ตรวจผ่าน' : 'ตีกลับ'}: {item.qcTimeFullStr || item.time}
                                     </div>
                                   </div>
                                 </div>
@@ -1314,7 +1314,7 @@ export default function QCPerformanceDashboard({
                         <div key={idx} className="border border-emerald-300 rounded-lg overflow-hidden page-break-inside-avoid shadow-sm">
                           <div className="bg-emerald-50 p-3 flex justify-between items-center border-b border-emerald-200 text-sm">
                             <div className="flex items-center gap-3">
-                              <span className="font-bold text-emerald-800 bg-white px-2 py-1 rounded shadow-sm">{item.time}</span>
+                              <span className="font-bold text-emerald-800 bg-white px-2 py-1 rounded shadow-sm">{item.qcTimeFullStr || item.time}</span>
                               <span className="font-black text-emerald-900 text-lg">{item.taskName}</span>
                             </div>
                             <div className="flex gap-2 text-xs font-bold text-emerald-700">
@@ -1351,7 +1351,7 @@ export default function QCPerformanceDashboard({
                         <div key={idx} className="border border-rose-300 rounded-lg overflow-hidden page-break-inside-avoid shadow-sm">
                           <div className="bg-rose-50 p-3 flex justify-between items-center border-b border-rose-200 text-sm">
                             <div className="flex items-center gap-3">
-                              <span className="font-bold text-rose-800 bg-white px-2 py-1 rounded shadow-sm">{item.time}</span>
+                              <span className="font-bold text-rose-800 bg-white px-2 py-1 rounded shadow-sm">{item.qcTimeFullStr || item.time}</span>
                               <span className="font-black text-rose-900 text-lg">{item.taskName}</span>
                             </div>
                             <div className="flex gap-2 text-xs font-bold text-rose-700">
@@ -1399,7 +1399,7 @@ export default function QCPerformanceDashboard({
                             <div key={idx} className={`border ${borderColor} rounded-lg overflow-hidden page-break-inside-avoid shadow-sm`}>
                               <div className={`${headerBg} p-3 flex justify-between items-center border-b ${borderColor} text-sm`}>
                                 <div className="flex items-center gap-3">
-                                  <span className="font-bold text-slate-700 bg-white px-2 py-1 rounded shadow-sm border border-slate-200">{item.time}</span>
+                                  <span className="font-bold text-slate-700 bg-white px-2 py-1 rounded shadow-sm border border-slate-200">{item.qcTimeFullStr || item.time}</span>
                                   <span className={`font-black px-3 py-1 rounded shadow-sm border ${statusColor}`}>{statusText}</span>
                                   <span className="font-black text-slate-900 text-lg">{item.taskName}</span>
                                 </div>
