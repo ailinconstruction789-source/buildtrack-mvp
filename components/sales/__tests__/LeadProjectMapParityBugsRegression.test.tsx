@@ -443,11 +443,15 @@ describe('Lead and Project Map Parity Bugs Regression Tests', () => {
             insert: async () => ({ data: {}, error: null })
           } as any;
         }
-        return {
-          select: () => ({
-            eq: async () => ({ data: [], error: null })
-          })
-        } as any;
+        const defaultChain: any = {
+          select: () => defaultChain,
+          update: () => defaultChain,
+          eq: () => defaultChain,
+          neq: () => defaultChain,
+          single: async () => ({ data: {}, error: null }),
+          then: (resolve: any) => resolve({ data: [], error: null })
+        };
+        return defaultChain as any;
       }) as any);
 
       const onClose = vi.fn();
@@ -562,6 +566,12 @@ describe('Lead and Project Map Parity Bugs Regression Tests', () => {
         }
         if (table === 'leads') {
           return {
+            select: () => ({
+              eq: () => ({
+                single: async () => ({ data: { id: 'lead-1', notes: 'Initial note' }, error: null }),
+                maybeSingle: async () => ({ data: { id: 'lead-1', notes: 'Initial note' }, error: null })
+              })
+            }),
             update: () => {
               const uChain: any = {
                 eq: () => uChain,
@@ -1098,6 +1108,12 @@ describe('Lead and Project Map Parity Bugs Regression Tests', () => {
         }
         if (table === 'leads') {
           return {
+            select: () => ({
+              eq: () => ({
+                single: async () => ({ data: { id: 'lead-old-tenant', notes: 'Initial note' }, error: null }),
+                maybeSingle: async () => ({ data: { id: 'lead-old-tenant', notes: 'Initial note' }, error: null })
+              })
+            }),
             update: () => {
               const uChain: any = {
                 eq: () => uChain,

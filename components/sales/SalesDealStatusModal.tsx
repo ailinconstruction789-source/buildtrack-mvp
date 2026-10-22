@@ -13,6 +13,7 @@ import type { CustomerHistoryDate } from '@/lib/sales/customerHistory';
 import CustomerHistoryTimeline from './CustomerHistoryTimeline';
 import { bangkokToday } from '@/lib/sales/actionFilters';
 import { SALES_BANK_NAMES, CASH_BANK_OPTION } from '@/lib/sales/banks';
+import { broadcastSalesSync } from '@/lib/sales/salesSyncBroadcast';
 import { salesDealStages as stages, salesDealNextStages, salesDealPaymentMethodOf, salesDealLeadStatus, salesDealContractStatus, salesDealTransitionError, salesDealStageOf as stageOf } from '@/lib/sales/dealStatus';
 const CustomerDealDetailsEditor = dynamic(() => import('./CustomerDealDetailsEditor'), {
   loading: () => <p role="status">กำลังเปิดฟอร์มแก้ข้อมูล…</p>,
@@ -279,7 +280,7 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         progress.current.history = true;
       }
       if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('buildtrack:sales_sync', { detail: { type: 'sales_deal_saved', timestamp: Date.now() } }));
+        broadcastSalesSync({ type: 'sales_deal_saved', timestamp: Date.now() });
       }
       if (mounted.current) onSaved(`อัปเดตข้อมูลลูกค้าและการขายแล้ว${stageChanged ? ` — ${option.label}` : ''}`);
     } catch (failure) {

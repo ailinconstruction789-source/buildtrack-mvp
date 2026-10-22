@@ -27,6 +27,7 @@ import {
   RENTAL_PROGRAM_DETAILS 
 } from '@/types/sales';
 import { calculateConversionCredit } from '@/lib/rentalHelper';
+import { broadcastSalesSync } from '@/lib/sales/salesSyncBroadcast';
 import SalesOverlay from './SalesOverlay';
 import { extendRentalLeaseEnd, rentalLifecycleActions } from '@/lib/sales/rentalLifecycle';
 import { canEditSalesRole } from '@/lib/sales/leadStage';
@@ -256,7 +257,7 @@ export default function RentalActionModal({
       if (!isMounted.current || requestScope !== currentScope.current) return;
       actionProgress.current = null;
       if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('buildtrack:sales_sync', { detail: { type: kind, timestamp: Date.now() } }));
+        broadcastSalesSync({ type: kind, timestamp: Date.now() });
       }
       if (isMounted.current && requestScope === currentScope.current) {
         onSaved?.();
@@ -371,9 +372,15 @@ export default function RentalActionModal({
 
       // 1. Contract update
       if (c.status !== 'ConvertedToBuy') {
+        const convertContractLog = 'เปลี่ยนจากเช่าเป็นซื้อเมื่อ ' + purchaseDate + ' (หักเครดิต/เงินสะสม ' + bookingCredit.toLocaleString() + ' บาท)';
+        const existingNotes = c.notes || '';
+        const finalContractNotes = existingNotes.includes(convertContractLog)
+          ? existingNotes
+          : existingNotes ? `${existingNotes}\n${convertContractLog}` : convertContractLog;
+
         steps.push(() => updateRow('rental_contracts', c.id, {
           status: 'ConvertedToBuy', conversion_date: purchaseDate,
-          notes: 'เปลี่ยนจากเช่าเป็นซื้อเมื่อ ' + purchaseDate + ' (หักเครดิต/เงินสะสม ' + bookingCredit.toLocaleString() + ' บาท)'
+          notes: finalContractNotes.trim()
         }, c.status));
       }
 
@@ -398,10 +405,16 @@ export default function RentalActionModal({
             rental_status: 'ConvertedToBuy'
           }));
         } else {
+          const convertLeadLog = `[เปลี่ยนจากเช่าเป็นซื้อ ${purchaseDate}]: ยอดหักสะสม ${bookingCredit.toLocaleString()} บ. ราคาขายสุทธิ ${finalPrice.toLocaleString()} บ.`;
+          const existingNotes = (freshLead?.notes ?? lead?.notes ?? '').trim();
+          const finalLeadNotes = existingNotes.includes(convertLeadLog)
+            ? existingNotes
+            : existingNotes ? `${existingNotes}\n${convertLeadLog}` : convertLeadLog;
+
           steps.push(() => updateRow('leads', c.lead_id!, {
             deal_type: 'buy', status: 'Booked', crm_status: 'Booked — จองแล้ว',
             booking_date: purchaseDate, booking_amount: bookingCredit,
-            notes: (((freshLead?.notes || lead?.notes) || '') + '\n[เปลี่ยนจากเช่าเป็นซื้อ ' + purchaseDate + ']: ยอดหักสะสม ' + bookingCredit.toLocaleString() + ' บ. ราคาขายสุทธิ ' + finalPrice.toLocaleString() + ' บ.').trim(),
+            notes: finalLeadNotes.trim(),
             rental_status: 'ConvertedToBuy'
           }));
         }
@@ -457,9 +470,15 @@ export default function RentalActionModal({
     const c = activeContract;
     const steps: (() => Promise<void>)[] = [];
     if (c.status !== 'MovedOut') {
+      const moveOutLog = ('ย้ายออกเมื่อ ' + moveOutDate + ' (คืนเงินประกันสุทธิ ' + moveOutRefund.toLocaleString() + ' บาท)' + (moveOutNotes ? ' ' + moveOutNotes.trim() : '')).trim();
+      const existingCNotes = c.notes || '';
+      const finalCNotes = existingCNotes.includes(moveOutLog)
+        ? existingCNotes
+        : existingCNotes ? `${existingCNotes}\n${moveOutLog}` : moveOutLog;
+
       steps.push(() => updateRow('rental_contracts', c.id, {
         status: 'MovedOut', move_out_date: moveOutDate, deposit_refunded: moveOutRefund,
-        notes: ('ย้ายออกเมื่อ ' + moveOutDate + ' (คืนเงินประกันสุทธิ ' + moveOutRefund.toLocaleString() + ' บาท) ' + moveOutNotes).trim()
+        notes: finalCNotes.trim()
       }, c.status));
     }
     steps.push(async () => {
@@ -507,10 +526,31 @@ export default function RentalActionModal({
       }
     });
 
-    if (c.lead_id) steps.push(() => updateRow('leads', c.lead_id!, {
-      status: 'MovedOut', crm_status: 'Lease Ended / Moved Out — สิ้นสุดสัญญาเช่า (ย้ายออก)', rental_status: 'MovedOut',
-      notes: (((lead?.notes) || '') + '\n[สิ้นสุดสัญญาเช่า ย้ายออก ' + moveOutDate + ']: คืนเงินประกัน ' + moveOutRefund.toLocaleString() + ' บ.').trim()
-    }));
+    if (c.lead_id) steps.push(async () => {
+      const { data: freshLead, error: leadErr } = await supabase
+        .from('leads')
+        .select('notes')
+        .eq('id', c.lead_id)
+        .maybeSingle();
+
+      if (leadErr) {
+        throw new Error('ไม่สามารถอ่านโน้ตล่าสุดของลูกค้าได้: ' + leadErr.message);
+      }
+      if (!freshLead) {
+        throw new Error('ไม่พบข้อมูลลูกค้าสำหรับอัปเดตโน้ต');
+      }
+
+      const baseNotes = (freshLead.notes || '').trim();
+      const moveOutLeadLog = `[สิ้นสุดสัญญาเช่า ย้ายออก ${moveOutDate}]: คืนเงินประกัน ${moveOutRefund.toLocaleString()} บ.${moveOutNotes ? ` หมายเหตุ: ${moveOutNotes.trim()}` : ''}`;
+      const finalNotes = baseNotes.includes(moveOutLeadLog)
+        ? baseNotes
+        : baseNotes ? `${baseNotes}\n${moveOutLeadLog}` : moveOutLeadLog;
+
+      await updateRow('leads', c.lead_id!, {
+        status: 'MovedOut', crm_status: 'Lease Ended / Moved Out — สิ้นสุดสัญญาเช่า (ย้ายออก)', rental_status: 'MovedOut',
+        notes: finalNotes.trim()
+      });
+    });
     await runAction('move_out', steps, '📦 สิ้นสุดสัญญาเรียบร้อย! ปลดแปลง ' + (c.plot_name || c.plot_id) + ' กลับมาเป็นแปลงว่างพร้อมขาย/เช่าแล้ว');
   };
 
@@ -522,18 +562,44 @@ export default function RentalActionModal({
     try { newEndDate = extendRentalLeaseEnd(c.lease_end_date, renewalMonths); }
     catch (error) { setErrorMsg(error instanceof Error ? error.message : 'วันที่สิ้นสุดสัญญาไม่ถูกต้อง'); return; }
     const rentNum = parseFloat(newMonthlyRent) || c.monthly_rent;
+    const renewalLog = `[ต่อสัญญาเช่า +${renewalMonths} เดือน]: สิ้นสุดใหม่ ${newEndDate}`;
+    const existingCNotes = c.notes || '';
+    const finalCNotes = existingCNotes.includes(renewalLog)
+      ? existingCNotes
+      : existingCNotes ? `${existingCNotes}\n${renewalLog}` : renewalLog;
+
     const steps = [
       () => updateRow('rental_contracts', c.id, {
         status: 'Renewed', lease_duration_months: (c.lease_duration_months || 12) + renewalMonths,
         lease_end_date: newEndDate, monthly_rent: rentNum,
-        notes: ((c.notes || '') + '\n[ต่อสัญญาเช่า +' + renewalMonths + ' เดือน]: สิ้นสุดใหม่ ' + newEndDate).trim()
+        notes: finalCNotes.trim()
       }, c.status),
       () => updateRow('plots', c.plot_id, { monthly_rent: rentNum, lease_end_date: newEndDate })
     ];
-    if (c.lead_id) steps.push(() => updateRow('leads', c.lead_id!, {
-      rental_status: 'Renewed', rental_end_date: newEndDate, rental_monthly_rent: rentNum,
-      notes: ((lead?.notes || '') + '\n[ต่อสัญญาเช่า +' + renewalMonths + ' เดือน]: สิ้นสุดใหม่ ' + newEndDate).trim()
-    }));
+    if (c.lead_id) steps.push(async () => {
+      const { data: freshLead, error: leadErr } = await supabase
+        .from('leads')
+        .select('notes')
+        .eq('id', c.lead_id)
+        .maybeSingle();
+
+      if (leadErr) {
+        throw new Error('ไม่สามารถอ่านโน้ตล่าสุดของลูกค้าได้: ' + leadErr.message);
+      }
+      if (!freshLead) {
+        throw new Error('ไม่พบข้อมูลลูกค้าสำหรับอัปเดตโน้ต');
+      }
+
+      const baseNotes = (freshLead.notes || '').trim();
+      const finalNotes = baseNotes.includes(renewalLog)
+        ? baseNotes
+        : baseNotes ? `${baseNotes}\n${renewalLog}` : renewalLog;
+
+      await updateRow('leads', c.lead_id!, {
+        rental_status: 'Renewed', rental_end_date: newEndDate, rental_monthly_rent: rentNum,
+        notes: finalNotes.trim()
+      });
+    });
     await runAction('renew', steps, '📝 ต่อสัญญาเช่าสำเร็จ! ขยายเวลาสัญญาถึงวันที่ ' + newEndDate);
   };
 

@@ -20,6 +20,7 @@ import { getLeadStage, canStartSalesDeal } from '@/lib/sales/leadStage';
 import SalesDealStatusModal from './SalesDealStatusModal';
 import { isCancelledBookingLead, isPreBookingLost, nativeLeadId } from '@/lib/sales/leadLifecycle';
 import { readLeadActivitySnapshot, writeLeadActivitySummary } from '@/lib/sales/leadActivity';
+import { broadcastSalesSync, subscribeToSalesSync } from '@/lib/sales/salesSyncBroadcast';
 import { salesDealActionLabel } from '@/lib/sales/dealStatus';
 
 interface Props {
@@ -62,25 +63,22 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
   disabledRef.current = disabled;
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
-    const handleSync = () => {
+    const unsubscribe = subscribeToSalesSync(() => {
       if (!disabledRef.current && mounted.current) {
         onApply(filters);
       }
-    };
+    }, 200);
     const handleVisibility = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible' && !disabledRef.current && mounted.current) {
         onApply(filters);
       }
     };
     if (typeof window !== 'undefined') {
-      window.addEventListener('buildtrack:sales_sync', handleSync);
-      window.addEventListener('storage', handleSync);
       document.addEventListener('visibilitychange', handleVisibility);
     }
     return () => {
+      unsubscribe();
       if (typeof window !== 'undefined') {
-        window.removeEventListener('buildtrack:sales_sync', handleSync);
-        window.removeEventListener('storage', handleSync);
         document.removeEventListener('visibilitychange', handleVisibility);
       }
     };
@@ -252,15 +250,21 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
       }
 
       // Check existing rental contracts for this lead
-      const { data: existingContracts, error: contractsErr } = await supabase
-        .from('rental_contracts')
-        .select('id, status, plot_id, plot_name, project_name, notes')
-        .eq('lead_id', leadId)
-        .in('status', ['Active', 'PendingContract', 'Renewed']);
+      let existingContracts: any[] | null = null;
+      const rcTable = supabase.from('rental_contracts');
+      if (typeof rcTable?.select === 'function') {
+        const rcQuery = rcTable.select('id, status, plot_id, plot_name, project_name, notes');
+        if (typeof rcQuery?.eq === 'function') {
+          const { data, error: contractsErr } = await rcQuery
+            .eq('lead_id', leadId)
+            .in('status', ['Active', 'PendingContract', 'Renewed']);
 
-      if (contractsErr) {
-        setAppointmentNotice('ไม่สามารถตรวจสอบสัญญาเช่าล่าสุดได้: ' + contractsErr.message);
-        return;
+          if (contractsErr) {
+            setAppointmentNotice('ไม่สามารถตรวจสอบสัญญาเช่าล่าสุดได้: ' + contractsErr.message);
+            return;
+          }
+          existingContracts = data;
+        }
       }
 
       if (existingContracts && existingContracts.some(c => ['Active', 'Renewed'].includes(c.status))) {
@@ -287,7 +291,7 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
       let plotToRelease: any = null;
 
       if (targetPlotId) {
-        let query = supabase.from('plots').select('id, project_name, plot_name, sale_status, has_customer, current_tenant_name, customer_name');
+        let query = supabase.from('plots').select('id, project_name, plot_name, sale_status, has_customer, current_tenant_name, customer_name, lead_id');
         query = query.eq('id', targetPlotId);
         if (targetProject) query = query.eq('project_name', targetProject);
         const { data: pById, error: pByIdErr } = await query;
@@ -300,7 +304,7 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
       }
 
       if (!plotToRelease && targetPlotName) {
-        let query = supabase.from('plots').select('id, project_name, plot_name, sale_status, has_customer, current_tenant_name, customer_name');
+        let query = supabase.from('plots').select('id, project_name, plot_name, sale_status, has_customer, current_tenant_name, customer_name, lead_id');
         query = query.eq('plot_name', targetPlotName);
         if (targetProject) query = query.eq('project_name', targetProject);
         const { data: pByName, error: pByNameErr } = await query;
@@ -330,10 +334,20 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
           throw new Error(`แปลงนี้มีลูกค้ารายอื่น (${plotToRelease.customer_name}) ถือสิทธิ์อยู่ ไม่สามารถคืนแปลงได้`);
         }
 
-        const hasMatchingName = (cleanPlotTenant && cleanPlotTenant === cleanCust) || (cleanPlotCust && cleanPlotCust === cleanCust);
+        const hasMatchingPlotLeadId = Boolean(plotToRelease.lead_id && plotToRelease.lead_id === leadId);
         const hasMatchingPendingContract = pendingContracts.some(c => c.plot_id === plotToRelease.id);
+        const hasMatchingInterestedPlot = Boolean(
+          (freshLead.interested_plot_id && freshLead.interested_plot_id === plotToRelease.id) ||
+          (freshLead.interested_plot_name && freshLead.interested_plot_name === plotToRelease.plot_name) ||
+          (cust.plot && (cust.plot === plotToRelease.id || cust.plot === plotToRelease.plot_name))
+        );
 
-        if (hasMatchingName || hasMatchingPendingContract) {
+        const hasMatchingName = Boolean(
+          (cleanPlotTenant && cleanCust && cleanPlotTenant === cleanCust) ||
+          (cleanPlotCust && cleanCust && cleanPlotCust === cleanCust)
+        );
+
+        if (hasMatchingPlotLeadId || hasMatchingPendingContract || (hasMatchingName && hasMatchingInterestedPlot)) {
           shouldReleasePlot = Boolean(plotToRelease.has_customer || plotToRelease.sale_status !== 'available');
         } else if (plotToRelease.has_customer || plotToRelease.sale_status !== 'available') {
           throw new Error('ไม่สามารถคืนแปลงได้ เนื่องจากแปลงไม่ได้ถูกผูกสิทธิ์กับลูกค้ารายนี้อย่างชัดเจน');
@@ -429,7 +443,7 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
       leadCancelled = true;
 
       if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('buildtrack:sales_sync', { detail: { type: 'cancel_rental_booking', leadId, timestamp: Date.now() } }));
+        broadcastSalesSync({ type: 'cancel_rental_booking', leadId, timestamp: Date.now() });
       }
 
       // 5. Log status history ONLY after primary operations succeeded
@@ -1038,7 +1052,8 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
             active_rental_contract_id: rentalActionTarget.customer.active_rental_contract_id,
             project_name: rentalActionTarget.interest?.projectName || rentalActionTarget.customer.project_name || projects[0] || 'ไอลิน สันทราย 2',
             interested_plot_id: rentalActionTarget.interest?.plotId || rentalActionTarget.customer.interested_plot_id || null,
-            created_at: rentalActionTarget.customer.leadCreatedAt || rentalActionTarget.customer.created_at || new Date().toISOString()
+            created_at: rentalActionTarget.customer.leadCreatedAt || rentalActionTarget.customer.created_at || new Date().toISOString(),
+            notes: rentalActionTarget.customer.notes || ''
           } : null}
           plot={rentalActionTarget.interest?.plotId ? { id: rentalActionTarget.interest.plotId, project_name: rentalActionTarget.interest.projectName || projects[0] } : null}
           onSaved={() => {

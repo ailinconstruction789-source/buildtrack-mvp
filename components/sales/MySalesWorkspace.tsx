@@ -148,9 +148,25 @@ export default function MySalesWorkspace({
   const [newLeadDate, setNewLeadDate] = useState(() => bangkokToday());
   const [isSavingLead, setIsSavingLead] = useState(false);
 
+  // ✏️ Edit Customer Name & Phone Modal State
+  const [editCustomerModal, setEditCustomerModal] = useState<{
+    isOpen: boolean;
+    lead: any | null;
+    customerName: string;
+    phone: string;
+  }>({
+    isOpen: false,
+    lead: null,
+    customerName: '',
+    phone: '',
+  });
+  const [isSavingCustomer, setIsSavingCustomer] = useState(false);
+  const [customerEditError, setCustomerEditError] = useState<string | null>(null);
+
   useEffect(() => {
     setBookingTarget(null); setStatusTarget(null); setFollowUpTarget(null); setAppointmentTarget(null);
     setRentalTarget(null); setRentalActionTarget(null); setShowAddLeadModal(false); setShowAdminDataModal(false);
+    setEditCustomerModal({ isOpen: false, lead: null, customerName: '', phone: '' });
   }, [myUserId, myUsername, currentUser?.role]);
 
   // Project names list
@@ -802,6 +818,205 @@ export default function MySalesWorkspace({
   };
   const openAddLead = () => setShowAddLeadModal(true);
 
+  // ✏️ Edit Customer Name & Phone Handlers
+  const handleOpenEditCustomer = (lead: any) => {
+    setCustomerEditError(null);
+    setEditCustomerModal({
+      isOpen: true,
+      lead,
+      customerName: lead.customer_name || lead.customerName || '',
+      phone: lead.phone || '',
+    });
+  };
+
+  const handleSaveCustomer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const target = editCustomerModal.lead;
+    if (!target) return;
+
+    const trimmedName = editCustomerModal.customerName.trim();
+    const trimmedPhone = editCustomerModal.phone.trim();
+
+    if (!trimmedName) {
+      setCustomerEditError('กรุณากรอกชื่อ-นามสกุลลูกค้า');
+      return;
+    }
+
+    setIsSavingCustomer(true);
+    setCustomerEditError(null);
+
+    try {
+      const nowIso = new Date().toISOString();
+      const targetLeadId = target.leadId || (target.sourceKind === 'lead' ? target.id : null);
+      const targetSaleId = target.saleId || (target.sourceKind === 'sale' ? target.id : null);
+      const oldName = target.customer_name || target.customerName || '';
+
+      // 1. Update leads table if leadId exists
+      if (targetLeadId) {
+        const { error: leadErr } = await supabase
+          .from('leads')
+          .update({
+            customer_name: trimmedName,
+            phone: trimmedPhone || null,
+            updated_at: nowIso,
+          })
+          .eq('id', targetLeadId);
+        if (leadErr) throw leadErr;
+
+        // Also sync customer_voices if present for this lead
+        try {
+          const fromVoices = supabase.from('customer_voices');
+          if (typeof fromVoices?.update === 'function') {
+            await fromVoices
+              .update({ customer_name: trimmedName, phone: trimmedPhone || null })
+              .eq('lead_id', targetLeadId);
+          }
+        } catch {
+          // optional survey table
+        }
+      }
+
+      // 2. Update sales table if saleId exists
+      if (targetSaleId) {
+        try {
+          const fromSales = supabase.from('sales');
+          if (typeof fromSales?.update === 'function') {
+            await fromSales
+              .update({
+                customer_name: trimmedName,
+                phone: trimmedPhone || null,
+                updated_at: nowIso,
+              })
+              .eq('id', targetSaleId);
+          }
+        } catch (saleErr) {
+          console.warn('Sales customer_name update notice:', saleErr);
+        }
+      }
+
+      // 3. Update rental contracts if any active contract matches this lead
+      if (targetLeadId) {
+        try {
+          const fromRc = supabase.from('rental_contracts');
+          if (typeof fromRc?.update === 'function') {
+            await fromRc
+              .update({
+                tenant_name: trimmedName,
+                tenant_phone: trimmedPhone || null,
+                updated_at: nowIso,
+              })
+              .eq('lead_id', targetLeadId)
+              .in('status', ['Active', 'PendingContract']);
+          }
+        } catch (rcErr) {
+          console.warn('Rental contracts update notice:', rcErr);
+        }
+      }
+
+      // 4. Update plots table if linked to a plot
+      const resolvedPlotId = target.plotId || target.interested_plot_id;
+      const resolvedPlotName = getLeadPlotName(target);
+
+      const matchedPlot = (dbPlots || []).find((p: any) =>
+        (resolvedPlotId && (p.id === resolvedPlotId || String(p.id) === String(resolvedPlotId))) ||
+        (resolvedPlotName && (
+          (!target.project_name || p.project_name === target.project_name || p.project === target.project_name) &&
+          (p.plot_name === resolvedPlotName || p.plot_number === resolvedPlotName || p.id === resolvedPlotName)
+        ))
+      );
+
+      const plotToUpdateId = matchedPlot?.id || (resolvedPlotId && !String(resolvedPlotId).includes('/') ? resolvedPlotId : null);
+
+      if (plotToUpdateId) {
+        try {
+          const plotPatch: any = {};
+          if (target.sourceKind === 'rental_plot' || target.status === 'Rented') {
+            plotPatch.current_tenant_name = trimmedName;
+            plotPatch.current_tenant_phone = trimmedPhone || null;
+          } else {
+            plotPatch.customer_name = trimmedName;
+            plotPatch.customer_phone = trimmedPhone || null;
+            if (matchedPlot?.highlight_note && matchedPlot.highlight_note.startsWith('จอง:')) {
+              plotPatch.highlight_note = `จอง: ${trimmedName}`;
+            }
+          }
+          const fromPlots = supabase.from('plots');
+          if (typeof fromPlots?.update === 'function') {
+            await fromPlots.update(plotPatch).eq('id', plotToUpdateId);
+          }
+        } catch (plotErr) {
+          console.warn('Plots customer update notice:', plotErr);
+        }
+      }
+
+      // 5. Optimistically update local leads state
+      setLeads(prevLeads =>
+        prevLeads.map(item => {
+          const isMatch =
+            item.id === target.id ||
+            (targetLeadId && item.leadId === targetLeadId) ||
+            (targetSaleId && item.saleId === targetSaleId);
+          if (isMatch) {
+            return {
+              ...item,
+              customer_name: trimmedName,
+              customerName: trimmedName,
+              phone: trimmedPhone,
+              updated_at: nowIso,
+            };
+          }
+          return item;
+        })
+      );
+
+      // 6. Update local dbPlots if plot was updated
+      if (plotToUpdateId) {
+        setDbPlots(prevPlots =>
+          prevPlots.map(p => {
+            if (p.id === plotToUpdateId) {
+              return {
+                ...p,
+                ...(target.sourceKind === 'rental_plot' || target.status === 'Rented'
+                  ? { current_tenant_name: trimmedName, current_tenant_phone: trimmedPhone || null }
+                  : { customer_name: trimmedName, customer_phone: trimmedPhone || null }),
+              };
+            }
+            return p;
+          })
+        );
+      }
+
+      // 7. Dispatch cross-view sync event
+      try {
+        window.dispatchEvent(
+          new CustomEvent('buildtrack:sales_sync', {
+            detail: {
+              type: 'customer_updated',
+              leadId: targetLeadId,
+              saleId: targetSaleId,
+              oldName,
+              customerName: trimmedName,
+              phone: trimmedPhone,
+            },
+          })
+        );
+      } catch (e) {
+        // ignore
+      }
+
+      setNotice(`อัปเดตข้อมูลลูกค้าเป็น "${trimmedName}" สำเร็จเรียบร้อยแล้ว`);
+      setEditCustomerModal({ isOpen: false, lead: null, customerName: '', phone: '' });
+
+      // 8. Re-fetch in background
+      fetchData(true);
+    } catch (err: any) {
+      console.error('Error updating customer name/phone:', err);
+      setCustomerEditError(err?.message || 'เกิดข้อผิดพลาดในการบันทึกข้อมูลลูกค้า');
+    } finally {
+      setIsSavingCustomer(false);
+    }
+  };
+
   // Quick Change Lead Stage Handler
   const handleQuickStatusChange = async (leadId: string, newCrmStatus: string, stageLabel: string) => {
     try {
@@ -1239,10 +1454,22 @@ export default function MySalesWorkspace({
                             }`}>
                               {lead.customer_name?.charAt(0) || 'L'}
                             </div>
-                            <div>
-                              <span className="font-bold text-slate-900 block text-xs">
-                                {lead.customer_name}
-                              </span>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-bold text-slate-900 block text-xs">
+                                  {lead.customer_name}
+                                </span>
+                                {canWrite && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEditCustomer(lead)}
+                                    className="text-slate-400 hover:text-amber-600 p-0.5 hover:bg-amber-50 rounded transition-colors inline-flex items-center"
+                                    title="แก้ไขชื่อและเบอร์โทรลูกค้า"
+                                  >
+                                    <Edit3 size={12} />
+                                  </button>
+                                )}
+                              </div>
                               {lead.phone ? (
                                 <a
                                   href={`tel:${lead.phone}`}
@@ -1404,6 +1631,7 @@ export default function MySalesWorkspace({
                     onAppointment={() => openAppointment(lead)}
                     onRent={() => openRental(lead)}
                     onQuickStatus={(status, label) => handleQuickStatusChange(lead.id, status, label)}
+                    onEditCustomer={() => handleOpenEditCustomer(lead)}
                   />
                 ))}
               </div>
@@ -1434,6 +1662,7 @@ export default function MySalesWorkspace({
                     onAppointment={() => openAppointment(lead)}
                     onRent={() => openRental(lead)}
                     onQuickStatus={(status, label) => handleQuickStatusChange(lead.id, status, label)}
+                    onEditCustomer={() => handleOpenEditCustomer(lead)}
                   />
                 ))}
               </div>
@@ -1464,6 +1693,7 @@ export default function MySalesWorkspace({
                     onAppointment={() => openAppointment(lead)}
                     onRent={() => openRental(lead)}
                     onQuickStatus={(status, label) => handleQuickStatusChange(lead.id, status, label)}
+                    onEditCustomer={() => handleOpenEditCustomer(lead)}
                   />
                 ))}
               </div>
@@ -1493,6 +1723,7 @@ export default function MySalesWorkspace({
                     onFollowUp={() => openFollowUp(lead)}
                     onRent={() => openRental(lead)}
                     onQuickStatus={(status, label) => handleQuickStatusChange(lead.id, status, label)}
+                    onEditCustomer={() => handleOpenEditCustomer(lead)}
                   />
                 ))}
               </div>
@@ -1522,6 +1753,7 @@ export default function MySalesWorkspace({
                     onFollowUp={() => openFollowUp(lead)}
                     onRent={() => openRental(lead)}
                     onQuickStatus={(status, label) => handleQuickStatusChange(lead.id, status, label)}
+                    onEditCustomer={() => handleOpenEditCustomer(lead)}
                   />
                 ))}
               </div>
@@ -1551,6 +1783,7 @@ export default function MySalesWorkspace({
                     onFollowUp={() => openFollowUp(lead)}
                     onRent={() => openRental(lead)}
                     onQuickStatus={(status, label) => handleQuickStatusChange(lead.id, status, label)}
+                    onEditCustomer={() => handleOpenEditCustomer(lead)}
                   />
                 ))}
               </div>
@@ -1583,6 +1816,7 @@ export default function MySalesWorkspace({
                       onFollowUp={() => openFollowUp(lead)}
                       onRent={() => openRental(lead)}
                       onQuickStatus={(status, label) => handleQuickStatusChange(lead.id, status, label)}
+                    onEditCustomer={() => handleOpenEditCustomer(lead)}
                     />
                   ))}
                 </div>
@@ -1616,6 +1850,7 @@ export default function MySalesWorkspace({
                       onFollowUp={() => openFollowUp(lead)}
                       onRent={() => openRental(lead)}
                       onQuickStatus={(status, label) => handleQuickStatusChange(lead.id, status, label)}
+                    onEditCustomer={() => handleOpenEditCustomer(lead)}
                     />
                   ))}
                 </div>
@@ -1887,6 +2122,135 @@ export default function MySalesWorkspace({
         />
       )}
 
+      {/* 7. Modal: แก้ไขข้อมูลลูกค้า (ชื่อ - เบอร์โทร) */}
+      {editCustomerModal.isOpen && editCustomerModal.lead && (
+        <SalesOverlay className="fixed inset-0 z-[400] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-100 w-full max-w-md overflow-hidden animate-in zoom-in-95">
+
+            <div className="flex items-center justify-between p-5 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center font-black">
+                  <Edit3 size={18} />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-800">แก้ไขข้อมูลลูกค้า</h3>
+                  <p className="text-xs text-slate-500 font-medium">แก้ไขชื่อ-นามสกุล และเบอร์โทรศัพท์สำหรับติดต่อ</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={isSavingCustomer}
+                onClick={() => setEditCustomerModal(prev => ({ ...prev, isOpen: false }))}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 disabled:opacity-50"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveCustomer} className="p-5 space-y-4">
+              {/* Context Summary */}
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/80 text-xs text-slate-600 space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-700">โครงการ:</span>
+                  <span className="font-semibold text-slate-900">{editCustomerModal.lead.project_name || '-'}</span>
+                </div>
+                {getLeadPlotName(editCustomerModal.lead) && (
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-700">แปลงที่สนใจ / จอง:</span>
+                    <span className="font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                      แปลง {getLeadPlotName(editCustomerModal.lead)}
+                    </span>
+                  </div>
+                )}
+                {editCustomerModal.lead.sales_owner && (
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-700">เซลล์ผู้ดูแล:</span>
+                    <span className="font-medium text-slate-800">{editCustomerModal.lead.sales_owner}</span>
+                  </div>
+                )}
+              </div>
+
+              {customerEditError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs font-semibold text-rose-700 flex items-center gap-2">
+                  <AlertCircle size={16} className="shrink-0 text-rose-500" />
+                  <span>{customerEditError}</span>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  ชื่อ-นามสกุล ลูกค้า <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  disabled={isSavingCustomer}
+                  value={editCustomerModal.customerName}
+                  onChange={e => setEditCustomerModal(prev => ({ ...prev, customerName: e.target.value }))}
+                  placeholder="เช่น นาย สมชาย ใจดี หรือ คุณสมชาย"
+                  className="w-full text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 focus:bg-white focus:ring-2 focus:ring-amber-500 disabled:opacity-60"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  เบอร์โทรศัพท์
+                </label>
+                <input
+                  type="tel"
+                  disabled={isSavingCustomer}
+                  value={editCustomerModal.phone}
+                  onChange={e => setEditCustomerModal(prev => ({ ...prev, phone: e.target.value }))}
+                  placeholder="เช่น 0812345678"
+                  className="w-full text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 focus:bg-white focus:ring-2 focus:ring-amber-500 disabled:opacity-60"
+                />
+              </div>
+
+              <div className="p-3 bg-amber-50/70 rounded-2xl border border-amber-200/70 text-xs text-amber-900 flex items-start gap-2">
+                <Sparkles size={16} className="text-amber-600 shrink-0 mt-0.5" />
+                <div className="space-y-0.5 leading-relaxed text-[11px]">
+                  <p className="font-bold">ซิงก์ข้อมูลอัตโนมัติ</p>
+                  <p className="text-amber-800/80">
+                    ระบบจะอัปเดตชื่อและเบอร์โทรในข้อมูล Lead, ผังโครงการ และแปลงบ้านที่เกี่ยวข้องให้ตรงกันทันที
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  disabled={isSavingCustomer}
+                  onClick={() => setEditCustomerModal(prev => ({ ...prev, isOpen: false }))}
+                  className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-all disabled:opacity-50"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingCustomer || !editCustomerModal.customerName.trim()}
+                  className="px-5 py-2.5 text-xs font-black text-white bg-amber-500 hover:bg-amber-600 active:bg-amber-700 rounded-xl shadow-sm transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSavingCustomer ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      <span>กำลังบันทึก...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Save size={14} />
+                      <span>บันทึกการแก้ไข</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+            </form>
+          </div>
+        </SalesOverlay>
+      )}
+
+
     </div>
   );
 }
@@ -1902,7 +2266,8 @@ function LeadKanbanCard({
   onAppointment,
   onRent,
   onQuickStatus,
-  canWrite
+  canWrite,
+  onEditCustomer
 }: {
   lead: any;
   canWrite: boolean;
@@ -1914,6 +2279,7 @@ function LeadKanbanCard({
   onAppointment?: () => void;
   onRent: () => void;
   onQuickStatus: (status: string, label: string) => void;
+  onEditCustomer?: () => void;
 }) {
   return (
     <div className={`p-3.5 bg-white rounded-xl border transition-all shadow-2xs space-y-2.5 ${
@@ -1923,10 +2289,22 @@ function LeadKanbanCard({
 
       {/* Header: Name & Owner */}
       <div className="flex items-start justify-between gap-2">
-        <div>
-          <span className="font-black text-xs text-slate-900 block leading-snug">
-            {lead.customer_name}
-          </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="font-black text-xs text-slate-900 block leading-snug">
+              {lead.customer_name}
+            </span>
+            {canWrite && onEditCustomer && (
+              <button
+                type="button"
+                onClick={onEditCustomer}
+                className="text-slate-400 hover:text-amber-600 p-0.5 hover:bg-amber-50 rounded transition-colors inline-flex items-center"
+                title="แก้ไขชื่อและเบอร์โทรลูกค้า"
+              >
+                <Edit3 size={11} />
+              </button>
+            )}
+          </div>
           {lead.phone && (
             <a href={`tel:${lead.phone}`} className="text-[11px] font-semibold text-blue-600 hover:underline flex items-center gap-1 mt-0.5">
               <Phone size={10} /> {lead.phone}

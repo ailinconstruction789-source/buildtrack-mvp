@@ -735,12 +735,12 @@ describe('RentalContractModal - Plot ordering, Booked plots & Historical dates',
         };
       }
       if (table === 'rental_contracts') {
+        const inPromise = Promise.resolve({ data: [], error: null });
+        (inPromise as any).limit = vi.fn().mockResolvedValue({ data: [], error: null });
         return {
           select: vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
-              in: vi.fn().mockReturnValue({
-                limit: vi.fn().mockResolvedValue({ data: [], error: null })
-              })
+              in: vi.fn().mockReturnValue(inPromise)
             })
           }),
           insert: vi.fn().mockImplementation((payload) => {
@@ -754,7 +754,14 @@ describe('RentalContractModal - Plot ordering, Booked plots & Historical dates',
         };
       }
       if (table === 'leads') {
+        const chain: any = {
+          neq: vi.fn().mockResolvedValue({ data: [], error: null }),
+          single: vi.fn().mockResolvedValue({ data: { id: 'lead-artipact' }, error: null })
+        };
+        chain.eq = vi.fn().mockReturnValue(chain);
+        chain.in = vi.fn().mockReturnValue(chain);
         return {
+          select: vi.fn().mockReturnValue(chain),
           update: vi.fn().mockImplementation((payload) => {
             leadUpdatePayload = payload;
             return {
@@ -768,12 +775,13 @@ describe('RentalContractModal - Plot ordering, Booked plots & Historical dates',
         };
       }
       if (table === 'sales') {
+        const chain: any = {
+          neq: vi.fn().mockResolvedValue({ data: [], error: null })
+        };
+        chain.eq = vi.fn().mockReturnValue(chain);
         return {
-          update: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              neq: vi.fn().mockResolvedValue({ data: null, error: null })
-            })
-          })
+          select: vi.fn().mockReturnValue(chain),
+          update: vi.fn().mockReturnValue(chain)
         };
       }
       return {

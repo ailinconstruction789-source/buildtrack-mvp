@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Map as MapIcon, ZoomIn, ZoomOut, Pickaxe, Home, Loader2, User, Sun, Moon, AlertTriangle } from 'lucide-react';
 import { isSampleHouse, fetchTodayInspectionStatus, fetchTodayInspectionMap, SampleHouseInspectionStatus } from '@/lib/sales/sampleHouseHelper';
+import { subscribeToSalesSync } from '@/lib/sales/salesSyncBroadcast';
 
 interface SalesMapProps {
   projectName?: string;
@@ -84,86 +85,103 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
   const [inspectionStatus, setInspectionStatus] = useState<SampleHouseInspectionStatus | null>(null);
   const [inspectionMap, setInspectionMap] = useState<Record<string, SampleHouseInspectionStatus>>({});
 
-  useEffect(() => {
-    const fetchMapData = async () => {
-      setLoading(true);
-      try {
-        // Fetch project layout
-        const { data: projectData } = await supabase
-          .from('projects')
-          .select('layout_data')
-          .eq('name', projectName)
-          .maybeSingle();
+  const dataRequest = useRef(0);
 
-        if (projectData && projectData.layout_data) {
-          const gridConfig = projectData.layout_data.find((c: any) => c.type === 'config');
-          if (gridConfig) {
-            setGridCols(gridConfig.cols || 40);
-            setGridRows(gridConfig.rows || 24);
-          }
-          setMapGrid(projectData.layout_data.filter((c: any) => c.type !== 'config'));
-        } else {
-          setMapGrid([]);
-          setGridCols(40);
-          setGridRows(24);
+  const fetchMapData = useCallback(async () => {
+    const requestId = ++dataRequest.current;
+    setLoading(true);
+    try {
+      // Fetch project layout
+      const { data: projectData } = await supabase
+        .from('projects')
+        .select('layout_data')
+        .eq('name', projectName)
+        .maybeSingle();
+
+      if (dataRequest.current !== requestId) return;
+
+      if (projectData && projectData.layout_data) {
+        const gridConfig = projectData.layout_data.find((c: any) => c.type === 'config');
+        if (gridConfig) {
+          setGridCols(gridConfig.cols || 40);
+          setGridRows(gridConfig.rows || 24);
         }
+        setMapGrid(projectData.layout_data.filter((c: any) => c.type !== 'config'));
+      } else {
+        setMapGrid([]);
+        setGridCols(40);
+        setGridRows(24);
+      }
 
-        // Fetch plots, progress, grass task assignments, and recent photos for this project
-        const [plotsRes, progressRes, grassTasksRes, photosRes, inspectRes, inspectMapRes] = await Promise.all([
-          supabase.from('plots').select('*').eq('project_name', projectName),
-          supabase.from('vw_plot_progress').select('plot_id, overall_progress'),
-          supabase.from('task_updates')
-            .select('plot_id, progress, task_templates!inner(task_name)')
-            .ilike('task_templates.task_name', '%งานปูหญ้า%')
-            .eq('progress', 100),
-          supabase.from('task_updates')
-            .select('plot_id, photo_url, updated_at')
-            .not('photo_url', 'is', null)
-            .order('updated_at', { ascending: false }),
-          fetchTodayInspectionStatus(projectName),
-          fetchTodayInspectionMap(projectName)
-        ]);
+      // Fetch plots, progress, grass task assignments, and recent photos for this project
+      const [plotsRes, progressRes, grassTasksRes, photosRes, inspectRes, inspectMapRes] = await Promise.all([
+        supabase.from('plots').select('*').eq('project_name', projectName),
+        supabase.from('vw_plot_progress').select('plot_id, overall_progress'),
+        supabase.from('task_updates')
+          .select('plot_id, progress, task_templates!inner(task_name)')
+          .ilike('task_templates.task_name', '%งานปูหญ้า%')
+          .eq('progress', 100),
+        supabase.from('task_updates')
+          .select('plot_id, photo_url, updated_at')
+          .not('photo_url', 'is', null)
+          .order('updated_at', { ascending: false }),
+        fetchTodayInspectionStatus(projectName),
+        fetchTodayInspectionMap(projectName)
+      ]);
+
+      if (dataRequest.current !== requestId) return;
+      
+      if (inspectRes) {
+        setInspectionStatus(inspectRes);
+      }
+      if (inspectMapRes) {
+        setInspectionMap(inspectMapRes);
+      }
         
-        if (inspectRes) {
-          setInspectionStatus(inspectRes);
-        }
-        if (inspectMapRes) {
-          setInspectionMap(inspectMapRes);
-        }
-          
-        if (plotsRes.data) {
-          const latestPhotos: Record<string, string> = {};
-          if (photosRes.data) {
-            // Since it's ordered by updated_at desc, the first one encountered is the latest
-            for (const row of photosRes.data) {
-              if (!latestPhotos[row.plot_id] && row.photo_url) {
-                latestPhotos[row.plot_id] = row.photo_url;
-              }
+      if (plotsRes.data) {
+        const latestPhotos: Record<string, string> = {};
+        if (photosRes.data) {
+          // Since it's ordered by updated_at desc, the first one encountered is the latest
+          for (const row of photosRes.data) {
+            if (!latestPhotos[row.plot_id] && row.photo_url) {
+              latestPhotos[row.plot_id] = row.photo_url;
             }
           }
-
-          const plotsWithProgress = plotsRes.data.map((plot: any) => {
-            const prog = progressRes.data?.find((p: any) => p.plot_id === plot.id);
-            const isGrassPlanted = grassTasksRes.data?.some((g: any) => g.plot_id === plot.id) || false;
-            
-            return {
-              ...plot,
-              progress: prog ? Number(prog.overall_progress) : 0,
-              isGrassPlanted,
-              latestPhoto: latestPhotos[plot.id] || null
-            };
-          });
-          setPlots(plotsWithProgress);
         }
-      } catch (err) {
-        console.error("Error fetching sales map data:", err);
-      } finally {
+
+        const plotsWithProgress = plotsRes.data.map((plot: any) => {
+          const prog = progressRes.data?.find((p: any) => p.plot_id === plot.id);
+          const isGrassPlanted = grassTasksRes.data?.some((g: any) => g.plot_id === plot.id) || false;
+          
+          return {
+            ...plot,
+            progress: prog ? Number(prog.overall_progress) : 0,
+            isGrassPlanted,
+            latestPhoto: latestPhotos[plot.id] || null
+          };
+        });
+        setPlots(plotsWithProgress);
+      }
+    } catch (err) {
+      console.error("Error fetching sales map data:", err);
+    } finally {
+      if (dataRequest.current === requestId) {
         setLoading(false);
       }
-    };
-
-    fetchMapData();
+    }
   }, [projectName]);
+
+  useEffect(() => {
+    fetchMapData();
+    const unsubscribe = subscribeToSalesSync(() => {
+      fetchMapData();
+    }, 200);
+
+    return () => {
+      dataRequest.current++;
+      unsubscribe();
+    };
+  }, [fetchMapData]);
 
   useEffect(() => {
     // Hide legend by default on mobile screens for a better initial view

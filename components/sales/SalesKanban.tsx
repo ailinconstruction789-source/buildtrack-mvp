@@ -1,7 +1,7 @@
 "use client";
 import { customerActualTransferDay, customerBusinessDay, customerExpectedTransferDay } from '@/lib/sales/customerBusinessDate';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Search, Plus, Map as MapIcon, Users, ListFilter, Download, ChevronRight, Home, Phone, Calendar, ArrowRight, ArrowLeft, LogOut, UserCheck, User, Key, X, FileText, Clock, CheckCircle, XCircle, Banknote, Building2, FileSignature, Pickaxe, Loader2, TrendingUp, Upload, Trash2, PieChart, Lightbulb, Sun, Moon, AlertTriangle, Sparkles, CreditCard, BookmarkCheck } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import SalesMap from './SalesMap';
@@ -27,6 +27,7 @@ import { useSalesStaffOptions } from '@/hooks/useSalesStaffOptions';
 import SalesOverlay from './SalesOverlay';
 import { canStartSalesDeal, getLeadStage } from '@/lib/sales/leadStage';
 import { loadSalesStatusHistory, mergeSalesTimeline, type SalesStatusHistoryRow } from '@/lib/sales/salesStatusHistory';
+import { subscribeToSalesSync } from '@/lib/sales/salesSyncBroadcast';
 
 async function checkedResult<T extends { error?: { message?: string } | null }>(query: PromiseLike<T>): Promise<T> {
   const result = await query;
@@ -189,6 +190,11 @@ export default function SalesKanban({
   const [search, setSearch] = useState('');
   
   const [panelState, setPanelState] = useState<{type: 'default' | 'booking' | 'customer' | 'new-customer', plotId: string, lead: any}>({ type: 'default', plotId: '', lead: null });
+  const panelStateRef = React.useRef(panelState);
+  useEffect(() => {
+    panelStateRef.current = panelState;
+  }, [panelState]);
+  const [plotInfoRefreshTrigger, setPlotInfoRefreshTrigger] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [statusHistory, setStatusHistory] = useState<{ scope: string; rows: SalesStatusHistoryRow[]; loading: boolean; error: string }>({ scope: '', rows: [], loading: false, error: '' });
   const [historyRetry, setHistoryRetry] = useState(0);
@@ -254,7 +260,23 @@ export default function SalesKanban({
   }, [statusHistory.scope, historyScope, statusHistory.rows, panelState.lead]);
 
   // For Customer Editing
-  const [editCustomerForm, setEditCustomerForm] = useState({ name: '', phone: '', occupation: '', status: '', plot: '', salePrice: '', bank: '', cancelReason: '', landOfficePrice: '', agentName: '', transactionDate: new Date().toISOString().split('T')[0], note: '' });
+  const [editCustomerForm, setEditCustomerFormState] = useState({ name: '', phone: '', occupation: '', status: '', plot: '', salePrice: '', bank: '', cancelReason: '', landOfficePrice: '', agentName: '', transactionDate: new Date().toISOString().split('T')[0], note: '' });
+  const editCustomerFormRef = useRef(editCustomerForm);
+  editCustomerFormRef.current = editCustomerForm;
+  const formBaselineRef = useRef<any>(null);
+  const isFormDirtyRef = useRef(false);
+
+  const setEditCustomerForm = useCallback((updater: any) => {
+    isFormDirtyRef.current = true;
+    setEditCustomerFormState(updater);
+  }, []);
+
+  useEffect(() => {
+    if (panelState.type !== 'customer') {
+      isFormDirtyRef.current = false;
+      formBaselineRef.current = null;
+    }
+  }, [panelState.type]);
 
   // Real Plot Data from Supabase
   const [projectPlots, setProjectPlots] = useState<string[]>([]);
@@ -668,8 +690,69 @@ export default function SalesKanban({
         });
       }
 
+      if (!isCurrent()) return;
+
       setLeads(formattedLeads);
       setRawLeads([...formattedLeads, ...(leadsData || [])]);
+
+      // Sync panelState.lead and editCustomerForm if open
+      if (panelStateRef.current.type === 'customer' && panelStateRef.current.lead) {
+        const curLead = panelStateRef.current.lead;
+        // Strictly match by unique ID - NEVER fallback to plot!
+        const fresh = formattedLeads.find((fl: any) =>
+          (curLead.leadId && (fl.leadId === curLead.leadId || fl.id === curLead.leadId)) ||
+          (curLead.id && (fl.id === curLead.id || fl.leadId === curLead.id)) ||
+          (curLead.saleId && fl.saleId === curLead.saleId)
+        );
+        if (fresh) {
+          setPanelState(prev => ({
+            ...prev,
+            lead: { ...prev.lead, ...fresh }
+          }));
+
+          const curForm = editCustomerFormRef.current;
+          const baseline = formBaselineRef.current;
+          const hasDraftEdits = isFormDirtyRef.current || (baseline && (
+            curForm.name !== baseline.name ||
+            curForm.phone !== baseline.phone ||
+            curForm.occupation !== baseline.occupation ||
+            curForm.agentName !== baseline.agentName ||
+            curForm.status !== baseline.status ||
+            curForm.plot !== baseline.plot ||
+            curForm.salePrice !== baseline.salePrice ||
+            curForm.bank !== baseline.bank ||
+            curForm.cancelReason !== baseline.cancelReason ||
+            curForm.landOfficePrice !== baseline.landOfficePrice ||
+            curForm.note !== baseline.note
+          ));
+
+          // Only sync server changes into editCustomerForm if user is not actively editing a draft
+          if (!hasDraftEdits) {
+            const nextForm = {
+              name: fresh.customer_name || fresh.name || curForm.name,
+              phone: fresh.phone || curForm.phone,
+              plot: fresh.plot || fresh.interested_plot_name || curForm.plot,
+              agentName: fresh.agentName || fresh.agent_name || curForm.agentName,
+              status: fresh.status || curForm.status
+            };
+            setEditCustomerFormState(prev => ({
+              ...prev,
+              ...nextForm
+            }));
+            if (formBaselineRef.current) {
+              formBaselineRef.current = {
+                ...formBaselineRef.current,
+                ...nextForm
+              };
+            }
+          }
+        }
+      }
+
+      // Refresh plotInfo if viewing a plot
+      if (panelStateRef.current.plotId) {
+        setPlotInfoRefreshTrigger(t => t + 1);
+      }
     } catch(e) {
       console.error('Error fetching sales data in SalesKanban:', e);
       if (!isCurrent()) return;
@@ -679,24 +762,22 @@ export default function SalesKanban({
 
   useEffect(() => {
     fetchData();
-    const handleSync = () => {
+    const unsubscribeSync = subscribeToSalesSync(() => {
       fetchData();
-    };
+    }, 200);
+
     const handleVisibility = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
         fetchData();
       }
     };
-    if (typeof window !== 'undefined') {
-      window.addEventListener('buildtrack:sales_sync', handleSync);
-      window.addEventListener('storage', handleSync);
+    if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', handleVisibility);
     }
     return () => {
       dataRequest.current++;
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('buildtrack:sales_sync', handleSync);
-        window.removeEventListener('storage', handleSync);
+      unsubscribeSync();
+      if (typeof document !== 'undefined') {
         document.removeEventListener('visibilitychange', handleVisibility);
       }
     };
@@ -805,7 +886,7 @@ export default function SalesKanban({
     };
 
     fetchPlotInfo();
-  }, [panelState.plotId]);
+  }, [panelState.plotId, plotInfoRefreshTrigger]);
 
   const handleToggleSampleHouse = async () => {
     if (!plotInfo && !panelState.plotId) return;
@@ -903,16 +984,22 @@ export default function SalesKanban({
       setPanelState({ type: 'booking', plotId, lead: null });
     } else if (lead) {
       const canonicalStatus = STATUS_CONFIG[lead.status] ? lead.status : (stageToKanbanStatus(lead.status) || 'Reserved');
+      const initialForm = { name: lead.name, phone: lead.phone, occupation: lead.occupation || '', status: canonicalStatus, plot: lead.plot || '', salePrice: lead.salePrice?.toString() || '', bank: lead.bank || '', cancelReason: lead.cancelReason || '', landOfficePrice: lead.landOfficePrice || '', transactionDate: new Date().toISOString().split('T')[0], agentName: lead.agentName || '', note: '' };
       setPanelState({ type: 'customer', plotId, lead });
-      setEditCustomerForm({ name: lead.name, phone: lead.phone, occupation: lead.occupation || '', status: canonicalStatus, plot: lead.plot || '', salePrice: lead.salePrice?.toString() || '', bank: lead.bank || '', cancelReason: lead.cancelReason || '', landOfficePrice: lead.landOfficePrice || '', transactionDate: new Date().toISOString().split('T')[0], agentName: lead.agentName || '', note: '' });
+      formBaselineRef.current = initialForm;
+      isFormDirtyRef.current = false;
+      setEditCustomerFormState(initialForm);
     }
   };
 
   const handleEditLeadClick = (lead: any) => {
     setActiveTab('map');
     const canonicalStatus = STATUS_CONFIG[lead.status] ? lead.status : (stageToKanbanStatus(lead.status) || 'Reserved');
+    const initialForm = { name: lead.name, phone: lead.phone, occupation: lead.occupation || '', status: canonicalStatus, plot: lead.plot || '', salePrice: lead.salePrice?.toString() || '', bank: lead.bank || '', cancelReason: lead.cancelReason || '', landOfficePrice: lead.landOfficePrice || '', transactionDate: new Date().toISOString().split('T')[0], agentName: lead.agentName || '', note: '' };
     setPanelState({ type: 'customer', plotId: lead.plot || '', lead });
-    setEditCustomerForm({ name: lead.name, phone: lead.phone, occupation: lead.occupation || '', status: canonicalStatus, plot: lead.plot || '', salePrice: lead.salePrice?.toString() || '', bank: lead.bank || '', cancelReason: lead.cancelReason || '', landOfficePrice: lead.landOfficePrice || '', transactionDate: new Date().toISOString().split('T')[0], agentName: lead.agentName || '', note: '' });
+    formBaselineRef.current = initialForm;
+    isFormDirtyRef.current = false;
+    setEditCustomerFormState(initialForm);
   };
 
   const handleSaveNewCustomer = async (e: React.FormEvent) => {

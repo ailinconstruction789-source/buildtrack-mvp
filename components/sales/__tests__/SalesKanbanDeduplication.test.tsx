@@ -1,6 +1,7 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import SalesKanban from '../SalesKanban';
+import { broadcastSalesSync } from '@/lib/sales/salesSyncBroadcast';
 
 const mock = vi.hoisted(() => ({ read: vi.fn() }));
 vi.mock('@/lib/sales/fetchWithoutLimit', () => ({ fetchSalesWithoutLimit: mock.read }));
@@ -208,5 +209,95 @@ describe('SalesKanban legacy sales & leads deduplication', () => {
     // Verify tenant name is displayed in rented tab, not hidden by past cancelled sale!
     expect(await screen.findByText('คุณกิตติศักดิ์ เช่าหลังยกเลิกซื้อ')).toBeInTheDocument();
     expect(screen.getByText(/฿16,000/)).toBeInTheDocument();
+  });
+
+  it('Finding C: preserves user uncommitted draft edits in editCustomerForm during background data refresh', async () => {
+    let currentLeads = [...leads];
+    mock.read.mockImplementation(async (table: string) => {
+      if (table === 'plots') return [plot1, plot2];
+      if (table === 'sales') return legacySales;
+      if (table === 'leads') return currentLeads;
+      return [];
+    });
+
+    render(<SalesKanban project={{ name: 'โยริว' }} initialTab="transferred" />);
+
+    // Wait for customer and click row to open edit profile
+    const row = await screen.findByText('นางสาวพจณีย์ สมสงวน');
+    fireEvent.click(row);
+
+    // Verify customer edit panel is open
+    const nameInput = (await screen.findByLabelText('ชื่อลูกค้า')) as HTMLInputElement;
+    expect(nameInput.value).toBe('นางสาวพจณีย์ สมสงวน');
+
+    // User modifies name input into an uncommitted draft
+    fireEvent.change(nameInput, { target: { value: 'นางสาวพจณีย์ ฉบับร่างกำลังพิมพ์' } });
+    expect(nameInput.value).toBe('นางสาวพจณีย์ ฉบับร่างกำลังพิมพ์');
+
+    // Simulate background server change
+    currentLeads = [
+      {
+        ...leads[0],
+        customer_name: 'นางสาวพจณีย์ อัปเดตจากเครื่องอื่น'
+      },
+      leads[1]
+    ];
+
+    // Trigger background sync event
+    act(() => {
+      broadcastSalesSync({ type: 'sales_deal_saved', timestamp: Date.now() });
+    });
+
+    // Wait for debounce and re-fetch to complete
+    await new Promise(r => setTimeout(r, 300));
+
+    // The user's uncommitted draft MUST NOT be overwritten by the background refresh
+    expect(nameInput.value).toBe('นางสาวพจณีย์ ฉบับร่างกำลังพิมพ์');
+  });
+
+  it('Finding C: strictly matches lead by explicit id and never falls back to another lead sharing the same plot', async () => {
+    let currentLeads = [
+      leads[0], // lead-1 on plot-1
+      leads[1]
+    ];
+
+    mock.read.mockImplementation(async (table: string) => {
+      if (table === 'plots') return [plot1, plot2];
+      if (table === 'sales') return legacySales;
+      if (table === 'leads') return currentLeads;
+      return [];
+    });
+
+    render(<SalesKanban project={{ name: 'โยริว' }} initialTab="transferred" />);
+
+    const row = await screen.findByText('นางสาวพจณีย์ สมสงวน');
+    fireEvent.click(row);
+
+    const nameInput = (await screen.findByLabelText('ชื่อลูกค้า')) as HTMLInputElement;
+    expect(nameInput.value).toBe('นางสาวพจณีย์ สมสงวน');
+
+    // Background refresh where lead-1 is removed and an unrelated lead on plot-1 arrives
+    currentLeads = [
+      {
+        id: 'different-lead-999',
+        customer_name: 'คนละคนแต่แปลง 1 เหมือนกัน',
+        phone: '0899999999',
+        project_name: 'โยริว',
+        interested_plot_name: '1',
+        interested_plot_id: 'plot-1',
+        status: 'Transferred',
+        transferred_date: '2024-09-27',
+      },
+      leads[1]
+    ];
+
+    act(() => {
+      broadcastSalesSync({ type: 'sales_deal_saved', timestamp: Date.now() });
+    });
+
+    await new Promise(r => setTimeout(r, 300));
+
+    // Must NOT adopt 'คนละคนแต่แปลง 1 เหมือนกัน' because ID does not match
+    expect(nameInput.value).not.toBe('คนละคนแต่แปลง 1 เหมือนกัน');
   });
 });
