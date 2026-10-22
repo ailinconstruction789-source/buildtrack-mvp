@@ -139,4 +139,88 @@ describe('HouseHandoverView - Mobile Schedule Editing', () => {
     // Trigger save
     fireEvent.click(screen.getByText(/บันทึกวันเริ่มงานรายการนี้/i));
   });
+
+  describe('Inspection Round Management for Foreman', () => {
+    it('allows Foreman to see and click "เริ่มตรวจรอบที่ 1 >" when inspection round has not started (round 0)', async () => {
+      const updateInspectionRoundMock = vi.fn().mockResolvedValue(true);
+      const plotRoundZero = {
+        ...mockPlot,
+        inspection_round: 0
+      };
+
+      render(
+        <HouseHandoverView 
+          {...defaultProps} 
+          selectedPlot={plotRoundZero} 
+          currentUserRole="Foreman" 
+          updateInspectionRound={updateInspectionRoundMock}
+        />
+      );
+
+      // Verify header indicates inspection round has not started
+      expect(screen.getByText(/รอบการตรวจ: ยังไม่เริ่ม/i)).toBeInTheDocument();
+
+      // Start round 1 button must be visible for Foreman
+      const startRoundBtn = screen.getByRole('button', { name: /เริ่มตรวจรอบที่ 1 >/i });
+      expect(startRoundBtn).toBeInTheDocument();
+      expect(startRoundBtn).toBeEnabled();
+
+      // Clicking start round opens confirmation modal
+      fireEvent.click(startRoundBtn);
+
+      expect(screen.getByText(/เริ่มการตรวจรอบใหม่/i)).toBeInTheDocument();
+
+      // Confirm start round
+      const confirmBtn = screen.getByRole('button', { name: 'เริ่มตรวจรอบที่ 1' });
+      fireEvent.click(confirmBtn);
+
+      expect(updateInspectionRoundMock).toHaveBeenCalledWith('A01', 1);
+    });
+
+    it('allows Foreman to start round 2 when current round is 1 and all defects are 100% completed', async () => {
+      const updateInspectionRoundMock = vi.fn().mockResolvedValue(true);
+      const completedDefect = {
+        ...mockDefect,
+        progress: 100,
+        status: 'completed'
+      };
+
+      render(
+        <HouseHandoverView 
+          {...defaultProps} 
+          defects={[completedDefect]}
+          currentUserRole="Foreman" 
+          updateInspectionRound={updateInspectionRoundMock}
+        />
+      );
+
+      const nextRoundBtn = screen.getByRole('button', { name: /เริ่มตรวจรอบที่ 2 >/i });
+      expect(nextRoundBtn).toBeInTheDocument();
+
+      fireEvent.click(nextRoundBtn);
+      expect(screen.getByText(/เริ่มการตรวจรอบใหม่/i)).toBeInTheDocument();
+
+      const confirmBtn = screen.getByRole('button', { name: 'เริ่มตรวจรอบที่ 2' });
+      fireEvent.click(confirmBtn);
+
+      expect(updateInspectionRoundMock).toHaveBeenCalledWith('A01', 2);
+    });
+
+    it('does not display start round button for Foreman when handover is already completed', () => {
+      const completedPlot = {
+        ...mockPlot,
+        handover_status: 'completed'
+      };
+
+      render(
+        <HouseHandoverView 
+          {...defaultProps} 
+          selectedPlot={completedPlot} 
+          currentUserRole="Foreman" 
+        />
+      );
+
+      expect(screen.queryByRole('button', { name: /เริ่มตรวจรอบที่/i })).not.toBeInTheDocument();
+    });
+  });
 });
