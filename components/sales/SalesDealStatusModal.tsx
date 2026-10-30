@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type ReactNode, type Dispatch, type SetStateAction } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode, type Dispatch, type SetStateAction } from 'react';
 import dynamic from 'next/dynamic';
 import { supabase } from '@/lib/supabase';
 import { canEditSalesRole, getLeadStage } from '@/lib/sales/leadStage';
@@ -13,7 +13,7 @@ import type { CustomerHistoryDate } from '@/lib/sales/customerHistory';
 import CustomerHistoryTimeline from './CustomerHistoryTimeline';
 import { bangkokToday } from '@/lib/sales/actionFilters';
 import { SALES_BANK_NAMES, CASH_BANK_OPTION } from '@/lib/sales/banks';
-import { broadcastSalesSync } from '@/lib/sales/salesSyncBroadcast';
+import { broadcastSalesSync, subscribeToSalesSync } from '@/lib/sales/salesSyncBroadcast';
 import { salesDealStages as stages, salesDealNextStages, salesDealPaymentMethodOf, salesDealLeadStatus, salesDealContractStatus, salesDealTransitionError, salesDealStageOf as stageOf } from '@/lib/sales/dealStatus';
 const CustomerDealDetailsEditor = dynamic(() => import('./CustomerDealDetailsEditor'), {
   loading: () => <p role="status">กำลังเปิดฟอร์มแก้ข้อมูล…</p>,
@@ -38,6 +38,8 @@ export interface SalesDealEditorModel {
   choices: string[]; busy: boolean; loading: boolean; locked: boolean; editable: boolean; canSave: boolean;
   error: string; resolved: { leadId: string | null; saleId: string | null } | null;
   save: (options?: { confirmedBySubmit?: boolean }) => Promise<void>;
+  conflictNotice?: string | null;
+  resolveConflict?: () => void;
 }
 const leadColumns = 'id,customer_name,phone,occupation,agent_name,status,crm_status,notes,project_name,interested_plot_id,interested_plot_name,updated_at';
 const saleColumns = 'id,lead_id,plot_id,booking_route,crm_stage,contract_status,sale_price,land_office_price,bank_name,payment_method,project_interest_id,external_booking_id,updated_at';
@@ -53,13 +55,18 @@ function draftOf(lead: Row | null, sale: Row | null): Draft {
 /** Lead and native Project Map share all post-booking progress and confirmation rules. */
 export default function SalesDealStatusModal(props: Props) {
   const { lead, currentUser } = props;
-  return <DealEditor key={JSON.stringify([lead.leadId, lead.saleId, currentUser?.id || currentUser?.username, currentUser?.role])} {...props} />;
+  return <DealEditor key={JSON.stringify([lead.leadId || lead.id, lead.saleId, currentUser?.id || currentUser?.username, currentUser?.role])} {...props} />;
 }
 function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props) {
   const [initial, setInitial] = useState(stageOf(lead));
   const [target, setTarget] = useState(stageOf(lead));
-  const [draft, setDraft] = useState<Draft>(() => draftOf(lead, null));
-  const [baseline, setBaseline] = useState<Draft | null>(null);
+  const [draft, setDraftState] = useState<Draft>(() => draftOf(lead, null));
+  const [baseline, setBaselineState] = useState<Draft | null>(null);
+  const originalBaseline = useRef<Draft | null>(null);
+  const serverSnapshot = useRef<{ stage: string; values: Draft; leadStage: string | null } | null>(null);
+  const dirtyFieldsRef = useRef<Set<keyof Draft>>(new Set());
+  const draftRef = useRef<Draft>(draft);
+  draftRef.current = draft;
   const [note, setNote] = useState('');
   const [reason, setReason] = useState('');
   const [eventDate, setEventDate] = useState(() => bangkokToday(new Date()));
@@ -69,20 +76,90 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
   const [editingCrmDetails, setEditingCrmDetails] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [conflictNotice, setConflictNotice] = useState<string | null>(null);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [protectedSale, setProtectedSale] = useState<{ id: string; stage: string; details: Draft; method: unknown; history?: CustomerHistoryDate[]; editingAvailable?: boolean } | null>(null);
   const [resolved, setResolved] = useState<{ leadId: string | null; saleId: string | null } | null>(null);
-  const progress = useRef<{ lead: boolean; sale: boolean; history: boolean; payload: { target: string; note: string; draft: Draft; reason: string; eventDate: string; confirmed: boolean; cancelCategory: string; occurredAt: string } | null }>({ lead: false, sale: false, history: false, payload: null });
+  const progress = useRef<{
+    lead: boolean;
+    sale: boolean;
+    history: boolean;
+    payload: { target: string; note: string; draft: Draft; reason: string; eventDate: string; confirmed: boolean; cancelCategory: string; occurredAt: string } | null;
+    effectiveValues?: {
+      price: number | null;
+      bank: string;
+      method: string;
+      landOfficePrice: number | null;
+      serverStage: string;
+    } | null;
+  }>({ lead: false, sale: false, history: false, payload: null, effectiveValues: null });
   const leadInitial = useRef<string | null>(null);
   const inFlight = useRef(false);
   const mounted = useRef(true);
+  const requestSeq = useRef(0);
+
+  const setDraft = useCallback((nextDraftOrUpdater: any) => {
+    setDraftState(prev => {
+      const incoming = typeof nextDraftOrUpdater === 'function' ? nextDraftOrUpdater(prev) : nextDraftOrUpdater;
+      if (incoming && typeof incoming === 'object') {
+        if ('customer_name' in incoming && !('name' in incoming)) (incoming as any).name = (incoming as any).customer_name;
+        if ('sale_price' in incoming && !('price' in incoming)) (incoming as any).price = (incoming as any).sale_price;
+        if ('bank_name' in incoming && !('bank' in incoming)) (incoming as any).bank = (incoming as any).bank_name;
+        if ('payment_method' in incoming && !('method' in incoming)) (incoming as any).method = (incoming as any).payment_method;
+      }
+      const next = { ...prev, ...incoming };
+      draftRef.current = next;
+      const base = originalBaseline.current || baseline;
+      if (base) {
+        for (const key of Object.keys(incoming || {}) as (keyof Draft)[]) {
+          if (next[key] !== base[key]) {
+            dirtyFieldsRef.current.add(key);
+          } else {
+            dirtyFieldsRef.current.delete(key);
+          }
+        }
+      }
+      return next;
+    });
+  }, [baseline]);
+
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  const leadId = typeof lead.leadId === 'string' && lead.leadId ? lead.leadId : null;
+  const leadId = typeof lead.leadId === 'string' && lead.leadId ? lead.leadId : (typeof lead.id === 'string' && lead.id ? lead.id : null);
   const suppliedSaleId = typeof lead.saleId === 'string' && lead.saleId ? lead.saleId : null;
   const projectName = str(lead.project_name || lead.projectName || lead.interest);
   const actorId = str(currentUser?.id);
-  const terminal = !['booked', 'transferred'].includes(getLeadStage(lead)) || initial === 'handover';
+  const terminal = !['booked', 'transferred', 'loan'].includes(getLeadStage(lead)) || initial === 'handover';
   const editable = canEditSalesRole(currentUser?.role) && !terminal && Boolean(leadId || suppliedSaleId);
+
+  // Subscribe to cross-tab / in-window sync events to keep open editor updated
   useEffect(() => {
+    const unsub = subscribeToSalesSync(detail => {
+      const matchLead = Boolean(detail?.leadId && detail.leadId === leadId);
+      const matchSale = Boolean(detail?.saleId && detail.saleId === suppliedSaleId);
+      const isGeneral = !detail?.leadId && !detail?.saleId;
+      if (isGeneral || matchLead || matchSale) {
+        setRefreshTrigger(t => t + 1);
+      }
+    }, 200);
+    return unsub;
+  }, [leadId, suppliedSaleId]);
+
+  const changed = Boolean((originalBaseline.current || baseline) && (target !== initial || note.trim() || reason.trim() || dirtyFieldsRef.current.size > 0));
+  const isDirtyRef = useRef(changed);
+  isDirtyRef.current = changed;
+  const initialRef = useRef(initial);
+  initialRef.current = initial;
+  const targetRef = useRef(target);
+  targetRef.current = target;
+  const noteRef = useRef(note);
+  noteRef.current = note;
+  const reasonRef = useRef(reason);
+  reasonRef.current = reason;
+  const confirmedRef = useRef(confirmed);
+  confirmedRef.current = confirmed;
+
+  useEffect(() => {
+    const currentReq = ++requestSeq.current;
     setLoading(true); setResolved(null); setProtectedSale(null); setError('');
     if (!editable && !suppliedSaleId) { setLoading(false); return; }
     let cancelled = false;
@@ -94,9 +171,9 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
           const result = await supabase.from('leads').select(leadColumns).eq('id', leadId).single();
           if (result.error) throw result.error;
           currentLead = result.data;
-          if (!currentLead || currentLead.id !== leadId || !['booked', 'transferred'].includes(getLeadStage(currentLead))) throw new Error('สถานะลูกค้าเปลี่ยนแล้ว กรุณาปิดและโหลดข้อมูลล่าสุด');
+          if (!currentLead || currentLead.id !== leadId || !['booked', 'transferred', 'loan'].includes(getLeadStage(currentLead))) throw new Error('สถานะลูกค้าเปลี่ยนแล้ว กรุณาปิดและโหลดข้อมูลล่าสุด');
         }
-        if (cancelled) return;
+        if (cancelled || currentReq !== requestSeq.current) return;
         if (suppliedSaleId) {
           const result = await supabase.from('sales').select(saleColumns).eq('id', suppliedSaleId).single();
           if (result.error) throw result.error;
@@ -108,42 +185,8 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
           if (result.error) throw result.error;
           if ((result.data?.length || 0) > 1) throw new Error('พบหลายรายการขาย กรุณาเลือกรายการที่ต้องการจาก Project Map');
           currentSale = result.data?.[0] || null;
-          if (!currentSale) {
-            const rawPlot = str(
-              lead.plot || lead.plotId || lead.plot_id ||
-              (Array.isArray(lead.interests) ? (lead.interests[0] as Row)?.plotId : null) ||
-              currentLead?.interested_plot_id || currentLead?.interested_plot_name
-            );
-            const cleanPlot = rawPlot ? rawPlot.replace(/^(AL\d+|YR|K\d+พิเศษ|K\d+|ไอลิน\s*\d+|โยริว|กานต์รวี\s*\d+)-?/i, '').trim() : '';
-            const candidatePlotName = str(currentLead?.interested_plot_name || lead.plotName || cleanPlot || rawPlot);
-            const proj = projectName || str(currentLead?.project_name);
-            let plotSaleRes = rawPlot
-              ? await supabase.from('sales').select(saleColumns).eq('plot_id', rawPlot).neq('contract_status', 'Cancelled').limit(2)
-              : null;
-            if (cancelled) return;
-            if ((!plotSaleRes?.data || plotSaleRes.data.length === 0) && cleanPlot && cleanPlot !== rawPlot) {
-              plotSaleRes = await supabase.from('sales').select(saleColumns).eq('plot_id', cleanPlot).neq('contract_status', 'Cancelled').limit(2);
-              if (cancelled) return;
-            }
-            if ((!plotSaleRes?.data || plotSaleRes.data.length === 0) && candidatePlotName && proj) {
-              const pRes = await supabase.from('plots').select('id').eq('plot_name', candidatePlotName).eq('project_name', proj).maybeSingle();
-              if (cancelled) return;
-              if (pRes?.data?.id && pRes.data.id !== rawPlot && pRes.data.id !== cleanPlot) {
-                plotSaleRes = await supabase.from('sales').select(saleColumns).eq('plot_id', pRes.data.id).neq('contract_status', 'Cancelled').limit(2);
-                if (cancelled) return;
-              }
-            }
-            if (plotSaleRes?.error) throw plotSaleRes.error;
-            if ((plotSaleRes?.data?.length || 0) > 1) throw new Error('พบหลายรายการขาย กรุณาเลือกรายการที่ต้องการจาก Project Map');
-            if (plotSaleRes?.data?.length === 1) {
-              const candidateSale = plotSaleRes.data[0];
-              if (!candidateSale.lead_id || candidateSale.lead_id === leadId) {
-                currentSale = candidateSale;
-              }
-            }
-          }
         }
-        if (cancelled) return;
+        if (cancelled || currentReq !== requestSeq.current) return;
         const isLegacyUnlinkedSale = Boolean(currentSale && !currentSale.lead_id && leadId);
         const isProtected = Boolean(currentSale && !isLegacyUnlinkedSale && currentSale.booking_route !== 'legacy_import' && (currentSale.project_interest_id || currentSale.external_booking_id));
         if (currentSale && isProtected) {
@@ -151,43 +194,101 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
             details: draftOf(currentSale.lead_id === leadId ? currentLead : null, currentSale), method: currentSale.payment_method });
           try {
             const context = await customerDealReadApi.read({ saleId: str(currentSale.id), projectName }, { signal: controller.signal });
-            if (cancelled) return;
+            if (cancelled || currentReq !== requestSeq.current) return;
             setProtectedSale({ id: context.deal.id, stage: context.deal.stage, method: context.deal.paymentMethod,
               details: { name: context.customer.name, phone: context.customer.phone || '', occupation: '',
                 price: str(context.deal.salePrice), bank: context.deal.bankName || '', method: context.deal.paymentMethod || 'mortgage' }, history: context.history, editingAvailable: context.detailsEditingAvailable });
           } catch {
-            if (!cancelled) setError('อ่านสถานะดีลได้ แต่ข้อมูลลูกค้าและประวัติ CRM ยังโหลดไม่ได้ กรุณาลองเปิดใหม่ ลูกค้าเก่าไม่ต้องสร้าง Lead ย้อนหลัง');
+            if (!cancelled && currentReq === requestSeq.current) setError('อ่านสถานะดีลได้ แต่ข้อมูลลูกค้าและประวัติ CRM ยังโหลดไม่ได้ กรุณาลองเปิดใหม่ ลูกค้าเก่าไม่ต้องสร้าง Lead ย้อนหลัง');
           }
           return;
         }
-        if (currentSale && (!['booked', 'transferred'].includes(getLeadStage({ status: currentSale.contract_status }))
+        if (currentSale && (!['booked', 'transferred', 'loan'].includes(getLeadStage({ status: currentSale.contract_status }))
           || (leadId && currentSale.lead_id && currentSale.lead_id !== leadId))) throw new Error('รายการขายไม่ตรงกับลูกค้าหรือสถานะล่าสุด กรุณาโหลดใหม่');
         const stage = stageOf((isLegacyUnlinkedSale && currentLead) ? currentLead : (currentSale || currentLead || lead));
-        leadInitial.current = currentLead ? stageOf(currentLead) : null;
+        const currentLeadStage = currentLead ? stageOf(currentLead) : null;
+        leadInitial.current = currentLeadStage;
         const values = draftOf(currentLead, currentSale);
-        setDraft(values); setBaseline(values); setInitial(stage); setTarget(stage); setCancelCategory(stage === 'loan_rejected' ? 'final_loan_rejection' : stage === 'downpayment' ? 'downpayment_abandoned' : 'booking_cancelled');
+        serverSnapshot.current = { stage, values, leadStage: currentLeadStage };
+
+        const isWorkflowDirty = targetRef.current !== initialRef.current || noteRef.current.trim() !== '' || reasonRef.current.trim() !== '';
+        const hasCustomerFieldDraft = dirtyFieldsRef.current.size > 0;
+        const hasLocalChanges = Boolean(originalBaseline.current && (hasCustomerFieldDraft || isWorkflowDirty));
+
+        if (!hasLocalChanges) {
+          originalBaseline.current = { ...values };
+          setBaselineState({ ...values });
+          setDraftState({ ...values });
+          draftRef.current = { ...values };
+          dirtyFieldsRef.current.clear();
+          setInitial(stage);
+          setTarget(stage);
+          setCancelCategory(stage === 'loan_rejected' ? 'final_loan_rejection' : stage === 'downpayment' ? 'downpayment_abandoned' : 'booking_cancelled');
+          setConflictNotice(null);
+        } else {
+          const base = originalBaseline.current || { ...values };
+          let fieldConflict: string | null = null;
+          const fieldNames: Record<keyof Draft, string> = {
+            name: 'ชื่อลูกค้า', phone: 'เบอร์โทรศัพท์', occupation: 'อาชีพ',
+            agentName: 'พนักงานขาย', price: 'ราคาขายสุทธิ', bank: 'ธนาคาร',
+            method: 'วิธีชำระเงิน', landOfficePrice: 'ราคาประเมิน'
+          };
+
+          const curDraft = draftRef.current;
+          const mergedDraft = { ...curDraft };
+          for (const key of Object.keys(values) as (keyof Draft)[]) {
+            if (!dirtyFieldsRef.current.has(key)) {
+              (mergedDraft as any)[key] = values[key];
+              (base as any)[key] = values[key];
+            } else {
+              if (values[key] !== base[key]) {
+                if (values[key] === curDraft[key]) {
+                  (base as any)[key] = values[key];
+                  dirtyFieldsRef.current.delete(key);
+                } else {
+                  if (!fieldConflict) {
+                    fieldConflict = `ข้อมูล ${fieldNames[key]} มีการเปลี่ยนแปลงในระบบ (ค่าในระบบ: "${values[key] || 'ว่าง'}") ในระหว่างที่คุณแก้ไข กรุณาตรวจสอบก่อนบันทึก`;
+                  }
+                }
+              }
+            }
+          }
+
+          draftRef.current = mergedDraft;
+          setDraftState(mergedDraft);
+          setBaselineState({ ...base });
+
+          if (stage !== initialRef.current) {
+            const stageLabel = stages.find(s => s.id === stage)?.label || stage;
+            setConflictNotice(`สถานะของลูกค้าในระบบเปลี่ยนเป็น "${stageLabel}" ในระหว่างที่คุณแก้ไข กรุณาตรวจสอบสถานะและเลือกขั้นตอนที่ต้องการดำเนินการต่อ`);
+          } else if (fieldConflict) {
+            setConflictNotice(fieldConflict);
+          } else {
+            setConflictNotice(null);
+          }
+        }
         setResolved({ leadId, saleId: currentSale ? str(currentSale.id) : null });
       } catch (failure) {
-        if (!cancelled) setError(failure instanceof Error ? failure.message : (failure as { message?: string })?.message || 'โหลดข้อมูลล่าสุดไม่สำเร็จ');
-      } finally { if (!cancelled) setLoading(false); }
+        if (!cancelled && currentReq === requestSeq.current) setError(failure instanceof Error ? failure.message : (failure as { message?: string })?.message || 'โหลดข้อมูลล่าสุดไม่สำเร็จ');
+      } finally { if (!cancelled && currentReq === requestSeq.current) setLoading(false); }
     }
     void load();
     return () => { cancelled = true; controller.abort(); };
-  }, [editable, leadId, suppliedSaleId, projectName, actorId]);
+  }, [editable, leadId, suppliedSaleId, projectName, actorId, lead.status, lead.crm_status, lead.crm_stage, (lead as any).updated_at, refreshTrigger]);
   const choices = [initial, ...salesDealNextStages(initial, draft.method)];
   const lifecycle = target !== initial && ['transferred', 'handover', 'cancelled'].includes(target);
   const reasonRequired = target !== initial && ['loan_rejected', 'cancelled'].includes(target);
-  const changed = Boolean(baseline && (target !== initial || note.trim() || Object.keys(draft).some(key => draft[key as keyof Draft] !== baseline[key as keyof Draft])));
   async function save(options?: { confirmedBySubmit?: boolean }) {
     if (!editable || !resolved || !baseline || inFlight.current || (!changed && !progress.current.payload)) return;
+    if (conflictNotice) { setError("สถานะของลูกค้าในระบบเปลี่ยนไปแล้ว กรุณายอมรับสถานะใหม่หรือตรวจสอบรายการก่อนบันทึก"); return; }
     if (!choices.includes(target)) { setError('ขั้นตอนนี้ไม่ตรงกับสถานะปัจจุบันหรือวิธีชำระเงิน'); return; }
-    if (resolved.leadId && !draft.name.trim()) { setError('กรุณาระบุชื่อลูกค้า'); return; }
-    const price = draft.price.trim() ? Number(draft.price.replace(/,/g, '')) : null;
-    if ((price !== null && (!Number.isFinite(price) || price < 0)) || (baseline.price && price === null) || /[\r\n]/.test(draft.bank)) { setError('กรุณาระบุราคาขายเป็นตัวเลขที่ไม่ติดลบ และธนาคารในบรรทัดเดียว'); return; }
+    if (resolved.leadId && !str(draft.name).trim()) { setError('กรุณาระบุชื่อลูกค้า'); return; }
+    const price = str(draft.price).trim() ? Number(String(draft.price).replace(/,/g, '')) : null;
+    if ((price !== null && (!Number.isFinite(price) || price < 0)) || (baseline.price && price === null) || /[\r\n]/.test(str(draft.bank))) { setError('กรุณาระบุราคาขายเป็นตัวเลขที่ไม่ติดลบ และธนาคารในบรรทัดเดียว'); return; }
     const submittedConfirmation = confirmed || options?.confirmedBySubmit === true;
-    const appraisal = draft.landOfficePrice?.trim() ? Number(draft.landOfficePrice.replace(/,/g, '')) : null;
+    const appraisal = str(draft.landOfficePrice).trim() ? Number(String(draft.landOfficePrice).replace(/,/g, '')) : null;
     if (appraisal !== null && (!Number.isFinite(appraisal) || appraisal < 0)) { setError('กรุณาระบุราคาประเมินเป็นตัวเลขที่ไม่ติดลบ'); return; }
-    const transitionError = salesDealTransitionError(initial, target, draft.method, { bank: draft.bank, reason, date: eventDate, confirmed: submittedConfirmation, saleId: resolved.saleId });
+    const transitionError = salesDealTransitionError(initial, target, draft.method, { bank: str(draft.bank), reason, date: eventDate, confirmed: submittedConfirmation, saleId: resolved.saleId });
     if (transitionError) { setError(transitionError); return; }
     inFlight.current = true; setBusy(true); setError('');
     const submitted = progress.current.payload || { target, note: note.trim(), draft: { ...draft }, reason: reason.trim(), eventDate, confirmed: submittedConfirmation, cancelCategory, occurredAt: new Date().toISOString() };
@@ -197,16 +298,20 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
     try {
       let currentLead: Row | null = null, currentSale: Row | null = null;
       let isLegacySale = false;
+      const assertNoFieldConflict = (keys: readonly (keyof ReturnType<typeof draftOf>)[], latest: ReturnType<typeof draftOf>) => {
+        for (const key of keys) {
+          if (dirtyFieldsRef.current.has(key) && latest[key] !== originalBaseline.current?.[key] && latest[key] !== submitted.draft[key]) {
+            throw new Error('ข้อมูลถูกแก้ไขจากผู้ใช้อื่นในช่องเดียวกัน กรุณาปิดและโหลดข้อมูลล่าสุด');
+          }
+        }
+      };
       if (resolved.leadId && !progress.current.lead) {
         const result = await supabase.from('leads').select(leadColumns).eq('id', resolved.leadId).single();
         if (result.error) throw result.error;
         currentLead = result.data;
-        if (!currentLead || currentLead.id !== resolved.leadId || !['booked', 'transferred'].includes(getLeadStage(currentLead)) || stageOf(currentLead) !== leadInitial.current) throw new Error('สถานะลูกค้าเปลี่ยนแล้ว กรุณาปิดและโหลดข้อมูลล่าสุด');
+        if (!currentLead || currentLead.id !== resolved.leadId || !['booked', 'transferred', 'loan'].includes(getLeadStage(currentLead)) || stageOf(currentLead) !== leadInitial.current) throw new Error('สถานะลูกค้าเปลี่ยนแล้ว กรุณาปิดและโหลดข้อมูลล่าสุด');
         const latest = draftOf(currentLead, null);
-        for (const key of ['name', 'phone', 'occupation', 'agentName'] as const) {
-          if (submitted.draft[key] !== baseline[key] && latest[key] !== baseline[key]) throw new Error('ข้อมูลลูกค้าเปลี่ยนแล้ว กรุณาปิดและโหลดข้อมูลล่าสุด');
-        }
-        if (!resolved.saleId && (latest.price !== baseline.price || latest.bank !== baseline.bank || latest.method !== baseline.method)) throw new Error('ข้อมูลการขายเปลี่ยนแล้ว กรุณาปิดและโหลดข้อมูลล่าสุด');
+        assertNoFieldConflict(resolved.saleId ? ['name', 'phone', 'occupation', 'agentName'] : ['name', 'phone', 'occupation', 'agentName', 'price', 'bank', 'method'], latest);
       }
       if (!mounted.current) return;
       if (resolved.saleId && !progress.current.sale) {
@@ -215,27 +320,64 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         currentSale = result.data;
         isLegacySale = Boolean(!currentSale?.lead_id && resolved.leadId);
         const isProtectedSale = Boolean(currentSale && !isLegacySale && currentSale.booking_route !== 'legacy_import' && (currentSale.project_interest_id || currentSale.external_booking_id));
-        if (!currentSale || isProtectedSale || currentSale.id !== resolved.saleId || !['booked', 'transferred'].includes(getLeadStage({ status: currentSale.contract_status })) || (!isLegacySale && stageOf(currentSale) !== initial)
+        if (!currentSale || isProtectedSale || currentSale.id !== resolved.saleId || !['booked', 'transferred', 'loan'].includes(getLeadStage({ status: currentSale.contract_status })) || (!isLegacySale && stageOf(currentSale) !== initial)
           || (resolved.leadId && currentSale.lead_id && currentSale.lead_id !== resolved.leadId)) throw new Error('สถานะรายการขายเปลี่ยนแล้ว กรุณาปิดและโหลดข้อมูลล่าสุด');
-        const latest = draftOf(currentLead, currentSale);
-        if (latest.price !== baseline.price || latest.bank !== baseline.bank || latest.method !== baseline.method || latest.landOfficePrice !== baseline.landOfficePrice) throw new Error('ราคา/ธนาคารเปลี่ยนแล้ว กรุณาปิดและโหลดข้อมูลล่าสุด');
+        assertNoFieldConflict(['price', 'bank', 'method', 'landOfficePrice'], draftOf(currentLead, currentSale));
       }
       if (!mounted.current) return;
+
+      if (!progress.current.effectiveValues) {
+        const latest = draftOf(currentLead, currentSale);
+        const pick = <K extends keyof typeof latest>(k: K) => dirtyFieldsRef.current.has(k) ? submitted.draft[k] : latest[k];
+        const parseNum = (v: string | undefined) => v?.trim() ? Number(v.replace(/,/g, '')) : null;
+        progress.current.effectiveValues = {
+          price: parseNum(pick('price')),
+          bank: pick('bank'),
+          method: pick('method'),
+          landOfficePrice: parseNum(pick('landOfficePrice')),
+          serverStage: stageOf((isLegacySale && currentLead) ? currentLead : (currentSale || currentLead || lead))
+        };
+      }
+      const {
+        price: effectivePrice,
+        bank: effectiveBank,
+        method: effectiveMethod,
+        landOfficePrice: effectiveLandOfficePrice,
+        serverStage: currentServerStage
+      } = progress.current.effectiveValues;
+
+      const effectiveChoices = [currentServerStage, ...salesDealNextStages(currentServerStage, effectiveMethod)];
+      if (!effectiveChoices.includes(submitted.target)) {
+        throw new Error(`วิธีชำระเงินหรือสถานะในระบบไม่ตรงกับขั้นตอนที่เลือก (${effectiveMethod === 'cash' ? 'เงินสด' : 'กู้ธนาคาร'})`);
+      }
+
+      const effectiveTransitionError = salesDealTransitionError(currentServerStage, submitted.target, effectiveMethod, {
+        bank: str(effectiveBank),
+        reason: submitted.reason,
+        date: submitted.eventDate,
+        confirmed: submitted.confirmed,
+        saleId: resolved.saleId
+      });
+      if (effectiveTransitionError) {
+        throw new Error(effectiveTransitionError);
+      }
+
       if (resolved.saleId && !progress.current.sale) {
         const patch: Row = {};
         if (stageChanged) Object.assign(patch, { crm_stage: submitted.target, contract_status: salesDealContractStatus(submitted.target) });
-        if (submitted.draft.method !== baseline.method) patch.payment_method = submitted.draft.method;
+        if (dirtyFieldsRef.current.has('method') && submitted.draft.method !== originalBaseline.current?.method) patch.payment_method = submitted.draft.method;
         const stamp = ['transferred', 'handover', 'cancelled'].includes(submitted.target) ? new Date(submitted.eventDate + 'T12:00:00+07:00').toISOString() : new Date().toISOString();
         if (stageChanged && submitted.target === 'contracted') patch.contracted_at = stamp;
         if (stageChanged && submitted.target === 'transferred') patch.transferred_at = stamp;
         if (stageChanged && submitted.target === 'handover') patch.crm_handover_at = stamp;
         if (stageChanged && submitted.target === 'cancelled') Object.assign(patch, { cancelled_at: stamp, cancellation_reason: submitted.reason, cancellation_category: submitted.cancelCategory });
-        if (submitted.draft.price !== baseline.price) patch.sale_price = submitted.draft.price.trim() ? Number(submitted.draft.price.replace(/,/g, '')) : null;
-        if (submitted.draft.landOfficePrice !== baseline.landOfficePrice) patch.land_office_price = submitted.draft.landOfficePrice?.trim() ? Number(submitted.draft.landOfficePrice.replace(/,/g, '')) : null;
-        if (submitted.draft.bank !== baseline.bank) patch.bank_name = submitted.draft.bank.trim() || null;
+        if (dirtyFieldsRef.current.has('price') && submitted.draft.price !== originalBaseline.current?.price) patch.sale_price = submitted.draft.price.trim() ? Number(submitted.draft.price.replace(/,/g, '')) : null;
+        if (dirtyFieldsRef.current.has('landOfficePrice') && submitted.draft.landOfficePrice !== originalBaseline.current?.landOfficePrice) patch.land_office_price = submitted.draft.landOfficePrice?.trim() ? Number(submitted.draft.landOfficePrice.replace(/,/g, '')) : null;
+        if (dirtyFieldsRef.current.has('bank') && submitted.draft.bank !== originalBaseline.current?.bank) patch.bank_name = submitted.draft.bank.trim() || null;
         if (Object.keys(patch).length) {
           let query = supabase.from('sales').update(patch).eq('id', resolved.saleId);
           for (const key of ['crm_stage', 'contract_status', 'updated_at'] as const) query = currentSale?.[key] == null ? query.is(key, null) : query.eq(key, currentSale[key]);
+          if (currentSale?.payment_method != null) query = query.eq('payment_method', currentSale.payment_method);
           if (isLegacySale || currentSale?.booking_route === 'legacy_import') {
             const { error: failure } = await query;
             if (failure) throw failure;
@@ -248,59 +390,120 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         }
         if (!mounted.current) return;
       }
+
       if (resolved.leadId && !progress.current.lead) {
         const stamp = new Date().toISOString();
-        const dealPrice = submitted.draft.price.trim() ? Number(submitted.draft.price.replace(/,/g, '')) : null;
-        const added = `[${stamp} อัปเดตข้อมูลการขาย โดย ${currentUser?.username || currentUser?.displayName || 'ฝ่ายขาย'}] ${option.label}\n${customerDealSummary(dealPrice, submitted.draft.bank)}\n• วิธีชำระเงิน: ${submitted.draft.method === 'cash' ? 'เงินสด' : 'กู้ธนาคาร'}${submitted.reason ? '\n• เหตุผล: ' + submitted.reason : ''}${lifecycle ? '\n• วันที่ทำรายการ: ' + submitted.eventDate : ''}${submitted.note ? '\n' + submitted.note : ''}`;
+        const dealPrice = effectivePrice;
+        const dealBank = effectiveBank;
+        const dealMethod = effectiveMethod;
+        const added = `[${stamp} อัปเดตข้อมูลการขาย โดย ${currentUser?.username || currentUser?.displayName || 'ฝ่ายขาย'}] ${option.label}\n${customerDealSummary(dealPrice, dealBank)}\n• วิธีชำระเงิน: ${dealMethod === 'cash' ? 'เงินสด' : 'กู้ธนาคาร'}${submitted.reason ? '\n• เหตุผล: ' + submitted.reason : ''}${lifecycle ? '\n• วันที่ทำรายการ: ' + submitted.eventDate : ''}${submitted.note ? '\n' + submitted.note : ''}`;
         const patch: Row = { notes: `${added}\n\n${str(currentLead?.notes)}`, updated_at: stamp };
         if (stageChanged || leadInitial.current !== submitted.target) Object.assign(patch, { status: salesDealLeadStatus(submitted.target), crm_status: option.label });
         if (stageChanged && submitted.target === 'transferred') patch.transferred_date = new Date(submitted.eventDate + 'T12:00:00+07:00').toISOString();
         if (stageChanged && submitted.target === 'cancelled') patch.lost_reason = submitted.reason;
         for (const [key, column] of [['name', 'customer_name'], ['phone', 'phone'], ['occupation', 'occupation'], ['agentName', 'agent_name']] as const) {
-          if (submitted.draft[key] !== baseline[key]) patch[column] = submitted.draft[key]?.trim() || null;
+          if (dirtyFieldsRef.current.has(key)) patch[column] = submitted.draft[key]?.trim() || null;
         }
         let query = supabase.from('leads').update(patch).eq('id', resolved.leadId);
         query = currentLead?.updated_at == null ? query.is('updated_at', null) : query.eq('updated_at', currentLead.updated_at);
+        query = currentLead?.notes == null ? query.is('notes', null) : query.eq('notes', currentLead.notes);
         const { data, error: failure } = await query.select('id').single();
         if (failure) throw failure;
-        if (!data?.id) throw new Error('ไม่พบลูกค้าที่สามารถอัปเดตได้');
+        if (!data?.id) throw new Error('ข้อมูลลูกค้าหรือประวัติในระบบเปลี่ยนไปแล้ว กรุณาโหลดข้อมูลล่าสุด');
         progress.current.lead = true;
       }
       if (!mounted.current) return;
       if (!progress.current.history && (stageChanged || (!resolved.leadId && submitted.note))) {
-        const detail = [submitted.reason, submitted.note, submitted.draft.bank ? `ธนาคาร: ${submitted.draft.bank}` : '', `วิธีชำระเงิน: ${submitted.draft.method === 'cash' ? 'เงินสด' : 'กู้ธนาคาร'}`].filter(Boolean).join(' | ');
-        const result = await supabase.from('status_history').insert({
-          entity_type: resolved.leadId ? 'lead' : 'sale', entity_id: resolved.leadId || resolved.saleId,
-          old_status: initial, new_status: submitted.target,
-          changed_by: `${currentUser?.username || currentUser?.displayName || 'ฝ่ายขาย'}${detail ? ' (' + detail + ')' : ''}`,
-          created_at: lifecycle ? new Date(submitted.eventDate + 'T12:00:00+07:00').toISOString() : submitted.occurredAt,
-        }).select('id').single();
-        if (result.error) throw result.error;
-        if (!result.data?.id) throw new Error('บันทึกประวัติสถานะยังไม่สำเร็จ');
-        progress.current.history = true;
+        const historyCreatedAt = lifecycle ? new Date(submitted.eventDate + 'T12:00:00+07:00').toISOString() : submitted.occurredAt;
+        const checkQ = await supabase.from('status_history')
+          .select('id')
+          .eq('entity_type', resolved.leadId ? 'lead' : 'sale')
+          .eq('entity_id', resolved.leadId || resolved.saleId)
+          .eq('new_status', submitted.target)
+          .eq('created_at', historyCreatedAt)
+          .limit(1);
+
+        if (checkQ.data && Array.isArray(checkQ.data) && checkQ.data.length > 0) {
+          progress.current.history = true;
+        } else {
+          const detail = [submitted.reason, submitted.note, effectiveBank ? `ธนาคาร: ${effectiveBank}` : '', `วิธีชำระเงิน: ${effectiveMethod === 'cash' ? 'เงินสด' : 'กู้ธนาคาร'}`].filter(Boolean).join(' | ');
+          const result = await supabase.from('status_history').insert({
+            entity_type: resolved.leadId ? 'lead' : 'sale', entity_id: resolved.leadId || resolved.saleId,
+            old_status: initial, new_status: submitted.target,
+            changed_by: `${currentUser?.username || currentUser?.displayName || 'ฝ่ายขาย'}${detail ? ' (' + detail + ')' : ''}`,
+            created_at: historyCreatedAt,
+          }).select('id').single();
+          if (result.error) throw result.error;
+          if (!result.data?.id) throw new Error('บันทึกประวัติสถานะยังไม่สำเร็จ');
+          progress.current.history = true;
+        }
       }
       if (typeof window !== 'undefined') {
         broadcastSalesSync({ type: 'sales_deal_saved', timestamp: Date.now() });
       }
+      progress.current.payload = null;
+      progress.current.effectiveValues = null;
+      dirtyFieldsRef.current.clear();
+      originalBaseline.current = { ...submitted.draft };
+      setBaselineState({ ...submitted.draft });
       if (mounted.current) onSaved(`อัปเดตข้อมูลลูกค้าและการขายแล้ว${stageChanged ? ` — ${option.label}` : ''}`);
     } catch (failure) {
       if (!mounted.current) return;
-      const message = failure instanceof Error ? failure.message : (failure as { message?: string })?.message || 'บันทึกไม่สำเร็จ';
+      let message = failure instanceof Error ? failure.message : (failure as { message?: string })?.message || 'บันทึกไม่สำเร็จ';
+      if ((failure as any)?.code === 'PGRST116' || message.includes('multiple (or no) rows returned') || message.includes('0 rows')) {
+        message = 'ข้อมูลถูกแก้ไขจากผู้ใช้อื่นก่อนบันทึก กรุณาโหลดข้อมูลล่าสุด';
+      }
       const partial = progress.current.lead || progress.current.sale || progress.current.history;
       setError(`${partial ? 'บันทึกบางส่วนแล้ว ยังไม่ครบ: ' : ''}${message}${partial ? ' กดลองบันทึกต่อโดยไม่เปลี่ยนข้อมูล' : ''}`);
-      if (!partial) progress.current.payload = null;
+      if (!partial) {
+        progress.current.payload = null;
+        progress.current.effectiveValues = null;
+      }
     } finally { inFlight.current = false; if (mounted.current) setBusy(false); }
   }
   const locked = busy || loading || !resolved || Boolean(progress.current.payload);
   const field = (key: keyof Draft, label: string, disabled = false) => <label className="block text-sm font-semibold">{label}<input aria-label={label} value={draft[key]} disabled={locked || disabled} onChange={e => setDraft({ ...draft, [key]: e.target.value })} className="block w-full border rounded-xl p-2 mt-1 disabled:bg-slate-50" /></label>;
+  const resolveConflict = () => {
+    const authoritative = serverSnapshot.current;
+    const freshStage = authoritative?.stage || stageOf(lead);
+    if (authoritative?.leadStage) {
+      leadInitial.current = authoritative.leadStage;
+    }
+    setInitial(freshStage);
+    setTarget(freshStage);
+    setConfirmed(false);
+    if (authoritative?.values && originalBaseline.current) {
+      originalBaseline.current = { ...authoritative.values };
+      setBaselineState({ ...authoritative.values });
+      setDraftState(cur => {
+        const next = { ...cur };
+        for (const key of Object.keys(authoritative.values) as (keyof Draft)[]) {
+          if (!dirtyFieldsRef.current.has(key)) {
+            (next as any)[key] = authoritative.values[key];
+          }
+        }
+        draftRef.current = next;
+        return next;
+      });
+    }
+    setConflictNotice(null);
+    setError("");
+  };
+  const canSave = Boolean(editable && !protectedSale && !busy && !loading && resolved && (changed || progress.current.payload) && !conflictNotice);
   if (renderEditor) return renderEditor({ draft: protectedSale ? { ...draft, ...protectedSale.details } : draft, setDraft,
     initial: protectedSale?.stage || initial, target: protectedSale?.stage || target, setTarget,
     note, setNote, reason, setReason, eventDate, setEventDate, choices: protectedSale ? [protectedSale.stage] : choices,
     busy, loading, locked: locked || !editable || Boolean(protectedSale), editable: editable && !protectedSale,
-    error, resolved, canSave: editable && !protectedSale && !busy && !loading && Boolean(resolved) && (changed || Boolean(progress.current.payload)), save });
+    error, resolved, canSave, save, conflictNotice, resolveConflict });
   return <SalesOverlay role="dialog" aria-modal="true" aria-label="สถานะหลังจอง" className="fixed inset-0 z-[300] bg-slate-950/70 flex items-center justify-center p-4">
     <div className="bg-white rounded-2xl w-full max-w-lg p-5 space-y-4 max-h-[90vh] overflow-y-auto">
       <div className="flex justify-between gap-3"><h2 className="font-bold">{editable && !protectedSale ? 'อัปเดตข้อมูลลูกค้าและการขาย' : 'รายละเอียดสถานะลูกค้า'}</h2><button type="button" disabled={busy} onClick={onClose} className="text-sm font-bold">ปิด</button></div>
+      {conflictNotice && (
+        <div role="alert" className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900 flex items-center justify-between gap-2">
+          <span>⚠️ {conflictNotice}</span>
+          <button type="button" onClick={resolveConflict} className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg text-[11px] shrink-0 cursor-pointer">ยอมรับสถานะใหม่</button>
+        </div>
+      )}
       <p className="text-sm">{str(lead.customer_name || lead.name)} · {str(lead.project_name || lead.interest)}</p>
       <p className="text-xs text-slate-600">แปลง: {str(lead.interested_plot_name || lead.interested_plot_id || lead.plotName || lead.plot || 'ยังไม่ระบุ')}</p>
       {loading && <p role="status">กำลังโหลดข้อมูลล่าสุด…</p>}
@@ -348,7 +551,7 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         <p className="text-xs text-slate-500">แสดงเฉพาะขั้นถัดไปที่ทำได้ เงินสดข้ามสินเชื่อ หลังโอนทำได้เฉพาะส่งมอบ ไม่บันทึกการจองใหม่</p>
       </> : <p className="text-sm text-slate-600">รายการนี้ดูรายละเอียดได้ตามสิทธิ์เดิม รายการส่งมอบแล้วหรือยกเลิกแล้วไม่เปิดแก้ขั้นตอนจากฟอร์มนี้</p>}
       {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
-      {editable && !protectedSale && <button type="button" disabled={busy || loading || !resolved || (!changed && !progress.current.payload)} onClick={() => void save()} className="bg-amber-500 rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50">{busy ? 'กำลังบันทึก…' : 'บันทึกข้อมูล'}</button>}
+      {editable && !protectedSale && <button type="button" disabled={!canSave} onClick={() => void save()} className="bg-amber-500 rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50">{busy ? 'กำลังบันทึก…' : 'บันทึกข้อมูล'}</button>}
     </div>
   </SalesOverlay>;
 }

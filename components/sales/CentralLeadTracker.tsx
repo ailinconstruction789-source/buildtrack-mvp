@@ -250,21 +250,14 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
       }
 
       // Check existing rental contracts for this lead
-      let existingContracts: any[] | null = null;
-      const rcTable = supabase.from('rental_contracts');
-      if (typeof rcTable?.select === 'function') {
-        const rcQuery = rcTable.select('id, status, plot_id, plot_name, project_name, notes');
-        if (typeof rcQuery?.eq === 'function') {
-          const { data, error: contractsErr } = await rcQuery
-            .eq('lead_id', leadId)
-            .in('status', ['Active', 'PendingContract', 'Renewed']);
-
-          if (contractsErr) {
-            setAppointmentNotice('ไม่สามารถตรวจสอบสัญญาเช่าล่าสุดได้: ' + contractsErr.message);
-            return;
-          }
-          existingContracts = data;
-        }
+      const { data: existingContracts, error: contractsErr } = await supabase
+        .from('rental_contracts')
+        .select('id, status, plot_id, plot_name, project_name, notes')
+        .eq('lead_id', leadId)
+        .in('status', ['Active', 'PendingContract', 'Renewed']);
+      if (contractsErr) {
+        setAppointmentNotice('ไม่สามารถตรวจสอบสัญญาเช่าล่าสุดได้: ' + contractsErr.message);
+        return;
       }
 
       if (existingContracts && existingContracts.some(c => ['Active', 'Renewed'].includes(c.status))) {
@@ -291,8 +284,7 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
       let plotToRelease: any = null;
 
       if (targetPlotId) {
-        let query = supabase.from('plots').select('id, project_name, plot_name, sale_status, has_customer, current_tenant_name, customer_name, lead_id');
-        query = query.eq('id', targetPlotId);
+        let query = supabase.from('plots').select('id, project_name, plot_name, sale_status, has_customer, current_tenant_name, customer_name').eq('id', targetPlotId);
         if (targetProject) query = query.eq('project_name', targetProject);
         const { data: pById, error: pByIdErr } = await query;
         if (pByIdErr) throw new Error('ตรวจสอบข้อมูลแปลงไม่สำเร็จ: ' + pByIdErr.message);
@@ -304,8 +296,7 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
       }
 
       if (!plotToRelease && targetPlotName) {
-        let query = supabase.from('plots').select('id, project_name, plot_name, sale_status, has_customer, current_tenant_name, customer_name, lead_id');
-        query = query.eq('plot_name', targetPlotName);
+        let query = supabase.from('plots').select('id, project_name, plot_name, sale_status, has_customer, current_tenant_name, customer_name').eq('plot_name', targetPlotName);
         if (targetProject) query = query.eq('project_name', targetProject);
         const { data: pByName, error: pByNameErr } = await query;
         if (pByNameErr) throw new Error('ตรวจสอบข้อมูลแปลงไม่สำเร็จ: ' + pByNameErr.message);
@@ -323,6 +314,41 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
         if (plotToRelease.sale_status === 'Transferred') {
           throw new Error('แปลงนี้ถูกโอนกรรมสิทธิ์ไปแล้ว ไม่สามารถคืนแปลงได้');
         }
+
+        // Verify who actually holds this plot in database tables (sales and rental_contracts)
+        const salesOnPlot = await supabase
+          .from('sales')
+          .select('id, lead_id, contract_status')
+          .eq('plot_id', plotToRelease.id)
+          .neq('contract_status', 'Cancelled');
+
+        const contractsOnPlot = await supabase
+          .from('rental_contracts')
+          .select('id, lead_id, status')
+          .eq('plot_id', plotToRelease.id)
+          .in('status', ['Active', 'PendingContract', 'Renewed']);
+
+        if (salesOnPlot?.error) throw new Error('ตรวจสอบข้อมูลการขายของแปลงไม่สำเร็จ: ' + salesOnPlot.error.message);
+        if (contractsOnPlot?.error) throw new Error('ตรวจสอบข้อมูลสัญญาเช่าของแปลงไม่สำเร็จ: ' + contractsOnPlot.error.message);
+
+        // If an Active or Renewed rental contract exists on this plot, it can NEVER be cancelled through booking cancellation
+        const hasActiveOrRenewedContract = (contractsOnPlot.data || []).some((c: any) => ['Active', 'Renewed'].includes(c.status));
+        if (hasActiveOrRenewedContract) {
+          throw new Error('แปลงนี้มีสัญญาเช่าที่มีผลบังคับใช้ (Active) แล้ว ไม่สามารถยกเลิกผ่านการยกเลิกจองได้ กรุณาใช้เมนูจัดการสัญญาเช่า');
+        }
+
+        // Check if another customer holds an active sale on this plot
+        const otherSaleHolder = (salesOnPlot.data || []).find((s: any) => s.lead_id && s.lead_id !== leadId);
+        if (otherSaleHolder) {
+          throw new Error('แปลงนี้มีลูกค้ารายอื่นถือสิทธิ์การจอง/ซื้ออยู่ ไม่สามารถยกเลิกหรือคืนแปลงได้');
+        }
+
+        // Check if another customer holds an active or pending contract on this plot
+        const otherContractHolder = (contractsOnPlot.data || []).find((c: any) => c.lead_id && c.lead_id !== leadId);
+        if (otherContractHolder) {
+          throw new Error('แปลงนี้มีผู้เช่ารายอื่นถือสิทธิ์อยู่ ไม่สามารถยกเลิกหรือคืนแปลงได้');
+        }
+
         const cleanCust = cleanName(customerDisplayName);
         const cleanPlotCust = cleanName(plotToRelease.customer_name);
         const cleanPlotTenant = cleanName(plotToRelease.current_tenant_name);
@@ -334,20 +360,16 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
           throw new Error(`แปลงนี้มีลูกค้ารายอื่น (${plotToRelease.customer_name}) ถือสิทธิ์อยู่ ไม่สามารถคืนแปลงได้`);
         }
 
-        const hasMatchingPlotLeadId = Boolean(plotToRelease.lead_id && plotToRelease.lead_id === leadId);
+        // Current lead authority: verified via pending contract on this plot, active sale for this lead on this plot, or matching interested plot
         const hasMatchingPendingContract = pendingContracts.some(c => c.plot_id === plotToRelease.id);
+        const hasMatchingSale = (salesOnPlot.data || []).some((s: any) => s.lead_id === leadId);
         const hasMatchingInterestedPlot = Boolean(
           (freshLead.interested_plot_id && freshLead.interested_plot_id === plotToRelease.id) ||
           (freshLead.interested_plot_name && freshLead.interested_plot_name === plotToRelease.plot_name) ||
           (cust.plot && (cust.plot === plotToRelease.id || cust.plot === plotToRelease.plot_name))
         );
 
-        const hasMatchingName = Boolean(
-          (cleanPlotTenant && cleanCust && cleanPlotTenant === cleanCust) ||
-          (cleanPlotCust && cleanCust && cleanPlotCust === cleanCust)
-        );
-
-        if (hasMatchingPlotLeadId || hasMatchingPendingContract || (hasMatchingName && hasMatchingInterestedPlot)) {
+        if (hasMatchingPendingContract || hasMatchingSale || hasMatchingInterestedPlot) {
           shouldReleasePlot = Boolean(plotToRelease.has_customer || plotToRelease.sale_status !== 'available');
         } else if (plotToRelease.has_customer || plotToRelease.sale_status !== 'available') {
           throw new Error('ไม่สามารถคืนแปลงได้ เนื่องจากแปลงไม่ได้ถูกผูกสิทธิ์กับลูกค้ารายนี้อย่างชัดเจน');
@@ -396,9 +418,7 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
           })
           .eq('id', plotToRelease.id);
 
-        if (typeof (plotUpdQuery as any).neq === 'function') {
-          plotUpdQuery = (plotUpdQuery as any).neq('sale_status', 'Rented').neq('sale_status', 'Transferred');
-        }
+        plotUpdQuery = plotUpdQuery.neq('sale_status', 'Rented').neq('sale_status', 'Transferred');
 
         if (plotToRelease.current_tenant_name) {
           plotUpdQuery = plotUpdQuery.eq('current_tenant_name', plotToRelease.current_tenant_name);
@@ -427,12 +447,9 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
         })
         .eq('id', leadId);
 
-      if (typeof (leadUpdQuery as any).in === 'function') {
-        leadUpdQuery = (leadUpdQuery as any).in('rental_status', ['PendingContract', 'pendingcontract', 'pending_contract', 'booked', 'Booked', null, '']);
-      }
-      if (typeof (leadUpdQuery as any).neq === 'function') {
-        leadUpdQuery = (leadUpdQuery as any).neq('rental_status', 'Active');
-      }
+      leadUpdQuery = leadUpdQuery
+        .in('rental_status', ['PendingContract', 'pendingcontract', 'pending_contract', 'booked', 'Booked', null, ''])
+        .neq('rental_status', 'Active');
 
       const { data: updLeadResult, error: leadUpdErr } = await leadUpdQuery.select('id');
 

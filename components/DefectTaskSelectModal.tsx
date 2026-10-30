@@ -15,11 +15,21 @@ export default function DefectTaskSelectModal({
 
     if (!isOpen) return null;
 
-    const availableTasks = (taskTemplates || []).filter((t: any) => {
+    const baseTasks = (taskTemplates || []).filter((t: any) => {
         if (t.house_type_id !== selectedPlot?.house_type_id) return false;
         if (searchQuery && !t.task_name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
         return true;
     });
+
+    const hasFurnitureTask = baseTasks.some((t: any) => t.task_name.includes('เฟอร์นิเจอร์'));
+    const furnitureTask = (!hasFurnitureTask && (!searchQuery || 'งานเฟอร์นิเจอร์'.toLowerCase().includes(searchQuery.toLowerCase()) || 'เฟอร์นิเจอร์'.toLowerCase().includes(searchQuery.toLowerCase()))) ? [{
+        id: 'virtual-furniture',
+        task_name: 'งานเฟอร์นิเจอร์',
+        task_order: 'พิเศษ',
+        is_furniture_badge: true
+    }] : [];
+
+    const availableTasks = [...baseTasks, ...furnitureTask];
 
     const handleToggleTask = (task: any, isAlreadyAdded: boolean) => {
         if (isAlreadyAdded) return;
@@ -68,7 +78,10 @@ export default function DefectTaskSelectModal({
 
                 <div className="flex-1 overflow-y-auto p-4 space-y-2">
                     {availableTasks.map((task: any) => {
-                        const isAlreadyAdded = existingDefects.some((d: any) => (d.task_id === task.id || d.task_template_id === task.id));
+                        const isAlreadyAdded = existingDefects.some((d: any) => 
+                            (d.task_id === task.id || d.task_template_id === task.id) ||
+                            (task.id === 'virtual-furniture' && (d.description?.includes('งานเฟอร์นิเจอร์') || d.task_name?.includes('งานเฟอร์นิเจอร์')))
+                        );
                         const isSelected = selectedTasks.find(t => t.id === task.id);
 
                         return (
@@ -99,6 +112,10 @@ export default function DefectTaskSelectModal({
                                     {isAlreadyAdded ? (
                                         <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-200">
                                             📌 มีในรอบนี้แล้ว
+                                        </span>
+                                    ) : task.is_furniture_badge ? (
+                                        <span className="text-[10px] font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-md border border-purple-200">
+                                            🛋️ เฟอร์นิเจอร์
                                         </span>
                                     ) : (
                                         <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-md border border-slate-200">

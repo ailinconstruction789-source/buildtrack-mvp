@@ -15,9 +15,69 @@ vi.mock('../LeadPicker', () => ({
   default: () => <div data-testid="lead-picker-stub" />
 }));
 
+const CHAIN_METHODS = new Set(['select', 'insert', 'update', 'delete', 'eq', 'neq', 'in', 'is', 'or', 'not', 'ilike', 'order', 'limit', 'range']);
+const proxyCache = new WeakMap<object, any>();
+
+function ensureChainable(val: any): any {
+  if (!val || (typeof val !== 'object' && typeof val !== 'function')) return val;
+  if (proxyCache.has(val)) return proxyCache.get(val);
+
+  if (typeof val.then === 'function' && (val instanceof Promise || !('select' in val || 'eq' in val || 'single' in val || 'maybeSingle' in val))) {
+    for (const m of CHAIN_METHODS) {
+      if (typeof val[m] !== 'function') val[m] = () => ensureChainable(val);
+    }
+    for (const m of ['single', 'maybeSingle'] as const) {
+      if (typeof val[m] !== 'function') {
+        val[m] = () => ensureChainable(val.then((r: any) => (r && Array.isArray(r.data) ? { ...r, data: r.data[0] ?? null } : r)));
+      }
+    }
+    proxyCache.set(val, val);
+    return val;
+  }
+
+  const proxy: any = new Proxy(val, {
+    get(target, prop, receiver) {
+      if (prop in target) {
+        const orig = Reflect.get(target, prop, receiver);
+        if (typeof orig === 'function') {
+          if (prop === 'then' || prop === 'catch' || prop === 'finally') return orig.bind(target);
+          return (...args: any[]) => ensureChainable(orig.apply(target, args));
+        }
+        return orig;
+      }
+      if (prop === 'single' || prop === 'maybeSingle') {
+        if (typeof target.maybeSingle === 'function') return (...args: any[]) => ensureChainable(target.maybeSingle(...args));
+        if (typeof target.single === 'function') return (...args: any[]) => ensureChainable(target.single(...args));
+        if (typeof target.then === 'function') {
+          return () => ensureChainable(Promise.resolve(target).then((r: any) => (r && Array.isArray(r.data) ? { ...r, data: r.data[0] ?? null } : r)));
+        }
+        return async () => ({ data: null, error: null });
+      }
+      if (prop === 'then') {
+        if (typeof target.maybeSingle === 'function') {
+          return (res: any, rej: any) => Promise.resolve(target.maybeSingle()).then((r: any) => (r && r.data && !Array.isArray(r.data) ? { ...r, data: [r.data] } : r)).then(res, rej);
+        }
+        if (typeof target.single === 'function') {
+          return (res: any, rej: any) => Promise.resolve(target.single()).then((r: any) => (r && r.data && !Array.isArray(r.data) ? { ...r, data: [r.data] } : r)).then(res, rej);
+        }
+        return (res: any, rej: any) => Promise.resolve({ data: [], error: null }).then(res, rej);
+      }
+      if (typeof prop === 'string' && CHAIN_METHODS.has(prop)) {
+        return () => proxy;
+      }
+      return undefined;
+    },
+  });
+  proxyCache.set(val, proxy);
+  return proxy;
+}
+
 describe('RentalContractModal - Plot ordering, Booked plots & Historical dates', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    const rawMockImpl = (mocks.from as any).__rawMockImpl ??= mocks.from.mockImplementation.bind(mocks.from);
+    mocks.from.mockImplementation = ((fn: (table: string) => any) =>
+      rawMockImpl(((table: string) => ensureChainable(fn(table))) as any)) as any;
   });
 
   it('sorts plots in natural numerical order and shows booked plots with 🟡 ติดจอง', async () => {

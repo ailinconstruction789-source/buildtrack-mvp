@@ -14,6 +14,8 @@ import { useTrustedAccountSession } from '@/hooks/useTrustedAccountSession';
 import { TRUSTED_AUTH_ENABLED, TRUSTED_AUTH_ERROR } from '@/lib/auth/trustedActor';
 import { GUARDED_ACCOUNT_COMMANDS_ENABLED, runGuardedAccountCommand } from '@/lib/auth/accountCommands';
 import { isSalesStaffRole } from '@/lib/sales/salesStaff';
+import { triggerBackgroundPhotoAudit } from '@/lib/photoAudit';
+import { evaluatePlotCompletionAndSaleStatus } from '@/lib/plotStatusEvaluator';
 
 // Enable only with the reviewed actor grants, presence RPC and role mappings.
 // The existing account feature flag alone must not cut over the legacy shell.
@@ -23,13 +25,13 @@ const ROOT_IDLE_MS = 24 * 60 * 60 * 1000;
 
 const LoginScreen = dynamic(() => import('@/components/LoginScreen'));
 const DashboardOverview = dynamic(() => import('@/components/DashboardOverview'));
-const ContractorScheduleView = dynamic(() => import('@/components/ContractorScheduleView'));
 const MapVisualizer = dynamic(() => import('@/components/MapVisualizer'));
 const HouseDetailView = dynamic(() => import('@/components/HouseDetailView'));
 const TaskProgressView = dynamic(() => import('@/components/TaskProgressView'));
 const DefectProgressView = dynamic(() => import('@/components/DefectProgressView'));
 const OwnerAnalyticsDashboard = dynamic(() => import('@/components/OwnerAnalyticsDashboard'));
 const DailyActivityHub = dynamic(() => import('@/components/DailyActivityHub'));
+const DailySiteActivitiesView = dynamic(() => import('@/components/DailySiteActivitiesView'));
 const HousePromotionsView = dynamic(() => import('@/components/HousePromotionsView'));
 const QCPerformanceDashboard = dynamic(() => import('@/components/QCPerformanceDashboard'));
 const ExecutiveAnalytics = dynamic(() => import('@/components/ExecutiveAnalytics'));
@@ -245,7 +247,7 @@ export default function ConstructionApp() {
 
   const setView = useCallback((newView: any) => {
     if (newView === 'sales-dashboard-excel') setHasOpenedSalesDashboard(true);
-    if (newView === 'global-feed') {
+    if (newView === 'global-feed' || newView === 'daily-activities') {
       setSelectedProject(null);
     }
     if (newView === 'project-detail') {
@@ -716,14 +718,41 @@ export default function ConstructionApp() {
     const plannedAvg = Number(statusRecord.planned_avg) || 0;
     const statusCode = statusRecord.status_code || 'none';
 
-    if (statusCode === 'ready_for_sale') return { actual: actualAvg, planned: plannedAvg, status: 'ready_for_sale', label: 'พร้อมขาย/รอโอน', colors: 'bg-amber-100/90 border-amber-500 text-amber-800' };
-    if (statusCode === 'completed') return { actual: actualAvg, planned: plannedAvg, status: 'completed', label: 'เสร็จสมบูรณ์', colors: 'bg-emerald-100/90 border-emerald-500 text-emerald-800' };
+    const plotObj = plots.find((p: any) => String(p.id) === String(plotId));
+
+    // 1. ถ้าโอนแล้ว => แสดงสีทอง (Gold/Amber) 🔑
+    if (plotObj?.is_completed || plotObj?.sale_status === 'transferred') {
+      return {
+        actual: actualAvg,
+        planned: plannedAvg,
+        status: 'transferred',
+        label: 'โอนกรรมสิทธิ์แล้ว',
+        colors: 'bg-amber-100/90 border-amber-500 text-amber-800 shadow-[0_0_10px_rgba(245,158,11,0.3)]',
+      };
+    }
+
+    // 2. ถ้าเป็นบ้านพร้อมขาย => แสดงสีฟ้าอมเขียว (Cyan)
+    if (plotObj?.sale_status === 'ready_for_sale' || statusCode === 'ready_for_sale') {
+      return {
+        actual: actualAvg,
+        planned: plannedAvg,
+        status: 'ready_for_sale',
+        label: 'พร้อมขาย/รอโอน',
+        colors: 'bg-cyan-50 border-cyan-500 text-cyan-800',
+      };
+    }
+
+    // 3. ถ้าเสร็จ 100% จากมุมมองฐานข้อมูลหรือทำจริงเสร็จ 100%
+    if (statusCode === 'completed' || actualAvg >= 100) {
+      return { actual: actualAvg, planned: plannedAvg, status: 'completed', label: 'เสร็จสมบูรณ์', colors: 'bg-emerald-50 border-emerald-500 text-emerald-800' };
+    }
+
     if (statusCode === 'delayed') return { actual: actualAvg, planned: plannedAvg, status: 'delayed', label: 'ล่าช้ากว่าแผน', colors: 'bg-rose-100/90 border-rose-500 text-rose-800' };
     if (statusCode === 'ahead') return { actual: actualAvg, planned: plannedAvg, status: 'ahead', label: 'เร็วกว่าแผน', colors: 'bg-indigo-100/90 border-indigo-500 text-indigo-800' };
     if (statusCode === 'on-track') return { actual: actualAvg, planned: plannedAvg, status: 'on-track', label: 'ตามแผน', colors: 'bg-blue-100/90 border-blue-500 text-blue-800' };
     
     return { actual: actualAvg, planned: plannedAvg, status: 'none', label: 'รอดำเนินการ', colors: 'bg-white/90 border-slate-300 text-slate-500' };
-  }, [plotOverallStatusMap]);
+  }, [plotOverallStatusMap, plots]);
 
   const getAdjacency = useCallback((x: number, y: number, type: string, plotId: string | null) => ({ hasTop: mapGrid.some(c => c.x === x && c.y === y - 1 && c.type === type && (type !== 'plot' || c.plotId === plotId)), hasBottom: mapGrid.some(c => c.x === x && c.y === y + 1 && c.type === type && (type !== 'plot' || c.plotId === plotId)), hasLeft: mapGrid.some(c => c.x === x - 1 && c.y === y && c.type === type && (type !== 'plot' || c.plotId === plotId)), hasRight: mapGrid.some(c => c.x === x + 1 && c.y === y && c.type === type && (type !== 'plot' || c.plotId === plotId)) }), [mapGrid]);
 
@@ -976,37 +1005,67 @@ export default function ConstructionApp() {
     }
   };
   // 🌟 ฟังก์ชันเพิ่ม/แก้ไขแบบบ้าน พร้อมระบบอัปเดตชื่ออัตโนมัติป้องกันลิงก์พัง
-  const [houseTypeForm, setHouseTypeForm] = useState({ id: '', type_name: '', memo: '' });
+  const [houseTypeForm, setHouseTypeForm] = useState<{
+    id: string;
+    type_name: string;
+    memo: string;
+    floor_count: number | null;
+    is_infrastructure?: boolean;
+  }>({ id: '', type_name: '', memo: '', floor_count: null });
   const [isEditingType, setIsEditingType] = useState(false);
   // 🌟 ฟังก์ชันบันทึกข้อมูลแบบบ้าน (เพิ่มใหม่ / แก้ไข)
   const handleSaveHouseType = async () => {
     if (!houseTypeForm.type_name.trim()) return showAlert('แจ้งเตือน', 'กรุณาระบุชื่อแบบบ้านครับ');
+
+    // สำหรับแบบบ้านใหม่ที่ไม่ใช่งานโครงสร้างพื้นฐาน ต้องบังคับให้เลือก 1 หรือ 2 ชั้น
+    if (!isEditingType && !houseTypeForm.is_infrastructure) {
+      if (houseTypeForm.floor_count !== 1 && houseTypeForm.floor_count !== 2) {
+        return showAlert('แจ้งเตือน', 'กรุณาระบุจำนวนชั้นของแบบบ้าน (บ้านชั้นเดียว หรือ บ้านสองชั้น) ก่อนบันทึกครับ');
+      }
+    }
+
+    // ตรวจสอบค่า floor_count ให้เป็น 1, 2 หรือ null เท่านั้น
+    let floorCountValue: number | null = null;
+    if (houseTypeForm.floor_count === 1 || houseTypeForm.floor_count === 2) {
+      floorCountValue = houseTypeForm.floor_count;
+    } else if (houseTypeForm.floor_count !== null && houseTypeForm.floor_count !== undefined) {
+      return showAlert('แจ้งเตือน', 'ค่าจำนวนชั้นไม่ถูกต้อง ต้องเป็น 1 หรือ 2 ชั้น เท่านั้นครับ');
+    }
 
     setIsSubmitting(true);
     try {
       if (isEditingType) {
         // อัปเดตแบบบ้านเดิม
         const { error } = await supabase.from('house_types')
-          .update({ type_name: houseTypeForm.type_name.trim(), memo: houseTypeForm.memo })
+          .update({
+            type_name: houseTypeForm.type_name.trim(),
+            memo: houseTypeForm.memo || '',
+            floor_count: floorCountValue
+          })
           .eq('id', houseTypeForm.id);
         if (error) throw error;
         showToast('แก้ไขข้อมูลแบบบ้านเรียบร้อยแล้ว', "success");
       } else {
         // เพิ่มแบบบ้านใหม่
         const { error } = await supabase.from('house_types')
-          .insert([{ type_name: houseTypeForm.type_name.trim(), memo: houseTypeForm.memo }]);
+          .insert([{
+            type_name: houseTypeForm.type_name.trim(),
+            memo: houseTypeForm.memo || '',
+            floor_count: floorCountValue
+          }]);
         if (error) throw error;
         showToast('เพิ่มแบบบ้านใหม่เข้าสู่ระบบเรียบร้อยแล้ว', "success");
       }
 
       // ล้างค่าฟอร์มและโหลดข้อมูลใหม่
-      setHouseTypeForm({ id: '', type_name: '', memo: '' });
+      setHouseTypeForm({ id: '', type_name: '', memo: '', floor_count: null });
       setIsEditingType(false);
       await fetchAllData();
     } catch (e: any) {
       showAlert('ล้มเหลว', (e as Error).message);
+    } finally {
+      setIsSubmitting(false);
     }
-    setIsSubmitting(false);
   };
 
 
@@ -2101,6 +2160,9 @@ export default function ConstructionApp() {
 
       defectFiles.forEach(f => { if (f?.previewUrl) URL.revokeObjectURL(f.previewUrl); });
       setNewDefectText(''); setDefectFiles([]);
+      if (imageUrls.length > 0) {
+        triggerBackgroundPhotoAudit(imageUrls, defectModal.plotId, new Date().toISOString());
+      }
       const { data } = await supabase.from('defects').select('*').order('created_at', { ascending: false }).limit(500); setDefects(data || []);
       if (imageUrls.length > 0) {
         setGlobalUploadState({ isUploading: false, isSuccess: true, message: 'แจ้งซ่อมพร้อมรูปภาพเรียบร้อย!' });
@@ -2192,6 +2254,8 @@ export default function ConstructionApp() {
       if (imageUrls.length > 0) {
         setGlobalUploadState({ isUploading: false, isSuccess: true, message: 'อัปโหลดรูปภาพเสร็จสิ้น!' });
         setTimeout(() => setGlobalUploadState({ isUploading: false, isSuccess: false, message: '' }), 1500);
+        // 🕒 สแกนลายน้ำอัตโนมัติเบื้องหลัง (Non-blocking: โฟร์แมนไม่ต้องรอ และข้ามอัตโนมัติหากติดโควต้า)
+        triggerBackgroundPhotoAudit(imageUrls, selectedPlot?.id, new Date().toISOString());
       }
     } catch (e: any) {
       if (selectedFiles.length > 0) setGlobalUploadState({ isUploading: false, isSuccess: false, message: '' });
@@ -2250,6 +2314,8 @@ export default function ConstructionApp() {
       if (imageUrls.length > 0) {
         setGlobalUploadState({ isUploading: false, isSuccess: true, message: 'อัปโหลดรูปภาพเสร็จสิ้น!' });
         setTimeout(() => setGlobalUploadState({ isUploading: false, isSuccess: false, message: '' }), 1500);
+        // 🕒 สแกนลายน้ำอัตโนมัติเบื้องหลัง (Non-blocking: โฟร์แมนไม่ต้องรอ และข้ามอัตโนมัติหากติดโควต้า)
+        triggerBackgroundPhotoAudit(imageUrls, selectedPlot?.id, new Date().toISOString());
       }
     } catch (e: any) {
       if (selectedFiles.length > 0) setGlobalUploadState({ isUploading: false, isSuccess: false, message: '' });
@@ -2390,6 +2456,8 @@ export default function ConstructionApp() {
       if (imageUrls.length > 0) {
         setGlobalUploadState({ isUploading: false, isSuccess: true, message: 'อัปโหลดรูปภาพเสร็จสิ้น!' });
         setTimeout(() => setGlobalUploadState({ isUploading: false, isSuccess: false, message: '' }), 1500);
+        // 🕒 สแกนลายน้ำอัตโนมัติเบื้องหลัง (Non-blocking: โฟร์แมนไม่ต้องรอ และข้ามอัตโนมัติหากติดโควต้า)
+        triggerBackgroundPhotoAudit(imageUrls, selectedPlot?.id, new Date().toISOString());
       }
     } catch (e: any) { 
       if (selectedFiles.length > 0) setGlobalUploadState({ isUploading: false, isSuccess: false, message: '' });
@@ -3432,17 +3500,17 @@ export default function ConstructionApp() {
                       if (houseReturnView) { setView(houseReturnView); setHouseReturnView(''); }
                       else setView('project-detail');
                     }} className="text-sm font-bold text-slate-500 hover:text-blue-600 flex items-center gap-1.5 hover:-translate-x-1 transition-transform cursor-pointer">
-                       <ArrowLeft size={16}/> BACK TO {houseReturnView === 'sales-dashboard-excel' ? 'SALES DASHBOARD' : houseReturnView === 'global-feed' ? 'LIVE FEED' : selectedProject?.name || 'PROJECT'}
+                       <ArrowLeft size={16}/> BACK TO {houseReturnView === 'daily-activities' ? 'DAILY ACTIVITIES' : houseReturnView === 'sales-dashboard-excel' ? 'SALES DASHBOARD' : houseReturnView === 'global-feed' ? 'LIVE FEED' : selectedProject?.name || 'PROJECT'}
                     </button>
                  )}
                  {view === 'task-progress' && (
                     <button onClick={() => setView(taskReturnView)} className="text-sm font-bold text-slate-500 hover:text-blue-600 flex items-center gap-1.5 hover:-translate-x-1 transition-transform">
-                       <ArrowLeft size={16}/> BACK TO {taskReturnView === 'global-feed' ? 'LIVE FEED' : taskReturnView === 'dashboard' ? 'DASHBOARD' : 'PLOT'}
+                       <ArrowLeft size={16}/> BACK TO {taskReturnView === 'daily-activities' ? 'DAILY ACTIVITIES' : taskReturnView === 'global-feed' ? 'LIVE FEED' : taskReturnView === 'dashboard' ? 'DASHBOARD' : 'PLOT'}
                     </button>
                  )}
                  {view === 'defect-progress' && (
                     <button onClick={() => setView(defectReturnView || 'house-detail')} className="text-sm font-bold text-slate-500 hover:text-blue-600 flex items-center gap-1.5 hover:-translate-x-1 transition-transform">
-                       <ArrowLeft size={16}/> BACK TO {defectReturnView === 'global-feed' ? 'LIVE FEED' : defectReturnView === 'dashboard' ? 'DASHBOARD' : 'PLOT'}
+                       <ArrowLeft size={16}/> BACK TO {defectReturnView === 'daily-activities' ? 'DAILY ACTIVITIES' : defectReturnView === 'global-feed' ? 'LIVE FEED' : defectReturnView === 'dashboard' ? 'DASHBOARD' : 'PLOT'}
                     </button>
                  )}
               </div>
@@ -3615,33 +3683,6 @@ export default function ConstructionApp() {
                                     )}
                                  </div>
                                ))}
-                            </div>
-                         </div>
-                      </div>
-                   ) : loadingView === 'contractor-schedule' ? (
-                      <div className="space-y-6 animate-pulse opacity-60 flex-1 flex flex-col">
-                         <div className="flex justify-between items-center mb-2">
-                            <div className="space-y-3">
-                               <div className="h-10 w-64 bg-slate-200 rounded-xl"></div>
-                               <div className="h-4 w-48 bg-slate-100 rounded-lg"></div>
-                            </div>
-                            <div className="h-10 w-32 bg-slate-200 rounded-xl"></div>
-                         </div>
-                         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 flex-1">
-                            <div className="bg-white rounded-3xl xl:col-span-2 border border-slate-200 shadow-sm p-6 flex flex-col">
-                               <div className="h-8 w-1/3 bg-slate-200 rounded-lg mb-6"></div>
-                               <div className="flex-1 flex gap-3">
-                                  {Array.from({length: 7}).map((_, i) => (
-                                     <div key={i} className="flex-1 bg-slate-50 border border-slate-100 rounded-xl h-full flex flex-col gap-2 p-2">
-                                        <div className="h-4 w-8 bg-slate-200 mx-auto rounded-sm mt-2 mb-4"></div>
-                                        {i % 2 === 0 ? <div className="h-20 bg-blue-100 rounded-lg w-full"></div> : i % 3 === 0 ? <div className="h-16 bg-emerald-100 rounded-lg w-full"></div> : null}
-                                     </div>
-                                  ))}
-                               </div>
-                            </div>
-                            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 flex flex-col gap-4">
-                               <div className="h-8 w-1/2 bg-slate-200 rounded-lg mb-4"></div>
-                               {[1,2,3,4,5].map(i => <div key={i} className="h-20 bg-slate-50 border border-slate-100 rounded-xl w-full flex items-center p-4 gap-4"><div className="w-10 h-10 rounded-full bg-slate-200"></div><div className="flex-1 space-y-2"><div className="h-4 w-1/2 bg-slate-200 rounded"></div><div className="h-3 w-1/3 bg-slate-100 rounded"></div></div></div>)}
                             </div>
                          </div>
                       </div>
@@ -4062,18 +4103,44 @@ export default function ConstructionApp() {
                   </div>
                 </div>
               )}
-              {/* 👷 Contractor Schedule View */}
-              {view === 'contractor-schedule' && (
-                <ContractorScheduleView
-                  view={view}
-                  schedules={schedules}
-                  assignments={assignments}
+              {/* 🕒 View: Daily Site Activities & Foreman Time Audit */}
+              {view === 'daily-activities' && (
+                <DailySiteActivitiesView
+                  allUpdatesRecord={allUpdatesRecord}
+                  defects={defects}
+                  defectUpdates={defectUpdates}
                   plots={plots}
+                  projects={projects}
                   taskTemplates={taskTemplates}
-                  contractors={contractors}
-                  weatherInfo={weatherInfo}
-                  latestUpdatesMap={latestUpdatesMap}
-                  loggedInUser={loggedInUser}
+                  allUsers={allUsers}
+                  currentUser={loggedInUser}
+                  selectedProject={selectedProject}
+                  mapGrid={mapGrid}
+                  plotBounds={plotBounds}
+                  gridCols={gridCols}
+                  gridRows={gridRows}
+                  getPlotOverallStatus={getPlotOverallStatus}
+                  houseTypes={houseTypes}
+                  plotsActiveToday={plotsActiveToday}
+                  setSelectedPlot={setSelectedPlot}
+                  setSelectedTask={setSelectedTask}
+                  setView={setView}
+                  onSelectPlot={(plot) => {
+                    const foundPlot = plots.find(p => String(p.id) === String(plot.id));
+                    if (foundPlot) {
+                      setSelectedPlot(foundPlot);
+                      setHouseReturnView('daily-activities');
+                      setView('house-detail');
+                    }
+                  }}
+                  onSelectTask={(taskId, plotId) => {
+                    const plot = plots.find(p => String(p.id) === String(plotId));
+                    if (plot) setSelectedPlot(plot);
+                    const task = taskTemplates.find(t => String(t.id) === String(taskId));
+                    if (task) setSelectedTask(task);
+                    setTaskReturnView('daily-activities');
+                    setView('task-progress');
+                  }}
                 />
               )}
               {/* 📅 Master Gantt Chart View */}
@@ -5493,12 +5560,6 @@ export default function ConstructionApp() {
                 <Home size={20} className={activeView === 'dashboard' ? 'fill-blue-100' : ''} />
                 <span className="text-[9px] font-black mt-1">หน้าหลัก</span>
               </button>
-              {(isSiteEngineer || isForeman || isAdmin || isProjectPlanner) && (
-                <button onClick={() => setView('contractor-schedule')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'contractor-schedule' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
-                  <Calendar size={20} className={activeView === 'contractor-schedule' ? 'fill-blue-100' : ''} />
-                  <span className="text-[9px] font-black mt-1">งานช่าง</span>
-                </button>
-              )}
               {(isAdmin || isProjectPlanner) && (
                 <button onClick={() => setView('master-gantt')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'master-gantt' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
                   <Grid size={20} className={activeView === 'master-gantt' ? 'fill-blue-100' : ''} />

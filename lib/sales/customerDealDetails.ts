@@ -2,8 +2,8 @@
 export interface CustomerDealDetails { salePrice: number | null; bank: string }
 export function customerDealDetails(notes: unknown): CustomerDealDetails {
   const text = typeof notes === 'string' ? notes : '';
-  const price = text.match(/^\s*•?\s*ราคาขายสุทธิ:\s*฿?([\d,.]+)\s*บาท/m);
-  const bank = text.match(/^\s*•?\s*ธนาคาร:[ \t]*([^\r\n]*)/m);
+  const price = text.match(/(?:^|[·\s\n•])ราคา(?:ขาย(?:สุทธิ)?)?:\s*฿?([\d,.]+)\s*(?:บ(?:\.|\s|$)|บาท)/);
+  const bank = text.match(/(?:^|[·\s\n•])ธนาคาร:[ \t]*([^\r\n•|]+)/);
   const value = price ? Number(price[1].replace(/,/g, '')) : null;
   return { salePrice: value !== null && Number.isFinite(value) && value >= 0 ? value : null, bank: bank?.[1]?.trim() || '' };
 }

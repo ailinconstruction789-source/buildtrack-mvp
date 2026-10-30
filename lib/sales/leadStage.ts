@@ -11,7 +11,7 @@ const text = (value: unknown) => typeof value === 'string' ? value.toLowerCase()
 function explicitStage(value: string): LeadStage | null {
   if (/\b(lost|cancelled|canceled|closed_lost|dropped|unqualified|nurture|cold|movedout)\b|ยกเลิก|ไม่สนใจ|ยุติการซื้อ|สิ้นสุดสัญญา|ย้ายออก/.test(value)) return 'lost';
   if (/\b(transferred|closed_won|handover)\b|โอนกรรมสิทธิ์|โอนแล้ว/.test(value)) return 'transferred';
-  if (/\b(booked|reserved|contracted|downpayment|documentprep|loanprocessing|loanrejected|approved|transfer[ _-]?pending|pendingcontract)\b|วางเงินจอง|จองแล้ว|จองเช่า|รอทำสัญญา|ทำสัญญาแล้ว/.test(value)) return 'booked';
+  if (/\b(booked|reserved|contracted|downpayment|documentprep|loanprocessing|loansubmitted|loan_submitted|loanrejected|approved|transfer[ _-]?pending|pendingcontract)\b|วางเงินจอง|จองแล้ว|จองเช่า|รอทำสัญญา|ทำสัญญาแล้ว/.test(value)) return 'booked';
   if (!value.includes('converted') && /rent|เช่า/.test(value)) return 'rented';
   if (/loan|pre.approv|สินเชื่อ|ยื่นกู้|เช็คเครดิต|เช็กเครดิต/.test(value)) return 'loan';
   if (/appointment|visit|นัด/.test(value)) return 'appointment';

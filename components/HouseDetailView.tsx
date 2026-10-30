@@ -9,7 +9,9 @@ import HouseHandoverView from './HouseHandoverView';
 import ReceiptUploadModal from './ReceiptUploadModal';
 import MeterPhotoConfirmationModal from './MeterPhotoConfirmationModal';
 import MeterStatusBadges from './MeterStatusBadges';
+import TodayUpdatedBadge from './TodayUpdatedBadge';
 import { buildHouseTaskIndex } from '@/lib/houseTaskIndex';
+import { evaluatePlotCompletionAndSaleStatus } from '@/lib/plotStatusEvaluator';
 
 interface HouseDetailViewProps {
   view: string;
@@ -84,6 +86,121 @@ interface HouseDetailViewProps {
   setActiveHouseTab?: (t: string) => void;
 }
 
+const renderSEBadge = (
+  status: 'passed' | 'pending' | 'rejected' | 'none',
+  inspector?: string,
+  date?: string,
+  onClick?: () => void
+) => {
+  if (status === 'passed') {
+    return (
+      <span
+        onClick={onClick}
+        title={`วิศวกรสนาม (SE): ผ่านการตรวจแล้ว${inspector ? ` โดย ${inspector}` : ''}${date ? ` (${date})` : ''}`}
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 transition-colors cursor-pointer shrink-0"
+      >
+        <CheckCircle2 size={10} className="text-blue-600" />
+        <span>SE: ผ่าน</span>
+      </span>
+    );
+  }
+  if (status === 'pending') {
+    return (
+      <span
+        onClick={onClick}
+        title="วิศวกรสนาม (SE): รอตรวจสอบงาน 100%"
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50 text-amber-800 border border-amber-300 animate-pulse hover:bg-amber-100 transition-colors cursor-pointer shrink-0"
+      >
+        <Clock size={10} className="text-amber-700" />
+        <span>SE: รอตรวจ</span>
+      </span>
+    );
+  }
+  if (status === 'rejected') {
+    return (
+      <span
+        onClick={onClick}
+        title={`วิศวกรสนาม (SE): สั่งแก้ไข (95%)${inspector ? ` โดย ${inspector}` : ''}${date ? ` (${date})` : ''}`}
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-50 text-rose-700 border border-rose-300 hover:bg-rose-100 transition-colors cursor-pointer shrink-0"
+      >
+        <AlertCircle size={10} className="text-rose-600" />
+        <span>SE: สั่งแก้</span>
+      </span>
+    );
+  }
+  return (
+    <span
+      title="วิศวกรสนาม (SE): ยังไม่ถึงขั้นตอนตรวจ"
+      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium bg-slate-50 text-slate-400 border border-slate-200/60 shrink-0"
+    >
+      <span>SE: -</span>
+    </span>
+  );
+};
+
+const renderQCBadge = (
+  status: 'passed' | 'pending' | 'rejected' | 'none' | 'na',
+  inspector?: string,
+  date?: string,
+  requireQC: boolean = true,
+  onClick?: () => void
+) => {
+  if (status === 'na' || requireQC === false) {
+    return (
+      <span
+        title="งานนี้ไม่จำเป็นต้องตรวจ QC (N/A)"
+        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium bg-slate-50 text-slate-400 border border-slate-200/40 shrink-0"
+      >
+        <span>QC: N/A</span>
+      </span>
+    );
+  }
+  if (status === 'passed') {
+    return (
+      <span
+        onClick={onClick}
+        title={`ผู้ตรวจสอบ (QC): ตรวจสอบผ่านแล้ว${inspector ? ` โดย ${inspector}` : ''}${date ? ` (${date})` : ''}`}
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100 transition-colors cursor-pointer shrink-0"
+      >
+        <CheckCircle2 size={10} className="text-emerald-700" />
+        <span>QC: ผ่าน</span>
+      </span>
+    );
+  }
+  if (status === 'pending') {
+    return (
+      <span
+        onClick={onClick}
+        title="ผู้ตรวจสอบ (QC): รอตรวจสอบคุณภาพงาน"
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-50 text-purple-800 border border-purple-300 animate-pulse hover:bg-purple-100 transition-colors cursor-pointer shrink-0"
+      >
+        <Search size={10} className="text-purple-700" />
+        <span>QC: รอตรวจ</span>
+      </span>
+    );
+  }
+  if (status === 'rejected') {
+    return (
+      <span
+        onClick={onClick}
+        title={`ผู้ตรวจสอบ (QC): สั่งแก้ไข (95%)${inspector ? ` โดย ${inspector}` : ''}${date ? ` (${date})` : ''}`}
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-50 text-rose-700 border border-rose-300 hover:bg-rose-100 transition-colors cursor-pointer shrink-0"
+      >
+        <AlertCircle size={10} className="text-rose-600" />
+        <span>QC: สั่งแก้</span>
+      </span>
+    );
+  }
+  return (
+    <span
+      title="ผู้ตรวจสอบ (QC): ยังไม่ถึงขั้นตอนตรวจ (รองานผ่าน SE ก่อน)"
+      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium bg-slate-50 text-slate-400 border border-slate-200/60 shrink-0"
+    >
+      <span>QC: -</span>
+    </span>
+  );
+};
+
 const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
   const {
     view, setView, selectedPlot, selectedProject, isMobileLayout,
@@ -111,6 +228,16 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
   const currentPlotStatus = selectedPlot ? getPlotOverallStatus(selectedPlot.id) : null;
   const houseTaskIndex = React.useMemo(() => buildHouseTaskIndex(selectedPlot?.id, assignments, allUpdatesRecord),
     [selectedPlot?.id, assignments, allUpdatesRecord]);
+
+  const plotSaleEvaluation = React.useMemo(() => {
+    return evaluatePlotCompletionAndSaleStatus({
+      plot: selectedPlot,
+      taskTemplates: props.taskTemplates || [],
+      assignments: assignments || [],
+      latestUpdatesMap: props.latestUpdatesMap || {},
+      allUpdatesRecord: allUpdatesRecord || [],
+    });
+  }, [selectedPlot, props.taskTemplates, assignments, props.latestUpdatesMap, allUpdatesRecord]);
 
   const [requestMaterialNote, setRequestMaterialNote] = React.useState('');
   const [requestMaterialTask, setRequestMaterialTask] = React.useState<any>(null);
@@ -396,10 +523,21 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                    
                    {/* 📸 Overview Image Section */}
                    {selectedPlot.overview_image_url ? (
-                     <div className="mb-6 relative w-full h-48 sm:h-72 rounded-xl overflow-hidden shadow-lg group border border-slate-200">
+                     <div 
+                       onClick={() => setViewImageModalUrl(selectedPlot.overview_image_url)}
+                       className="mb-6 relative w-full h-48 sm:h-72 rounded-xl overflow-hidden shadow-lg group border border-slate-200 cursor-pointer"
+                       title="คลิกเพื่อดูภาพเต็ม"
+                     >
                        <img src={selectedPlot.overview_image_url} alt="Overview" className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
-                       <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                       <label className="absolute bottom-3 right-3 bg-white/90 hover:bg-white text-slate-800 p-2 sm:px-4 sm:py-2 rounded-full sm:rounded-lg cursor-pointer backdrop-blur-sm transition-all shadow-[0_4px_15px_rgba(0,0,0,0.2)] flex items-center gap-2 text-xs font-bold hover:scale-105">
+                       <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center">
+                         <span className="text-white text-xs sm:text-sm font-semibold bg-black/40 px-3.5 py-1.5 rounded-full backdrop-blur-xs flex items-center gap-1.5 pointer-events-none">
+                           <Search size={15} /> คลิกเพื่อดูภาพเต็ม
+                         </span>
+                       </div>
+                       <label 
+                         onClick={(e) => e.stopPropagation()} 
+                         className="absolute bottom-3 right-3 bg-white/90 hover:bg-white text-slate-800 p-2 sm:px-4 sm:py-2 rounded-full sm:rounded-lg cursor-pointer backdrop-blur-sm transition-all shadow-[0_4px_15px_rgba(0,0,0,0.2)] flex items-center gap-2 text-xs font-bold hover:scale-105 z-10"
+                       >
                           <Camera size={16}/> <span className="hidden sm:inline">เปลี่ยนภาพหน้างาน</span>
                           <input type="file" accept="image/*" className="hidden" onChange={(e) => { if(e.target.files?.[0]) handleUploadOverviewImage(e.target.files[0]) }} />
                        </label>
@@ -425,6 +563,32 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                     <div className="flex-shrink-0 flex flex-col gap-1">
                         <div className="flex items-center gap-2">
                            <h2 className="text-xl font-bold italic tracking-tighter">{selectedPlot.plot_name || selectedPlot.id}</h2>
+                           {/* 🌟 ป้ายสถานะบ้านพร้อมขาย / พร้อมให้ลูกค้าตรวจ / เสร็จสมบูรณ์ (คำนวณอัตโนมัติจากความคืบหน้าและการผ่าน QC) 🌟 */}
+                           {plotSaleEvaluation.badgeType === 'ready_for_sale' && (
+                             <span 
+                               className="bg-amber-500/90 hover:bg-amber-500 text-white text-[10px] sm:text-xs px-2.5 py-1 rounded-full font-bold shadow-md flex items-center gap-1 border border-amber-300"
+                               title={`งานหลักผ่าน QC ครบ 100% แล้ว (${plotSaleEvaluation.countedTasksPassedQC}/${plotSaleEvaluation.countedTasksTotal} งาน)`}
+                             >
+                               🏷️ บ้านพร้อมขาย
+                             </span>
+                           )}
+                           {plotSaleEvaluation.badgeType === 'ready_for_customer' && (
+                             <span 
+                               className="bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] sm:text-xs px-2.5 py-1 rounded-full font-bold shadow-md flex items-center gap-1 border border-emerald-400"
+                               title="งานทุกประเภทผ่าน QC ครบถ้วน 100% พร้อมส่งมอบให้ลูกค้าเข้าตรวจรับบ้าน"
+                             >
+                               📋 พร้อมให้ลูกค้าตรวจ
+                             </span>
+                           )}
+                           {plotSaleEvaluation.badgeType === 'completed_stock' && (
+                             <span 
+                               className="bg-teal-600 hover:bg-teal-500 text-white text-[10px] sm:text-xs px-2.5 py-1 rounded-full font-bold shadow-md flex items-center gap-1 border border-teal-400"
+                               title="งานทุกประเภทผ่าน QC ครบถ้วน 100% แล้ว อยู่ในสต๊อกพร้อมส่งมอบทันที"
+                             >
+                               🏆 บ้านสร้างเสร็จสมบูรณ์
+                             </span>
+                           )}
+
                            {/* 🌟 ป้ายสถานะสำหรับบ้านเสร็จ และมีลูกค้า 🌟 */}
                            {selectedPlot.is_completed && currentPlotStatus?.actual === 100 && <span className="bg-emerald-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow-sm" title="สร้างเสร็จพร้อมโอน">🔑</span>}
                            {selectedPlot.is_completed && currentPlotStatus?.actual < 100 && <span className="bg-purple-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow-sm" title="โอนแล้วแต่ยังเก็บงานไม่เสร็จ">🔑 โอนแล้ว-รอเก็บงาน</span>}
@@ -472,16 +636,6 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                             className={`px-2.5 py-1.5 rounded text-[10px] sm:text-xs font-bold border transition-all flex items-center gap-1 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed ${selectedPlot.is_completed ? 'bg-emerald-600 border-emerald-500 text-white shadow-[0_0_10px_rgba(5,150,105,0.4)]' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-emerald-900/50 hover:text-emerald-400 hover:border-emerald-700'}`}
                           >
                             🔑 {selectedPlot.is_completed ? (currentPlotStatus?.actual < 100 ? 'โอนแล้ว-รอเก็บงาน' : 'เสร็จสมบูรณ์') : 'พร้อมโอน'}
-                          </button>
-                          
-                          {/* 🌟 New Button for "Ready for Sale" Toggle 🌟 */}
-                          <button 
-                            onClick={() => togglePlotSaleStatus(selectedPlot.id, selectedPlot.sale_status, selectedPlot.paused_for_sale_at)} 
-                            disabled={selectedPlot.sale_status !== 'ready_for_sale' && currentPlotStatus?.actual < 85}
-                            title={selectedPlot.sale_status !== 'ready_for_sale' && currentPlotStatus?.actual < 85 ? "ความคืบหน้าต้องถึง 85% ถึงจะตั้งเป็นบ้านพร้อมขายได้" : ""}
-                            className={`px-2.5 py-1.5 rounded text-[10px] sm:text-xs font-bold border transition-all flex items-center gap-1 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed ${selectedPlot.sale_status === 'ready_for_sale' ? 'bg-amber-500 border-amber-400 text-white shadow-[0_0_10px_rgba(245,158,11,0.4)]' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-amber-900/50 hover:text-amber-400 hover:border-amber-700'}`}
-                          >
-                            {selectedPlot.sale_status === 'ready_for_sale' ? '✨ เริ่มงานตกแต่ง (ลูกค้ายืนยัน)' : '🏠 บ้านพร้อมขาย (หยุดเวลา)'}
                           </button>
 
                           {isAdmin && handleForceCompleteAllTasks && (
@@ -738,7 +892,16 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                      </div>
 
                      {activeHouseTab === 'construction' && (() => {
-                        const totalPlotCost = taskTemplates.reduce((sum, task) => {
+                        const tasksUpdatedToday = taskTemplates.filter(t => {
+                          if (t.house_type_id !== selectedPlot?.house_type_id) return false;
+                          return allUpdatesRecord.some((u: any) => 
+                            u.plot_id === selectedPlot?.id && 
+                            u.task_template_id === t.id && 
+                            new Date(u.created_at).toLocaleDateString('en-CA') === new Date().toLocaleDateString('en-CA')
+                          );
+                        });
+
+                         const totalPlotCost = taskTemplates.reduce((sum, task) => {
                           const isExcluded = selectedPlot?.house_types?.type_name 
                                           ? task.excluded_house_types?.includes(selectedPlot.house_types.type_name) 
                                           : false;
@@ -780,6 +943,43 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                             ซ่อนงานข้อยกเว้น (N/A)
                           </label>
                        </div>
+
+                        {/* 🏷️ คำอธิบายสัญลักษณ์ (Symbols Legend) */}
+                        <div className="px-3 py-2 bg-slate-50 border-b border-black/5 text-[10px] sm:text-xs text-slate-600 flex flex-wrap items-center gap-x-4 gap-y-1.5 shrink-0">
+                          <span className="font-bold text-slate-500 flex items-center gap-1">
+                            <span>💡 สัญลักษณ์:</span>
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-blue-800">วิศวกรสนาม (SE):</span>
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 font-bold text-[9px]">
+                              <CheckCircle2 size={10} /> ผ่าน
+                            </span>
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-300 font-bold text-[9px]">
+                              <Clock size={10} /> รอตรวจ
+                            </span>
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-300 font-bold text-[9px]">
+                              <AlertCircle size={10} /> สั่งแก้
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-purple-800">ผู้ตรวจสอบ (QC):</span>
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-300 font-bold text-[9px]">
+                              <CheckCircle2 size={10} /> ผ่าน
+                            </span>
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-purple-50 text-purple-800 border border-purple-300 font-bold text-[9px]">
+                              <Search size={10} /> รอตรวจ
+                            </span>
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-300 font-bold text-[9px]">
+                              <AlertCircle size={10} /> สั่งแก้
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <TodayUpdatedBadge tasks={tasksUpdatedToday} label="อัปเดตวันนี้" />
+                            <span className="inline-flex items-center gap-1 text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded text-[9px] font-bold">
+                              <Truck size={10} className="text-blue-600" /> สั่งวัสดุ
+                            </span>
+                          </div>
+                        </div>
                        
                        <div 
                          ref={tableScrollRef}
@@ -792,7 +992,16 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                          {!isMobileLayout && (
                          <thead className="sticky top-0 z-[60] bg-[#f5f5f7] shadow-sm text-[10px] sm:text-xs font-bold uppercase text-[#86868b] tracking-widest">
                            <tr>
-                             <th className={`sticky left-0 bg-[#f5f5f7] z-[65] border-b border-r border-black/5 p-3 sm:p-5 ${isMobileLayout ? 'w-[220px] min-w-[220px] max-w-[220px]' : 'w-[280px] min-w-[280px] max-w-[280px]'} shadow-[4px_0_15px_-5px_rgba(0,0,0,0.1)]`}>Task Name</th>
+                             <th className={`sticky left-0 bg-[#f5f5f7] z-[65] border-b border-r border-black/5 p-2.5 sm:p-3 ${isMobileLayout ? 'w-[220px] min-w-[220px] max-w-[220px]' : 'w-[280px] min-w-[280px] max-w-[280px]'} shadow-[4px_0_15px_-5px_rgba(0,0,0,0.1)]`}>
+                                <div className="flex items-center justify-between gap-1">
+                                  <span>Task Name</span>
+                                  {tasksUpdatedToday.length > 0 ? (
+                                    <TodayUpdatedBadge tasks={tasksUpdatedToday} label="วันนี้" maxNameLength={8} className="shadow-xs" />
+                                  ) : (
+                                    <span className="text-[9px] text-slate-400 font-normal normal-case tracking-normal">({taskTemplates.filter(t => t.house_type_id === selectedPlot?.house_type_id).length} งาน)</span>
+                                  )}
+                                </div>
+                              </th>
                              {!isMobileLayout && <th className="sticky left-[280px] bg-[#f5f5f7] z-[65] border-b border-r border-black/5 p-3 sm:p-5 text-center w-[80px] min-w-[80px] max-w-[80px] shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.08)]">Weight</th>}
                               <th className={`sticky ${isMobileLayout ? 'left-[220px]' : 'left-[360px]'} bg-[#f5f5f7] z-[65] border-b border-r border-black/5 p-3 sm:p-5 text-center w-[115px] sm:w-[140px] min-w-[115px] sm:min-w-[140px] max-w-[115px] sm:max-w-[140px] shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.08)]`}>Start</th>
                              <th className={`sticky ${isMobileLayout ? 'left-[335px]' : 'left-[500px]'} bg-[#f5f5f7] z-[65] border-b border-r border-black/5 p-3 sm:p-5 text-center w-[70px] sm:w-[100px] min-w-[70px] sm:min-w-[100px] max-w-[70px] sm:max-w-[100px] text-pink-600`}>Duration</th>
@@ -843,7 +1052,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                                   {/* PC Skeleton */}
                                   {!isMobileLayout && (
                                   <tr className="bg-white border-b border-black/5 animate-pulse table-row">
-                                    <td className="p-3 h-[120px] w-[280px] bg-white sticky left-0 shadow-[4px_0_10px_-4px_rgba(0,0,0,0.1)] z-20"><div className="h-4 bg-slate-200 rounded w-3/4 mb-2 mt-2"></div><div className="h-3 bg-slate-200 rounded w-1/2"></div></td>
+                                    <td className="p-3 h-[148px] w-[280px] bg-white sticky left-0 shadow-[4px_0_10px_-4px_rgba(0,0,0,0.1)] z-20"><div className="h-4 bg-slate-200 rounded w-3/4 mb-2 mt-2"></div><div className="h-3 bg-slate-200 rounded w-1/2"></div></td>
                                     <td className="p-3 w-[140px] sticky left-[280px] bg-white z-20"><div className="h-6 bg-slate-200 rounded w-full mt-2"></div></td>
                                     <td className="p-3 w-[100px] sticky left-[420px] bg-white z-20"><div className="h-6 bg-slate-200 rounded w-full mt-2"></div></td>
                                     <td className="p-3 w-[140px] sticky left-[520px] bg-white z-20 shadow-[6px_0_10px_-6px_rgba(0,0,0,0.1)]"><div className="h-6 bg-slate-200 rounded w-full mt-2"></div></td>
@@ -888,6 +1097,81 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                                 first100DateInStreak = tUpdates[i].created_at || tUpdates[i].updated_at;
                             }
 
+                            // 🌟 ตรวจสอบประวัติการตรวจของ SE (วิศวกรสนาม) และ QC (ผู้ตรวจสอบคุณภาพ)
+                            let latestSEUpdate: any = null;
+                            let latestQCUpdate: any = null;
+
+                            for (let i = tUpdates.length - 1; i >= 0; i--) {
+                              const u = tUpdates[i];
+                              const act = u.action || '';
+                              const role = u.role || '';
+                              if (!latestSEUpdate && (
+                                act.includes('Site Engineer') ||
+                                role === 'Site Engineer' ||
+                                act === 'วิศวกรอนุมัติ' ||
+                                act === 'วิศวกรสั่งแก้'
+                              )) {
+                                latestSEUpdate = u;
+                              }
+                              if (!latestQCUpdate && (
+                                act.includes('QC') ||
+                                role === 'QC'
+                              )) {
+                                latestQCUpdate = u;
+                              }
+                              if (latestSEUpdate && latestQCUpdate) break;
+                            }
+
+                            const mapRole = latestUpdatesMap[key]?.role;
+                            const mapAction = latestUpdatesMap[key]?.action || '';
+                            if (!latestSEUpdate && (mapRole === 'Site Engineer' || mapAction.includes('Site Engineer'))) {
+                              latestSEUpdate = latestUpdatesMap[key];
+                            }
+                            if (!latestQCUpdate && (mapRole === 'QC' || mapAction.includes('QC'))) {
+                              latestQCUpdate = latestUpdatesMap[key];
+                            }
+
+                            const isSEApproved = (act: string) => act.includes('อนุมัติ') || act.includes('ผ่าน');
+                            const isSERejected = (act: string) => act.includes('สั่งแก้') || act.includes('ไม่อนุมัติ') || act.includes('ไม่ผ่าน') || act.includes('แจ้งแก้ไข');
+
+                            const isQCApproved = (act: string) => act.includes('อนุมัติ') || act.includes('ผ่าน');
+                            const isQCRejected = (act: string) => act.includes('สั่งแก้') || act.includes('ไม่อนุมัติ') || act.includes('ไม่ผ่าน') || act.includes('แจ้งแก้ไข');
+
+                            let seStatus: 'passed' | 'pending' | 'rejected' | 'none' = 'none';
+                            let qcStatus: 'passed' | 'pending' | 'rejected' | 'none' | 'na' = (task.require_qc === false) ? 'na' : 'none';
+
+                            if (tProgress === 100) {
+                              if (isQCApproved(mapAction) || (latestQCUpdate && isQCApproved(latestQCUpdate.action || ''))) {
+                                seStatus = 'passed';
+                                qcStatus = task.require_qc === false ? 'na' : 'passed';
+                              } else if (isSEApproved(mapAction) || (latestSEUpdate && isSEApproved(latestSEUpdate.action || ''))) {
+                                seStatus = 'passed';
+                                qcStatus = task.require_qc === false ? 'na' : 'pending';
+                              } else if (mapAction === 'ส่งงาน 100%' || mapRole === 'Foreman') {
+                                seStatus = 'pending';
+                                qcStatus = task.require_qc === false ? 'na' : 'none';
+                              } else {
+                                seStatus = 'passed';
+                                qcStatus = task.require_qc === false ? 'na' : 'passed';
+                              }
+                            } else if (tProgress === 95) {
+                              if (isQCRejected(mapAction) || (mapRole === 'QC') || (latestQCUpdate && isQCRejected(latestQCUpdate.action || ''))) {
+                                seStatus = 'passed';
+                                qcStatus = 'rejected';
+                              } else {
+                                seStatus = 'rejected';
+                                qcStatus = task.require_qc === false ? 'na' : 'none';
+                              }
+                            } else {
+                              seStatus = 'none';
+                              qcStatus = task.require_qc === false ? 'na' : 'none';
+                            }
+
+                            const seInspector = latestSEUpdate?.user_name || '';
+                            const seDate = latestSEUpdate?.created_at ? new Date(latestSEUpdate.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }) : '';
+                            const qcInspector = latestQCUpdate?.user_name || '';
+                            const qcDate = latestQCUpdate?.created_at ? new Date(latestQCUpdate.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }) : '';
+
                             const isTaskCompleted = tProgress === 100;
                             let rawDateToUse = first100DateInStreak || dates?.end;
                             
@@ -895,12 +1179,14 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                             let actualEndUI = <div className="w-full text-[9px] sm:text-[11px] font-bold text-green-600 text-center">{actualEndRaw}</div>;
                             
                             if (tProgress === 100 && actualEndRaw !== '-') {
-                                if (tAction === 'QC อนุมัติ' || tAction === 'QC อนุมัติผ่าน' || (!task.require_qc && tAction === 'Site Engineer อนุมัติ')) {
-                                  actualEndUI = <div className="flex items-center justify-center gap-1 w-full text-[9px] sm:text-[11px] font-bold text-emerald-600 text-center"><span>{actualEndRaw}</span><span className="text-[7px] bg-emerald-100 text-emerald-800 px-1 rounded-sm whitespace-nowrap">✅ สำเร็จ</span></div>;
-                                } else if (tAction === 'Site Engineer อนุมัติ' && task.require_qc) {
-                                  actualEndUI = <div className="flex items-center justify-center gap-1 w-full text-[9px] sm:text-[11px] font-bold text-orange-600 text-center"><span>{actualEndRaw}</span><span className="text-[7px] bg-orange-100 text-orange-800 px-1 rounded-sm whitespace-nowrap">🔍 รอ QC</span></div>;
-                                } else if (tAction === 'ส่งงาน 100%' || tRole === 'Foreman') {
-                                  actualEndUI = <div className="flex items-center justify-center gap-1 w-full text-[9px] sm:text-[11px] font-bold text-yellow-600 text-center"><span>{actualEndRaw}</span><span className="text-[7px] bg-yellow-100 text-yellow-800 px-1 rounded-sm whitespace-nowrap">⏳ รอ Site Engineer</span></div>;
+                                if (qcStatus === 'passed' || (seStatus === 'passed' && task.require_qc === false)) {
+                                  actualEndUI = <div className="flex items-center justify-center gap-1 w-full text-[9px] sm:text-[11px] font-bold text-emerald-600 text-center"><span>{actualEndRaw}</span><span className="text-[7px] bg-emerald-100 text-emerald-800 px-1 py-0.5 rounded font-bold whitespace-nowrap">✅ สำเร็จ</span></div>;
+                                } else if (seStatus === 'passed' && qcStatus === 'pending') {
+                                  actualEndUI = <div className="flex items-center justify-center gap-1 w-full text-[9px] sm:text-[11px] font-bold text-purple-600 text-center"><span>{actualEndRaw}</span><span className="text-[7px] bg-purple-100 text-purple-800 px-1 py-0.5 rounded font-bold whitespace-nowrap">🔍 รอ QC</span></div>;
+                                } else if (seStatus === 'pending') {
+                                  actualEndUI = <div className="flex items-center justify-center gap-1 w-full text-[9px] sm:text-[11px] font-bold text-amber-600 text-center"><span>{actualEndRaw}</span><span className="text-[7px] bg-amber-100 text-amber-800 px-1 py-0.5 rounded font-bold whitespace-nowrap">⏳ รอ SE</span></div>;
+                                } else {
+                                  actualEndUI = <div className="flex items-center justify-center gap-1 w-full text-[9px] sm:text-[11px] font-bold text-emerald-600 text-center"><span>{actualEndRaw}</span><span className="text-[7px] bg-emerald-100 text-emerald-800 px-1 py-0.5 rounded font-bold whitespace-nowrap">✅ สำเร็จ</span></div>;
                                 }
                             } else if (actualEndRaw !== '-') {
                                 actualEndUI = <div className="w-full text-[9px] sm:text-[11px] font-bold text-blue-600 text-center">-</div>;
@@ -960,11 +1246,15 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                                                   <span className="text-[10px] font-bold text-slate-400 bg-[#f5f5f7] px-2 py-0.5 rounded border mt-0.5 shrink-0">#{task.task_order}</span>
                                                   <div>
                                                     <h4 className="font-bold text-[#1d1d1f] text-sm leading-tight mb-1">{task.task_name}</h4>
-                                                    {contractorName ? (
+                                                    <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                                                      {contractorName ? (
                                                         <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-100"><HardHat size={12} /> {contractorName ? `${String(contractorName).split(' ')[0]} ${contractorPhone ? `(${contractorPhone})` : ''}` : 'ยังไม่ระบุ'}</span>
                                                     ) : (
                                                         <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-400 bg-[#f5f5f7] px-2 py-0.5 rounded-md"><Users size={12} /> ยังไม่ระบุช่าง</span>
                                                     )}
+                                                      {renderSEBadge(seStatus, seInspector, seDate, openTaskProgress)}
+                                                      {renderQCBadge(qcStatus, qcInspector, qcDate, task.require_qc, openTaskProgress)}
+                                                    </div>
                                                   </div>
                                               </div>
                                               <div className="flex flex-col items-end gap-1 shrink-0">
@@ -1119,21 +1409,23 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                                   }}>
                                 {/* 🌟 2. [ฉบับแก้ไข] บีบความสูงแถวฝั่งซ้าย ล็อก Task Name 2 บรรทัด และล็อกคอลัมน์ให้อยู่กับที่ 🌟 */}
                                 {/* 🌟 ปรับขยายความสูงแถว เพื่อไม่ให้เบอร์โทรโดนทับ (มือถือ 90px / คอม 100px) */}
-                                 <td className={`p-2 sm:p-3 border-b border-r border-black/5 ${isMobileLayout ? 'h-[110px] w-[220px] min-w-[220px] max-w-[220px] z-[45]' : 'h-[120px] w-[280px] min-w-[280px] max-w-[280px] z-[45]'} flex flex-col justify-between bg-white sticky left-0 shadow-[4px_0_10px_-4px_rgba(0,0,0,0.1)]`}>
+                                 <td className={`p-2 sm:p-2.5 border-b border-r border-black/5 ${isMobileLayout ? 'min-h-[135px] w-[220px] min-w-[220px] max-w-[220px] z-[45]' : 'h-[148px] min-h-[148px] w-[280px] min-w-[280px] max-w-[280px] z-[45]'} flex flex-col justify-between bg-white sticky left-0 shadow-[4px_0_10px_-4px_rgba(0,0,0,0.1)]`}>
                                     <div className="min-w-0">
-                                        <div className="flex items-start gap-1.5">
-                                          <span className="text-[10px] sm:text-xs font-bold text-slate-400 shrink-0 bg-[#f5f5f7] px-1.5 py-0.5 rounded border mt-0.5">#{task.task_order}</span>
-                                          {/* 🎯 บังคับชื่องานให้แสดงสูงสุด 2 บรรทัดเท่ากันหมด */}
-                                          <h4 className="font-bold text-[#1d1d1f] text-xs sm:text-sm leading-tight text-ellipsis overflow-hidden [display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical]" title={task.task_name}>
-                                             {task.task_name}
-                                             
-                                             {/* ⛏️ ไอคอนคนทำงาน จะโชว์เฉพาะงานที่มีการอัปเดต "วันนี้" (รวมถึงงานที่เสร็จ 100% วันนี้ด้วย) */}
-                                             {hasUpdateToday && (
-                                                <span title="มีการอัปเดตงานในวันนี้" className="inline-flex items-center justify-center bg-orange-100 text-orange-600 p-[2px] rounded shadow-sm animate-pulse ml-1.5 align-text-bottom">
-                                                   <Pickaxe size={12} />
-                                                </span>
-                                             )}
-                                          </h4>
+                                        <div className="flex items-start justify-between gap-1.5">
+                                          <div className="flex items-start gap-1.5 min-w-0 flex-1">
+                                            <span className="text-[10px] sm:text-xs font-bold text-slate-400 shrink-0 bg-[#f5f5f7] px-1.5 py-0.5 rounded border mt-0.5">#{task.task_order}</span>
+                                            {/* 🎯 บังคับชื่องานให้แสดงสูงสุด 2 บรรทัดเท่ากันหมด */}
+                                            <h4 className="font-bold text-[#1d1d1f] text-xs sm:text-sm leading-tight text-ellipsis overflow-hidden [display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical]" title={task.task_name}>
+                                               {task.task_name}
+                                            </h4>
+                                          </div>
+                                          {/* ⛏️ ไอคอนคนทำงาน จะโชว์เฉพาะงานที่มีการอัปเดต "วันนี้" วางมุมบนขวา สะอาดตา ชัดเจน */}
+                                          {hasUpdateToday && (
+                                             <span title="มีการอัปเดตงานในวันนี้" className="inline-flex items-center gap-0.5 bg-orange-100 text-orange-700 border border-orange-200 px-1.5 py-0.5 rounded text-[9px] font-bold shadow-xs shrink-0 animate-pulse">
+                                                <Pickaxe size={11} className="text-orange-600" />
+                                                <span className="hidden sm:inline">วันนี้</span>
+                                             </span>
+                                          )}
                                        </div>
                                     </div>
 
@@ -1173,6 +1465,11 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                                          )}
                                        </div>
                                        
+                                       {/* 🔍 สัญลักษณ์สถานะตรวจงาน: วิศวกรสนาม (SE) และ ผู้ตรวจสอบ (QC) */}
+                                       <div className="flex items-center gap-1.5 py-0.5">
+                                          {renderSEBadge(seStatus, seInspector, seDate, openTaskProgress)}
+                                          {renderQCBadge(qcStatus, qcInspector, qcDate, task.require_qc, openTaskProgress)}
+                                       </div>
                                        {/* 🌟 แสดงเปอร์เซ็นต์งาน + สถานะล่าช้า/เร็วกว่าแผน */}
                                        <div className="flex items-center justify-between">
                                           <div className="flex items-center gap-1.5 flex-1 pr-2">

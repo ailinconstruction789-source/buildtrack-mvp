@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, ClipboardList, Home, PieChart, BarChartHorizontal, TrendingUp, Building2, Users, Lightbulb, Grid, Calendar, Activity, ShieldAlert, PlusCircle, MapIcon, Building, DollarSign, Monitor, FileSpreadsheet, Wrench, FolderOpen, Smartphone, ChevronRight, Gift, CalendarDays, FileText, ShieldCheck, Key, User, Award, Target } from 'lucide-react';
+import { LayoutDashboard, ClipboardList, Home, PieChart, BarChartHorizontal, TrendingUp, Building2, Users, Lightbulb, Grid, Calendar, Activity, ShieldAlert, PlusCircle, MapIcon, Building, DollarSign, Monitor, FileSpreadsheet, Wrench, FolderOpen, Smartphone, ChevronRight, Gift, CalendarDays, FileText, ShieldCheck, Key, User, Award, Target, Clock } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
 
@@ -122,6 +122,9 @@ const Sidebar = React.memo(({
                       {/* 📜 เมนูแรกสุด: ไทม์ไลน์รวมหน้าไซต์ (สำหรับ Owner และ Admin) */}
                       {(isAdmin || isOwner || isSiteEngineer) && (
                         <button onClick={() => { setView('global-feed'); setSelectedProject(null); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'global-feed' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><ClipboardList size={18} /> Live Feed หน้าไซต์</button>
+                      )}
+                      {(isAdmin || isOwner || isSiteEngineer || isForeman || isQC || isProjectPlanner) && (
+                        <button onClick={() => { setView('daily-activities'); setSelectedProject(null); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'daily-activities' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Clock size={18} /> ดูกิจกรรมประจำวัน</button>
                       )}
                       <button onClick={() => { setView('dashboard'); setSelectedProject(null); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'dashboard' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Home size={18} /> Dashboard</button>
                       {(isAdmin || isProjectPlanner || isQC || isSiteEngineer || isOwner || isForeman) && (
@@ -369,16 +372,11 @@ const Sidebar = React.memo(({
                     </div>
                   )}
 
-                  {(isAdmin || isProjectPlanner || isOwner || isQC || isSiteEngineer || isForeman) && (
+                  {(isAdmin || isProjectPlanner || isOwner) && (
                     <div>
                       <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3 px-2">Planning & Schedule</p>
                       <nav className="space-y-1">
-                        {(isAdmin || isProjectPlanner || isOwner) && (
-                          <button onClick={() => setView('master-gantt')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'master-gantt' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Grid size={18} /> Master Gantt Chart</button>
-                        )}
-                        {(isAdmin || isProjectPlanner || isQC || isSiteEngineer || isOwner || isForeman) && (
-                          <button onClick={() => setView('contractor-schedule')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'contractor-schedule' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Calendar size={18} /> แผนงานผู้รับเหมา</button>
-                        )}
+                        <button onClick={() => setView('master-gantt')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'master-gantt' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Grid size={18} /> Master Gantt Chart</button>
                       </nav>
                     </div>
                   )}

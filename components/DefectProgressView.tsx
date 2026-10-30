@@ -62,6 +62,8 @@ const DefectProgressView = function DefectProgressView(props: DefectProgressView
   // 📸 ขยายขีดจำกัดให้อัปโหลดได้สูงสุด 20 รูปสำหรับทุกตำแหน่งเท่ากัน
   const maxImages = 20;
 
+  const isForeman = currentUserRole === 'Foreman' || (currentUserRole || '').toLowerCase() === 'foreman';
+
   const selectionKey = JSON.stringify([selectedDefect?.id, selectedPlot?.id, loggedInUser?.id, loggedInUser?.authUserId, loggedInUser?.username, currentUserRole]);
   const successfulSelection = useRef<string | null>(null);
   const [historyState, setHistoryState] = useState<{ key: string; status: 'loading' | 'ready' | 'error'; hasData: boolean }>({ key: selectionKey, status: 'loading', hasData: false });
@@ -193,11 +195,11 @@ const DefectProgressView = function DefectProgressView(props: DefectProgressView
                                       {/* สังเกตตรงนี้: ผมแอบเติม pr-8 เข้าไปท้ายสุดของบรรทัดเพื่อไม่ให้ข้อความไปบังปุ่มลบครับ */}
                                      <div className={`flex-1 bg-white ${isMobileLayout ? 'p-3 rounded-2xl' : 'p-5 sm:p-6 rounded-[1.5rem] sm:rounded-[2rem]'} border ${isQCPass ? 'border-emerald-200 bg-emerald-50/20' : isQCFail ? 'border-rose-200 bg-rose-50/20' : 'border-black/5'} shadow-sm relative pr-8`}>
                                          
-                                         {/* 🗑️ ปุ่มลบรายงาน (สิทธิ์: เฉพาะ Admin เท่านั้น) และงานนั้นต้องยังไม่จบ 100% */}
-                                         {historyReady && isAdmin && !isTaskCompleted && (
+                                         {/* 🗑️ ปุ่มลบรายงาน (สิทธิ์: Admin หรือ Foreman) และงานนั้นต้องยังไม่จบ 100% */}
+                                         {historyReady && (isAdmin || isForeman) && !isTaskCompleted && (
                                             <button
                                                onClick={() => handleDeleteDefectUpdate(update.id, selectedDefect.id, selectedPlot.id)}
-                                               className="absolute top-3 right-3 text-slate-400 hover:text-rose-500 p-1.5 hover:bg-rose-50 rounded-xl transition-all hover:scale-105"
+                                               className="absolute top-3 right-3 text-slate-400 hover:text-rose-500 p-1.5 hover:bg-rose-50 rounded-xl transition-all hover:scale-105 cursor-pointer"
                                                title="ลบรายงานความผิดพลาดชิ้นนี้"
                                             >
                                                <Trash2 size={15} />

@@ -10,6 +10,8 @@ export interface HouseType {
   id: string;
   type_name: string;
   memo?: string;
+  floor_count?: number | null; // 1 = Single storey, 2 = Two storeys, null = Unspecified
+  is_infrastructure?: boolean;
   visual_config?: Record<string, any>;
   created_at: string;
 }
@@ -39,7 +41,7 @@ export interface Plot {
   type?: string;
   overview_image_url?: string;
   created_at: string;
-  house_types?: { type_name: string };
+  house_types?: { type_name: string; floor_count?: number | null; is_infrastructure?: boolean };
   // Admin Document Updates
   permit_date?: string;
   registration_date?: string;

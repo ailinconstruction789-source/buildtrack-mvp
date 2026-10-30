@@ -1,12 +1,14 @@
 -- ==============================================================================
--- MIGRATION: Update Delayed Status Threshold in vw_plot_overall_status
+-- MIGRATION: Update Delayed Status Threshold & Completed Criteria in vw_plot_overall_status
 -- ==============================================================================
--- เกณฑ์การคำนวณ:
--- 1. ทำจริง < แผน (actual_avg < planned_avg) => 'delayed' (ล่าช้ากว่าแผน - ไม่มีหัก 10% แล้ว)
--- 2. แผน <= ทำจริง <= แผน + 10 => 'on-track' (ตามแผน - เกินแผน 1-10% ถือว่าตามแผน)
--- 3. ทำจริง > แผน + 10 => 'ahead' (เร็วกว่าแผน - เกินกว่า 10%)
--- 4. ทำจริง >= 100 และ แผน >= 100 => 'completed' (เสร็จสมบูรณ์)
--- 5. sale_status = 'ready_for_sale' => 'ready_for_sale'
+-- เกณฑ์การคำนวณสถานะ:
+-- 1. ถ้าแปลงถูกระบุว่าเสร็จสมบูรณ์/โอนแล้ว (p.is_completed = true) หรือ ทำจริงเสร็จ 100% (actual_avg >= 100) 
+--    => 'completed' (สีเขียวเสร็จสมบูรณ์ทันที โดยไม่ต้องรอให้ปฏิทินแผนงานถึง 100%)
+-- 2. ถ้า sale_status = 'ready_for_sale' => 'ready_for_sale' (สีทองบ้านพร้อมขาย)
+-- 3. ถ้าไม่มีงานหรือความคืบหน้าเป็น 0 => 'none'
+-- 4. ถ้าทำจริงล่าช้ากว่าแผน (actual_avg < planned_avg) => 'delayed' (สีแดงล่าช้า)
+-- 5. ถ้าทำจริงเร็วกว่าแผนเกิน 10% (actual_avg > planned_avg + 10) => 'ahead' (สีม่วงเร็วกว่าแผน)
+-- 6. อื่นๆ => 'on-track' (สีฟ้าตามแผน)
 -- ==============================================================================
 
 DROP VIEW IF EXISTS vw_plot_overall_status CASCADE;
@@ -26,7 +28,6 @@ WITH task_status AS (
             WHEN CURRENT_DATE >= s.planned_end::date THEN 100
             WHEN CURRENT_DATE <= s.planned_start::date THEN 0
             ELSE 
-               -- date - date yields an integer (days). We cast to numeric for division.
                ((CURRENT_DATE - s.planned_start::date)::numeric / NULLIF((s.planned_end::date - s.planned_start::date)::numeric, 0)) * 100
         END AS planned_progress
     FROM plots p
@@ -54,6 +55,7 @@ plot_averages AS (
         p.project_name,
         p.house_type_id,
         p.sale_status,
+        p.is_completed,
         COALESCE(a.task_count, 0) AS task_count,
         COALESCE(
             CASE 
@@ -80,10 +82,10 @@ SELECT
     actual_avg,
     planned_avg,
     CASE 
+        WHEN is_completed = true OR actual_avg >= 100 THEN 'completed'
         WHEN sale_status = 'ready_for_sale' THEN 'ready_for_sale'
         WHEN task_count = 0 THEN 'none'
         WHEN actual_avg = 0 AND planned_avg = 0 THEN 'none'
-        WHEN actual_avg >= 100 AND planned_avg >= 100 THEN 'completed'
         WHEN actual_avg < planned_avg THEN 'delayed'
         WHEN actual_avg > planned_avg + 10 THEN 'ahead'
         ELSE 'on-track'

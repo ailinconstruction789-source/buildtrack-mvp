@@ -22,3 +22,10 @@ GROUP BY
     EXTRACT(ISODOW FROM (created_at AT TIME ZONE 'Asia/Bangkok')),
     EXTRACT(DAY FROM (created_at AT TIME ZONE 'Asia/Bangkok')),
     EXTRACT(HOUR FROM (created_at AT TIME ZONE 'Asia/Bangkok'));
+
+
+-- Grant permissions for PostgREST / Supabase client
+GRANT SELECT ON vw_qc_se_performance TO authenticated, anon, service_role;
+
+-- Reload Supabase PostgREST schema cache
+NOTIFY pgrst, 'reload schema';

@@ -165,7 +165,7 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
         loadedAt: null as number | null,
         promise: Promise.all([
           fetchSalesStartupLeads(),
-          fetchWithoutLimit('plots', null, 'id', true, '*, house_types(type_name)', 'id', true),
+          fetchWithoutLimit('plots', null, 'id', true, '*, house_types(type_name, floor_count, is_infrastructure)', 'id', true),
         ]).then(([leads, plots]) => ({ leads, plots })),
       };
       next.promise = next.promise.then(result => {
@@ -308,7 +308,7 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
         leadsData
       ] = await Promise.all([
         referenceCache.promise,
-        salesStartup ? salesStartup.then(data => data.plots as BuildTrackDataRow[]) : fetchWithoutLimit('plots', null, 'created_at', true, '*, house_types(type_name)', 'id', true),
+        salesStartup ? salesStartup.then(data => data.plots as BuildTrackDataRow[]) : fetchWithoutLimit('plots', null, 'created_at', true, '*, house_types(type_name, floor_count, is_infrastructure)', 'id', true),
         requireSuccessfulRead(supabase.from('notifications').select('*').or(`target_user.eq.${username},target_role.eq.${role}`).order('created_at', { ascending: false })),
         fetchWithoutLimit('vw_plot_progress', null, 'plot_id', true, '*', null, true),
         requireSuccessfulRead(supabase.from('vw_project_progress').select('*')),
@@ -324,8 +324,8 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
         salesWorkspaceOnly ? [] : fetchWithoutLimit('vw_plot_overall_status', null, 'plot_id', true, '*', null, true),
         salesWorkspaceOnly || constructionOverviewOnly ? null : fetchWithoutLimit('vw_qc_se_performance', null, 'date', true, '*', ['role', 'action', 'day_of_week', 'day_of_month', 'hour_of_day'], true)
           .catch(error => {
-            console.error('Error fetching QC performance:', error);
-            return null;
+            console.warn('QC performance view unavailable (vw_qc_se_performance):', error?.message || error?.details || 'View not found or permission not granted');
+            return [];
           }),
         salesStartup ? salesStartup.then(data => orderPlotMatchingLeads(data.leads) as BuildTrackDataRow[]) : fetchWithoutLimit('leads', null, 'created_at', false, 'id, customer_name, phone, project_name, interested_plot_id, interested_plot_name, status, crm_status, booking_date, transferred_date, agent_name, notes', 'id', true)
       ]);

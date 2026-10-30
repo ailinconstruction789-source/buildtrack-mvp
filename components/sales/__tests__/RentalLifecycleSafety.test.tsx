@@ -29,9 +29,10 @@ const fail = (message = 'write denied'): Result => ({ data: null, error: { messa
 function defaultResult(q: Query): Result {
   if (q.action !== 'read') return ok({ id: q.table + '-saved' });
   if (q.table === 'plots') return ok([{ id: 'plot-1', plot_name: '1', project_name: 'Project', has_customer: false }]);
+  if (q.table === 'leads' && q.filters.some(([key]) => key === 'id')) return ok(q.single ? lead : [lead]);
   if (q.table === 'rental_payments') return ok(q.columns?.includes('savings_amount') ? [{ savings_amount: 5000 }] : []);
   if (q.table === 'rental_contracts') {
-    if (q.filters.some(([key]) => key === 'lead_id')) return ok([]);
+    if (q.filters.some(([key]) => key === 'lead_id' || key === 'plot_id')) return ok([]);
     return ok(q.single ? contract : [contract]);
   }
   return ok([]);

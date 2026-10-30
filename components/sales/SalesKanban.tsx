@@ -3086,6 +3086,21 @@ export default function SalesKanban({
                   </div>
                   
                   {editor?.loading && <p role="status" className="text-xs text-slate-500">กำลังโหลดข้อมูลล่าสุด…</p>}
+                  {editor?.conflictNotice && (
+                    <div role="alert" className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-1.5 font-medium">
+                        <span className="shrink-0">⚠️</span>
+                        <span>{editor.conflictNotice}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={editor.resolveConflict}
+                        className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg text-xs shrink-0 cursor-pointer shadow-sm transition-colors"
+                      >
+                        ยอมรับสถานะใหม่และปรับปรุงตัวเลือก
+                      </button>
+                    </div>
+                  )}
                   {editor?.error && <p role="alert" className="text-sm text-red-700">{editor.error}</p>}
                   <form onSubmit={handleUpdateCustomer} className="space-y-4 flex-1" autoComplete="off">
                     <div className="flex flex-col items-center p-4 bg-slate-50 border border-slate-100 rounded-2xl text-center mb-2">
@@ -3550,7 +3565,7 @@ export default function SalesKanban({
                   panelState.lead?.status === 'Rented' ||
                   String(panelState.lead?.crm_status || '').includes('เช่า')
                 );
-                return (!isRentalDeal && ['booked', 'transferred'].includes(getLeadStage(panelState.lead))) ? <SalesDealStatusModal
+                return (!isRentalDeal && ['booked', 'transferred', 'loan'].includes(getLeadStage(panelState.lead))) ? <SalesDealStatusModal
                   lead={panelState.lead} currentUser={user}
                   onClose={() => setPanelState({ type: 'default', plotId: '', lead: null })}
                   onSaved={async notice => {

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useTransition } from 'react';
 import { 
   Map as MapIcon, Monitor, Search, ZoomOut, ZoomIn, Loader2, Paintbrush, 
-  Eraser, Pickaxe, HardHat, Activity, Trash2, Settings, PlusCircle, Grid, Filter, X, TreePine, Check, Flag, FileSpreadsheet
+  Eraser, Pickaxe, HardHat, Activity, Trash2, Settings, PlusCircle, Grid, Filter, X, TreePine, Check, Flag, FileSpreadsheet, Palette
 } from 'lucide-react';
 import WeeklyProgressReportModal from './WeeklyProgressReportModal';
 import MeterStatusBadges from './MeterStatusBadges';
@@ -157,6 +157,7 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
 
   const [isUtilityMode, setIsUtilityMode] = useState(false);
   const [isWeeklyReportOpen, setIsWeeklyReportOpen] = useState(false);
+  const [showColorLegend, setShowColorLegend] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   const plotsById = useMemo(() => indexFirstBy(plots || [], p => p.id), [plots]);
@@ -289,16 +290,51 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                         <div>
                           <h2 className="text-xl sm:text-4xl font-bold text-[#1d1d1f] italic uppercase tracking-tighter">{selectedProject.name} MAP</h2>
                           <p className="text-[#86868b] text-[10px] sm:text-sm font-bold uppercase tracking-widest flex items-center gap-1.5 sm:gap-2 mt-0.5 sm:mt-1"><MapIcon size={12} className="sm:w-4 sm:h-4"/> จำลองผังโครงการ ({gridCols}x{gridRows} Grid)</p>
-                          <div className="flex items-center gap-1 sm:gap-2 mt-1.5 flex-wrap">
-                            <span className="inline-flex items-center gap-1 text-[9px] sm:text-[11px] font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md shadow-2xs">
+                          {/* 🎨 แถบสรุปสถานะสี & กิจกรรมในแปลง */}
+                          <div className="flex items-center gap-1 sm:gap-1.5 mt-2 flex-wrap">
+                            {/* สีสถานะแปลง */}
+                            <span className="inline-flex items-center gap-1 text-[9px] sm:text-[11px] font-bold text-amber-900 bg-amber-50 border border-amber-300 px-2 py-0.5 rounded-md shadow-2xs" title="โอนกรรมสิทธิ์เรียบร้อยแล้ว">
+                              <span className="w-2 h-2 rounded-full bg-amber-500"></span> 🔑 โอนแล้ว
+                            </span>
+                            <span className="inline-flex items-center gap-1 text-[9px] sm:text-[11px] font-bold text-emerald-900 bg-emerald-50 border border-emerald-300 px-2 py-0.5 rounded-md shadow-2xs" title="งานก่อสร้างเสร็จ 100% ครบถ้วน">
+                              <span className="w-2 h-2 rounded-full bg-emerald-500"></span> เสร็จ 100%
+                            </span>
+                            <span className="inline-flex items-center gap-1 text-[9px] sm:text-[11px] font-bold text-cyan-900 bg-cyan-50 border border-cyan-300 px-2 py-0.5 rounded-md shadow-2xs" title="งานหลักในแผนเสร็จ 100% ผ่าน QC พร้อมขาย">
+                              <span className="w-2 h-2 rounded-full bg-cyan-500"></span> พร้อมขาย
+                            </span>
+                            <span className="inline-flex items-center gap-1 text-[9px] sm:text-[11px] font-bold text-blue-900 bg-blue-50 border border-blue-300 px-2 py-0.5 rounded-md shadow-2xs" title="งานกำลังก่อสร้างดำเนินไปตามแผน">
+                              <span className="w-2 h-2 rounded-full bg-blue-500"></span> ตามแผน
+                            </span>
+                            <span className="inline-flex items-center gap-1 text-[9px] sm:text-[11px] font-bold text-rose-900 bg-rose-50 border border-rose-300 px-2 py-0.5 rounded-md shadow-2xs" title="งานก่อสร้างล่าช้ากว่าแผน">
+                              <span className="w-2 h-2 rounded-full bg-rose-500"></span> ล่าช้า
+                            </span>
+
+                            <div className="h-3.5 w-px bg-slate-300 mx-0.5 hidden sm:block"></div>
+
+                            {/* สัญลักษณ์กิจกรรมวันนี้ */}
+                            <span className="inline-flex items-center gap-1 text-[9px] sm:text-[11px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md shadow-2xs">
                               <span className="w-2 h-2 rounded-full bg-yellow-400"></span> ⛏️ ช่างเข้างาน
                             </span>
                             <span className="inline-flex items-center gap-1 text-[9px] sm:text-[11px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md shadow-2xs">
-                              <span className="w-2 h-2 rounded-full bg-sky-800"></span> ⛑️ วิศวกรตรวจ (หมวกขาว)
+                              <span className="w-2 h-2 rounded-full bg-sky-800"></span> ⛑️ วิศวกรตรวจ
                             </span>
                             <span className="inline-flex items-center gap-1 text-[9px] sm:text-[11px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md shadow-2xs">
-                              <span className="w-2 h-2 rounded-full bg-emerald-600"></span> ⛑️ QC ตรวจ (หมวกเขียว)
+                              <span className="w-2 h-2 rounded-full bg-emerald-600"></span> ⛑️ QC ตรวจ
                             </span>
+
+                            {/* ปุ่มเปิด/ปิดคำอธิบายสีทั้งหมด */}
+                            <button
+                              onClick={() => setShowColorLegend(!showColorLegend)}
+                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[9px] sm:text-[11px] font-black transition-all border shadow-2xs ml-auto sm:ml-1 cursor-pointer ${
+                                showColorLegend 
+                                  ? 'bg-indigo-600 text-white border-indigo-700 shadow-sm' 
+                                  : 'bg-white text-indigo-700 border-indigo-200 hover:bg-indigo-50'
+                              }`}
+                              title="คลิกเพื่อดูคำอธิบายสีและสัญลักษณ์ทั้งหมดแบบละเอียด"
+                            >
+                              <Palette size={12} className={showColorLegend ? 'text-white' : 'text-indigo-600'} />
+                              <span>{showColorLegend ? 'ซ่อนคำอธิบาย' : '🎨 คำอธิบายสี & สัญลักษณ์ทั้งหมด'}</span>
+                            </button>
                           </div>
                         </div>
                         
@@ -345,6 +381,219 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                           )}
                         </div>
                      </div>
+
+                     {/* 🌟 Color & Status Legend Card (คำอธิบายสีและสัญลักษณ์แบบละเอียด) 🌟 */}
+                     {showColorLegend && (
+                       <div className="mb-4 sm:mb-6 p-4 sm:p-5 bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 border-2 border-indigo-100 rounded-2xl shadow-md animate-in fade-in slide-in-from-top-2">
+                         <div className="flex items-center justify-between pb-3 border-b border-slate-200 mb-3.5">
+                           <div className="flex items-center gap-2">
+                             <div className="p-1.5 rounded-lg bg-indigo-600 text-white shadow-xs">
+                               <Palette size={16} />
+                             </div>
+                             <div>
+                               <h3 className="text-xs sm:text-sm font-black text-slate-800">คู่มือคำอธิบายสีแปลง และ สัญลักษณ์ผังโครงการ</h3>
+                               <p className="text-[10px] sm:text-xs text-slate-500 font-medium">มาตรฐานการแสดงผลสถานะงานก่อสร้าง และ สถานะการส่งมอบโอนกรรมสิทธิ์</p>
+                             </div>
+                           </div>
+                           <button 
+                             onClick={() => setShowColorLegend(false)}
+                             className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                             title="ปิดคำอธิบาย"
+                           >
+                             <X size={16} />
+                           </button>
+                         </div>
+
+                         {/* หมวดหมู่ 1: ความหมายสีของแปลง */}
+                         <div className="mb-4">
+                           <div className="text-[11px] sm:text-xs font-black text-slate-700 uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
+                             <span>🎨 ความหมายสีของแปลงบ้าน (Plot Status Colors):</span>
+                           </div>
+                           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                             
+                             {/* สีทอง */}
+                             <div className="p-2.5 rounded-xl bg-amber-50/90 border-2 border-amber-500 shadow-xs flex items-start gap-2.5">
+                               <div className="w-5 h-5 rounded-lg bg-amber-400 border border-amber-600 flex items-center justify-center text-xs shrink-0 mt-0.5">
+                                 🔑
+                               </div>
+                               <div className="min-w-0">
+                                 <div className="flex items-center gap-1 font-black text-amber-950 text-xs">
+                                   <span>สีทอง (Gold)</span>
+                                   <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-amber-200/80 text-amber-900">ขั้นสูงสุด</span>
+                                 </div>
+                                 <p className="text-[10px] sm:text-[11px] text-amber-900 font-bold mt-0.5">โอนกรรมสิทธิ์แล้ว</p>
+                                 <p className="text-[9px] text-amber-700 mt-0.5 leading-snug">บ้านส่งมอบและบันทึกโอนในระบบเรียบร้อย (`is_completed: true` หรือ `transferred`)</p>
+                                </div>
+                             </div>
+
+                             {/* สีเขียว */}
+                             <div className="p-2.5 rounded-xl bg-emerald-50/90 border-2 border-emerald-500 shadow-xs flex items-start gap-2.5">
+                               <div className="w-5 h-5 rounded-lg bg-emerald-400 border border-emerald-600 flex items-center justify-center text-xs shrink-0 mt-0.5 text-white font-black">
+                                 ✓
+                               </div>
+                               <div className="min-w-0">
+                                 <div className="flex items-center gap-1 font-black text-emerald-950 text-xs">
+                                   <span>สีเขียว 100% (Green)</span>
+                                 </div>
+                                 <p className="text-[10px] sm:text-[11px] text-emerald-900 font-bold mt-0.5">สร้างเสร็จสมบูรณ์</p>
+                                 <p className="text-[9px] text-emerald-700 mt-0.5 leading-snug">งานก่อสร้างและงานตรวจผ่านครบ 100% (พร้อมให้ลูกค้าตรวจรับ หรือ สต็อกสร้างเสร็จสมบูรณ์)</p>
+                               </div>
+                             </div>
+
+                             {/* สีฟ้าอมเขียว Cyan */}
+                             <div className="p-2.5 rounded-xl bg-cyan-50/90 border-2 border-cyan-500 shadow-xs flex items-start gap-2.5">
+                               <div className="w-5 h-5 rounded-lg bg-cyan-400 border border-cyan-600 flex items-center justify-center text-xs shrink-0 mt-0.5">
+                                 🏷️
+                               </div>
+                               <div className="min-w-0">
+                                 <div className="flex items-center gap-1 font-black text-cyan-950 text-xs">
+                                   <span>สีฟ้าอมเขียว (Cyan)</span>
+                                 </div>
+                                 <p className="text-[10px] sm:text-[11px] text-cyan-900 font-bold mt-0.5">บ้านพร้อมขาย / รอโอน</p>
+                                 <p className="text-[9px] text-cyan-700 mt-0.5 leading-snug">งานหลักในแผนก่อสร้างเสร็จผ่าน QC 100% และเปิดขาย (`ready_for_sale`)</p>
+                               </div>
+                             </div>
+
+                             {/* สีน้ำเงิน */}
+                             <div className="p-2.5 rounded-xl bg-blue-50/90 border-2 border-blue-500 shadow-xs flex items-start gap-2.5">
+                               <div className="w-5 h-5 rounded-lg bg-blue-400 border border-blue-600 flex items-center justify-center text-xs shrink-0 mt-0.5 text-white font-black">
+                                 ▶
+                               </div>
+                               <div className="min-w-0">
+                                 <div className="flex items-center gap-1 font-black text-blue-950 text-xs">
+                                   <span>สีน้ำเงิน (Blue)</span>
+                                 </div>
+                                 <p className="text-[10px] sm:text-[11px] text-blue-900 font-bold mt-0.5">กำลังทำตามแผน (On Track)</p>
+                                 <p className="text-[9px] text-blue-700 mt-0.5 leading-snug">ความคืบหน้างานจริงดำเนินไปตรงตามแผนงาน (ผลต่างเปอร์เซ็นต์เป็น 0% หรือปกติ)</p>
+                               </div>
+                             </div>
+
+                             {/* สีคราม Indigo */}
+                             <div className="p-2.5 rounded-xl bg-indigo-50/90 border-2 border-indigo-500 shadow-xs flex items-start gap-2.5">
+                               <div className="w-5 h-5 rounded-lg bg-indigo-400 border border-indigo-600 flex items-center justify-center text-xs shrink-0 mt-0.5 text-white font-black">
+                                 ▲
+                               </div>
+                               <div className="min-w-0">
+                                 <div className="flex items-center gap-1 font-black text-indigo-950 text-xs">
+                                   <span>สีคราม (Indigo)</span>
+                                 </div>
+                                 <p className="text-[10px] sm:text-[11px] text-indigo-900 font-bold mt-0.5">เร็วกว่าแผน (Ahead)</p>
+                                 <p className="text-[9px] text-indigo-700 mt-0.5 leading-snug">งานก่อสร้างจริงเสร็จนำหน้าแผนงาน (แสดงเปอร์เซ็นต์ความต่างเป็นบวก เช่น +5%)</p>
+                               </div>
+                             </div>
+
+                             {/* สีแดง Rose */}
+                             <div className="p-2.5 rounded-xl bg-rose-50/90 border-2 border-rose-500 shadow-xs flex items-start gap-2.5">
+                               <div className="w-5 h-5 rounded-lg bg-rose-400 border border-rose-600 flex items-center justify-center text-xs shrink-0 mt-0.5 text-white font-black">
+                                 ▼
+                               </div>
+                               <div className="min-w-0">
+                                 <div className="flex items-center gap-1 font-black text-rose-950 text-xs">
+                                   <span>สีแดง (Rose/Red)</span>
+                                 </div>
+                                 <p className="text-[10px] sm:text-[11px] text-rose-900 font-bold mt-0.5">ล่าช้ากว่าแผน (Delayed)</p>
+                                 <p className="text-[9px] text-rose-700 mt-0.5 leading-snug">งานก่อสร้างช้ากว่าแผน (แสดงผลต่างเปอร์เซ็นต์เป็นลบ เช่น -10%)</p>
+                               </div>
+                             </div>
+
+                             {/* สีเทา Slate */}
+                             <div className="p-2.5 rounded-xl bg-slate-50/90 border-2 border-slate-300 shadow-xs flex items-start gap-2.5">
+                               <div className="w-5 h-5 rounded-lg bg-slate-300 border border-slate-400 flex items-center justify-center text-xs shrink-0 mt-0.5 text-slate-600 font-black">
+                                 -
+                               </div>
+                               <div className="min-w-0">
+                                 <div className="flex items-center gap-1 font-black text-slate-900 text-xs">
+                                   <span>สีเทา (Slate)</span>
+                                 </div>
+                                 <p className="text-[10px] sm:text-[11px] text-slate-700 font-bold mt-0.5">รอดำเนินการ (Pending)</p>
+                                 <p className="text-[9px] text-slate-500 mt-0.5 leading-snug">ยังไม่เริ่มดำเนินงาน (ความคืบหน้า 0%)</p>
+                               </div>
+                             </div>
+
+                           </div>
+                         </div>
+
+                         {/* หมวดหมู่ 2: ความหมายของสัญลักษณ์ & ไอคอน */}
+                         <div className="pt-3 border-t border-slate-200">
+                           <div className="text-[11px] sm:text-xs font-black text-slate-700 uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
+                             <span>💡 สัญลักษณ์และไอคอนบนแปลงบ้าน (Symbols & Badges):</span>
+                           </div>
+                           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] sm:text-xs">
+                             <div className="flex items-center gap-2 p-2 rounded-lg bg-white border border-slate-200 shadow-2xs">
+                               <span className="text-base">🔑</span>
+                               <div>
+                                 <span className="font-black text-slate-800">กุญแจทอง</span>
+                                 <p className="text-[9px] text-slate-500">โอนกรรมสิทธิ์ให้ลูกค้าแล้ว</p>
+                               </div>
+                             </div>
+
+                             <div className="flex items-center gap-2 p-2 rounded-lg bg-white border border-slate-200 shadow-2xs">
+                               <span className="text-base">👤</span>
+                               <div>
+                                 <span className="font-black text-slate-800">คน (Customer)</span>
+                                 <p className="text-[9px] text-slate-500">มีลูกค้าจอง / ทำสัญญาแล้ว</p>
+                               </div>
+                             </div>
+
+                             <div className="flex items-center gap-2 p-2 rounded-lg bg-white border border-slate-200 shadow-2xs">
+                               <div className="w-5 h-5 rounded-full bg-yellow-400 flex items-center justify-center text-slate-900 text-[10px] font-black shrink-0">
+                                 ⛏️
+                               </div>
+                               <div>
+                                 <span className="font-black text-slate-800">ค้อนเหลือง (บนแปลง)</span>
+                                 <p className="text-[9px] text-slate-500">มีอัปเดตงานก่อสร้างวันนี้</p>
+                               </div>
+                             </div>
+
+                             <div className="flex items-center gap-2 p-2 rounded-lg bg-white border border-slate-200 shadow-2xs">
+                               <div className="w-5 h-5 rounded-full bg-purple-600 flex items-center justify-center text-white text-[10px] font-black shrink-0">
+                                 ⛏️
+                               </div>
+                               <div>
+                                 <span className="font-black text-slate-800">ค้อนม่วง (ล่างแปลง)</span>
+                                 <p className="text-[9px] text-slate-500">มีงานตรวจรับมอบบ้านวันนี้</p>
+                               </div>
+                             </div>
+
+                             <div className="flex items-center gap-2 p-2 rounded-lg bg-white border border-slate-200 shadow-2xs">
+                               <div className="w-5 h-5 rounded-full bg-sky-800 flex items-center justify-center text-white text-[10px] font-black shrink-0">
+                                 ⛑️
+                               </div>
+                               <div>
+                                 <span className="font-black text-slate-800">หมวกขาว (วิศวกร)</span>
+                                 <p className="text-[9px] text-slate-500">วิศวกรโครงการเข้าตรวจวันนี้</p>
+                               </div>
+                             </div>
+
+                             <div className="flex items-center gap-2 p-2 rounded-lg bg-white border border-slate-200 shadow-2xs">
+                               <div className="w-5 h-5 rounded-full bg-emerald-600 flex items-center justify-center text-white text-[10px] font-black shrink-0">
+                                 ⛑️
+                               </div>
+                               <div>
+                                 <span className="font-black text-slate-800">หมวกเขียว (QC)</span>
+                                 <p className="text-[9px] text-slate-500">เจ้าหน้าที่ QC เข้าตรวจวันนี้</p>
+                               </div>
+                             </div>
+
+                             <div className="flex items-center gap-2 p-2 rounded-lg bg-white border border-slate-200 shadow-2xs">
+                               <span className="text-base animate-pulse">🚨</span>
+                               <div>
+                                 <span className="font-black text-rose-700">สัญญาณเตือนภัย</span>
+                                 <p className="text-[9px] text-slate-500">เร่งด่วน! ล่าช้า + มีลูกค้า</p>
+                               </div>
+                             </div>
+
+                             <div className="flex items-center gap-2 p-2 rounded-lg bg-white border border-slate-200 shadow-2xs">
+                               <span className="text-base">🌿</span>
+                               <div>
+                                 <span className="font-black text-emerald-800">ลายหญ้า</span>
+                                 <p className="text-[9px] text-slate-500">งานปูหญ้าเสร็จ 100%</p>
+                               </div>
+                             </div>
+                           </div>
+                         </div>
+                       </div>
+                     )}
 
                      {/* Mobile Search Bar */}
                      <TaskSearchRadar uniqueTaskNamesList={uniqueTaskNamesList} searchTask={searchTask} setSearchTask={setSearchTask} isMobile={true} />
@@ -451,8 +700,9 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                              );
                            })}
                          </div>
-                         {mapGrid.filter((c: any) => c.type === 'fence-h').map((c: any) => (<div key={c.id} className={`absolute border-t-4 border-dashed ${isEditMapMode ? 'border-slate-300' : 'border-orange-500'} z-20 pointer-events-none transition-all ${isDrawingInfraGlobal ? 'opacity-40 grayscale' : ''} ${isUtilityMode ? 'hidden' : ''}`} style={{ left: `${(c.x / gridCols) * 100}%`, top: `${(c.y / gridRows) * 100}%`, width: `${(1 / gridCols) * 100}%`, height: '6px', transform: 'translateY(-50%)' }} />))}
-                         {mapGrid.filter((c: any) => c.type === 'fence-v').map((c: any) => (<div key={c.id} className={`absolute border-l-4 border-dashed ${isEditMapMode ? 'border-slate-300' : 'border-orange-500'} z-20 pointer-events-none transition-all ${isDrawingInfraGlobal ? 'opacity-40 grayscale' : ''} ${isUtilityMode ? 'hidden' : ''}`} style={{ left: `${(c.x / gridCols) * 100}%`, top: `${(c.y / gridRows) * 100}%`, width: '6px', height: `${(1 / gridRows) * 100}%`, transform: 'translateX(-50%)' }} />))}
+                         {/* 🌟 ซ่อนเส้นประรั้วในโหมดดูผังปกติ (แสดงเป็นเส้นบางเฉพาะตอนเปิดโหมดแก้ไขผัง เพื่อความสบายตาและไม่บดบังแปลงบ้าน) */}
+                         {isEditMapMode && mapGrid.filter((c: any) => c.type === 'fence-h').map((c: any) => (<div key={c.id} className={`absolute border-t-2 border-dashed border-slate-300 z-20 pointer-events-none transition-all ${isDrawingInfraGlobal ? 'opacity-40 grayscale' : ''} ${isUtilityMode ? 'hidden' : ''}`} style={{ left: `${(c.x / gridCols) * 100}%`, top: `${(c.y / gridRows) * 100}%`, width: `${(1 / gridCols) * 100}%`, height: '4px', transform: 'translateY(-50%)' }} />))}
+                         {isEditMapMode && mapGrid.filter((c: any) => c.type === 'fence-v').map((c: any) => (<div key={c.id} className={`absolute border-l-2 border-dashed border-slate-300 z-20 pointer-events-none transition-all ${isDrawingInfraGlobal ? 'opacity-40 grayscale' : ''} ${isUtilityMode ? 'hidden' : ''}`} style={{ left: `${(c.x / gridCols) * 100}%`, top: `${(c.y / gridRows) * 100}%`, width: '4px', height: `${(1 / gridRows) * 100}%`, transform: 'translateX(-50%)' }} />))}
                          
                          
                          {/* 🌟 Infrastructure Edge Lines 🌟 */}
@@ -657,8 +907,8 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                               }
                            } else {
                               // ถ้าไม่ได้ค้นหาช่าง ให้ใส่สไตล์ Overdue / ล่าช้ากว่าแผน
-                              const isOverdue = statusInfo.planned === 100 && statusInfo.actual < 100 && statusInfo.status !== 'ready_for_sale' && !plotInfo.is_completed;
-                              const isDelayed = statusInfo.status === 'delayed' && statusInfo.status !== 'ready_for_sale' && !plotInfo.is_completed;
+                              const isOverdue = statusInfo.planned === 100 && statusInfo.actual < 100 && statusInfo.status !== 'ready_for_sale' && statusInfo.status !== 'transferred' && !plotInfo.is_completed;
+                              const isDelayed = statusInfo.status === 'delayed' && statusInfo.status !== 'ready_for_sale' && statusInfo.status !== 'transferred' && !plotInfo.is_completed;
                               const isCritical = (isOverdue || isDelayed) && plotInfo.has_customer;
 
                               if (isCritical) {
@@ -764,7 +1014,7 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                                    {/* แสดงชื่อแปลงเป็นหลัก */}
                                    <div className="flex items-center gap-0.5 sm:gap-1 relative z-10 flex-wrap justify-center">
                                       <span className={`font-black text-xs sm:text-base tracking-tight ${isGrassPlanted ? 'bg-white/80 px-1.5 py-0.5 rounded shadow-sm' : ''}`}>{plotInfo.plot_name || plotInfo.id}</span>
-                                      {plotInfo.is_completed && <span className={`text-[10px] sm:text-xs ${isGrassPlanted ? 'bg-white/80 rounded-full shadow-sm px-0.5' : ''}`} title="สร้างเสร็จพร้อมโอน">🔑</span>}
+                                      {(plotInfo.is_completed || plotInfo.sale_status === 'transferred' || statusInfo.status === 'transferred') && <span className={`text-[10px] sm:text-xs ${isGrassPlanted ? 'bg-white/80 rounded-full shadow-sm px-0.5' : ''}`} title="โอนกรรมสิทธิ์แล้ว / สร้างเสร็จพร้อมโอน">🔑</span>}
                                       {plotInfo.has_customer && (
                                          <span 
                                             className={`text-[10px] sm:text-xs px-0.5 rounded-full transition-all ${
@@ -825,8 +1075,8 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                                    
                                    {/* 🌟 ไอคอนแจ้งเตือนเร่งด่วนพิเศษ (แสดงเฉพาะแปลงที่มีลูกค้า + งานล่าช้า โดยไม่บังเลขแปลง) 🌟 */}
                                    {(!hasSearchedTask) && (() => {
-                                      const isOverdue = statusInfo.planned === 100 && statusInfo.actual < 100 && statusInfo.status !== 'ready_for_sale' && !plotInfo.is_completed;
-                                      const isDelayed = statusInfo.status === 'delayed' && statusInfo.status !== 'ready_for_sale' && !plotInfo.is_completed;
+                                      const isOverdue = statusInfo.planned === 100 && statusInfo.actual < 100 && statusInfo.status !== 'ready_for_sale' && statusInfo.status !== 'transferred' && !plotInfo.is_completed;
+                                      const isDelayed = statusInfo.status === 'delayed' && statusInfo.status !== 'ready_for_sale' && statusInfo.status !== 'transferred' && !plotInfo.is_completed;
                                       const isCritical = (isOverdue || isDelayed) && plotInfo.has_customer;
                                       if (isCritical) {
                                          return <div className="absolute top-0.5 right-0.5 text-[9px] sm:text-xs z-30 animate-pulse" title="เร่งด่วนพิเศษ! ลูกค้ารออยู่และงานล่าช้ากว่าแผน">🚨</div>;
@@ -843,7 +1093,7 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                                       <div className="flex justify-between items-center w-full mb-1 sm:mb-2">
                                          <div className="flex items-center gap-1">
                                             <span className="font-bold text-xs sm:text-sm">{plotInfo.id}</span>
-                                            {plotInfo.is_completed && <span className="bg-emerald-500 text-white text-[8px] px-1 rounded-sm" title="สร้างเสร็จพร้อมโอน">🔑</span>}
+                                            {(plotInfo.is_completed || plotInfo.sale_status === 'transferred' || statusInfo.status === 'transferred') && <span className="bg-amber-500 text-white text-[8px] px-1 rounded-sm" title="โอนกรรมสิทธิ์แล้ว / สร้างเสร็จพร้อมโอน">🔑</span>}
                                             {plotInfo.has_customer && <span className="bg-blue-500 text-white text-[8px] px-1 rounded-sm" title="มีลูกค้าจองแล้ว">👤</span>}
                                          </div>
                                          <span className={`text-[8px] sm:text-[10px] font-bold px-1.5 sm:px-2 py-0.5 rounded-full ${statusInfo.status === 'delayed' ? 'bg-rose-500 text-white' : statusInfo.status === 'completed' ? 'bg-emerald-500 text-white' : statusInfo.status === 'ahead' ? 'bg-indigo-500 text-white' : statusInfo.status === 'on-track' ? 'bg-blue-500 text-white' : 'bg-slate-600 text-slate-300'}`}>{statusInfo.label}</span>
@@ -1038,7 +1288,7 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                               <div className={`flex flex-col gap-1 ${plot.highlight_color ? 'mt-4 sm:mt-5' : ''}`}>
                                 <h3 className={`${isMobileLayout ? 'text-2xl' : 'text-4xl sm:text-5xl'} font-bold text-[#1d1d1f] truncate`}>{plot.plot_name || plot.id}</h3>
                                 <div className="flex gap-1.5 items-center flex-wrap">
-                                  {plot.is_completed && <span className="bg-emerald-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow-sm" title="สร้างเสร็จพร้อมโอน">🔑 เสร็จแล้ว</span>}
+                                  {(plot.is_completed || plot.sale_status === 'transferred' || statusInfo.status === 'transferred') && <span className="bg-amber-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow-sm" title="โอนกรรมสิทธิ์แล้ว / สร้างเสร็จพร้อมโอน">🔑 โอนแล้ว</span>}
                                   {plot.has_customer && <span className="bg-blue-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow-sm" title="มีลูกค้าจองแล้ว">👤 จองแล้ว</span>}
                                   <MeterStatusBadges plot={plot} size="sm" interactive={false} />
                                 </div>

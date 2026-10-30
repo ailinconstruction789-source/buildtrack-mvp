@@ -12,19 +12,65 @@ vi.mock('@/lib/sales/sampleHouseHelper', () => ({
   isPlotEligibleForSampleHouse: () => false,
   toggleSampleHouse: vi.fn(),
   fetchTodayInspectionStatus: async () => null,
+  fetchTodayInspectionMap: async () => ({}),
 }));
+const supabaseDb = vi.hoisted(() => ({
+  leads: [] as any[],
+  sales: [] as any[],
+}));
+
 vi.mock('@/lib/supabase', () => ({
   supabase: {
-    from: () => {
+    from: (table: string) => {
+      let filterId: string | null = null;
+      let filterLeadId: string | null = null;
       const q: any = {
         select: () => q,
-        eq: () => q,
+        eq: (k: string, v: string) => {
+          if (k === 'id') filterId = v;
+          if (k === 'lead_id') filterLeadId = v;
+          return q;
+        },
         order: () => q,
         in: () => q,
-        maybeSingle: async () => ({ data: null, error: null }),
-        then: (fn: any) => Promise.resolve({ data: [], error: null }).then(fn),
+        neq: () => q,
+        ilike: () => q,
+        is: () => q,
+        not: () => q,
+        limit: () => q,
+        maybeSingle: async () => {
+          if (table === 'leads') {
+            const found = supabaseDb.leads.find(l => l.id === filterId);
+            return { data: found || null, error: null };
+          }
+          if (table === 'sales') {
+            const found = supabaseDb.sales.find(s => s.id === filterId || (filterLeadId && s.lead_id === filterLeadId));
+            return { data: found || null, error: null };
+          }
+          return { data: null, error: null };
+        },
+        single: async () => {
+          if (table === 'leads') {
+            const found = supabaseDb.leads.find(l => l.id === filterId);
+            return { data: found || null, error: null };
+          }
+          if (table === 'sales') {
+            const found = supabaseDb.sales.find(s => s.id === filterId || (filterLeadId && s.lead_id === filterLeadId));
+            return { data: found || null, error: null };
+          }
+          return { data: null, error: null };
+        },
+        then: (fn: any) => {
+          if (table === 'sales' && filterLeadId) {
+            const found = supabaseDb.sales.filter(s => s.lead_id === filterLeadId);
+            return Promise.resolve({ data: found, error: null }).then(fn);
+          }
+          return Promise.resolve({ data: [], error: null }).then(fn);
+        },
       };
-      return q;
+      return new Proxy(q, {
+        get: (target, prop) => (prop in target ? target[prop] : () => q)
+      });
     },
     rpc: async () => ({ data: { rows: [] }, error: null }),
     auth: { getSession: async () => ({ data: { session: null } }) },
@@ -83,10 +129,12 @@ describe('SalesKanban legacy sales & leads deduplication', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    supabaseDb.leads = JSON.parse(JSON.stringify(leads));
+    supabaseDb.sales = JSON.parse(JSON.stringify(legacySales));
     mock.read.mockImplementation(async (table: string) => {
       if (table === 'plots') return [plot1, plot2];
-      if (table === 'sales') return legacySales;
-      if (table === 'leads') return leads;
+      if (table === 'sales') return supabaseDb.sales;
+      if (table === 'leads') return supabaseDb.leads;
       return [];
     });
   });
@@ -114,7 +162,7 @@ describe('SalesKanban legacy sales & leads deduplication', () => {
   });
 
   it('merges legacy booked sale with matching lead and does not display duplicate rows or ลูกค้าไม่ระบุชื่อ in booked tab', async () => {
-    render(<SalesKanban project={{ name: 'โยริว' }} initialTab="booked" />);
+    render(<SalesKanban project={{ name: 'โยริว' }} user={{ id: 'user-1', role: 'Sales' }} initialTab="booked" />);
 
     // Customer name should be displayed
     expect(await screen.findByText('น.ส. กชกร อุดร')).toBeInTheDocument();
@@ -212,7 +260,7 @@ describe('SalesKanban legacy sales & leads deduplication', () => {
   });
 
   it('Finding C: preserves user uncommitted draft edits in editCustomerForm during background data refresh', async () => {
-    let currentLeads = [...leads];
+    let currentLeads: any[] = [...leads];
     mock.read.mockImplementation(async (table: string) => {
       if (table === 'plots') return [plot1, plot2];
       if (table === 'sales') return legacySales;
@@ -299,5 +347,70 @@ describe('SalesKanban legacy sales & leads deduplication', () => {
 
     // Must NOT adopt 'คนละคนแต่แปลง 1 เหมือนกัน' because ID does not match
     expect(nameInput.value).not.toBe('คนละคนแต่แปลง 1 เหมือนกัน');
+  });
+
+  it('Finding 2: renders conflict notice banner and resolve action button in SalesKanban custom panel when conflict occurs', async () => {
+    let currentLeads: any[] = [...leads];
+    mock.read.mockImplementation(async (table: string) => {
+      if (table === 'plots') return [plot1, plot2];
+      if (table === 'sales') return legacySales;
+      if (table === 'leads') return currentLeads;
+      return [];
+    });
+
+    render(<SalesKanban project={{ name: 'โยริว' }} user={{ id: 'user-1', role: 'Sales' }} initialTab="booked" />);
+
+    // Open lead-2 (booked customer)
+    const row = await screen.findByText('น.ส. กชกร อุดร');
+    fireEvent.click(row);
+
+    // Verify panel is open
+    const nameInput = (await screen.findByLabelText('ชื่อลูกค้า')) as HTMLInputElement;
+    expect(nameInput.value).toBe('น.ส. กชกร อุดร');
+
+    // User edits customer to create dirty draft
+    fireEvent.change(nameInput, { target: { value: 'น.ส. กชกร แก้ไขโดยผู้ใช้' } });
+
+    // Background server change: status changed on server to LoanProcessing / loan_submitted
+    currentLeads = [
+      leads[0],
+      {
+        ...leads[1],
+        crm_stage: 'loan_submitted',
+        status: 'LoanProcessing'
+      }
+    ];
+    supabaseDb.leads = currentLeads;
+    const updatedSales = supabaseDb.sales.map((s, idx) =>
+      idx === 1
+        ? {
+            ...s,
+            crm_stage: 'loan_submitted',
+            contract_status: 'Contracted'
+          }
+        : s
+    );
+    supabaseDb.sales = updatedSales;
+
+    // Background sync arrives
+    act(() => {
+      broadcastSalesSync({ type: 'sales_deal_saved', leadId: 'lead-2', timestamp: Date.now() });
+    });
+
+    // Wait for conflict warning to appear in the panel
+    const conflictAlert = await screen.findByText(/สถานะของลูกค้าในระบบเปลี่ยนเป็น/i);
+    expect(conflictAlert).toBeInTheDocument();
+
+    // Must display action button to resolve conflict
+    const resolveBtn = await screen.findByRole('button', { name: /ยอมรับสถานะใหม่และปรับปรุงตัวเลือก/i });
+    expect(resolveBtn).toBeInTheDocument();
+
+    // Clicking resolve updates conflict and preserves draft
+    fireEvent.click(resolveBtn);
+
+    await waitFor(() => {
+      expect(screen.queryByText(/ยอมรับสถานะใหม่และปรับปรุงตัวเลือก/i)).not.toBeInTheDocument();
+    });
+    expect(nameInput.value).toBe('น.ส. กชกร แก้ไขโดยผู้ใช้');
   });
 });

@@ -1,11 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Gift, PlusCircle, CheckCircle2, Circle, Clock, Search, Trash2, Edit3, X, Loader2, Calendar, Package, Sparkles, Filter, Home, ChevronRight, Building2, CheckSquare, Square, Save, Layers, ListChecks, Check, Table, Grid } from 'lucide-react';
+import { Gift, PlusCircle, CheckCircle2, Circle, Clock, Search, Trash2, Edit3, X, Loader2, Calendar, Package, Sparkles, Filter, Home, ChevronRight, Building2, CheckSquare, Square, Save, Layers, ListChecks, Check, Table, Grid, DollarSign } from 'lucide-react';
 import AppCustomModal, { AppModalConfig } from './AppCustomModal';
 import SalesOverlay from './sales/SalesOverlay';
 
 // 🏠 Standard Room Categories & Master Catalog
 const ROOM_GROUPS: { room: string; icon: string; items: { category: string; item_name: string; quantity: number }[] }[] = [
+  {
+    room: 'ทั้งหลัง',
+    icon: '🪟',
+    items: [
+      { category: 'ทั้งหลัง', item_name: 'ผ้าม่านกัน UV ทั้งหลัง', quantity: 1 }
+    ]
+  },
   {
     room: 'ห้องโถง / Living Room',
     icon: '🛋️',
@@ -64,6 +71,26 @@ const ALL_MASTER_ITEMS = ROOM_GROUPS.flatMap(g =>
   }))
 );
 
+// 💵 Helper functions for Cash Discount in lieu of Freebies
+export const isCashDiscountPromo = (p: any): boolean => {
+  if (!p) return false;
+  return (
+    p.category === 'เปลี่ยนเป็นเงินสด' ||
+    p.category === 'cash_discount' ||
+    p.item_name === 'ไม่รับของแถม เปลี่ยนเป็นส่วนลดเงินสด' ||
+    Boolean(p.item_name && (p.item_name.includes('เปลี่ยนเป็นส่วนลดเงินสด') || p.item_name.includes('เปลี่ยนเป็นเงินสด')))
+  );
+};
+
+export const getCashDiscountAmount = (p: any): number => {
+  if (!p) return 0;
+  if (p.remarks) {
+    const parsed = Number(String(p.remarks).replace(/[^0-9.-]+/g, ''));
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  return 0;
+};
+
 export default function HousePromotionsView({ 
   plots = [], 
   projects = [],
@@ -112,6 +139,10 @@ export default function HousePromotionsView({
   const [searchQuery, setSearchQuery] = useState('');
   const [plotFilterQuery, setPlotFilterQuery] = useState('');
   const [selectedRoomFilter, setSelectedRoomFilter] = useState('ทั้งหมด');
+
+  // 💵 Cash Discount state for Single Plot View
+  const [cashDiscountInput, setCashDiscountInput] = useState<string>('0');
+  const [isEditingCash, setIsEditingCash] = useState<boolean>(false);
 
   // Checklist Selection State (Keyed by `${category}___${item_name}`)
   const [checklistState, setChecklistState] = useState<Record<string, { included: boolean; quantity: number; category: string; remarks?: string }>>({});
@@ -250,6 +281,15 @@ export default function HousePromotionsView({
     const currentItems = allProjectPromotions[currentPlot.id] || [];
     setPromotions(currentItems);
 
+    const cashPromo = currentItems.find(isCashDiscountPromo);
+    if (cashPromo) {
+      setCashDiscountInput(String(getCashDiscountAmount(cashPromo) || 0));
+      setIsEditingCash(false);
+    } else {
+      setCashDiscountInput('0');
+      setIsEditingCash(false);
+    }
+
     // Populate Checklist State keyed by `${category}___${item_name}`
     const initialChecklist: Record<string, { included: boolean; quantity: number; category: string; remarks?: string }> = {};
     ROOM_GROUPS.forEach(group => {
@@ -263,7 +303,7 @@ export default function HousePromotionsView({
       });
     });
 
-    currentItems.forEach(item => {
+    currentItems.filter(item => !isCashDiscountPromo(item)).forEach(item => {
       const key = `${item.category}___${item.item_name}`;
       initialChecklist[key] = {
         included: true,
@@ -280,7 +320,12 @@ export default function HousePromotionsView({
   const openMatrixCellModal = (plotId: string, masterItem: any) => {
     const existingItems = allProjectPromotions[plotId] || [];
     const itemRoomCategory = masterItem.category || masterItem.room;
-    const existing = existingItems.find(p => p.item_name === masterItem.item_name && (p.category === itemRoomCategory || p.category === masterItem.room));
+    const existing = existingItems.find(p => 
+      !isCashDiscountPromo(p) && (
+        p.item_name === masterItem.item_name ||
+        p.item_name?.trim() === masterItem.item_name?.trim()
+      )
+    );
 
     setMatrixModal({
       isOpen: true,
@@ -465,6 +510,7 @@ export default function HousePromotionsView({
 
       const unselectedItemIds = promotions
         .filter(p => {
+          if (isCashDiscountPromo(p)) return true;
           const key = `${p.category}___${p.item_name}`;
           return !checklistState[key]?.included;
         })
@@ -489,6 +535,86 @@ export default function HousePromotionsView({
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  // 💵 Save / Update Cash Discount for Single Plot View (Always editable anytime)
+  const handleSaveCashDiscount = async () => {
+    if (!currentPlot?.id) return;
+    setIsSubmitting(true);
+
+    try {
+      const cleanNum = Number(String(cashDiscountInput).replace(/[^0-9.-]+/g, '')) || 0;
+
+      // 1. Delete all existing items for this plot
+      const { error: delError } = await supabase
+        .from('plot_promotions')
+        .delete()
+        .eq('plot_id', currentPlot.id);
+      if (delError) console.warn('Cash discount delete old notice:', delError.message);
+
+      // 2. Insert cash discount record
+      const payload = {
+        plot_id: currentPlot.id,
+        category: 'เปลี่ยนเป็นเงินสด',
+        item_name: 'ไม่รับของแถม เปลี่ยนเป็นส่วนลดเงินสด',
+        quantity: 1,
+        status: 'installed',
+        remarks: String(cleanNum),
+        updated_at: new Date().toISOString()
+      };
+
+      const { data, error: insError } = await supabase
+        .from('plot_promotions')
+        .insert([payload])
+        .select();
+
+      if (insError) console.warn('Cash discount insert notice:', insError.message);
+
+      const savedItem = data && data.length > 0 ? data[0] : { ...payload, id: 'cash-' + Date.now() };
+      setPromotions([savedItem]);
+      setAllProjectPromotions(prev => ({
+        ...prev,
+        [currentPlot.id]: [savedItem]
+      }));
+      setIsEditingCash(false);
+      await fetchAllProjectPromotions();
+      showAlert('บันทึกสำเร็จ', `แปลง ${currentPlot.id} บันทึกการเปลี่ยนเป็นส่วนลดเงินสด ฿${cleanNum.toLocaleString('th-TH')} บาท เรียบร้อยแล้ว`, 'success');
+    } catch (e: any) {
+      console.error('Save cash discount error:', e);
+      showAlert('เกิดข้อผิดพลาด', e.message || 'ไม่สามารถบันทึกข้อมูลได้', 'danger');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // 🎁 Switch from Cash Discount back to Freebies Checklist
+  const handleSwitchToFreebies = () => {
+    showConfirm(
+      'สลับเป็นรับของแถม',
+      `คุณต้องการเปลี่ยนแปลง ${currentPlot?.id} จาก "ส่วนลดเงินสด" กลับมาเป็น "รับของแถมตามรายการ" ใช่หรือไม่?`,
+      async () => {
+        if (!currentPlot?.id) return;
+        setIsSubmitting(true);
+        try {
+          await supabase.from('plot_promotions').delete().eq('plot_id', currentPlot.id);
+          setPromotions([]);
+          setAllProjectPromotions(prev => ({
+            ...prev,
+            [currentPlot.id]: []
+          }));
+          setIsEditingCash(false);
+          setSingleActiveStep('checklist');
+          await fetchAllProjectPromotions();
+          showAlert('สลับโหมดสำเร็จ', `แปลง ${currentPlot.id} พร้อมให้เลือกรายการของแถมแล้วครับ`, 'success');
+        } catch (err: any) {
+          console.error('Switch mode error:', err);
+        } finally {
+          setIsSubmitting(false);
+        }
+      },
+      'info',
+      'ยืนยันสลับโหมด'
+    );
   };
 
   const openAddModal = (preset?: any) => {
@@ -625,21 +751,31 @@ export default function HousePromotionsView({
     return p.id.toLowerCase().includes(plotFilterQuery.toLowerCase());
   });
 
+  // Exclude cash discount from standard freebies counts
+  const freebiePromotions = promotions.filter(p => !isCashDiscountPromo(p));
+  const currentPlotCashPromo = promotions.find(isCashDiscountPromo);
+  const isCurrentPlotCash = !!currentPlotCashPromo;
+  const currentPlotCashAmount = currentPlotCashPromo ? getCashDiscountAmount(currentPlotCashPromo) : 0;
+
   // Single plot progress stats
-  const totalCount = promotions.length;
-  const installedCount = promotions.filter(p => p.status === 'installed').length;
-  const deliveredCount = promotions.filter(p => p.status === 'delivered').length;
-  const pendingCount = promotions.filter(p => p.status === 'pending').length;
+  const totalCount = freebiePromotions.length;
+  const installedCount = freebiePromotions.filter(p => p.status === 'installed').length;
+  const deliveredCount = freebiePromotions.filter(p => p.status === 'delivered').length;
+  const pendingCount = freebiePromotions.filter(p => p.status === 'pending').length;
   const progressPercent = totalCount > 0 ? Math.round(((installedCount + (deliveredCount * 0.5)) / totalCount) * 100) : 0;
 
   // Single plot grouped items by Room Category for Tracker view
   const promotionsByRoom = ROOM_GROUPS.map(group => ({
     ...group,
-    items: promotions.filter(p => p.category === group.room && (selectedRoomFilter === 'ทั้งหมด' || p.category === selectedRoomFilter))
+    items: freebiePromotions.filter(p => (
+      p.category === group.room ||
+      (group.room === 'ทั้งหลัง' && (p.item_name?.includes('ผ้าม่าน') || p.category === 'ทั้งหลัง')) ||
+      (group.room.includes('Living Room') && (p.category === 'เฟอร์นิเจอร์ & ห้องโถง' || p.category === 'ทั่วไป') && !p.item_name?.includes('ผ้าม่าน'))
+    ) && (selectedRoomFilter === 'ทั้งหมด' || p.category === selectedRoomFilter))
   })).concat({
     room: 'หมวดหมู่อื่นๆ',
     icon: '🎁',
-    items: promotions.filter(p => !ROOM_GROUPS.some(g => g.room === p.category) && (selectedRoomFilter === 'ทั้งหมด' || p.category === selectedRoomFilter))
+    items: freebiePromotions.filter(p => !ROOM_GROUPS.some(g => g.room === p.category) && (selectedRoomFilter === 'ทั้งหมด' || p.category === selectedRoomFilter))
   }).filter(g => g.items.length > 0);
 
   return (
@@ -830,9 +966,83 @@ export default function HousePromotionsView({
                   ) : (
                     filteredMatrixPlots.map((plot: any) => {
                       const plotPromos = allProjectPromotions[plot.id] || [];
-                      const plotInstalledCount = plotPromos.filter(p => p.status === 'installed').length;
-                      const plotDeliveredCount = plotPromos.filter(p => p.status === 'delivered').length;
-                      const plotTotalCount = plotPromos.length;
+                      const cashPromo = plotPromos.find(isCashDiscountPromo);
+                      const isCashDiscount = !!cashPromo;
+                      const cashAmount = cashPromo ? getCashDiscountAmount(cashPromo) : 0;
+
+                      if (isCashDiscount) {
+                        return (
+                          <tr 
+                            key={plot.id} 
+                            className="bg-slate-800 hover:bg-slate-750 transition-colors group border-b-2 border-slate-700 text-white"
+                          >
+                            {/* Sticky Plot ID Cell */}
+                            <td 
+                              onClick={() => { setSelectedPlotId(plot.id); setViewMode('single'); }}
+                              className="sticky left-0 bg-slate-900 group-hover:bg-slate-850 p-3 font-black text-white border-r-4 border-slate-700 z-20 cursor-pointer shadow-md"
+                            >
+                              <div className="flex items-center justify-between gap-1.5">
+                                <span className="text-sm font-black text-amber-400">{plot.id}</span>
+                                <span className="text-[10px] font-bold text-slate-300 bg-slate-800 px-1.5 py-0.5 rounded border border-slate-700 truncate max-w-[70px]">
+                                  {plot.house_types?.type_name || plot.type || '-'}
+                                </span>
+                              </div>
+                            </td>
+
+                            {/* Merged Banner across all master item columns */}
+                            <td 
+                              colSpan={ALL_MASTER_ITEMS.length}
+                              onClick={() => { setSelectedPlotId(plot.id); setViewMode('single'); }}
+                              className="p-3 text-center align-middle bg-slate-800 text-slate-100 cursor-pointer hover:bg-slate-750 transition-colors border-r-2 border-slate-700 select-none"
+                            >
+                              <div className="flex flex-wrap items-center justify-between px-3 sm:px-6 gap-3">
+                                <div className="flex items-center gap-3">
+                                  <span className="w-8 h-8 rounded-xl bg-amber-400/20 text-amber-300 border border-amber-400/30 flex items-center justify-center text-base shrink-0">
+                                    💵
+                                  </span>
+                                  <div className="text-left">
+                                    <span className="text-xs sm:text-sm font-black text-amber-300 tracking-wide block">
+                                      เปลี่ยนเป็นเงินสด {cashAmount > 0 ? `฿${cashAmount.toLocaleString('th-TH')} บาท` : ''}
+                                    </span>
+                                    <span className="text-[11px] font-bold text-slate-400 block">
+                                      (แปลงนี้ไม่รับของแถมทุกรายการ — เปลี่ยนเป็นส่วนลดเงินสด)
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedPlotId(plot.id);
+                                    setViewMode('single');
+                                  }}
+                                  className="text-xs font-black text-white bg-slate-700 hover:bg-slate-600 border border-slate-600 hover:border-amber-400/50 px-3.5 py-1.5 rounded-xl flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
+                                >
+                                  <Edit3 size={13} className="text-amber-400" />
+                                  <span>แก้ไขยอดเงิน / สลับกลับมารับของแถม</span>
+                                </button>
+                              </div>
+                            </td>
+
+                            {/* Row Total Progress Cell */}
+                            <td className="p-3 text-center align-middle bg-slate-900 border-l-2 border-slate-700">
+                              <div className="flex flex-col items-center gap-1">
+                                <span className="text-xs font-black text-amber-400">
+                                  {cashAmount > 0 ? `฿${cashAmount.toLocaleString('th-TH')}` : 'เงินสด'}
+                                </span>
+                                <span className="text-[10px] font-bold text-slate-300 bg-slate-800 px-2 py-0.5 rounded-full border border-slate-700">
+                                  ส่วนลดเงินสด
+                                </span>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      }
+
+                      const plotInstalledCount = plotPromos.filter(p => !isCashDiscountPromo(p) && p.status === 'installed').length;
+                      const plotDeliveredCount = plotPromos.filter(p => !isCashDiscountPromo(p) && p.status === 'delivered').length;
+                      const plotTotalCount = plotPromos.filter(p => !isCashDiscountPromo(p)).length;
                       const plotPercent = plotTotalCount > 0 ? Math.round(((plotInstalledCount + (plotDeliveredCount * 0.5)) / plotTotalCount) * 100) : 0;
 
                       return (
@@ -853,10 +1063,12 @@ export default function HousePromotionsView({
 
                           {/* Matrix Item Cells */}
                           {ALL_MASTER_ITEMS.map((masterItem, iIdx) => {
-                            // Exact match by BOTH category AND item_name!
+                            // Exact match by item_name or category
                             const foundItem = plotPromos.find(p => 
-                              p.item_name === masterItem.item_name && 
-                              (p.category === masterItem.category || p.category === masterItem.room)
+                              !isCashDiscountPromo(p) && (
+                                p.item_name === masterItem.item_name ||
+                                (p.item_name?.trim() === masterItem.item_name?.trim())
+                              )
                             );
                             const isIncluded = !!foundItem;
                             const status = foundItem?.status || 'pending';
@@ -935,47 +1147,231 @@ export default function HousePromotionsView({
           
           {/* Single Plot Summary Card */}
           <div className="bg-white rounded-3xl p-5 sm:p-6 shadow-sm border border-slate-100 relative overflow-hidden flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-            <div className="absolute top-0 left-0 w-2 h-full bg-[#d4af37]"></div>
+            <div className={`absolute top-0 left-0 w-2 h-full ${isCurrentPlotCash ? 'bg-slate-800' : 'bg-[#d4af37]'}`}></div>
             <div className="pl-2">
-              <div className="flex items-center gap-2 text-[#d4af37] mb-1">
-                <Gift size={20} />
-                <span className="text-xs font-black tracking-widest uppercase">รายการของแถมประจำแปลง</span>
+              <div className="flex items-center gap-2 mb-1">
+                {isCurrentPlotCash ? (
+                  <>
+                    <DollarSign size={20} className="text-emerald-600" />
+                    <span className="text-xs font-black tracking-widest uppercase text-emerald-700">ไม่รับของแถม — เปลี่ยนเป็นส่วนลดเงินสด</span>
+                  </>
+                ) : (
+                  <>
+                    <Gift size={20} className="text-[#d4af37]" />
+                    <span className="text-xs font-black tracking-widest uppercase text-[#d4af37]">รายการของแถมประจำแปลง</span>
+                  </>
+                )}
               </div>
-              <h3 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
-                {selectedProjectName ? `${selectedProjectName} — ` : ''}แปลง {currentPlot?.id || 'ยังไม่เลือกแปลง'}
-              </h3>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+                  {selectedProjectName ? `${selectedProjectName} — ` : ''}แปลง {currentPlot?.id || 'ยังไม่เลือกแปลง'}
+                </h3>
+                {isCurrentPlotCash ? (
+                  <span className="text-xs bg-slate-800 text-amber-300 font-black px-3 py-1 rounded-full border border-slate-700">
+                    💵 เปลี่ยนเป็นเงินสด ฿{currentPlotCashAmount.toLocaleString('th-TH')} บาท
+                  </span>
+                ) : (
+                  <span className="text-xs bg-amber-100 text-amber-900 font-black px-2.5 py-0.5 rounded-full border border-amber-300">
+                    🎁 รับของแถม ({totalCount} รายการ)
+                  </span>
+                )}
+              </div>
               <p className="text-xs font-bold text-slate-500 mt-1">
-                แบบบ้าน: {currentPlot?.house_types?.type_name || currentPlot?.house_type_id || '-'} • ของแถมในแปลง: {totalCount} รายการ
+                แบบบ้าน: {currentPlot?.house_types?.type_name || currentPlot?.house_type_id || '-'}
+                {!isCurrentPlotCash && ` • ของแถมในแปลง: ${totalCount} รายการ (ติดตั้งแล้ว ${installedCount})`}
               </p>
             </div>
 
-            {/* 🎛️ Single Plot Step Switcher: 1. Checklist vs 2. Tracker */}
-            <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-              <div className="bg-slate-100 p-1.5 rounded-2xl flex items-center gap-1 w-full sm:w-auto border border-slate-200">
+            {/* Quick Actions: Switch Mode / Edit */}
+            <div className="flex flex-wrap items-center gap-2">
+              {isCurrentPlotCash ? (
                 <button
-                  onClick={() => setSingleActiveStep('checklist')}
-                  className={`flex-1 sm:flex-initial px-4 py-2.5 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                    singleActiveStep === 'checklist'
-                      ? 'bg-slate-900 text-white shadow-md'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
-                  }`}
+                  type="button"
+                  onClick={handleSwitchToFreebies}
+                  disabled={isSubmitting}
+                  className="px-4 py-2.5 rounded-xl font-black text-xs bg-amber-500 hover:bg-amber-600 text-white shadow-sm flex items-center gap-2 transition-all cursor-pointer"
                 >
-                  <ListChecks size={18} className={singleActiveStep === 'checklist' ? 'text-[#d4af37]' : ''} />
-                  <span>1. ติ๊กเลือกของแถม ({Object.values(checklistState).filter(v => v.included).length})</span>
+                  <Gift size={16} />
+                  <span>สลับกลับมารับของแถม</span>
                 </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setIsEditingCash(prev => !prev)}
+                  disabled={isSubmitting}
+                  className="px-4 py-2.5 rounded-xl font-black text-xs bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 shadow-sm flex items-center gap-2 transition-all cursor-pointer"
+                >
+                  <DollarSign size={16} />
+                  <span>{isEditingCash ? 'ปิดแก้ไขเงินสด' : 'เปลี่ยนเป็นเงินสด'}</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* 💵 Cash Discount Management Box (Always editable anytime) */}
+          {(isCurrentPlotCash || isEditingCash) && (
+            <div className="bg-slate-900 text-white rounded-3xl p-5 sm:p-6 shadow-md border border-slate-800 space-y-4">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <span className="w-9 h-9 rounded-xl bg-amber-400/20 text-amber-300 border border-amber-400/30 flex items-center justify-center text-lg">
+                    💵
+                  </span>
+                  <div>
+                    <h4 className="font-black text-sm sm:text-base text-white">
+                      ไม่รับของแถม — เปลี่ยนเป็นส่วนลดเงินสด (แปลง {currentPlot?.id})
+                    </h4>
+                    <p className="text-xs text-slate-400 font-bold">
+                      ระบุจำนวนเงินส่วนลดที่ให้ลูกค้าแทนของแถม สามารถแก้ไขได้ตลอดเวลา
+                    </p>
+                  </div>
+                </div>
+
+                {!isCurrentPlotCash && isEditingCash && (
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingCash(false)}
+                    className="text-xs font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-slate-700"
+                  >
+                    ยกเลิก
+                  </button>
+                )}
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-start sm:items-end gap-3 pt-1">
+                <div className="flex-1 w-full">
+                  <label className="block text-xs font-black text-amber-300 mb-1.5">
+                    จำนวนเงินส่วนลดเงินสด (บาท):
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1000"
+                    value={cashDiscountInput}
+                    onChange={(e) => setCashDiscountInput(e.target.value)}
+                    placeholder="เช่น 50000"
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-700 bg-slate-800 font-black text-base text-white outline-none focus:ring-2 focus:ring-amber-400"
+                  />
+                </div>
 
                 <button
-                  onClick={() => setSingleActiveStep('tracker')}
-                  className={`flex-1 sm:flex-initial px-4 py-2.5 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                    singleActiveStep === 'tracker'
-                      ? 'bg-[#d4af37] text-white shadow-md'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
-                  }`}
+                  type="button"
+                  onClick={handleSaveCashDiscount}
+                  disabled={isSubmitting}
+                  className="w-full sm:w-auto px-6 py-2.5 bg-[#d4af37] hover:bg-[#b8952b] text-slate-950 font-black text-xs sm:text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                 >
-                  <CheckCircle2 size={18} />
-                  <span>2. ติดตามสถานะส่งมอบ ({installedCount}/{totalCount})</span>
+                  {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                  <span>{isCurrentPlotCash ? 'บันทึกการแก้ไขยอดเงิน' : 'ยืนยันเปลี่ยนเป็นเงินสด'}</span>
                 </button>
               </div>
+
+              <p className="text-[11px] font-bold text-slate-400">
+                ✨ หมายเหตุ: เมื่อบันทึกแล้ว ตารางภาพรวมของแถมทุกแปลงจะแสดงแถวของแปลงนี้เป็นสีเทาเข้ม พร้อมระบุยอดเงินสด และคุณสามารถสลับกลับมารับของแถมได้ตลอดเวลา
+              </p>
+            </div>
+          )}
+
+          {/* 📦 สรุปรายการของแถมที่หลังนี้เลือก (Selected Freebies) เมื่อไม่ได้เป็นเงินสด */}
+          {!isCurrentPlotCash && (
+            <div className="bg-white rounded-3xl p-5 sm:p-6 shadow-sm border border-slate-200 space-y-3">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">🎁</span>
+                  <div>
+                    <h4 className="font-black text-sm sm:text-base text-slate-800">
+                      รายการของแถมที่แปลง {currentPlot?.id} เลือก ({freebiePromotions.length} รายการ)
+                    </h4>
+                    <p className="text-xs text-slate-500 font-bold">
+                      {freebiePromotions.length > 0 
+                        ? 'รายการของแถมที่เลือกไว้พร้อมสถานะการส่งมอบและติดตั้ง' 
+                        : 'ยังไม่มีการเลือกรายการของแถมสำหรับแปลงนี้'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSingleActiveStep('checklist')}
+                    className="text-xs font-black text-[#d4af37] hover:text-[#b8952b] bg-amber-50 hover:bg-amber-100 border border-amber-200 px-3.5 py-1.5 rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <Edit3 size={13} />
+                    <span>{freebiePromotions.length > 0 ? 'แก้ไขรายการของแถม' : 'ติ๊กเลือกของแถม'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {freebiePromotions.length === 0 ? (
+                <div className="p-6 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-slate-400 font-bold text-xs">
+                  แปลงนี้ยังไม่ได้เลือกของแถม (คลิกปุ่ม "ติ๊กเลือกของแถม" เพื่อเลือกรายการ)
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {freebiePromotions.map((item) => {
+                    const isInstalled = item.status === 'installed';
+                    const isDelivered = item.status === 'delivered';
+                    return (
+                      <div
+                        key={item.id || item.item_name}
+                        className={`px-3 py-2 rounded-xl border text-xs font-black flex items-center gap-2 transition-all shadow-2xs ${
+                          isInstalled
+                            ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
+                            : isDelivered
+                            ? 'bg-amber-50 text-amber-900 border-amber-300'
+                            : 'bg-white text-slate-800 border-slate-200'
+                        }`}
+                      >
+                        <span className="text-sm">
+                          {item.item_name.includes('ผ้าม่าน') ? '🪟' : item.item_name.includes('แอร์') ? '⚡' : item.item_name.includes('เตียง') ? '🛏️' : '🎁'}
+                        </span>
+                        <span>{item.item_name}</span>
+                        {item.quantity > 1 && (
+                          <span className="bg-slate-200 text-slate-700 px-1.5 py-0.2 rounded-md text-[10px]">
+                            x{item.quantity}
+                          </span>
+                        )}
+                        <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-md ${
+                          isInstalled
+                            ? 'bg-emerald-600 text-white'
+                            : isDelivered
+                            ? 'bg-amber-500 text-white'
+                            : 'bg-rose-500 text-white'
+                        }`}>
+                          {isInstalled ? 'ติดตั้งแล้ว' : isDelivered ? 'ส่งแล้ว' : 'ยังไม่มา'}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 🎛️ Single Plot Step Switcher: 1. Checklist vs 2. Tracker */}
+          <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+            <div className="bg-slate-100 p-1.5 rounded-2xl flex items-center gap-1 w-full sm:w-auto border border-slate-200">
+              <button
+                onClick={() => setSingleActiveStep('checklist')}
+                className={`flex-1 sm:flex-initial px-4 py-2.5 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  singleActiveStep === 'checklist'
+                    ? 'bg-slate-900 text-white shadow-md'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                }`}
+              >
+                <ListChecks size={18} className={singleActiveStep === 'checklist' ? 'text-[#d4af37]' : ''} />
+                <span>1. ติ๊กเลือกของแถม ({Object.values(checklistState).filter(v => v.included).length})</span>
+              </button>
+
+              <button
+                onClick={() => setSingleActiveStep('tracker')}
+                className={`flex-1 sm:flex-initial px-4 py-2.5 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  singleActiveStep === 'tracker'
+                    ? 'bg-[#d4af37] text-white shadow-md'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                }`}
+              >
+                <CheckCircle2 size={18} />
+                <span>2. ติดตามสถานะส่งมอบ ({installedCount}/{totalCount})</span>
+              </button>
             </div>
           </div>
 

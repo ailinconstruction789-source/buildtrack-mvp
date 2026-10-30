@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { ShieldAlert, CheckCircle, PlusCircle, Loader2, Calendar, HardHat, Pickaxe, History, Trash2, Search, Award, FileCheck, Lock, Unlock, CheckCircle2, UserCog, X, AlertTriangle, CalendarClock, Wrench } from 'lucide-react';
+import { ShieldAlert, CheckCircle, PlusCircle, Loader2, Calendar, HardHat, Pickaxe, History, Trash2, Search, Award, FileCheck, Lock, Unlock, CheckCircle2, UserCog, X, AlertTriangle, CalendarClock, Wrench, Plus } from 'lucide-react';
 import DefectTaskSelectModal from './DefectTaskSelectModal';
 import HandoverCertificateModal from './HandoverCertificateModal';
 import AppCustomModal, { AppModalConfig } from './AppCustomModal';
@@ -23,6 +23,8 @@ export default function HouseHandoverView({
   setDefectReturnView
 }: any) {
   const [isSelectModalOpen, setIsSelectModalOpen] = useState(false);
+  const [isCustomTaskModalOpen, setIsCustomTaskModalOpen] = useState(false);
+  const isAdminRole = currentUserRole === 'Admin' || (currentUserRole || '').toLowerCase() === 'admin';
   const [isCertificateModalOpen, setIsCertificateModalOpen] = useState(false);
   const [assigningDefect, setAssigningDefect] = useState<any>(null);
   const [contractorSearchQuery, setContractorSearchQuery] = useState('');
@@ -272,9 +274,13 @@ export default function HouseHandoverView({
       showAlert('ยังไม่ได้เริ่มตรวจ', "กรุณากด 'เริ่มตรวจรอบที่ 1' ก่อนเพิ่มรายการครับ", 'warning');
       return;
     }
-    const newTasksToInsert = selectedTasks.filter(t => 
-      !roundDefects.some((d: any) => d.task_id === t.id || d.task_template_id === t.id)
-    );
+    const newTasksToInsert = selectedTasks.filter(t => {
+      const isVirtual = t.id === 'virtual-furniture' || t.id === 'custom-furniture';
+      if (isVirtual) {
+        return !roundDefects.some((d: any) => d.description?.includes(t.task_name) || d.task_name?.includes(t.task_name));
+      }
+      return !roundDefects.some((d: any) => d.task_id === t.id || d.task_template_id === t.id);
+    });
 
     if (newTasksToInsert.length === 0) {
       showAlert('รายการซ้ำ', "รายการที่คุณเลือกถูกเพิ่มในรอบตรวจนี้ไปแล้วครับ", 'warning');
@@ -284,7 +290,8 @@ export default function HouseHandoverView({
     setIsSubmitting(true);
     try {
       const newDefects = newTasksToInsert.map(t => {
-        const originalAssignment = assignments?.find((a: any) => a.task_template_id === t.id && a.plot_id === selectedPlot.id);
+        const isVirtual = t.id === 'virtual-furniture' || t.id === 'custom-furniture';
+        const originalAssignment = !isVirtual ? assignments?.find((a: any) => a.task_template_id === t.id && a.plot_id === selectedPlot.id) : null;
         const contractorId = originalAssignment?.contractor_id || null;
 
         return {
@@ -295,7 +302,7 @@ export default function HouseHandoverView({
           defect_stage: 'handover',
           handover_cycle: cycle,
           inspection_round: currentRound,
-          task_id: t.id,
+          task_id: isVirtual ? null : t.id,
           contractor_id: contractorId
         };
       });
@@ -317,16 +324,94 @@ export default function HouseHandoverView({
     }
   };
 
-  const handleDeleteDefect = async (defect: any) => {
-    if (currentUserRole !== 'Admin') {
-      showAlert('ไม่มีสิทธิ์ลบรายการ', 'เฉพาะผู้ใช้งานบทบาท Admin เท่านั้นที่สามารถลบรายการได้ครับ', 'warning');
+  const handleAddCustomTask = async ({
+    taskName,
+    contractorId,
+    plannedStart,
+    plannedEnd
+  }: {
+    taskName: string;
+    contractorId: string | null;
+    plannedStart: string | null;
+    plannedEnd: string | null;
+  }) => {
+    if (!isAdminRole) {
+      showAlert('ไม่มีสิทธิ์ดำเนินการ', 'เฉพาะผู้ดูแลระบบ (Admin) เท่านั้นที่สามารถเพิ่มงานเพิ่มเติมได้ครับ', 'warning');
       return;
     }
+    if (currentRound === 0) {
+      showAlert('ยังไม่ได้เริ่มตรวจ', "กรุณากด 'เริ่มตรวจรอบที่ 1' ก่อนเพิ่มรายการครับ", 'warning');
+      return;
+    }
+    if (!taskName || !taskName.trim()) {
+      showAlert('กรุณาระบุชื่องาน', 'กรุณากรอกชื่องานหรือเลือกจากหมวดหมู่งานที่ต้องการเพิ่มครับ', 'warning');
+      return;
+    }
+
+    const trimmedName = taskName.trim();
+    const cleanDesc = trimmedName.startsWith('แก้:') ? trimmedName : `แก้: ${trimmedName}`;
+
+    const isDuplicate = roundDefects.some((d: any) => d.description === cleanDesc);
+    if (isDuplicate) {
+      showAlert('รายการซ้ำ', `รายการ "${trimmedName}" มีอยู่ในรอบตรวจนี้แล้วครับ`, 'warning');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const newDefect = {
+        plot_id: selectedPlot.id,
+        description: cleanDesc,
+        reported_by: currentUserRole,
+        status: 'pending',
+        defect_stage: 'handover',
+        handover_cycle: cycle,
+        inspection_round: currentRound,
+        task_id: null,
+        contractor_id: contractorId || null,
+        planned_start: plannedStart || null,
+        planned_end: plannedEnd || null,
+        progress: 0
+      };
+
+      const { data: insertedDefect, error } = await supabase.from('defects').insert([newDefect]).select();
+      if (error) throw error;
+
+      if (setDefects && insertedDefect && insertedDefect.length > 0) {
+        setDefects((prev: any[]) => [...(prev || []), ...insertedDefect]);
+      }
+
+      setViewingRound(currentRound);
+      setIsCustomTaskModalOpen(false);
+      if (fetchAllData) await fetchAllData();
+      showAlert('เพิ่มงานสำเร็จ', `เพิ่มรายการ "${trimmedName}" เข้าสู่รอบตรวจเรียบร้อยแล้วครับ`, 'success');
+    } catch (e: any) {
+      showAlert('เกิดข้อผิดพลาด', 'Error adding custom defect: ' + e.message, 'danger');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDeleteDefect = async (defect: any) => {
+    const isRoleAdmin = currentUserRole === 'Admin' || (currentUserRole || '').toLowerCase() === 'admin';
+    const isRoleForeman = currentUserRole === 'Foreman' || (currentUserRole || '').toLowerCase() === 'foreman';
+    const defectProgress = Number(defect.progress) || 0;
+
+    if (!isRoleAdmin && !isRoleForeman) {
+      showAlert('ไม่มีสิทธิ์ลบรายการ', 'เฉพาะผู้ใช้งานบทบาท Admin หรือ Foreman เท่านั้นที่สามารถลบรายการได้ครับ', 'warning');
+      return;
+    }
+
+    if (isRoleForeman && !isRoleAdmin && defectProgress > 0) {
+      showAlert('ไม่สามารถลบรายการได้', 'รายการนี้เริ่มดำเนินการแก้ไขแล้ว (ความคืบหน้ามากกว่า 0%) หากต้องการลบกรุณาติดต่อ Admin ครับ', 'warning');
+      return;
+    }
+
     const taskName = taskTemplates?.find((t: any) => t.id === (defect.task_id || defect.task_template_id))?.task_name || defect.description || 'รายการนี้';
     
     showConfirm(
-      'ลบรายการแจ้งซ่อม',
-      `คุณต้องการลบรายการแจ้งซ่อม "${taskName}" ใช่หรือไม่?`,
+      'ยืนยันการลบรายการที่เพิ่มผิด ⚠️',
+      `คุณต้องการลบรายการแจ้งซ่อม "${taskName}" ออกจากรอบตรวจรับนี้ใช่หรือไม่?`,
       async () => {
         try {
           setIsSubmitting(true);
@@ -336,6 +421,7 @@ export default function HouseHandoverView({
             setDefects((prev: any[]) => prev.filter((d: any) => d.id !== defect.id));
           }
           if (fetchAllData) await fetchAllData();
+          showAlert('สำเร็จ ✨', `ลบรายการ "${taskName}" เรียบร้อยแล้วครับ`);
         } catch (e: any) {
           showAlert('เกิดข้อผิดพลาด', 'เกิดข้อผิดพลาดในการลบรายการ: ' + e.message, 'danger');
         } finally {
@@ -728,6 +814,17 @@ export default function HouseHandoverView({
           <PlusCircle size={18} /> เพิ่มรายการแจ้งซ่อม (ลูกค้า)
         </button>
 
+        {isAdminRole && (
+          <button 
+            onClick={() => setIsCustomTaskModalOpen(true)}
+            disabled={currentRound === 0}
+            className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed shrink-0 text-xs sm:text-sm cursor-pointer"
+            title="เฉพาะผู้ดูแลระบบ (Admin): เพิ่มงานตรวจรับเพิ่มเติม เช่น เฟอร์นิเจอร์สั่งทำ, ม่าน, แอร์, หรือของแถมพิเศษ"
+          >
+            <Plus size={16} /> + เพิ่มงานเพิ่มเติม (Admin)
+          </button>
+        )}
+
         <button 
           onClick={() => setIsCertificateModalOpen(true)}
           className="w-full sm:w-auto bg-slate-100 hover:bg-slate-200 text-slate-700 px-3.5 py-2.5 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all text-xs sm:text-sm shrink-0 border border-slate-200 cursor-pointer"
@@ -879,14 +976,14 @@ export default function HouseHandoverView({
                                        <span className={`px-2.5 py-1 rounded-xl text-xs font-bold ${defect.progress === 100 ? 'bg-emerald-100 text-emerald-700' : 'bg-purple-100 text-purple-700'}`}>
                                            {defect.progress || 0}%
                                        </span>
-                                       {currentUserRole === 'Admin' && (
+                                       {(currentUserRole === 'Admin' || (['Foreman'].includes(currentUserRole) && (Number(defect.progress) || 0) === 0)) && (
                                           <button 
                                             type="button"
                                             onClick={(e) => {
                                               e.stopPropagation();
                                               handleDeleteDefect(defect);
                                             }}
-                                            title="ลบรายการแจ้งซ่อม (เฉพาะ Admin)"
+                                            title={currentUserRole === 'Admin' ? "ลบรายการแจ้งซ่อม" : "ลบรายการที่เพิ่มผิด (ความคืบหน้า 0%)"}
                                             className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors shrink-0 cursor-pointer"
                                           >
                                             <Trash2 size={16} />
@@ -1067,14 +1164,14 @@ export default function HouseHandoverView({
                                               {taskTemp?.task_name || defect.description}
                                            </h4>
                                         </div>
-                                        {currentUserRole === 'Admin' && (
+                                        {(currentUserRole === 'Admin' || (['Foreman'].includes(currentUserRole) && (Number(defect.progress) || 0) === 0)) && (
                                            <button 
                                              type="button"
                                              onClick={(e) => {
                                                e.stopPropagation();
                                                handleDeleteDefect(defect);
                                              }}
-                                             title="ลบรายการแจ้งซ่อม (เฉพาะ Admin)"
+                                             title={currentUserRole === 'Admin' ? "ลบรายการแจ้งซ่อม" : "ลบรายการที่เพิ่มผิด (ความคืบหน้า 0%)"}
                                              className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors shrink-0 cursor-pointer"
                                            >
                                              <Trash2 size={15} />
@@ -1247,6 +1344,14 @@ export default function HouseHandoverView({
         existingDefects={roundDefects}
       />
 
+      <CustomHandoverTaskModal
+        isOpen={isCustomTaskModalOpen}
+        onClose={() => setIsCustomTaskModalOpen(false)}
+        onSubmit={handleAddCustomTask}
+        contractors={contractors || []}
+        isSubmitting={isSubmitting}
+      />
+
       <HandoverCertificateModal 
         isOpen={isCertificateModalOpen}
         onClose={() => setIsCertificateModalOpen(false)}
@@ -1370,6 +1475,176 @@ export default function HouseHandoverView({
         config={modalConfig} 
         onClose={() => setModalConfig(null)} 
       />
+    </div>
+  );
+}
+
+// 🌟 Modal สำหรับ Admin เพิ่มงานเพิ่มเติม/พิเศษในขั้นตอนตรวจรับมอบบ้าน
+function CustomHandoverTaskModal({
+  isOpen,
+  onClose,
+  onSubmit,
+  contractors = [],
+  isSubmitting
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onSubmit: (params: { taskName: string; contractorId: string | null; plannedStart: string | null; plannedEnd: string | null }) => void;
+  contractors: any[];
+  isSubmitting: boolean;
+}) {
+  const [taskName, setTaskName] = useState('');
+  const [contractorId, setContractorId] = useState<string>('');
+  const [plannedStart, setPlannedStart] = useState('');
+  const [plannedEnd, setPlannedEnd] = useState('');
+
+  if (!isOpen) return null;
+
+  const quickChips = [
+    { label: '🛋️ งานเฟอร์นิเจอร์', name: 'งานเฟอร์นิเจอร์' },
+    { label: '🪟 งานผ้าม่าน/มุ้งลวด', name: 'งานผ้าม่าน/มุ้งลวด' },
+    { label: '❄️ งานแอร์/เครื่องใช้ไฟฟ้า', name: 'งานเครื่องปรับอากาศ/เครื่องใช้ไฟฟ้า' },
+    { label: '🧹 ทำความสะอาดพิเศษ', name: 'งานทำความสะอาดพิเศษ (Big Cleaning)' },
+    { label: '🌳 งานสวน/ของแถม', name: 'งานจัดสวนและของแถมพิเศษ' },
+    { label: '🚪 งานประตูรีโมท/Digital Door Lock', name: 'งานติดตั้ง Digital Door Lock/ประตูรีโมท' },
+  ];
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!taskName.trim()) return;
+    onSubmit({
+      taskName: taskName.trim(),
+      contractorId: contractorId ? contractorId : null,
+      plannedStart: plannedStart || null,
+      plannedEnd: plannedEnd || null
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-[99999] flex justify-center items-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-lg flex flex-col max-h-[85vh] overflow-hidden shadow-2xl">
+        <div className="p-4 border-b flex justify-between items-center bg-indigo-50/70">
+          <div>
+            <h2 className="text-lg font-bold text-indigo-900 flex items-center gap-2">
+              <span>🛠️</span> เพิ่มงานตรวจรับเพิ่มเติม (เฉพาะ Admin)
+            </h2>
+            <p className="text-xs font-semibold text-indigo-600">
+              เพิ่มงานตรวจพิเศษนอกเหนือจากรายการในแบบบ้านมาตรฐาน
+            </p>
+          </div>
+          <button onClick={onClose} className="p-2 bg-slate-200 text-slate-600 rounded-full hover:bg-slate-300">
+            <X size={20} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1.5">
+              เลือกหมวดหมู่งานด่วน (Quick Select):
+            </label>
+            <div className="flex flex-wrap gap-1.5">
+              {quickChips.map((chip, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => setTaskName(chip.name)}
+                  className={`text-xs px-2.5 py-1.5 rounded-lg border font-bold transition-all cursor-pointer ${
+                    taskName === chip.name
+                      ? 'bg-indigo-600 text-white border-indigo-700 shadow-sm'
+                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-indigo-50 hover:border-indigo-300'
+                  }`}
+                >
+                  {chip.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1">
+              ชื่องาน / รายละเอียด <span className="text-rose-500">*</span>
+            </label>
+            <input
+              type="text"
+              required
+              placeholder="เช่น งานเฟอร์นิเจอร์บิวท์อินห้องนอน, งานม่านสั่งทำ..."
+              value={taskName}
+              onChange={(e) => setTaskName(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-semibold outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1">
+              ผู้รับเหมา / ช่างที่รับผิดชอบ (Optional):
+            </label>
+            <select
+              value={contractorId}
+              onChange={(e) => setContractorId(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-semibold outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white"
+            >
+              <option value="">-- ไม่ระบุผู้รับเหมา --</option>
+              {contractors.map((c: any) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} {c.specialization ? `(${c.specialization})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                วันเริ่มแผนงาน (Optional):
+              </label>
+              <input
+                type="date"
+                value={plannedStart}
+                onChange={(e) => setPlannedStart(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                วันสิ้นสุดแผนงาน (Optional):
+              </label>
+              <input
+                type="date"
+                value={plannedEnd}
+                onChange={(e) => setPlannedEnd(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+          </div>
+
+          <div className="pt-2 border-t flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-4 py-2.5 rounded-xl text-xs cursor-pointer"
+            >
+              ยกเลิก
+            </button>
+            <button
+              type="submit"
+              disabled={!taskName.trim() || isSubmitting}
+              className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold px-5 py-2.5 rounded-xl text-xs flex items-center gap-1.5 shadow-sm cursor-pointer"
+            >
+              {isSubmitting ? (
+                <>
+                  <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                  <span>กำลังบันทึก...</span>
+                </>
+              ) : (
+                <>
+                  <Plus size={16} />
+                  <span>บันทึกเพิ่มงาน</span>
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

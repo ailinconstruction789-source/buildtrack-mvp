@@ -223,4 +223,105 @@ describe('HouseHandoverView - Mobile Schedule Editing', () => {
       expect(screen.queryByRole('button', { name: /เริ่มตรวจรอบที่/i })).not.toBeInTheDocument();
     });
   });
+
+  describe('Defect Deletion Permissions', () => {
+    it('allows Foreman to see delete button when defect progress is 0%', () => {
+      const zeroProgressDefect = {
+        ...mockDefect,
+        inspection_round: 1,
+        progress: 0
+      };
+
+      render(
+        <HouseHandoverView 
+          {...defaultProps} 
+          selectedPlot={{ ...mockPlot, inspection_round: 1 }}
+          defects={[zeroProgressDefect]}
+          currentUserRole="Foreman" 
+        />
+      );
+
+      const deleteButtons = screen.getAllByTitle(/ลบรายการที่เพิ่มผิด/i);
+      expect(deleteButtons.length).toBeGreaterThan(0);
+    });
+
+    it('does not allow Foreman to see delete button when defect progress is greater than 0%', () => {
+      const inProgressDefect = {
+        ...mockDefect,
+        inspection_round: 1,
+        progress: 50
+      };
+
+      render(
+        <HouseHandoverView 
+          {...defaultProps} 
+          selectedPlot={{ ...mockPlot, inspection_round: 1 }}
+          defects={[inProgressDefect]}
+          currentUserRole="Foreman" 
+        />
+      );
+
+      expect(screen.queryByTitle(/ลบรายการที่เพิ่มผิด/i)).not.toBeInTheDocument();
+      expect(screen.queryByTitle(/ลบรายการแจ้งซ่อม/i)).not.toBeInTheDocument();
+    });
+
+    it('allows Admin to see delete button even when defect has progress', () => {
+      const inProgressDefect = {
+        ...mockDefect,
+        inspection_round: 1,
+        progress: 50
+      };
+
+      render(
+        <HouseHandoverView 
+          {...defaultProps} 
+          selectedPlot={{ ...mockPlot, inspection_round: 1 }}
+          defects={[inProgressDefect]}
+          currentUserRole="Admin" 
+        />
+      );
+
+      const deleteButtons = screen.getAllByTitle(/ลบรายการแจ้งซ่อม/i);
+      expect(deleteButtons.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('Custom Handover Tasks & Furniture Support', () => {
+    it('shows "+ เพิ่มงานเพิ่มเติม (Admin)" button only for Admin role', () => {
+      const { rerender } = render(
+        <HouseHandoverView 
+          {...defaultProps} 
+          selectedPlot={{ ...mockPlot, inspection_round: 1 }}
+          currentUserRole="Foreman" 
+        />
+      );
+      expect(screen.queryByText(/\+ เพิ่มงานเพิ่มเติม \(Admin\)/i)).not.toBeInTheDocument();
+
+      rerender(
+        <HouseHandoverView 
+          {...defaultProps} 
+          selectedPlot={{ ...mockPlot, inspection_round: 1 }}
+          currentUserRole="Admin" 
+        />
+      );
+      expect(screen.getByText(/\+ เพิ่มงานเพิ่มเติม \(Admin\)/i)).toBeInTheDocument();
+    });
+
+    it('opens CustomHandoverTaskModal when Admin clicks "+ เพิ่มงานเพิ่มเติม (Admin)"', () => {
+      render(
+        <HouseHandoverView 
+          {...defaultProps} 
+          selectedPlot={{ ...mockPlot, inspection_round: 1 }}
+          currentUserRole="Admin" 
+        />
+      );
+
+      const addCustomBtn = screen.getByText(/\+ เพิ่มงานเพิ่มเติม \(Admin\)/i);
+      fireEvent.click(addCustomBtn);
+
+      expect(screen.getByText(/เพิ่มงานตรวจรับเพิ่มเติม \(เฉพาะ Admin\)/i)).toBeInTheDocument();
+      expect(screen.getByText(/🛋️ งานเฟอร์นิเจอร์/i)).toBeInTheDocument();
+      expect(screen.getByText(/🪟 งานผ้าม่าน\/มุ้งลวด/i)).toBeInTheDocument();
+    });
+  });
 });

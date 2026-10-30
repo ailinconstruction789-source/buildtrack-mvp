@@ -349,18 +349,30 @@ export default function CentralLeadBookingModal({
           try {
             const { data: promosData } = await supabase
               .from('plot_promotions')
-              .select('id, category, item_name, quantity, status')
+              .select('id, category, item_name, quantity, status, remarks')
               .eq('plot_id', plotData.id);
 
             if (cancelled) return;
 
             if (promosData && promosData.length > 0) {
-              setSelectedFreebies(promosData.map((p: any) => ({
-                category: p.category || 'ทั่วไป',
-                item_name: p.item_name,
-                quantity: p.quantity || 1
-              })));
-              setPromoMode('freebies');
+              const cashPromo = promosData.find((p: any) =>
+                p.category === 'เปลี่ยนเป็นเงินสด' ||
+                p.category === 'cash_discount' ||
+                (p.item_name && (p.item_name.includes('เปลี่ยนเป็นส่วนลดเงินสด') || p.item_name.includes('เปลี่ยนเป็นเงินสด')))
+              );
+              if (cashPromo) {
+                setPromoMode('discount');
+                const cashVal = cashPromo.remarks ? Number(String(cashPromo.remarks).replace(/[^0-9.-]+/g, '')) || 0 : 0;
+                setFreebieDiscount(String(cashVal));
+                setSelectedFreebies([]);
+              } else {
+                setSelectedFreebies(promosData.map((p: any) => ({
+                  category: p.category || 'ทั่วไป',
+                  item_name: p.item_name,
+                  quantity: p.quantity || 1
+                })));
+                setPromoMode('freebies');
+              }
             } else {
               // Default to full master catalog items so sales can choose/customize immediately
               const defaultCatalogItems = MASTER_FREEBIES_CATALOG.flatMap(c => 
@@ -676,6 +688,19 @@ export default function CentralLeadBookingModal({
             updated_at: now.toISOString()
           }));
           const { error } = await supabase.from('plot_promotions').insert(promoRows);
+          if (error) throw error;
+        } else if (promoMode === 'discount') {
+          const promoRow = {
+            plot_id: resolvedPlotId,
+            category: 'เปลี่ยนเป็นเงินสด',
+            item_name: 'ไม่รับของแถม เปลี่ยนเป็นส่วนลดเงินสด',
+            quantity: 1,
+            status: 'installed',
+            remarks: String(rawFreebieDiscount || 0),
+            created_at: now.toISOString(),
+            updated_at: now.toISOString()
+          };
+          const { error } = await supabase.from('plot_promotions').insert([promoRow]);
           if (error) throw error;
         }
         checkpoint.promotionsSaved = true;
