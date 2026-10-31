@@ -402,9 +402,9 @@ export default function TransferTrackingMatrixView({
       const nextVal = !currentVal;
       const oldNotes = targetPlot.handover_notes || '';
       const cleanNotes = oldNotes.replace(/\[qc_pass:(done|pending)\]/g, '').trim();
-      const newNotes = cleanNotes 
-        ? `${cleanNotes} [qc_pass:${nextVal ? 'done' : 'pending'}]` 
-        : `[qc_pass:${nextVal ? 'done' : 'pending'}]`;
+      const newNotes = nextVal 
+        ? (cleanNotes ? `${cleanNotes} [qc_pass:done]` : `[qc_pass:done]`)
+        : cleanNotes;
 
       setPlots(prev => prev.map(p => p.id === plotId ? { ...p, handover_notes: newNotes } : p));
       const { error } = await supabase.from('plots').update({ handover_notes: newNotes }).eq('id', plotId);
@@ -528,26 +528,15 @@ export default function TransferTrackingMatrixView({
       // Construction progress (% ก่อสร้าง จริงจากระบบงานก่อสร้าง vw_plot_progress)
       const progress = overallMap.get(String(plot.id)) ?? (plot.progress ?? 0);
 
-      // Defects for this plot & QC Pass evaluation
+      // Defects for this plot
       const plotDefects = defects.filter(d => String(d.plot_id) === String(plot.id));
       const hasUnresolvedDefects = plotDefects.some(d => (d.progress || 0) < 100 && d.status !== 'resolved');
 
+      // QC Pass: ขั้นตอนตรวจบ้านเมื่อเสร็จก่อนเตรียมส่งมอบให้ฝ่ายขาย/ลูกค้า
+      // ปัจจุบันยังไม่มีกระบวนการเช็คนี้ในระบบ จึงตั้งต้นเป็น "-" ไว้ทั้งหมดก่อน และเปิดให้คลิกเปลี่ยนสถานะได้โดยตรง
       const manualQCPassTag = Boolean(plot.handover_notes && plot.handover_notes.includes('[qc_pass:done]'));
-      const manualQCPendingTag = Boolean(plot.handover_notes && plot.handover_notes.includes('[qc_pass:pending]'));
-
-      let qcStatus: 'passed' | 'failed' | 'pending';
-      if (manualQCPassTag) {
-        qcStatus = 'passed';
-      } else if (manualQCPendingTag) {
-        qcStatus = 'pending';
-      } else if (hasUnresolvedDefects) {
-        qcStatus = 'failed';
-      } else if (progress >= 100 || plot.is_completed) {
-        qcStatus = 'passed';
-      } else {
-        qcStatus = 'pending';
-      }
-      const qcPass = qcStatus === 'passed';
+      const qcPass = manualQCPassTag;
+      const qcStatus: 'passed' | 'pending' = qcPass ? 'passed' : 'pending';
 
       // การก่อสร้างสิ้นสุด (Auto เมื่อครบ 100% หรือทำเครื่องหมายเสร็จสิ้น + One-click override)
       const manualFinishedTag = Boolean(plot.handover_notes && plot.handover_notes.includes('[construction_finished:done]'));
@@ -1170,22 +1159,18 @@ export default function TransferTrackingMatrixView({
                         </div>
                       </td>
 
-                      {/* QC Pass (Auto + One-click toggle override) */}
+                      {/* QC Pass (ค่าเริ่มต้นเป็น "-" รอระบบกระบวนการตรวจ QC / สามารถคลิกเปลี่ยนสถานะได้) */}
                       <td 
                         onClick={() => handleToggleQCPass(r.id, r.qcPass)}
-                        title="คลิกเพื่อสลับสถานะ: QC PASS [✓] / รอตรวจ [-]"
+                        title="คลิกเพื่อสลับสถานะ: QC PASS [✓] / ยังไม่มีการตรวจ [-]"
                         className="py-2.5 px-2 border-r border-slate-200 cursor-pointer select-none transition-all hover:bg-slate-100/70"
                       >
-                        {r.qcStatus === 'passed' ? (
+                        {r.qcPass ? (
                           <span className="inline-block bg-[#16a34a] text-white p-1 rounded-md" title="QC Pass (ผ่านการตรวจเรียบร้อย)">
                             <Check size={14} strokeWidth={3} />
                           </span>
-                        ) : r.qcStatus === 'failed' ? (
-                          <span className="inline-block bg-[#dc2626] text-white p-1 rounded-md" title="มีงานแก้ที่ยังไม่เสร็จ (Defect ค้าง)">
-                            <X size={14} strokeWidth={3} />
-                          </span>
                         ) : (
-                          <span className="text-slate-300 font-bold hover:text-slate-500" title="ยังไม่ถึงขั้นตอน QC / รอตรวจ">-</span>
+                          <span className="text-slate-300 font-bold hover:text-slate-500" title="ยังไม่มีกระบวนการตรวจ QC">-</span>
                         )}
                       </td>
 
