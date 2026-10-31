@@ -49,6 +49,7 @@ export default function TransferTrackingMatrixView({
 
   // Preview Image Lightbox
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [updatingPlotId, setUpdatingPlotId] = useState<string | null>(null);
 
   // Month Names in Thai
   const THAI_MONTHS = [
@@ -127,7 +128,7 @@ export default function TransferTrackingMatrixView({
       // 2. Fetch Task Templates
       const { data: tTemplates } = await supabase
         .from('task_templates')
-        .select('id, task_name, category');
+        .select('id, task_name');
       setTaskTemplates(tTemplates || []);
 
       // 3. Fetch Plots
@@ -269,6 +270,82 @@ export default function TransferTrackingMatrixView({
     }
   };
 
+  // 🖱️ One-Click Toggle Handlers (Everyone can click to toggle)
+  const handleToggleSandwashCoating = async (plotId: string, currentVal: boolean) => {
+    try {
+      setUpdatingPlotId(plotId);
+      const targetPlot = plots.find(p => p.id === plotId);
+      if (!targetPlot) return;
+      const nextVal = !currentVal;
+      const oldNotes = targetPlot.handover_notes || '';
+      const cleanNotes = oldNotes.replace(/\[sandwash_coating:(done|pending)\]/g, '').trim();
+      const newNotes = cleanNotes 
+        ? `${cleanNotes} [sandwash_coating:${nextVal ? 'done' : 'pending'}]` 
+        : `[sandwash_coating:${nextVal ? 'done' : 'pending'}]`;
+
+      setPlots(prev => prev.map(p => p.id === plotId ? { ...p, handover_notes: newNotes } : p));
+      const { error } = await supabase.from('plots').update({ handover_notes: newNotes }).eq('id', plotId);
+      if (error) {
+        console.error('Error updating sandwash coating:', error);
+        setPlots(prev => prev.map(p => p.id === plotId ? { ...p, handover_notes: oldNotes } : p));
+      }
+    } catch (err) {
+      console.error('Toggle error:', err);
+    } finally {
+      setUpdatingPlotId(null);
+    }
+  };
+
+  const handleToggleCloseConstruction = async (plotId: string, currentVal: boolean) => {
+    try {
+      setUpdatingPlotId(plotId);
+      const targetPlot = plots.find(p => p.id === plotId);
+      if (!targetPlot) return;
+      const nextVal = !currentVal;
+      const oldNotes = targetPlot.handover_notes || '';
+      const cleanNotes = oldNotes.replace(/\[close_construction:(done|pending)\]/g, '').trim();
+      const newNotes = cleanNotes 
+        ? `${cleanNotes} [close_construction:${nextVal ? 'done' : 'pending'}]` 
+        : `[close_construction:${nextVal ? 'done' : 'pending'}]`;
+
+      setPlots(prev => prev.map(p => p.id === plotId ? { ...p, handover_notes: newNotes } : p));
+      const { error } = await supabase.from('plots').update({ handover_notes: newNotes }).eq('id', plotId);
+      if (error) {
+        console.error('Error updating close construction:', error);
+        setPlots(prev => prev.map(p => p.id === plotId ? { ...p, handover_notes: oldNotes } : p));
+      }
+    } catch (err) {
+      console.error('Toggle error:', err);
+    } finally {
+      setUpdatingPlotId(null);
+    }
+  };
+
+  const handleToggleCloseSales = async (plotId: string, currentVal: boolean) => {
+    try {
+      setUpdatingPlotId(plotId);
+      const targetPlot = plots.find(p => p.id === plotId);
+      if (!targetPlot) return;
+      const nextVal = !currentVal;
+      const oldNotes = targetPlot.handover_notes || '';
+      const cleanNotes = oldNotes.replace(/\[close_sales:(done|pending)\]/g, '').trim();
+      const newNotes = cleanNotes 
+        ? `${cleanNotes} [close_sales:${nextVal ? 'done' : 'pending'}]` 
+        : `[close_sales:${nextVal ? 'done' : 'pending'}]`;
+
+      setPlots(prev => prev.map(p => p.id === plotId ? { ...p, handover_notes: newNotes } : p));
+      const { error } = await supabase.from('plots').update({ handover_notes: newNotes }).eq('id', plotId);
+      if (error) {
+        console.error('Error updating close sales:', error);
+        setPlots(prev => prev.map(p => p.id === plotId ? { ...p, handover_notes: oldNotes } : p));
+      }
+    } catch (err) {
+      console.error('Toggle error:', err);
+    } finally {
+      setUpdatingPlotId(null);
+    }
+  };
+
   // Process & Assemble Rows
   const rows = useMemo(() => {
     // Map template IDs to task names
@@ -286,13 +363,20 @@ export default function TransferTrackingMatrixView({
     });
 
     // Helper to get progress by task name keyword
-    const getTaskDone = (plotId: string, keyword: string): boolean => {
+    const getTaskProgress = (plotId: string, keyword: string): number => {
       const tasks = plotTaskProg.get(plotId);
-      if (!tasks) return false;
+      if (!tasks) return 0;
+      let maxProg = 0;
       for (const [name, prog] of Object.entries(tasks)) {
-        if (name.includes(keyword) && prog >= 100) return true;
+        if (name.includes(keyword) && prog > maxProg) {
+          maxProg = prog;
+        }
       }
-      return false;
+      return maxProg;
+    };
+
+    const getTaskDone = (plotId: string, keyword: string): boolean => {
+      return getTaskProgress(plotId, keyword) >= 100;
     };
 
     return plots.map(plot => {
@@ -344,22 +428,65 @@ export default function TransferTrackingMatrixView({
       const progress = plot.progress ?? 0;
       const isConstructionFinished = plot.is_completed || progress >= 100;
 
-      // Check specific tasks from Excel
+      // 🛠️ Field Work Checklist Calculations:
+      // 1. สุขภัณฑ์
       const sanDone = getTaskDone(plot.id, 'สุขภัณฑ์');
+
+      // 2. ปั๊มน้ำ / ถังเก็บน้ำ
       const pumpDone = getTaskDone(plot.id, 'ปั้มน้ำ') || getTaskDone(plot.id, 'ปั๊มน้ำ') || getTaskDone(plot.id, 'ถังเก็บน้ำ');
-      const soilDone = getTaskDone(plot.id, 'ดินดำ') || getTaskDone(plot.id, 'ปรับพื้นที่');
-      const grassDone = getTaskDone(plot.id, 'หญ้า');
+
+      // 3. ดินดำ: ให้นับถ้ามีความคืบหน้าในงานปูหญ้า (>0%) หรือมีงานปรับพื้นที่/ดินดำ
+      const grassProg = getTaskProgress(plot.id, 'หญ้า');
+      const soilDone = grassProg > 0 || getTaskDone(plot.id, 'ปรับพื้นที่') || getTaskDone(plot.id, 'ดินดำ');
+
+      // 4. หญ้า: เมื่องานปูหญ้าเสร็จสมบูรณ์ 100%
+      const grassDone = grassProg >= 100;
+
+      // 5. รั้ว
       const fenceDone = getTaskDone(plot.id, 'รั้ว');
+
+      // 6. ทรายล้าง
       const sandwashDone = getTaskDone(plot.id, 'ทรายล้าง');
-      const sandwashCoatingDone = getTaskDone(plot.id, 'เคลือบ') || (sandwashDone && progress >= 95);
+
+      // 7. เคลือบทรายล้าง: ตรวจจาก tag ใน handover_notes หรือคลิกสลับสถานะ
+      const hasCoatingDoneTag = Boolean(plot.handover_notes && plot.handover_notes.includes('[sandwash_coating:done]'));
+      const hasCoatingPendingTag = Boolean(plot.handover_notes && plot.handover_notes.includes('[sandwash_coating:pending]'));
+      const sandwashCoatingDone = hasCoatingDoneTag ? true : (hasCoatingPendingTag ? false : (sandwashDone && progress >= 95));
 
       // Inspection Statuses
       const round1Status = plot.inspection_round1_status || 'pending';
       const round2Status = plot.inspection_round2_status || 'pending';
 
-      // Closeout
-      const closeConstruction = isConstructionFinished || plot.handover_status === 'construction_closed';
-      const closeSales = isTransferred || plot.handover_status === 'completed';
+      // 8. ปิดจบ ก่อสร้าง:
+      // เสร็จงานทุกอย่าง (ความคืบหน้า 100%) + เก็บงานตรวจรับมอบบ้านผ่านทุกรอบ (ไม่มี Defect ค้าง) + มีการกดมอบบ้าน
+      const isHandoverDelivered = Boolean(plot.handover_status === 'completed' || plot.handover_completed_at);
+      const manualCloseConstruction = Boolean(plot.handover_notes && plot.handover_notes.includes('[close_construction:done]'));
+      const manualPendingConstruction = Boolean(plot.handover_notes && plot.handover_notes.includes('[close_construction:pending]'));
+      const autoCloseConstruction = Boolean((plot.is_completed || progress >= 100) && !hasUnresolvedDefects && isHandoverDelivered);
+      const closeConstruction = manualCloseConstruction ? true : (manualPendingConstruction ? false : autoCloseConstruction);
+
+      // 9. ปิดจบ ฝ่ายขาย:
+      // โอนกรรมสิทธิ์แล้ว + รับมอบบ้านแล้ว + มีการรับเฟอร์นิเจอร์ครบ (หรือไม่มีเฟอร์นิเจอร์ให้ผ่านเงื่อนไข)
+      const tasks = plotTaskProg.get(plot.id) || {};
+      const plotFurnitureTasks = Object.keys(tasks).filter(k => k.includes('เฟอร์นิเจอร์'));
+      const hasFurnitureTask = plotFurnitureTasks.length > 0;
+      const furnitureTaskDone = hasFurnitureTask ? plotFurnitureTasks.every(k => (tasks[k] || 0) >= 100) : false;
+
+      const furniturePromos = plotPromos.filter(p => 
+        (p.item_name && p.item_name.includes('เฟอร์')) || 
+        (p.category && p.category.includes('เฟอร์'))
+      );
+      const hasFurniturePromo = furniturePromos.length > 0;
+      const furniturePromoDone = hasFurniturePromo ? furniturePromos.every(p => ['installed', 'delivered', 'completed'].includes(p.status)) : false;
+
+      const hasFurniture = hasFurnitureTask || hasFurniturePromo;
+      const furnitureDone = hasFurniture ? (hasFurnitureTask ? furnitureTaskDone : true) && (hasFurniturePromo ? furniturePromoDone : true) : true;
+      const furnitureNote = !hasFurniture ? 'ไม่มีเฟอร์นิเจอร์' : (furnitureDone ? 'รับเฟอร์นิเจอร์ครบแล้ว' : 'รอส่งมอบเฟอร์นิเจอร์');
+
+      const manualCloseSales = Boolean(plot.handover_notes && plot.handover_notes.includes('[close_sales:done]'));
+      const manualPendingSales = Boolean(plot.handover_notes && plot.handover_notes.includes('[close_sales:pending]'));
+      const autoCloseSales = Boolean(isTransferred && isHandoverDelivered && furnitureDone);
+      const closeSales = manualCloseSales ? true : (manualPendingSales ? false : autoCloseSales);
 
       return {
         id: plot.id,
@@ -398,6 +525,7 @@ export default function TransferTrackingMatrixView({
         round2Status,
         closeConstruction,
         closeSales,
+        furnitureNote,
         hasTermiteDone,
         termiteDate,
 
@@ -999,9 +1127,24 @@ export default function TransferTrackingMatrixView({
                         {r.sandwashDone ? 'เรียบร้อย' : 'รอดำเนินการ'}
                       </td>
 
-                      {/* เคลือบทรายล้าง */}
-                      <td className={`py-2.5 px-2 border-r border-slate-200 ${r.sandwashCoatingDone ? 'bg-[#22c55e] text-white' : 'bg-[#ef4444] text-white'}`}>
-                        {r.sandwashCoatingDone ? 'เคลือบแล้ว' : 'ยังไม่เคลือบ'}
+                      {/* เคลือบทรายล้าง (One-click toggle) */}
+                      <td 
+                        onClick={() => handleToggleSandwashCoating(r.id, r.sandwashCoatingDone)}
+                        title="คลิกเพื่อสลับสถานะ: เคลือบแล้ว / ยังไม่เคลือบ"
+                        className={`py-2.5 px-2 border-r border-slate-200 cursor-pointer select-none transition-all hover:brightness-110 active:scale-95 ${
+                          r.sandwashCoatingDone ? 'bg-[#22c55e] text-white hover:bg-emerald-600' : 'bg-[#ef4444] text-white hover:bg-rose-600'
+                        }`}
+                      >
+                        <div className="flex items-center justify-center gap-1 font-bold text-xs">
+                          {updatingPlotId === r.id ? (
+                            <span className="text-[10px] animate-pulse">กำลังบันทึก...</span>
+                          ) : (
+                            <>
+                              <span>{r.sandwashCoatingDone ? 'เคลือบแล้ว' : 'ยังไม่เคลือบ'}</span>
+                              <span className="text-[9px] opacity-70">✎</span>
+                            </>
+                          )}
+                        </div>
                       </td>
 
                       {/* ตรวจ 1 */}
@@ -1028,14 +1171,32 @@ export default function TransferTrackingMatrixView({
                          r.round2Status === 'scheduled' ? 'นัดแล้ว' : '-'}
                       </td>
 
-                      {/* ปิดจบ ก่อสร้าง */}
-                      <td className={`py-2.5 px-2 border-r border-slate-200 ${r.closeConstruction ? 'bg-[#22c55e] text-white' : 'bg-[#ef4444] text-white'}`}>
-                        {r.closeConstruction ? 'ปิดจบแล้ว' : 'ยังไม่ปิดจบ'}
+                      {/* ปิดจบ ก่อสร้าง (Auto + One-click toggle override) */}
+                      <td 
+                        onClick={() => handleToggleCloseConstruction(r.id, r.closeConstruction)}
+                        title="คลิกเพื่อสลับสถานะ (ระบบนับ: งานเสร็จ 100% + ผ่านตรวจทุกรอบ + มอบบ้าน)"
+                        className={`py-2.5 px-2 border-r border-slate-200 cursor-pointer select-none transition-all hover:brightness-110 active:scale-95 ${
+                          r.closeConstruction ? 'bg-[#22c55e] text-white hover:bg-emerald-600' : 'bg-[#ef4444] text-white hover:bg-rose-600'
+                        }`}
+                      >
+                        <div className="flex items-center justify-center gap-1 font-bold text-xs">
+                          <span>{r.closeConstruction ? 'ปิดจบแล้ว' : 'ยังไม่ปิดจบ'}</span>
+                          <span className="text-[9px] opacity-70">✎</span>
+                        </div>
                       </td>
 
-                      {/* ปิดจบ ฝ่ายขาย */}
-                      <td className={`py-2.5 px-2 border-r border-slate-200 ${r.closeSales ? 'bg-[#22c55e] text-white' : 'bg-[#ef4444] text-white'}`}>
-                        {r.closeSales ? 'ส่งมอบแล้ว' : 'รอส่งมอบ'}
+                      {/* ปิดจบ ฝ่ายขาย (Auto + One-click toggle override) */}
+                      <td 
+                        onClick={() => handleToggleCloseSales(r.id, r.closeSales)}
+                        title={`คลิกเพื่อสลับสถานะ (ระบบนับ: โอนกรรมสิทธิ์ + มอบบ้าน + ${r.furnitureNote})`}
+                        className={`py-2.5 px-2 border-r border-slate-200 cursor-pointer select-none transition-all hover:brightness-110 active:scale-95 ${
+                          r.closeSales ? 'bg-[#22c55e] text-white hover:bg-emerald-600' : 'bg-[#ef4444] text-white hover:bg-rose-600'
+                        }`}
+                      >
+                        <div className="flex items-center justify-center gap-1 font-bold text-xs">
+                          <span>{r.closeSales ? 'ปิดจบแล้ว' : (r.isTransferred ? 'รอส่งมอบ' : 'ยังไม่ปิดจบ')}</span>
+                          <span className="text-[9px] opacity-70">✎</span>
+                        </div>
                       </td>
 
                       {/* ปลวก */}
