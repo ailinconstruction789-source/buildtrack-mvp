@@ -212,6 +212,15 @@ const Sidebar = React.memo(({
                           >
                             <Building2 size={17} />{!isSidebarCollapsed && <span>ตารางสรุปฝั่งขาย</span>}
                           </button>
+                          <button 
+                            onClick={() => { setSelectedProject(null); setView('transfer-tracking-matrix'); }} 
+                            onMouseEnter={() => { import('@/components/sales/TransferTrackingMatrixView').catch(() => {}); }}
+                            title="ตารางติดตามบ้านรอโอน (Transfer Matrix)"
+                            aria-label="ตารางติดตามบ้านรอโอน (Transfer Matrix)"
+                            className={`w-full flex items-center gap-3 py-2.5 rounded-xl font-bold text-xs transition-all ${activeView === 'transfer-tracking-matrix' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-[#d4af37]'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5'}`}
+                          >
+                            <FileSpreadsheet size={17} />{!isSidebarCollapsed && <span>ตารางติดตามบ้านรอโอน</span>}
+                          </button>
                           {(isAdmin || isSales) && (
                             <button 
                               onClick={() => setView('sales-promotions')} 

@@ -42,6 +42,7 @@ const DailyVisitsScheduleView = dynamic(() => import('@/components/sales/DailyVi
 const SalesReportsView = dynamic(() => import('@/components/sales/SalesReportsView'));
 const SalesIntelligenceView = dynamic(() => import('@/components/sales/SalesIntelligenceView'));
 const SalesSummaryTable = dynamic(() => import('@/components/sales/SalesSummaryTable'));
+const TransferTrackingMatrixView = dynamic(() => import('@/components/sales/TransferTrackingMatrixView'));
 const SalesWorkspaceEntry = dynamic(() => import('@/components/sales/SalesWorkspaceEntry'));
 const SalesReportingEntry = dynamic(() => import('@/components/sales/SalesReportingEntry'));
 const CentralLeadsView = dynamic(() => import('@/components/sales/CentralLeadsView'));
@@ -5005,6 +5006,18 @@ export default function ConstructionApp() {
                 <SalesSummaryTable />
               )}
 
+              {/* 📊 View: ตารางติดตามบ้านรอโอน (Transfer Tracking Matrix) */}
+              {view === 'transfer-tracking-matrix' && (
+                <TransferTrackingMatrixView
+                  onBack={() => { setView('dashboard'); setSelectedProject(null); }}
+                  onViewPlot={(p) => {
+                    setSelectedPlot(p);
+                    setView('house-detail');
+                  }}
+                  initialProjectName={selectedProject?.name}
+                />
+              )}
+
               {/* 👤 View: ลูกค้าของฉัน (My Sales Hub) */}
               {view === 'my-sales-workspace' && (
                 <div className="w-full h-full">
@@ -5595,8 +5608,8 @@ export default function ConstructionApp() {
                 </>
               )}
               {(isAdmin || isOwner || isSales) && (
-                <button onClick={() => setShowMobileSalesMenu(true)} className={`flex flex-col items-center p-2 rounded-xl w-16 ${['sales-dashboard-excel', 'sales-dashboard', 'sales-daily-visits', 'sales-reports', 'sales-summary-table', 'sales-promotions', 'agent-performance', 'sales-intelligence'].includes(activeView) ? 'text-[#d4af37]' : 'text-slate-400 hover:text-slate-600'}`}>
-                  <Building2 size={20} className={['sales-dashboard-excel', 'sales-dashboard', 'sales-daily-visits', 'sales-reports', 'sales-summary-table', 'sales-promotions', 'agent-performance', 'sales-intelligence'].includes(activeView) ? 'fill-[#d4af37]/20' : ''} />
+                <button onClick={() => setShowMobileSalesMenu(true)} className={`flex flex-col items-center p-2 rounded-xl w-16 ${['sales-dashboard-excel', 'sales-dashboard', 'sales-daily-visits', 'sales-reports', 'sales-summary-table', 'transfer-tracking-matrix', 'sales-promotions', 'agent-performance', 'sales-intelligence'].includes(activeView) ? 'text-[#d4af37]' : 'text-slate-400 hover:text-slate-600'}`}>
+                  <Building2 size={20} className={['sales-dashboard-excel', 'sales-dashboard', 'sales-daily-visits', 'sales-reports', 'sales-summary-table', 'transfer-tracking-matrix', 'sales-promotions', 'agent-performance', 'sales-intelligence'].includes(activeView) ? 'fill-[#d4af37]/20' : ''} />
                   <span className="text-[9px] font-black mt-1">ฝ่ายขาย</span>
                 </button>
               )}
@@ -5647,6 +5660,10 @@ export default function ConstructionApp() {
               <button onClick={() => { setView('sales-summary-table'); setShowMobileSalesMenu(false); }} className={`flex flex-col items-center justify-center p-5 rounded-2xl border-2 transition-all ${activeView === 'sales-summary-table' ? 'border-[#d4af37] bg-[#d4af37]/10' : 'border-slate-100 bg-slate-50 hover:border-slate-200'}`}>
                 <Building2 size={28} className="text-[#d4af37] mb-3" />
                 <span className="text-xs font-bold text-slate-700 text-center">ตารางสรุป<br/>ฝั่งขาย</span>
+              </button>
+              <button onClick={() => { setView('transfer-tracking-matrix'); setShowMobileSalesMenu(false); }} className={`flex flex-col items-center justify-center p-5 rounded-2xl border-2 transition-all ${activeView === 'transfer-tracking-matrix' ? 'border-[#166534] bg-[#166534]/10' : 'border-slate-100 bg-slate-50 hover:border-slate-200'}`}>
+                <FileSpreadsheet size={28} className="text-[#166534] mb-3" />
+                <span className="text-xs font-bold text-slate-700 text-center">ตารางติดตาม<br/>บ้านรอโอน</span>
               </button>
               {(isAdmin || isSales) && (
                 <button onClick={() => { setView('sales-promotions'); setShowMobileSalesMenu(false); }} className={`flex flex-col items-center justify-center p-5 rounded-2xl border-2 transition-all ${activeView === 'sales-promotions' ? 'border-[#d4af37] bg-[#d4af37]/10' : 'border-slate-100 bg-slate-50 hover:border-slate-200'}`}>
