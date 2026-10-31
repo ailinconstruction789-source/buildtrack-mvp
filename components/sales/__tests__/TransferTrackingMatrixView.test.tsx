@@ -26,4 +26,11 @@ describe('TransferTrackingMatrixView Component', () => {
     expect(screen.getByText(/Export Excel/i)).toBeDefined();
     expect(screen.getAllByText(/ดูทุกเดือน/i).length).toBeGreaterThanOrEqual(1);
   });
+
+  it('renders quick status tabs including waiting and rental', () => {
+    render(<TransferTrackingMatrixView />);
+    expect(screen.getAllByText(/รอโอนกรรมสิทธิ์/i).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/บ้านเช่า/i).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/โอนสำเร็จแล้ว/i).length).toBeGreaterThanOrEqual(1);
+  });
 });

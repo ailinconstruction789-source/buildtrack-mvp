@@ -5014,7 +5014,7 @@ export default function ConstructionApp() {
                     setSelectedPlot(p);
                     setView('house-detail');
                   }}
-                  initialProjectName={selectedProject?.name}
+                  initialProjectName="all"
                 />
               )}
 

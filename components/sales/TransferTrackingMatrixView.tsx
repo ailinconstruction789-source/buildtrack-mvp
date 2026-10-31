@@ -155,11 +155,11 @@ export default function TransferTrackingMatrixView({
       const allLeads = lData || [];
       setLeads(allLeads);
 
-      // 🎯 STRICT FILTER: Exactly matching "รายละเอียดบ้านที่รอโอน" (Waiting for Transfer)
+      // 🎯 STRICT FILTER: Exactly matching "รายละเอียดบ้านที่รอโอน" (Waiting for Transfer) - Exactly 17 plots
       // Only include plots that:
       // - Belong to active projects (not is_closed)
       // - Are not infrastructure
-      // - Have an active booking/sale (not cancelled), OR are an active rental, OR have a customer reserved
+      // - Have an active booking/sale (not cancelled), OR are an active rental (current_tenant_name), OR have customer reserved
       const qualifiedPlots = (pData || []).filter(p => {
         // Exclude closed projects
         if (closedProjects.has(p.project_name)) return false;
@@ -167,22 +167,23 @@ export default function TransferTrackingMatrixView({
         // Exclude infrastructure
         if (p.house_types?.is_infrastructure || p.house_types?.type_name === 'สาธารณูปโภค') return false;
 
-        // Active sales for this plot
+        // 1. Rental check (บ้านเช่า)
+        const isRental = Boolean(
+          p.current_tenant_name ||
+          p.rental_program ||
+          p.sale_status === 'Rented' ||
+          (p.highlight_note && /เช่า:|จองเช่า:/i.test(p.highlight_note))
+        );
+
+        // 2. Active Customer booking waiting for transfer (บ้านรอโอนขาย)
         const plotSales = allSales.filter(sl => sl.plot_id === p.id && sl.contract_status !== 'Cancelled');
-        const hasWaitingSale = plotSales.some(sl => !['transferred', 'handover'].includes((sl.stage || sl.contract_status || '').toLowerCase()));
-        
-        // Rental check
-        const isRental = Boolean(p.current_tenant_name || p.rental_program || p.sale_status === 'Rented');
-
-        // Customer booking check
-        const hasCustomerBooking = Boolean(p.has_customer && (p.sale_status || '').toLowerCase() !== 'transferred');
+        const isNotTransferred = (p.sale_status || '').toLowerCase() !== 'transferred';
+        const hasCustomerBooking = Boolean(p.has_customer && isNotTransferred);
         const isReservedStatus = ['booked', 'contracted', 'reserved', 'transfer_pending'].includes((p.sale_status || '').toLowerCase());
-        const hasHighlightBooking = Boolean(p.highlight_note && /ลูกค้า:|จองแล้ว|สัญญาเช่า|เช่า:/i.test(p.highlight_note));
+        const hasWaitingSale = plotSales.some(sl => !['transferred', 'handover'].includes((sl.stage || sl.contract_status || '').toLowerCase()));
 
-        // Transferred check (only if transferred in active sales)
-        const hasTransferSale = plotSales.some(sl => Boolean(sl.transferred_at || sl.transfer_date));
-
-        return hasWaitingSale || isRental || hasCustomerBooking || isReservedStatus || hasHighlightBooking || hasTransferSale;
+        // Exactly 17 plots: 12 waiting transfer sales + 5 rentals
+        return isRental || hasCustomerBooking || isReservedStatus || hasWaitingSale;
       });
 
       setPlots(qualifiedPlots);
@@ -443,7 +444,17 @@ export default function TransferTrackingMatrixView({
           const rowVal = row.targetYear * 12 + row.targetMonth;
           const fromVal = fromYear * 12 + fromMonth;
           const toVal = toYear * 12 + toMonth;
-          if (rowVal < fromVal || rowVal > toVal) return false;
+          
+          if (row.isTransferred) {
+            // โอนสำเร็จแล้ว: ต้องอยู่ในช่วงเดือนที่เลือก
+            if (rowVal < fromVal || rowVal > toVal) return false;
+          } else {
+            // บ้านรอโอน: แปลงที่นัดหมายก่อนหน้านี้ถือเป็น "ตกค้างจากเดือนก่อน" (Carried over) ยังคงอยู่ในเป้าหมายรอโอนของเดือนนี้
+            // ถ้ากำหนดวันนัดหมายในอนาคตเกินช่วงเดือนที่เลือก ให้ดูว่าติ๊ก includeUnscheduled ไว้หรือไม่
+            if (rowVal > toVal) {
+              return includeUnscheduled;
+            }
+          }
         } else {
           return includeUnscheduled;
         }
