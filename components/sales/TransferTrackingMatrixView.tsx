@@ -976,10 +976,10 @@ export default function TransferTrackingMatrixView({
                   const isEven = idx % 2 === 0;
 
                   return (
-                    <tr key={r.id} className={`hover:bg-emerald-50/40 transition-colors ${isEven ? 'bg-white' : 'bg-slate-50/60'}`}>
+                    <tr key={r.id} className={`group transition-colors ${isEven ? 'bg-white' : 'bg-slate-50'} hover:bg-emerald-50/60`}>
                       
-                      {/* 📌 Sticky Left Column: Thumbnail + Plot Name */}
-                      <td className="sticky left-0 z-20 bg-inherit py-2.5 px-3 border-r border-slate-200 text-left shadow-[4px_0_12px_rgba(0,0,0,0.06)]">
+                      {/* 📌 Sticky Left Column: Thumbnail + Plot Name (100% Solid Opaque Background) */}
+                      <td className={`sticky left-0 z-20 py-2.5 px-3 border-r border-slate-200 text-left shadow-[4px_0_12px_rgba(0,0,0,0.08)] transition-colors ${isEven ? 'bg-white' : 'bg-slate-50'} group-hover:bg-[#ecfdf5]`}>
                         <div className="flex items-center gap-2.5">
                           {/* Thumbnail */}
                           {r.imageUrl ? (
