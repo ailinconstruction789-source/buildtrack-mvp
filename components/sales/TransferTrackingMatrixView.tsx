@@ -46,6 +46,7 @@ export default function TransferTrackingMatrixView({
   const [taskTemplates, setTaskTemplates] = useState<any[]>([]);
   const [defects, setDefects] = useState<any[]>([]);
   const [promotions, setPromotions] = useState<any[]>([]);
+  const [plotOverallProgress, setPlotOverallProgress] = useState<any[]>([]);
 
   // Preview Image Lightbox
   const [previewImage, setPreviewImage] = useState<string | null>(null);
@@ -194,6 +195,7 @@ export default function TransferTrackingMatrixView({
         setTaskAssignments([]);
         setDefects([]);
         setPromotions([]);
+        setPlotOverallProgress([]);
         setLoading(false);
         return;
       }
@@ -235,6 +237,17 @@ export default function TransferTrackingMatrixView({
         if (prData) allPromos = [...allPromos, ...prData];
       }
       setPromotions(allPromos);
+
+      // 9. Fetch Overall Progress from vw_plot_overall_status
+      let allOverall: any[] = [];
+      for (const chunk of chunks) {
+        const { data: oData } = await supabase
+          .from('vw_plot_overall_status')
+          .select('plot_id, actual_avg')
+          .in('plot_id', chunk);
+        if (oData) allOverall = [...allOverall, ...oData];
+      }
+      setPlotOverallProgress(allOverall);
 
     } catch (err) {
       console.error('Error fetching matrix data:', err);
@@ -296,6 +309,31 @@ export default function TransferTrackingMatrixView({
     }
   };
 
+  const handleToggleConstructionFinished = async (plotId: string, currentVal: boolean) => {
+    try {
+      setUpdatingPlotId(plotId);
+      const targetPlot = plots.find(p => p.id === plotId);
+      if (!targetPlot) return;
+      const nextVal = !currentVal;
+      const oldNotes = targetPlot.handover_notes || '';
+      const cleanNotes = oldNotes.replace(/\[construction_finished:(done|pending)\]/g, '').trim();
+      const newNotes = cleanNotes 
+        ? `${cleanNotes} [construction_finished:${nextVal ? 'done' : 'pending'}]` 
+        : `[construction_finished:${nextVal ? 'done' : 'pending'}]`;
+
+      setPlots(prev => prev.map(p => p.id === plotId ? { ...p, handover_notes: newNotes } : p));
+      const { error } = await supabase.from('plots').update({ handover_notes: newNotes }).eq('id', plotId);
+      if (error) {
+        console.error('Error updating construction finished:', error);
+        setPlots(prev => prev.map(p => p.id === plotId ? { ...p, handover_notes: oldNotes } : p));
+      }
+    } catch (err) {
+      console.error('Toggle error:', err);
+    } finally {
+      setUpdatingPlotId(null);
+    }
+  };
+
   const handleToggleCloseConstruction = async (plotId: string, currentVal: boolean) => {
     try {
       setUpdatingPlotId(plotId);
@@ -348,6 +386,10 @@ export default function TransferTrackingMatrixView({
 
   // Process & Assemble Rows
   const rows = useMemo(() => {
+    // Map overall progress
+    const overallMap = new Map<string, number>();
+    plotOverallProgress.forEach(s => overallMap.set(String(s.plot_id), Math.round(Number(s.actual_avg || 0))));
+
     // Map template IDs to task names
     const templateMap = new Map<string, string>();
     taskTemplates.forEach(t => templateMap.set(String(t.id), t.task_name));
@@ -424,9 +466,20 @@ export default function TransferTrackingMatrixView({
         }
       }
 
-      // Construction progress
-      const progress = plot.progress ?? 0;
-      const isConstructionFinished = plot.is_completed || progress >= 100;
+      // Construction progress (% ก่อสร้าง จริงจากระบบงานก่อสร้าง vw_plot_overall_status)
+      const progress = overallMap.get(String(plot.id)) ?? (plot.progress ?? 0);
+
+      // การก่อสร้างสิ้นสุด (Auto เมื่อครบ 100% หรือทำเครื่องหมายเสร็จสิ้น + One-click override)
+      const manualFinishedTag = Boolean(plot.handover_notes && plot.handover_notes.includes('[construction_finished:done]'));
+      const manualPendingTag = Boolean(plot.handover_notes && plot.handover_notes.includes('[construction_finished:pending]'));
+      const autoFinished = progress >= 100 || Boolean(plot.is_completed);
+      const isConstructionFinished = manualFinishedTag ? true : (manualPendingTag ? false : autoFinished);
+
+      // คาดว่าแล้วเสร็จ: ดึงจากวันที่ในแผนงาน (วันสิ้นสุดของงวดงานก่อสร้างล่าสุดจาก plot_task_assignments)
+      const plotAssigns = taskAssignments.filter(a => String(a.plot_id) === String(plot.id));
+      const endDates = plotAssigns.map(a => a.actual_end_date).filter(Boolean).sort();
+      const latestPlanEndDate = endDates.length > 0 ? endDates[endDates.length - 1] : null;
+      const expectedFinishDate = formatDateDMY(latestPlanEndDate);
 
       // 🛠️ Field Work Checklist Calculations:
       // 1. สุขภัณฑ์
@@ -507,7 +560,7 @@ export default function TransferTrackingMatrixView({
         qcPass,
         progress,
         isConstructionFinished,
-        expectedFinishDate: formatDateDMY(plot.created_at ? new Date(new Date(plot.created_at).getTime() + 90*24*60*60*1000).toISOString() : null),
+        expectedFinishDate,
         inspectionDate: formatDateDMY(plot.inspection_round1_date),
         handoverDate: formatDateDMY(plot.handover_completed_at),
         isTransferred,
@@ -540,7 +593,7 @@ export default function TransferTrackingMatrixView({
         waterDate: formatDateDMY(plot.water_meter_installed_date || plot.water_meter_date),
       };
     });
-  }, [plots, sales, leads, taskAssignments, taskTemplates, defects, promotions]);
+  }, [plots, sales, leads, taskAssignments, taskTemplates, defects, promotions, plotOverallProgress]);
 
   // Filter Rows based on Month-to-Month Range, Project, Search, Status
   const filteredRows = useMemo(() => {
@@ -1041,14 +1094,18 @@ export default function TransferTrackingMatrixView({
                         </span>
                       </td>
 
-                      {/* การก่อสร้างสิ้นสุด */}
-                      <td className="py-2.5 px-2 border-r border-slate-200">
+                      {/* การก่อสร้างสิ้นสุด (Auto เมื่อ 100% หรือเสร็จสิ้น + One-click toggle override) */}
+                      <td 
+                        onClick={() => handleToggleConstructionFinished(r.id, r.isConstructionFinished)}
+                        title="คลิกเพื่อสลับสถานะ: ก่อสร้างสิ้นสุด [✓] / ยังไม่สิ้นสุด [-]"
+                        className="py-2.5 px-2 border-r border-slate-200 cursor-pointer select-none transition-all hover:bg-slate-100/70"
+                      >
                         {r.isConstructionFinished ? (
-                          <span className="inline-block bg-[#16a34a] text-white p-1 rounded-md" title="ก่อสร้างเสร็จ">
+                          <span className="inline-block bg-[#16a34a] text-white p-1 rounded-md" title="ก่อสร้างเสร็จสิ้นแล้ว">
                             <Check size={14} strokeWidth={3} />
                           </span>
                         ) : (
-                          <span className="text-slate-300">-</span>
+                          <span className="text-slate-300 font-bold hover:text-slate-500">-</span>
                         )}
                       </td>
 
