@@ -28,9 +28,9 @@ export default function TransferTrackingMatrixView({
   const [statusFilter, setStatusFilter] = useState<'all' | 'waiting' | 'transferred' | 'rental'>('all');
   const [includeUnscheduled, setIncludeUnscheduled] = useState(true);
 
-  // Date Range: Month to Month
-  const currentYear = new Date().getFullYear();
-  const currentMonth = new Date().getMonth() + 1; // 1-12
+  // Date Range: Month to Month (defaults to October 2026 / current date)
+  const currentYear = 2026;
+  const currentMonth = 10; // ตุลาคม
 
   const [fromMonth, setFromMonth] = useState<number>(currentMonth);
   const [fromYear, setFromYear] = useState<number>(currentYear);
@@ -67,13 +67,13 @@ export default function TransferTrackingMatrixView({
   ];
 
   // Available Years
-  const YEARS = [currentYear - 1, currentYear, currentYear + 1, currentYear + 2];
+  const YEARS = [2025, 2026, 2027, 2028];
 
   // Fetch initial project list
   useEffect(() => {
     const fetchProjects = async () => {
       try {
-        const { data } = await supabase.from('projects').select('id, name').order('name');
+        const { data } = await supabase.from('projects').select('id, name, is_closed').order('name');
         if (data) setProjects(data);
       } catch (err) {
         console.error('Error fetching projects:', err);
@@ -82,33 +82,113 @@ export default function TransferTrackingMatrixView({
     fetchProjects();
   }, []);
 
+  // Helper: Extract expected transfer date from notes (e.g. "คาดโอน 17 ต.ค. 69")
+  const extractExpectedDate = (text?: string | null): string | null => {
+    if (!text) return null;
+    const months: Record<string, string> = {
+      'ม.ค.': '01', 'ก.พ.': '02', 'มี.ค.': '03', 'เม.ย.': '04', 'พ.ค.': '05', 'มิ.ย.': '06',
+      'ก.ค.': '07', 'ส.ค.': '08', 'ก.ย.': '09', 'ต.ค.': '10', 'พ.ย.': '11', 'ธ.ค.': '12'
+    };
+    const match = text.match(/(?:คาดโอน|โอน|นัดโอน)\s*([0-9]{1,2})\s*([^\s]+)\s*([0-9]{2,4})/);
+    if (match) {
+      const day = String(match[1]).padStart(2, '0');
+      const mName = match[2];
+      let mNum = months[mName];
+      if (!mNum) {
+        const foundKey = Object.keys(months).find(k => mName.includes(k.replace('.', '')));
+        if (foundKey) mNum = months[foundKey];
+      }
+      let year = Number(match[3]);
+      if (year < 100) year += 2500;
+      if (year > 2500) year -= 543;
+      if (mNum) return `${year}-${mNum}-${day}`;
+    }
+    return null;
+  };
+
+  // Helper: Extract customer name from highlight_note
+  const extractCustomerName = (note?: string | null): string | null => {
+    if (!note) return null;
+    const mCust = note.match(/ลูกค้า:\s*([^(]+)/);
+    if (mCust) return mCust[1].trim();
+    const mRent = note.match(/(?:เช่า|จองเช่า):[^(]*\(([^)]+)\)/);
+    if (mRent) return mRent[1].trim();
+    return null;
+  };
+
   // Comprehensive Data Fetching
   const fetchAllMatrixData = async () => {
     setLoading(true);
     try {
-      // 1. Fetch Task Templates
+      // 1. Fetch Projects to filter closed ones
+      const { data: projData } = await supabase.from('projects').select('name, is_closed');
+      const closedProjects = new Set((projData || []).filter(p => p.is_closed).map(p => p.name));
+
+      // 2. Fetch Task Templates
       const { data: tTemplates } = await supabase
         .from('task_templates')
         .select('id, task_name, category');
       setTaskTemplates(tTemplates || []);
 
-      // 2. Fetch Plots (excluding infra)
+      // 3. Fetch Plots
       let plotQuery = supabase
         .from('plots')
-        .select('*, house_types(type_name)');
+        .select('*, house_types(type_name, is_infrastructure)');
       
       if (selectedProject && selectedProject !== 'all') {
         plotQuery = plotQuery.eq('project_name', selectedProject);
       }
 
       const { data: pData } = await plotQuery;
-      const validPlots = (pData || []).filter(p => p.house_types?.type_name !== 'สาธารณูปโภค');
-      setPlots(validPlots);
 
-      const plotIds = validPlots.map(p => p.id);
+      // 4. Fetch Sales
+      const { data: sData } = await supabase
+        .from('sales')
+        .select('*');
+      const allSales = sData || [];
+      setSales(allSales);
+
+      // 5. Fetch Leads
+      const { data: lData } = await supabase
+        .from('leads')
+        .select('*');
+      const allLeads = lData || [];
+      setLeads(allLeads);
+
+      // 🎯 STRICT FILTER: Exactly matching "รายละเอียดบ้านที่รอโอน" (Waiting for Transfer)
+      // Only include plots that:
+      // - Belong to active projects (not is_closed)
+      // - Are not infrastructure
+      // - Have an active booking/sale (not cancelled), OR are an active rental, OR have a customer reserved
+      const qualifiedPlots = (pData || []).filter(p => {
+        // Exclude closed projects
+        if (closedProjects.has(p.project_name)) return false;
+
+        // Exclude infrastructure
+        if (p.house_types?.is_infrastructure || p.house_types?.type_name === 'สาธารณูปโภค') return false;
+
+        // Active sales for this plot
+        const plotSales = allSales.filter(sl => sl.plot_id === p.id && sl.contract_status !== 'Cancelled');
+        const hasWaitingSale = plotSales.some(sl => !['transferred', 'handover'].includes((sl.stage || sl.contract_status || '').toLowerCase()));
+        
+        // Rental check
+        const isRental = Boolean(p.current_tenant_name || p.rental_program || p.sale_status === 'Rented');
+
+        // Customer booking check
+        const hasCustomerBooking = Boolean(p.has_customer && (p.sale_status || '').toLowerCase() !== 'transferred');
+        const isReservedStatus = ['booked', 'contracted', 'reserved', 'transfer_pending'].includes((p.sale_status || '').toLowerCase());
+        const hasHighlightBooking = Boolean(p.highlight_note && /ลูกค้า:|จองแล้ว|สัญญาเช่า|เช่า:/i.test(p.highlight_note));
+
+        // Transferred check (only if transferred in active sales)
+        const hasTransferSale = plotSales.some(sl => Boolean(sl.transferred_at || sl.transfer_date));
+
+        return hasWaitingSale || isRental || hasCustomerBooking || isReservedStatus || hasHighlightBooking || hasTransferSale;
+      });
+
+      setPlots(qualifiedPlots);
+
+      const plotIds = qualifiedPlots.map(p => p.id);
       if (plotIds.length === 0) {
-        setSales([]);
-        setLeads([]);
         setTaskAssignments([]);
         setDefects([]);
         setPromotions([]);
@@ -121,33 +201,7 @@ export default function TransferTrackingMatrixView({
         Array.from({ length: Math.ceil(arr.length / size) }, (v, i) => arr.slice(i * size, i * size + size));
       const chunks = chunkArray(plotIds, 100);
 
-      // 3. Fetch Sales
-      let allSales: any[] = [];
-      for (const chunk of chunks) {
-        const { data: sData } = await supabase
-          .from('sales')
-          .select('*')
-          .in('plot_id', chunk);
-        if (sData) allSales = [...allSales, ...sData];
-      }
-      setSales(allSales);
-
-      // 4. Fetch Leads for Sales
-      const leadIds = allSales.map(s => s.lead_id).filter(Boolean);
-      let allLeads: any[] = [];
-      if (leadIds.length > 0) {
-        const leadChunks = chunkArray(leadIds, 100);
-        for (const lChunk of leadChunks) {
-          const { data: lData } = await supabase
-            .from('leads')
-            .select('*')
-            .in('id', lChunk);
-          if (lData) allLeads = [...allLeads, ...lData];
-        }
-      }
-      setLeads(allLeads);
-
-      // 5. Fetch Task Assignments
+      // 6. Fetch Task Assignments
       let allAssignments: any[] = [];
       for (const chunk of chunks) {
         const { data: aData } = await supabase
@@ -158,7 +212,7 @@ export default function TransferTrackingMatrixView({
       }
       setTaskAssignments(allAssignments);
 
-      // 6. Fetch Defects
+      // 7. Fetch Defects
       let allDefects: any[] = [];
       for (const chunk of chunks) {
         const { data: dData } = await supabase
@@ -169,7 +223,7 @@ export default function TransferTrackingMatrixView({
       }
       setDefects(allDefects);
 
-      // 7. Fetch Promotions (for termite / ของแถม)
+      // 8. Fetch Promotions (for termite / ของแถม)
       let allPromos: any[] = [];
       for (const chunk of chunks) {
         const { data: prData } = await supabase
@@ -195,7 +249,8 @@ export default function TransferTrackingMatrixView({
   const isRentalPlot = (plot: any) => Boolean(
     plot.current_tenant_name ||
     plot.rental_program ||
-    plot.sale_status === 'Rented'
+    plot.sale_status === 'Rented' ||
+    (plot.highlight_note && /เช่า:/i.test(plot.highlight_note))
   );
 
   // Helper: format Date DD/MM/YYYY
@@ -242,7 +297,11 @@ export default function TransferTrackingMatrixView({
     return plots.map(plot => {
       const sale = sales.find(s => s.plot_id === plot.id && s.contract_status !== 'Cancelled') ||
                    sales.find(s => s.plot_id === plot.id);
-      const lead = sale ? leads.find(l => l.id === sale.lead_id) : null;
+      const lead = sale ? leads.find(l => l.id === sale.lead_id) : 
+                   leads.find(l => l.interested_plot_id === plot.id || (l.interested_plot_name === plot.plot_name && l.project_name === plot.project_name));
+
+      // Customer name resolution
+      const customerName = lead?.customer_name || plot.current_tenant_name || extractCustomerName(plot.highlight_note) || '-';
 
       // Defects for this plot
       const plotDefects = defects.filter(d => String(d.plot_id) === String(plot.id));
@@ -259,7 +318,7 @@ export default function TransferTrackingMatrixView({
       const termiteDate = termitePromo?.delivery_date ? formatDateDMY(termitePromo.delivery_date) : '-';
 
       // Transfer & Completion Dates
-      const expectedTransferDate = sale?.expected_transfer_date || lead?.expected_transfer_date || null;
+      const expectedTransferDate = sale?.expected_transfer_date || lead?.expected_transfer_date || extractExpectedDate(plot.highlight_note) || extractExpectedDate(sale?.notes) || null;
       const actualTransferDate = sale?.transferred_at || sale?.transfer_date || (plot.sale_status === 'Transferred' ? plot.updated_at : null);
       const isTransferred = Boolean(actualTransferDate || plot.sale_status === 'Transferred');
 
@@ -308,8 +367,8 @@ export default function TransferTrackingMatrixView({
         houseModel: plot.house_types?.type_name || plot.house_model || '-',
         imageUrl: plot.overview_image_url || null,
         isRental: isRentalPlot(plot),
-        hasCustomer: Boolean(plot.has_customer || sale || lead),
-        customerName: lead?.customer_name || plot.current_tenant_name || '-',
+        hasCustomer: Boolean(plot.has_customer || sale || lead || customerName !== '-'),
+        customerName,
         
         // Month Filter matching info
         targetYear,
@@ -490,7 +549,7 @@ export default function TransferTrackingMatrixView({
               ตารางติดตามบ้านรอโอน (Transfer Tracking Matrix)
             </h1>
             <p className="text-xs text-slate-500 font-medium">
-              ตรวจสอบความพร้อมงานก่อสร้าง, เอกสารสิทธิ์, มิเตอร์น้ำไฟ และนัดหมายโอนกรรมสิทธิ์
+              คัดเฉพาะบ้านรอโอนกรรมสิทธิ์และบ้านเช่า • ตรวจสอบความพร้อมงานก่อสร้าง, เอกสารสิทธิ์, มิเตอร์น้ำไฟ
             </p>
           </div>
         </div>
@@ -671,7 +730,7 @@ export default function TransferTrackingMatrixView({
                 className="bg-transparent text-white font-bold text-xs outline-none cursor-pointer"
               >
                 <option value="all" className="text-slate-900 bg-white font-bold">ทุกโครงการ (All Projects)</option>
-                {projects.map(p => (
+                {projects.filter(p => !p.is_closed).map(p => (
                   <option key={p.id} value={p.name} className="text-slate-900 bg-white font-bold">
                     {p.name}
                   </option>
@@ -769,8 +828,8 @@ export default function TransferTrackingMatrixView({
                 <tr>
                   <td colSpan={31} className="py-16 text-center text-slate-400">
                     <FileSpreadsheet size={40} className="mx-auto text-slate-300 mb-2" />
-                    <p className="font-bold text-base text-slate-600">ไม่พบแปลงที่ตรงกับเงื่อนไขในเดือนที่เลือก</p>
-                    <p className="text-xs text-slate-400 mt-1">ลองเปลี่ยนช่วงเดือน หรือติ๊ก &quot;ดูทุกเดือน (All)&quot; เพื่อแสดงข้อมูลทั้งหมด</p>
+                    <p className="font-bold text-base text-slate-600">ไม่พบแปลงรอโอนในเดือนที่เลือก</p>
+                    <p className="text-xs text-slate-400 mt-1">ลองเปลี่ยนช่วงเดือน หรือติ๊ก &quot;ดูทุกเดือน (All)&quot; เพื่อแสดงข้อมูลบ้านรอโอนทั้งหมด</p>
                   </td>
                 </tr>
               ) : (
@@ -929,7 +988,7 @@ export default function TransferTrackingMatrixView({
                         {r.sandwashDone ? 'เรียบร้อย' : 'รอดำเนินการ'}
                       </td>
 
-                      {/* เคลือบทรายล้าง (Red in Excel screenshot when pending) */}
+                      {/* เคลือบทรายล้าง */}
                       <td className={`py-2.5 px-2 border-r border-slate-200 ${r.sandwashCoatingDone ? 'bg-[#22c55e] text-white' : 'bg-[#ef4444] text-white'}`}>
                         {r.sandwashCoatingDone ? 'เคลือบแล้ว' : 'ยังไม่เคลือบ'}
                       </td>
