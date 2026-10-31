@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { customerExpectedTransferDay } from '@/lib/sales/customerBusinessDate';
 import { supabase } from '@/lib/supabase';
-import { CheckCircle2, Circle, Clock, FileText, Home, Save, Calendar, CheckSquare, Award, ShieldCheck, Gift, ChevronRight, Edit3, X, AlertTriangle, Search, Eye, HardHat, Camera, Check, CheckCircle } from 'lucide-react';
+import { CheckCircle2, Circle, Clock, FileText, Home, Save, Calendar, CheckSquare, Award, ShieldCheck, Gift, ChevronRight, Edit3, X, AlertTriangle, Search, Eye, HardHat, Camera, Check, CheckCircle, Tag, ArrowUpDown, Coins, Filter } from 'lucide-react';
 import SalesOverlay from './SalesOverlay';
 import { useSalesWorkspaceMode } from './SalesWorkspaceModeProvider';
 import { transferForecastRecord } from '@/lib/sales/transferForecastRecord';
@@ -30,6 +30,10 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = EM
   const [taskUpdatesMap, setTaskUpdatesMap] = useState<Record<string, any[]>>({});
   const [promotionsMap, setPromotionsMap] = useState<Record<string, any[]>>({});
   const [plotsDataMap, setPlotsDataMap] = useState<Record<string, any>>({});
+
+  // Filter & Sort State
+  const [filterType, setFilterType] = useState<'all' | 'sales' | 'rental'>('all');
+  const [sortBy, setSortBy] = useState<'project-plot' | 'plot-only' | 'date'>('project-plot');
 
   // Modal State for Booking Inspection Dates
   const [inspectionModal, setInspectionModal] = useState<{
@@ -241,14 +245,84 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = EM
     { key: 'electric_meter_date', label: 'มิเตอร์ไฟฟ้า' },
   ];
 
+  // Helper: check if plot is rental
+  const isRentalPlot = (plot: any) => Boolean(
+    plot.current_tenant_name || 
+    plot.rental_program || 
+    plot.sale_status === 'Rented' ||
+    (plot as any).activeSale?.sale_status === 'Rented'
+  );
+
+  // Helper: get rental monthly rate
+  const getRentalRate = (plot: any) => {
+    return Number(
+      plot.rental_monthly_rent || 
+      plot.monthly_rent || 
+      (plot as any).activeSale?.rental_monthly_rent || 
+      (plot as any).activeSale?.monthly_rent || 
+      0
+    );
+  };
+
+  // KPI Calculations across all target plots
+  const totalAllCount = allTargetPlots.length;
+  const rentalPlotsAll = allTargetPlots.filter(isRentalPlot);
+  const salesPlotsAll = allTargetPlots.filter(p => !isRentalPlot(p));
+  const totalRentalCount = rentalPlotsAll.length;
+  const totalSalesCount = salesPlotsAll.length;
+
+  const totalSalesValue = salesPlotsAll.reduce((sum, plot) => {
+    const rec = transferForecastRecord(plot, validRecords, canonicalMode);
+    const price = Number(rec?.salePrice || (plot as any).activeSale?.salePrice || plot.price || plot.selling_price || 0);
+    return sum + price;
+  }, 0);
+
+  const totalRentalMonthly = rentalPlotsAll.reduce((sum, plot) => {
+    return sum + getRentalRate(plot);
+  }, 0);
+
+  // Natural alphanumeric compare (e.g. 1, 2, 10 instead of 1, 10, 2)
+  const naturalCompare = (aStr: string = '', bStr: string = '') => {
+    return aStr.localeCompare(bStr, 'th', { numeric: true, sensitivity: 'base' });
+  };
+
+  // Filter and Sort processor for plot lists
+  const processPlots = (plotList: any[]) => {
+    let filtered = plotList;
+    if (filterType === 'sales') {
+      filtered = filtered.filter(p => !isRentalPlot(p));
+    } else if (filterType === 'rental') {
+      filtered = filtered.filter(p => isRentalPlot(p));
+    }
+
+    return [...filtered].sort((a, b) => {
+      if (sortBy === 'project-plot') {
+        const projA = a.project_name || '';
+        const projB = b.project_name || '';
+        const projDiff = naturalCompare(projA, projB);
+        if (projDiff !== 0) return projDiff;
+        const nameA = String(a.plot_name || a.id || '');
+        const nameB = String(b.plot_name || b.id || '');
+        return naturalCompare(nameA, nameB);
+      }
+      if (sortBy === 'plot-only') {
+        const nameA = String(a.plot_name || a.id || '');
+        const nameB = String(b.plot_name || b.id || '');
+        return naturalCompare(nameA, nameB);
+      }
+      if (sortBy === 'date') {
+        const expA = customerExpectedTransferDay(transferForecastRecord(a, validRecords, canonicalMode) ?? {}) ?? '9999-99-99';
+        const expB = customerExpectedTransferDay(transferForecastRecord(b, validRecords, canonicalMode) ?? {}) ?? '9999-99-99';
+        return expA.localeCompare(expB);
+      }
+      return 0;
+    });
+  };
+
   const renderPlotList = (plotList: any[]) => {
     return (
       <div className="grid grid-cols-1 gap-6">
-        {[...plotList].sort((a, b) => {
-          const expA = customerExpectedTransferDay(transferForecastRecord(a, validRecords, canonicalMode) ?? {}) ?? '9999-99-99';
-          const expB = customerExpectedTransferDay(transferForecastRecord(b, validRecords, canonicalMode) ?? {}) ?? '9999-99-99';
-          return expA.localeCompare(expB);
-        }).map((plot) => {
+        {plotList.map((plot) => {
           // Find records for this plot
           const currentRecord = transferForecastRecord(plot, validRecords, canonicalMode);
           
@@ -273,6 +347,8 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = EM
           const displaySalePrice = Number(currentRecord?.salePrice || (plot as any).activeSale?.salePrice || plot.price || plot.selling_price || 0);
           const displayTdPrice = Number(currentRecord?.tdPrice || (currentRecord as any)?.landOfficePrice || (currentRecord as any)?.land_office_price || (currentRecord as any)?.sale?.tdPrice || (currentRecord as any)?.sale?.land_office_price || (plot as any).activeSale?.tdPrice || (plot as any).activeSale?.land_office_price || plot.appraisal || plot.land_appraisal_price || displaySalePrice);
           const progress = actualProgress[plot.id] ?? (plot.progress || 0);
+          const isRental = isRentalPlot(plot);
+          const rentalRate = getRentalRate(plot);
 
           // Plot Fresh Inspection & Promotions Data
           const freshPlotData = plotsDataMap[plot.id] || plot;
@@ -373,12 +449,23 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = EM
                       {displaySalePrice > 0 ? `฿${displaySalePrice.toLocaleString('th-TH')}` : '-'}
                     </div>
                   </div>
-                  <div className="bg-emerald-50/70 p-3 rounded-xl border border-emerald-100">
-                    <div className="text-xs text-emerald-700 font-bold mb-1 flex items-center gap-1">ยอดขาย ทด. ประเมิน</div>
-                    <div className="text-sm font-black text-emerald-900 truncate">
-                      {displayTdPrice > 0 ? `฿${displayTdPrice.toLocaleString('th-TH')}` : '-'}
+                  {isRental && rentalRate > 0 ? (
+                    <div className="bg-teal-50/80 p-3 rounded-xl border border-teal-200">
+                      <div className="text-xs text-teal-700 font-bold mb-1 flex items-center gap-1">
+                        <Tag size={12} /> ค่าเช่าต่อเดือน
+                      </div>
+                      <div className="text-sm font-black text-teal-900 truncate">
+                        ฿{rentalRate.toLocaleString('th-TH')}/ด.
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="bg-emerald-50/70 p-3 rounded-xl border border-emerald-100">
+                      <div className="text-xs text-emerald-700 font-bold mb-1 flex items-center gap-1">ยอดขาย ทด. ประเมิน</div>
+                      <div className="text-sm font-black text-emerald-900 truncate">
+                        {displayTdPrice > 0 ? `฿${displayTdPrice.toLocaleString('th-TH')}` : '-'}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
@@ -618,15 +705,129 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = EM
     );
   };
 
-  const totalWaitingCount = waitingPlots.length + carriedOverPlots.length + unscheduledPlots.length;
+  const processedWaiting = processPlots(waitingPlots);
+  const processedCarriedOver = processPlots(carriedOverPlots);
+  const processedUnscheduled = processPlots(unscheduledPlots);
 
   return (
     <div className="mt-8 mb-6">
-      <div className="flex items-center gap-3 mb-8 border-b border-gray-100 pb-4">
-        <Home className="text-amber-600 w-8 h-8 p-1.5 bg-amber-100 rounded-lg" />
-        <div>
-          <h2 className="text-2xl font-bold text-gray-800">รายละเอียดบ้านที่รอโอน (Waiting for Transfer)</h2>
-          <p className="text-sm text-gray-500">เป้าหมายทั้งหมด {totalWaitingCount} แปลง</p>
+      {/* Header Title */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 border-b border-gray-100 pb-5">
+        <div className="flex items-center gap-3">
+          <Home className="text-amber-600 w-9 h-9 p-2 bg-amber-100 rounded-xl shrink-0" />
+          <div>
+            <h2 className="text-2xl font-black text-gray-800 tracking-tight">รายละเอียดบ้านที่รอโอน (Waiting for Transfer)</h2>
+            <p className="text-sm text-gray-500 font-medium">ภาพรวมการส่งมอบและติดตามงานรอโอนกรรมสิทธิ์ แยกกลุ่มขายและบ้านเช่า</p>
+          </div>
+        </div>
+      </div>
+
+      {/* KPI Cards: All, Sales, Rental */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+        {/* All Target Card */}
+        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between">
+          <div>
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">เป้าหมายทั้งหมด</span>
+            <span className="text-2xl font-black text-slate-900 mt-0.5 block">{totalAllCount} <span className="text-sm font-semibold text-slate-500">แปลง</span></span>
+            <span className="text-[11px] text-slate-400 font-medium">รวมทุกสถานะรอโอนและบ้านเช่า</span>
+          </div>
+          <div className="w-11 h-11 rounded-xl bg-slate-100 flex items-center justify-center text-slate-700 shrink-0">
+            <Home size={22} />
+          </div>
+        </div>
+
+        {/* Sales Transfer Card */}
+        <div className="bg-gradient-to-br from-blue-50/80 to-indigo-50/50 p-4 rounded-2xl border border-blue-200/80 shadow-xs flex items-center justify-between">
+          <div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+              <span className="text-xs font-bold text-blue-800 uppercase tracking-wider">บ้านรอโอนขาย</span>
+            </div>
+            <span className="text-2xl font-black text-blue-950 mt-0.5 block">
+              {totalSalesCount} <span className="text-sm font-semibold text-blue-700">แปลง</span>
+            </span>
+            <span className="text-[11px] text-blue-700 font-bold truncate block">
+              มูลค่ายอดขาย: ฿{totalSalesValue.toLocaleString('th-TH')}
+            </span>
+          </div>
+          <div className="w-11 h-11 rounded-xl bg-blue-500 text-white flex items-center justify-center shadow-xs shrink-0">
+            <Coins size={22} />
+          </div>
+        </div>
+
+        {/* Rental Card */}
+        <div className="bg-gradient-to-br from-teal-50/80 to-emerald-50/50 p-4 rounded-2xl border border-teal-200/80 shadow-xs flex items-center justify-between">
+          <div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-teal-500"></span>
+              <span className="text-xs font-bold text-teal-800 uppercase tracking-wider">บ้านเช่า</span>
+            </div>
+            <span className="text-2xl font-black text-teal-950 mt-0.5 block">
+              {totalRentalCount} <span className="text-sm font-semibold text-teal-700">แปลง</span>
+            </span>
+            <span className="text-[11px] text-teal-700 font-bold truncate block">
+              {totalRentalMonthly > 0 ? `ค่าเช่ารวม: ฿${totalRentalMonthly.toLocaleString('th-TH')}/ด.` : 'สัญญาเช่า / เช่าออม'}
+            </span>
+          </div>
+          <div className="w-11 h-11 rounded-xl bg-teal-600 text-white flex items-center justify-center shadow-xs shrink-0">
+            <Tag size={22} />
+          </div>
+        </div>
+      </div>
+
+      {/* Filter Tabs & Sort Toolbar */}
+      <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-xs mb-8 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+        {/* Quick Filter Tabs */}
+        <div className="flex items-center gap-1.5 p-1 bg-slate-100/90 rounded-xl overflow-x-auto">
+          <button
+            type="button"
+            onClick={() => setFilterType('all')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition-all whitespace-nowrap cursor-pointer ${
+              filterType === 'all'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            📌 ทั้งหมด ({totalAllCount})
+          </button>
+          <button
+            type="button"
+            onClick={() => setFilterType('sales')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition-all whitespace-nowrap cursor-pointer ${
+              filterType === 'sales'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-blue-700'
+            }`}
+          >
+            🔑 บ้านรอโอนขาย ({totalSalesCount})
+          </button>
+          <button
+            type="button"
+            onClick={() => setFilterType('rental')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition-all whitespace-nowrap cursor-pointer ${
+              filterType === 'rental'
+                ? 'bg-teal-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-teal-700'
+            }`}
+          >
+            🏷️ บ้านเช่า ({totalRentalCount})
+          </button>
+        </div>
+
+        {/* Sort Dropdown */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-slate-500 flex items-center gap-1 shrink-0">
+            <ArrowUpDown size={13} className="text-slate-400" /> เรียงตาม:
+          </span>
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as any)}
+            className="bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-800 text-xs font-bold rounded-xl px-3 py-1.5 outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer transition-colors"
+          >
+            <option value="project-plot">🏢 โครงการ ➔ แปลง (ก-ฮ, 1-10)</option>
+            <option value="plot-only">🔢 เลขแปลงอย่างเดียว (1-10)</option>
+            <option value="date">📅 วันที่คาดว่าจะโอน</option>
+          </select>
         </div>
       </div>
 
@@ -634,10 +835,16 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = EM
       <div className="mb-10">
         <h3 className="text-lg font-bold text-blue-600 mb-4 flex items-center gap-2">
           <span className="bg-blue-100 text-blue-600 p-1.5 rounded-lg"><Calendar size={16} /></span>
-          คาดโอนตามเป้าหมายเดือนนี้ ({waitingPlots.length} แปลง)
+          คาดโอนตามเป้าหมายเดือนนี้ ({processedWaiting.length}{filterType !== 'all' ? ` จาก ${waitingPlots.length}` : ''} แปลง)
         </h3>
         {waitingPlots && waitingPlots.length > 0 ? (
-          renderPlotList(waitingPlots)
+          processedWaiting.length > 0 ? (
+            renderPlotList(processedWaiting)
+          ) : (
+            <div className="bg-slate-50 border border-dashed border-slate-200 rounded-2xl p-6 text-center text-slate-500 text-xs font-bold">
+              ไม่มี{filterType === 'sales' ? 'บ้านรอโอนขาย' : 'บ้านเช่า'}ในหมวดนี้
+            </div>
+          )
         ) : (
           <div className="bg-blue-50/50 border border-dashed border-blue-200 rounded-2xl p-6 text-center text-slate-500 text-sm">
             ไม่มีบ้านที่กำหนดวันคาดว่าจะโอนในเดือนนี้ (สามารถระบุ &quot;วันที่คาดว่าจะโอน&quot; ได้ที่หน้าสถานะการขาย CRM)
@@ -650,9 +857,15 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = EM
         <div className="mb-10">
           <h3 className="text-lg font-bold text-rose-600 mb-4 flex items-center gap-2">
             <span className="bg-rose-100 text-rose-600 p-1.5 rounded-lg"><Clock size={16} /></span>
-            คาดโอนตกค้างจากเดือนก่อน ({carriedOverPlots.length} แปลง)
+            คาดโอนตกค้างจากเดือนก่อน ({processedCarriedOver.length}{filterType !== 'all' ? ` จาก ${carriedOverPlots.length}` : ''} แปลง)
           </h3>
-          {renderPlotList(carriedOverPlots)}
+          {processedCarriedOver.length > 0 ? (
+            renderPlotList(processedCarriedOver)
+          ) : (
+            <div className="bg-slate-50 border border-dashed border-slate-200 rounded-2xl p-6 text-center text-slate-500 text-xs font-bold">
+              ไม่มี{filterType === 'sales' ? 'บ้านรอโอนขาย' : 'บ้านเช่า'}ในหมวดนี้
+            </div>
+          )}
         </div>
       )}
 
@@ -661,9 +874,15 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = EM
         <div className="mb-10">
           <h3 className="text-lg font-bold text-amber-700 mb-4 flex items-center gap-2">
             <span className="bg-amber-100 text-amber-700 p-1.5 rounded-lg"><Clock size={16} /></span>
-            รอโอน - ยังไม่ระบุวันโอน / นัดหมายเดือนอื่น ({unscheduledPlots.length} แปลง)
+            รอโอน - ยังไม่ระบุวันโอน / นัดหมายเดือนอื่น ({processedUnscheduled.length}{filterType !== 'all' ? ` จาก ${unscheduledPlots.length}` : ''} แปลง)
           </h3>
-          {renderPlotList(unscheduledPlots)}
+          {processedUnscheduled.length > 0 ? (
+            renderPlotList(processedUnscheduled)
+          ) : (
+            <div className="bg-slate-50 border border-dashed border-slate-200 rounded-2xl p-6 text-center text-slate-500 text-xs font-bold">
+              ไม่มี{filterType === 'sales' ? 'บ้านรอโอนขาย' : 'บ้านเช่า'}ในหมวดนี้
+            </div>
+          )}
         </div>
       )}
 
