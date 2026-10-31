@@ -340,6 +340,12 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
             });
             const isGrassPlanted = plotInfo?.isGrassPlanted || plotInfo?.is_completed || false;
             const isSample = isSampleHouse(plotInfo);
+            const isRented = activeLead?.deal_type === 'rent' || 
+                             activeLead?.rental_status === 'Active' || 
+                             activeLead?.status === 'Rented' || 
+                             plotInfo?.sale_status === 'Rented' || 
+                             !!plotInfo?.current_tenant_name || 
+                             !!plotInfo?.rental_program;
             const cardBorderClass = isSample && status === 'Available' 
               ? 'bg-amber-50/95 border-amber-500 text-amber-950 shadow-[0_0_15px_rgba(245,158,11,0.5)] border-[3px] ring-2 ring-amber-300' 
               : getSalesColor(status);
@@ -432,6 +438,17 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
                     ))
                   )}
 
+                  {/* 🏷️ Rental Badge (บ้านเช่า / Active Lease) */}
+                  {isRented && (
+                    <div 
+                      className={`absolute ${isSample ? 'bottom-0 right-0 rounded-tl-md' : 'top-0 right-0 rounded-bl-md'} bg-teal-600 hover:bg-teal-700 text-white px-1 sm:px-1.5 py-0.5 text-[6px] sm:text-[8px] font-black shadow-xs z-30 flex items-center gap-0.5 transition-colors`}
+                      title={`บ้านเช่า (Active Lease)${plotInfo?.current_tenant_name ? ` · ผู้เช่า: ${plotInfo.current_tenant_name}` : ''}${plotInfo?.monthly_rent ? ` (${Number(plotInfo.monthly_rent).toLocaleString()} บ./ด.)` : ''}`}
+                    >
+                      <span className="text-[7px] sm:text-[9px]">🏷️</span>
+                      <span className="font-black">เช่า</span>
+                    </div>
+                  )}
+
                   {/* Hover Photo Popover */}
                   {plotInfo?.latestPhoto && (
                     <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-[105%] hidden group-hover:flex flex-col items-center z-50 pointer-events-none w-24">
@@ -472,6 +489,12 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
               <div className="flex items-center gap-3"><div className="w-3.5 h-3.5 rounded-full bg-indigo-50 border-[2px] border-indigo-500 shadow-sm"></div> รอผลสินเชื่อ (Loan Process)</div>
               <div className="flex items-center gap-3"><div className="w-3.5 h-3.5 rounded-full bg-blue-50 border-[2px] border-blue-500 shadow-sm"></div> อนุมัติแล้ว (Approved)</div>
               <div className="flex items-center gap-3"><div className="w-3.5 h-3.5 rounded-full bg-violet-50 border-[2px] border-violet-500 shadow-sm"></div> โอนกรรมสิทธิ์ (Transferred)</div>
+              <div className="flex items-center gap-3 pt-1 border-t border-slate-100">
+                <span className="bg-teal-600 text-white px-1.5 py-0.5 rounded text-[9px] font-black flex items-center gap-1 shadow-2xs">
+                  <span>🏷️</span> เช่า
+                </span>
+                <span>บ้านเช่า (Active Lease)</span>
+              </div>
             </div>
 
             {/* Sample House & SOP Legend */}

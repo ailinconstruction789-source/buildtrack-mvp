@@ -78,6 +78,32 @@ describe('Ailin Rental Advanced Features & Helper Tests', () => {
       expect(screen.getAllByText(/RCP-202610-P32-M01/).length).toBeGreaterThan(0);
       expect(screen.getByText(/หนึ่งหมื่นห้าพันบาทถ้วน/)).toBeDefined();
     });
+
+    it('renders company bank account section on invoice instead of mock QR code', () => {
+      const invoiceData: RentalReceiptData = {
+        ...mockData,
+        receiptNo: 'INV-202610-P32-M01',
+        receiptType: 'invoice',
+        paymentStatus: 'Pending',
+        bankName: 'ธนาคารกสิกรไทย (KBANK)',
+        bankAccountNo: '987-6-54321-0',
+        bankAccountName: 'บริษัท ไอลิน พร็อพเพอร์ตี้ จำกัด'
+      };
+
+      render(
+        <RentalReceiptModal
+          isOpen={true}
+          onClose={vi.fn()}
+          data={invoiceData}
+        />
+      );
+
+      expect(screen.getByText('ช่องทางการชำระเงิน (โอนเข้าบัญชีบริษัท)')).toBeInTheDocument();
+      expect(screen.getByText('987-6-54321-0')).toBeInTheDocument();
+      expect(screen.getByText('แก้ไขเลขบัญชี')).toBeInTheDocument();
+      // Ensure mock promptpay QR text is NOT rendered
+      expect(screen.queryByText(/สแกน QR Code เพื่อชำระค่าเช่า/)).not.toBeInTheDocument();
+    });
   });
 
 });

@@ -271,7 +271,7 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = EM
           const actualTransfer = rawActual && rawActual !== 'ยังไม่โอน' && rawActual !== 'โอนแล้ว' ? formatThaiDate(rawActual) : rawActual;
           const customerName = currentRecord?.customer_name || currentRecord?.customerName || (plot as any).activeSale?.customerName || plot.customer_name;
           const displaySalePrice = Number(currentRecord?.salePrice || (plot as any).activeSale?.salePrice || plot.price || plot.selling_price || 0);
-          const displayTdPrice = Number(currentRecord?.tdPrice || (currentRecord as any)?.sale?.tdPrice || (plot as any).activeSale?.tdPrice || plot.appraisal || plot.land_appraisal_price || displaySalePrice);
+          const displayTdPrice = Number(currentRecord?.tdPrice || (currentRecord as any)?.landOfficePrice || (currentRecord as any)?.land_office_price || (currentRecord as any)?.sale?.tdPrice || (currentRecord as any)?.sale?.land_office_price || (plot as any).activeSale?.tdPrice || (plot as any).activeSale?.land_office_price || plot.appraisal || plot.land_appraisal_price || displaySalePrice);
           const progress = actualProgress[plot.id] ?? (plot.progress || 0);
 
           // Plot Fresh Inspection & Promotions Data
@@ -311,6 +311,11 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = EM
                   ) : (
                     <div className="text-sm font-bold bg-amber-500/90 px-2 py-1 rounded inline-block mb-2 text-white">รอโอน (สร้างเสร็จ)</div>
                   )}
+                  {(plot.current_tenant_name || plot.rental_program || plot.sale_status === 'Rented') && (
+                    <div className="text-sm font-bold bg-teal-600/95 px-2 py-1 rounded inline-block mb-2 ml-1.5 text-white shadow-xs">
+                      🏷️ บ้านเช่า
+                    </div>
+                  )}
                   <h3 className="font-black text-xl">{plot.house_types?.type_name || plot.type || 'ไม่ระบุแบบบ้าน'}</h3>
                   <div className="flex items-center gap-1.5 text-slate-200 text-sm mt-1 mb-1">
                     <Home size={14} />
@@ -319,6 +324,11 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = EM
                   {customerName && (
                     <div className="text-xs font-bold text-amber-300 mb-1 truncate">
                       👤 ลูกค้า: {customerName}
+                    </div>
+                  )}
+                  {(plot.current_tenant_name || plot.rental_program || plot.sale_status === 'Rented') && (
+                    <div className="text-[10px] font-black text-teal-200 bg-teal-950/80 border border-teal-500/60 px-2 py-0.5 rounded-md inline-flex items-center gap-1 mb-1.5 shadow-xs">
+                      🏷️ มีผู้เช่าอยู่{plot.current_tenant_name ? `: ${plot.current_tenant_name}` : ''}
                     </div>
                   )}
                   {displaySalePrice > 0 && (
@@ -343,7 +353,12 @@ export default function WaitingForTransferDetails({ plots, carriedOverPlots = EM
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
                     <div className="text-xs text-slate-500 font-bold mb-1 flex items-center gap-1"><Calendar size={12}/> สถานะล่าสุด</div>
-                    <div className="text-sm font-bold text-slate-700 truncate">{currentRecord?.status || plot.sale_status || '-'}</div>
+                    <div className="text-sm font-bold text-slate-700 truncate flex items-center gap-1.5">
+                      <span>{currentRecord?.status || plot.sale_status || '-'}</span>
+                      {(plot.current_tenant_name || plot.rental_program || plot.sale_status === 'Rented') && (
+                        <span className="text-[9px] font-black text-teal-700 bg-teal-100 border border-teal-200 px-1.5 py-0.2 rounded-md">เช่า</span>
+                      )}
+                    </div>
                   </div>
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
                     <div className="text-xs text-slate-500 font-bold mb-1 flex items-center gap-1"><Clock size={12}/> วันที่โอน</div>

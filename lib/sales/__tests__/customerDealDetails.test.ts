@@ -27,6 +27,20 @@ describe('customer deal history values', () => {
       const notes = 'ที่ดิน 72.6 ตร.ว. · ราคา: 2,690,000 บ. · ราคาทด13: 2,999,000 บ.';
       expect(extractAgreedPrices(notes)).toEqual({ salePrice: 2690000, landAppraisalPrice: 2999000 });
     });
+    it('extracts land office price formatted as ราคา ท.ด. ฿2,950,000 or ยอด ทด or in deal summary', () => {
+      expect(extractAgreedPrices('• ราคาขายสุทธิ: ฿2,500,000 บาท\n• ราคา ทด.13: ฿2,800,000 บาท\n• ธนาคาร: SCB')).toEqual({
+        salePrice: 2500000,
+        landAppraisalPrice: 2800000
+      });
+      expect(extractAgreedPrices('ราคา ท.ด. ฿2,950,000')).toEqual({
+        salePrice: null,
+        landAppraisalPrice: 2950000
+      });
+      expect(extractAgreedPrices('ยอด ทด: 3,100,000 บาท')).toEqual({
+        salePrice: null,
+        landAppraisalPrice: 3100000
+      });
+    });
     it('handles empty or non-string input safely', () => {
       expect(extractAgreedPrices(null)).toEqual({ salePrice: null, landAppraisalPrice: null });
       expect(extractAgreedPrices('')).toEqual({ salePrice: null, landAppraisalPrice: null });

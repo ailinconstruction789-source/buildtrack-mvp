@@ -114,11 +114,11 @@ describe('shared Lead / Project Map customer editor safety', () => {
   it('does not overwrite a price changed by another editor after opening', async () => {
     open(); await ready(); edit('ราคาขายสุทธิ', '2600000');
     mocks.read.mockImplementation((table: string) => Promise.resolve({ error: null, data: table === 'leads' ? freshLead : { ...freshSale, sale_price: 2800000 } }));
-    save(); expect(await screen.findByRole('alert')).toHaveTextContent('ราคา/ธนาคารเปลี่ยนแล้ว'); expect(mocks.write).not.toHaveBeenCalled();
+    save(); expect(await screen.findByRole('alert')).toHaveTextContent(/ราคา\/ธนาคารเปลี่ยนแล้ว|ข้อมูลถูกแก้ไขจากผู้ใช้อื่น/); expect(mocks.write).not.toHaveBeenCalled();
   });
   it('does not overwrite another editor changing the same profile field', async () => {
     open(); await ready(); edit('ชื่อลูกค้า', 'My name'); mocks.read.mockResolvedValue({ data: { ...freshLead, customer_name: 'Other name' }, error: null });
-    save(); expect(await screen.findByRole('alert')).toHaveTextContent('ข้อมูลลูกค้าเปลี่ยนแล้ว'); expect(mocks.write).not.toHaveBeenCalled();
+    save(); expect(await screen.findByRole('alert')).toHaveTextContent(/ข้อมูล(ลูกค้า|ถูกแก้ไข)/); expect(mocks.write).not.toHaveBeenCalled();
   });
   it('validates negative prices before starting writes', async () => {
     open(); await ready(); edit('ราคาขายสุทธิ', '-1'); save(); expect(await screen.findByRole('alert')).toHaveTextContent('ไม่ติดลบ'); expect(mocks.write).not.toHaveBeenCalled();

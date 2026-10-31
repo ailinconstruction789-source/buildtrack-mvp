@@ -225,7 +225,7 @@ describe('existing sidebar save binding safety with fixture data', () => {
     await openMap(); edit('ชื่อลูกค้า', 'Local changed name');
     db.lead.customer_name = 'Concurrent changed name';
     fireEvent.click(screen.getByRole('button', { name: 'บันทึกการเปลี่ยนแปลง' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('ข้อมูลลูกค้าเปลี่ยนแล้ว');
+    expect(await screen.findByRole('alert')).toHaveTextContent(/ข้อมูล(ลูกค้า|ถูกแก้ไข)/);
     expect(db.writes).not.toHaveBeenCalled();
     expect(db.lead.customer_name).toBe('Concurrent changed name');
   });

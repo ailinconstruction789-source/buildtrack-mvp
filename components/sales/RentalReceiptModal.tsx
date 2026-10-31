@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { 
   Receipt, 
   Printer, 
@@ -18,7 +18,9 @@ import {
   Home,
   User,
   ShieldCheck,
-  Sparkles
+  Sparkles,
+  Settings,
+  Check
 } from 'lucide-react';
 import { RentalReceiptData, RENTAL_PROGRAM_DETAILS } from '@/types/sales';
 import { formatThaiBahtText } from '@/lib/rentalHelper';
@@ -37,12 +39,68 @@ export default function RentalReceiptModal({
 }: RentalReceiptModalProps) {
   const printRef = useRef<HTMLDivElement>(null);
 
+  // 🏦 ข้อมูลบัญชีธนาคารของบริษัท (ดึงจาก props หรือ localStorage หรือค่าเริ่มต้น)
+  const [bankInfo, setBankInfo] = useState({
+    bankName: 'ธนาคารกสิกรไทย (KBANK)',
+    accountNo: '',
+    accountName: 'บริษัท ไอลิน พร็อพเพอร์ตี้ จำกัด',
+    branch: 'สาขาสันทราย เชียงใหม่'
+  });
+  const [isEditingBank, setIsEditingBank] = useState(false);
+  const [copiedAccount, setCopiedAccount] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('buildtrack_rental_company_bank');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          setBankInfo(prev => ({
+            ...prev,
+            ...parsed,
+            bankName: data?.bankName || parsed.bankName || prev.bankName,
+            accountNo: data?.bankAccountNo || parsed.accountNo || prev.accountNo,
+            accountName: data?.bankAccountName || parsed.accountName || prev.accountName,
+            branch: data?.bankBranch || parsed.branch || prev.branch
+          }));
+          return;
+        }
+      } catch (e) {
+        // ignore parse error
+      }
+    }
+    if (data) {
+      setBankInfo({
+        bankName: data.bankName || 'ธนาคารกสิกรไทย (KBANK)',
+        accountNo: data.bankAccountNo || '',
+        accountName: data.bankAccountName || data.companyName || 'บริษัท ไอลิน พร็อพเพอร์ตี้ จำกัด',
+        branch: data.bankBranch || 'สาขาสันทราย เชียงใหม่'
+      });
+    }
+  }, [data]);
+
+  const handleSaveBankInfo = (newInfo: typeof bankInfo) => {
+    setBankInfo(newInfo);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('buildtrack_rental_company_bank', JSON.stringify(newInfo));
+      } catch (e) {
+        // ignore storage error
+      }
+    }
+  };
+
+  const handleCopyAccountNo = () => {
+    if (!bankInfo.accountNo) return;
+    navigator.clipboard?.writeText(bankInfo.accountNo);
+    setCopiedAccount(true);
+    setTimeout(() => setCopiedAccount(false), 2000);
+  };
+
   if (!isOpen || !data) return null;
 
   const isReceipt = data.receiptType === 'receipt';
   const thaiBaht = formatThaiBahtText(data.paidAmount ?? data.totalAmount);
-  const promptPayNumber = data.promptPayId || '0812345678'; // Default developer PromptPay ID
-  const promptPayQrUrl = `https://promptpay.io/${promptPayNumber}/${data.totalAmount}.png`;
 
   const handlePrint = () => {
     window.print();
@@ -58,7 +116,13 @@ export default function RentalReceiptModal({
 งวด: ${data.periodLabel}
 ยอดเงิน: ฿${(data.paidAmount ?? data.totalAmount).toLocaleString()} บาท (${thaiBaht})
 สถานะ: ${data.paymentStatus === 'Paid' ? 'ชำระเรียบร้อยแล้ว ✅' : 'รอชำระเงิน ⏳'}
-${!isReceipt ? `\n💳 สแกนจ่ายผ่าน PromptPay: ${promptPayNumber}` : ''}
+${!isReceipt ? `
+🏦 ช่องทางการชำระเงิน (โอนเข้าบัญชีบริษัท):
+ธนาคาร: ${bankInfo.bankName}
+เลขที่บัญชี: ${bankInfo.accountNo || 'กรุณาติดต่อสอบถามฝ่ายการเงิน'}
+ชื่อบัญชี: ${bankInfo.accountName}${bankInfo.branch ? ` (${bankInfo.branch})` : ''}
+* เมื่อโอนชำระแล้ว กรุณาส่งสลิปหลักฐานยืนยันทางช่องทางนี้
+` : ''}
 ━━━━━━━━━━━━━━━━━━
 ไอลิน คอนสตรัคชั่น แอนด์ พร็อพเพอร์ตี้
     `.trim();
@@ -303,31 +367,120 @@ ${!isReceipt ? `\n💳 สแกนจ่ายผ่าน PromptPay: ${promptP
               <span className="font-bold text-slate-900 text-xs">({thaiBaht})</span>
             </div>
 
-            {/* Payment PromptPay QR (If Invoice or Unpaid) */}
+            {/* Payment Company Bank Account (If Invoice or Unpaid) */}
             {!isReceipt && (
-              <div className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl border border-blue-200 flex flex-col sm:flex-row items-center justify-between gap-4">
-                <div className="space-y-1">
-                  <div className="font-bold text-blue-900 flex items-center gap-1.5 text-xs">
-                    <QrCode size={16} className="text-blue-700" /> ชำระเงินผ่าน PromptPay QR Code
+              <div className="p-4 bg-gradient-to-r from-blue-50 via-indigo-50/60 to-slate-50 rounded-2xl border border-blue-200/90 shadow-2xs space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="font-bold text-blue-900 flex items-center gap-2 text-xs">
+                    <Building2 size={16} className="text-blue-700" />
+                    <span>ช่องทางการชำระเงิน (โอนเข้าบัญชีบริษัท)</span>
                   </div>
-                  <p className="text-[11px] text-blue-700">
-                    สแกน QR Code เพื่อชำระค่าเช่า ยอดเงินจะระบุอัตโนมัติ <b>฿{data.totalAmount.toLocaleString()} บาท</b>
-                  </p>
-                  <div className="text-[10px] text-slate-500 font-mono">
-                    พร้อมเพย์: <b>{promptPayNumber}</b> (ไอลิน พร็อพเพอร์ตี้)
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingBank(!isEditingBank)}
+                    className="no-print text-[10px] font-bold text-blue-700 hover:text-blue-900 bg-white hover:bg-blue-100 border border-blue-200 px-2 py-0.5 rounded-lg transition-colors cursor-pointer flex items-center gap-1 shadow-2xs"
+                    title="แก้ไขข้อมูลบัญชีธนาคารของบริษัท"
+                  >
+                    <Settings size={11} />
+                    <span>{isEditingBank ? 'ปิดฟอร์ม' : 'แก้ไขเลขบัญชี'}</span>
+                  </button>
                 </div>
 
-                <div className="p-2 bg-white rounded-xl shadow-xs border border-blue-200 shrink-0 text-center">
-                  <img 
-                    src={promptPayQrUrl} 
-                    alt="PromptPay QR Code" 
-                    className="w-24 h-24 object-contain mx-auto"
-                    onError={(e: any) => {
-                      e.target.style.display = 'none';
-                    }}
-                  />
-                  <div className="text-[9px] font-bold text-blue-800 mt-1">PromptPay QR</div>
+                {/* Edit Form (Inline toggle, hidden on print) */}
+                {isEditingBank && (
+                  <div className="no-print p-3 bg-white rounded-xl border border-blue-200 space-y-2.5 animate-in fade-in">
+                    <div className="text-[11px] font-black text-slate-800">
+                      ⚙️ กำหนดข้อมูลบัญชีธนาคารของบริษัท (บันทึกอัตโนมัติ)
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-600 mb-0.5">ธนาคาร</label>
+                        <select
+                          value={bankInfo.bankName}
+                          onChange={e => handleSaveBankInfo({ ...bankInfo, bankName: e.target.value })}
+                          className="w-full border border-slate-300 rounded-lg p-1.5 text-xs font-bold text-slate-800 bg-white"
+                        >
+                          <option value="ธนาคารกสิกรไทย (KBANK)">ธนาคารกสิกรไทย (KBANK)</option>
+                          <option value="ธนาคารไทยพาณิชย์ (SCB)">ธนาคารไทยพาณิชย์ (SCB)</option>
+                          <option value="ธนาคารกรุงเทพ (BBL)">ธนาคารกรุงเทพ (BBL)</option>
+                          <option value="ธนาคารกรุงไทย (KTB)">ธนาคารกรุงไทย (KTB)</option>
+                          <option value="ธนาคารกรุงศรีอยุธยา (BAY)">ธนาคารกรุงศรีอยุธยา (BAY)</option>
+                          <option value="ธนาคารทหารไทยธนชาต (TTB)">ธนาคารทหารไทยธนชาต (TTB)</option>
+                          <option value="ธนาคารออมสิน (GSB)">ธนาคารออมสิน (GSB)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-600 mb-0.5">เลขที่บัญชี</label>
+                        <input
+                          type="text"
+                          value={bankInfo.accountNo}
+                          placeholder="เช่น 123-4-56789-0"
+                          onChange={e => handleSaveBankInfo({ ...bankInfo, accountNo: e.target.value })}
+                          className="w-full border border-slate-300 rounded-lg p-1.5 text-xs font-bold text-slate-800 font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-600 mb-0.5">ชื่อบัญชี</label>
+                        <input
+                          type="text"
+                          value={bankInfo.accountName}
+                          placeholder="เช่น บริษัท ไอลิน พร็อพเพอร์ตี้ จำกัด"
+                          onChange={e => handleSaveBankInfo({ ...bankInfo, accountName: e.target.value })}
+                          className="w-full border border-slate-300 rounded-lg p-1.5 text-xs font-bold text-slate-800"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-600 mb-0.5">สาขา (ถ้ามี)</label>
+                        <input
+                          type="text"
+                          value={bankInfo.branch || ''}
+                          placeholder="เช่น สันทราย เชียงใหม่"
+                          onChange={e => handleSaveBankInfo({ ...bankInfo, branch: e.target.value })}
+                          className="w-full border border-slate-300 rounded-lg p-1.5 text-xs font-bold text-slate-800"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Display Bank Card */}
+                <div className="bg-white p-3.5 rounded-xl border border-blue-100 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center font-black text-sm shrink-0 shadow-xs">
+                      🏦
+                    </div>
+                    <div>
+                      <div className="font-extrabold text-xs text-slate-800">{bankInfo.bankName}</div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="font-mono font-black text-sm text-blue-700 tracking-wider">
+                          {bankInfo.accountNo || 'ยังไม่ได้ระบุเลขที่บัญชี (กดปุ่มแก้ไขเลขบัญชี)'}
+                        </span>
+                        {bankInfo.accountNo && (
+                          <button
+                            type="button"
+                            onClick={handleCopyAccountNo}
+                            className="no-print px-2 py-0.5 text-[10px] font-bold rounded bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition-colors flex items-center gap-1 cursor-pointer"
+                            title="คัดลอกเลขบัญชี"
+                          >
+                            {copiedAccount ? <CheckCircle2 size={11} className="text-emerald-600" /> : <Copy size={11} />}
+                            <span>{copiedAccount ? 'คัดลอกแล้ว' : 'คัดลอก'}</span>
+                          </button>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-slate-500 font-medium">
+                        ชื่อบัญชี: <b className="text-slate-700">{bankInfo.accountName}</b>
+                        {bankInfo.branch ? ` · สาขา ${bankInfo.branch}` : ''}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="text-left sm:text-right border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-100">
+                    <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider">ยอดชำระตามใบแจ้งหนี้</span>
+                    <span className="font-black text-base text-blue-800 font-mono">
+                      ฿{data.totalAmount.toLocaleString()}
+                    </span>
+                    <span className="text-[9px] text-slate-400 block mt-0.5 font-medium">* กรุณาส่งสลิปยืนยันหลังโอน</span>
+                  </div>
                 </div>
               </div>
             )}

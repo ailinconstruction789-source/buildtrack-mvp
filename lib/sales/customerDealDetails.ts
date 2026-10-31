@@ -7,8 +7,12 @@ export function customerDealDetails(notes: unknown): CustomerDealDetails {
   const value = price ? Number(price[1].replace(/,/g, '')) : null;
   return { salePrice: value !== null && Number.isFinite(value) && value >= 0 ? value : null, bank: bank?.[1]?.trim() || '' };
 }
-export function customerDealSummary(price: number | null, bank: string): string {
-  return `${price === null ? '' : `• ราคาขายสุทธิ: ฿${price.toLocaleString('en-US', { maximumFractionDigits: 2 })} บาท\n`}• ธนาคาร: ${bank.trim()}`;
+export function customerDealSummary(price: number | null, bank: string, landOfficePrice?: number | null): string {
+  const priceLine = price === null ? '' : `• ราคาขายสุทธิ: ฿${price.toLocaleString('en-US', { maximumFractionDigits: 2 })} บาท\n`;
+  const landLine = (landOfficePrice !== null && landOfficePrice !== undefined && Number.isFinite(landOfficePrice) && landOfficePrice > 0)
+    ? `• ราคา ทด.13: ฿${landOfficePrice.toLocaleString('en-US', { maximumFractionDigits: 2 })} บาท\n`
+    : '';
+  return `${priceLine}${landLine}• ธนาคาร: ${bank.trim()}`;
 }
 
 export interface ExtractedPrices {
@@ -36,8 +40,8 @@ export function extractAgreedPrices(notes: unknown): ExtractedPrices {
   }
 
   let landAppraisalPrice: number | null = null;
-  // 3. Land office price: "ราคาทด13: 2,950,000 บ." or "ราคาทด: 2,950,000 บ." or "ราคา ทด: ..."
-  const landMatch = notes.match(/(?:^|[·\s\n•])(?:ราคา\s*ทด(?:\.|\s*13)?|ราคาทด(?:13)?|ราคาประเมิน(?:\s*ทด)?):\s*฿?([\d,.]+)\s*(?:บ(?:\.|\s|$)|บาท)/i);
+  // 3. Land office price: "ราคาทด13: 2,950,000 บ." or "ราคาทด: 2,950,000 บ." or "ราคา ทด: ..." or "ราคา ท.ด. ฿2,950,000" or "ยอด ทด: 2,950,000"
+  const landMatch = notes.match(/(?:^|[·\s\n•])(?:ราคา\s*(?:ท\.?ด\.?(?:\s*13)?|ประเมิน(?:\s*ทด)?)|ยอด\s*(?:ท\.?ด\.?(?:\s*13)?)|ราคาทด(?:13)?|ท\.?ด\.?)[:\s]*฿?([\d,.]+)(?:\s*(?:บ(?:\.|\s|$)|บาท))?/i);
   if (landMatch) {
     landAppraisalPrice = Number(landMatch[1].replace(/,/g, ''));
   }

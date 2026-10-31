@@ -331,6 +331,10 @@ export interface RentalReceiptData {
   paymentStatus: 'Paid' | 'Pending' | 'Overdue';
   companyName: string;
   promptPayId?: string;
+  bankName?: string;
+  bankAccountNo?: string;
+  bankAccountName?: string;
+  bankBranch?: string;
   agentName?: string;
   notes?: string;
 }

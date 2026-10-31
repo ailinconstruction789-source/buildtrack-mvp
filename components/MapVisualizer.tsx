@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo, useTransition } from 'react';
 import { 
   Map as MapIcon, Monitor, Search, ZoomOut, ZoomIn, Loader2, Paintbrush, 
-  Eraser, Pickaxe, HardHat, Activity, Trash2, Settings, PlusCircle, Grid, Filter, X, TreePine, Check, Flag, FileSpreadsheet, Palette
+  Eraser, Pickaxe, HardHat, Activity, Trash2, Settings, PlusCircle, Grid, Filter, X, TreePine, Check, Flag, FileSpreadsheet, Palette, Gift
 } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
 import WeeklyProgressReportModal from './WeeklyProgressReportModal';
 import MeterStatusBadges from './MeterStatusBadges';
 import { buildMapAssignmentIndex, buildMapHistoryIndex, buildMapTaskIndex, indexFirstBy } from '@/lib/constructionMapIndex';
@@ -160,6 +161,76 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
   const [showColorLegend, setShowColorLegend] = useState(false);
   const [isPending, startTransition] = useTransition();
 
+  // 🎁 รายการของแถมสำหรับฝ่ายก่อสร้าง (Read-only)
+  const [promotionsMap, setPromotionsMap] = useState<Record<string, any[]>>({});
+  const [selectedPromoPlot, setSelectedPromoPlot] = useState<any | null>(null);
+
+  const getPlotPromotions = (plot: any) => {
+    if (!plot) return [];
+    const pId = String(plot.id);
+    const pName = plot.plot_name ? String(plot.plot_name) : '';
+    return promotionsMap[pId] || (pName ? promotionsMap[pName] : []) || [];
+  };
+
+  useEffect(() => {
+    if (!plots || plots.length === 0) return;
+    const plotIds = plots.map((p: any) => p.id).filter(Boolean);
+    if (plotIds.length === 0) return;
+
+    let isMounted = true;
+
+    const fetchPromotions = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('plot_promotions')
+          .select('id, plot_id, category, item_name, quantity, status, delivery_date, remarks')
+          .in('plot_id', plotIds);
+
+        if (error) {
+          console.error('Failed to fetch plot promotions for map:', error);
+          return;
+        }
+
+        if (isMounted && data) {
+          const promoMap: Record<string, any[]> = {};
+          data.forEach((p: any) => {
+            if (
+              p.category === 'เปลี่ยนเป็นเงินสด' ||
+              p.category === 'cash_discount' ||
+              (p.item_name && p.item_name.includes('เปลี่ยนเป็นส่วนลดเงินสด'))
+            ) {
+              return;
+            }
+            const key = String(p.plot_id);
+            if (!promoMap[key]) promoMap[key] = [];
+            promoMap[key].push(p);
+          });
+          setPromotionsMap(promoMap);
+        }
+      } catch (err) {
+        console.error('Error fetching promotions for map:', err);
+      }
+    };
+
+    fetchPromotions();
+
+    const promoChannel = supabase
+      .channel('map-promotions-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'plot_promotions' },
+        () => {
+          fetchPromotions();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      isMounted = false;
+      supabase.removeChannel(promoChannel);
+    };
+  }, [plots]);
+
   const plotsById = useMemo(() => indexFirstBy(plots || [], p => p.id), [plots]);
   const normalizedPlotsById = useMemo(() => indexFirstBy(plots || [], p => String(p.id)), [plots]);
   const houseTypesById = useMemo(() => indexFirstBy(houseTypes || [], h => h.id), [houseTypes]);
@@ -171,6 +242,19 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
     (mapGrid || []).filter(c => typeof c.x === 'number' && typeof c.y === 'number' && (c.type === 'plot' || c.type === 'road' || c.type === 'park')),
     c => `${c.x}-${c.y}`,
   ), [mapGrid, gridMap]);
+
+  // 🌳 คำนวณขอบเขตและจุดศูนย์กลางของพื้นที่สวนสาธารณะ สำหรับแสดงป้ายชื่อสวน
+  const parkBounds = useMemo(() => {
+    const parkCells = (mapGrid || []).filter((c: any) => c.type === 'park' && typeof c.x === 'number' && typeof c.y === 'number');
+    if (parkCells.length === 0) return null;
+    const xs = parkCells.map((c: any) => c.x);
+    const ys = parkCells.map((c: any) => c.y);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const midX = Math.round((minX + maxX) / 2);
+    const midY = Math.round((minY + maxY) / 2);
+    return { minX, maxX, minY, maxY, midX, midY, total: parkCells.length };
+  }, [mapGrid]);
 
   // 👷‍♂️ วิศวกรโครงการ (Site Engineer - หมวกขาว) และ 👷‍♀️ QC (หมวกเขียว) ที่เข้าตรวจในแปลงวันนี้
   const roleActivitiesToday = useMemo(() => {
@@ -307,6 +391,12 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                             </span>
                             <span className="inline-flex items-center gap-1 text-[9px] sm:text-[11px] font-bold text-rose-900 bg-rose-50 border border-rose-300 px-2 py-0.5 rounded-md shadow-2xs" title="งานก่อสร้างล่าช้ากว่าแผน">
                               <span className="w-2 h-2 rounded-full bg-rose-500"></span> ล่าช้า
+                            </span>
+                            <span className="inline-flex items-center gap-1 text-[9px] sm:text-[11px] font-bold text-teal-900 bg-teal-50 border border-teal-300 px-2 py-0.5 rounded-md shadow-2xs" title="บ้านเช่า / มีผู้เช่าพักอาศัยอยู่ (Active Lease)">
+                              <span className="w-2 h-2 rounded-full bg-teal-500"></span> 🏷️ บ้านเช่า
+                            </span>
+                            <span className="inline-flex items-center gap-1 text-[9px] sm:text-[11px] font-bold text-amber-900 bg-amber-50 border border-amber-300 px-2 py-0.5 rounded-md shadow-2xs" title="บ้านที่มีรายการของแถม/โปรโมชั่นที่ต้องติดตั้ง (Read-only)">
+                              <span className="w-2 h-2 rounded-full bg-amber-500"></span> 🎁 ของแถม
                             </span>
 
                             <div className="h-3.5 w-px bg-slate-300 mx-0.5 hidden sm:block"></div>
@@ -535,6 +625,22 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                                </div>
                              </div>
 
+                             <div className="flex items-center gap-2 p-2 rounded-lg bg-teal-50/80 border border-teal-300 shadow-2xs">
+                               <span className="bg-teal-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded shadow-2xs">🏷️ เช่า</span>
+                               <div>
+                                 <span className="font-black text-teal-950">บ้านเช่า (Active Lease)</span>
+                                 <p className="text-[9px] text-teal-700">มีผู้เช่าพักอาศัยอยู่</p>
+                               </div>
+
+                             <div className="flex items-center gap-2 p-2 rounded-lg bg-amber-50/80 border border-amber-300 shadow-2xs">
+                               <span className="bg-amber-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded shadow-2xs">🎁 ของแถม</span>
+                               <div>
+                                 <span className="font-black text-amber-950">รายการของแถม (Promotions)</span>
+                                 <p className="text-[9px] text-amber-700">ฝ่ายขายบันทึกไว้ / ช่างดูเพื่อเตรียมติดตั้ง</p>
+                               </div>
+                             </div>
+                             </div>
+
                              <div className="flex items-center gap-2 p-2 rounded-lg bg-white border border-slate-200 shadow-2xs">
                                <div className="w-5 h-5 rounded-full bg-yellow-400 flex items-center justify-center text-slate-900 text-[10px] font-black shrink-0">
                                  ⛏️
@@ -675,10 +781,10 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                              } else if (cellData?.type === 'road') { 
                                baseStyles = 'bg-slate-200 flex items-center justify-center border-slate-300 '; 
                              } else if (cellData?.type === 'park') {
-                               const adj = getAdjacency(x, y, 'park', null);
-                               baseStyles = 'bg-emerald-50 border-emerald-200 flex items-center justify-center relative overflow-hidden ';
-                               if (adj.hasTop) baseStyles += '!border-t-0 '; if (adj.hasBottom) baseStyles += '!border-b-0 '; if (adj.hasLeft) baseStyles += '!border-l-0 '; if (adj.hasRight) baseStyles += '!border-r-0 ';
-                             }
+                                const adj = getAdjacency(x, y, 'park', null);
+                                baseStyles = 'bg-emerald-50/90 border-emerald-300/80 flex items-center justify-center relative ';
+                                if (adj.hasTop) baseStyles += '!border-t-0 '; if (adj.hasBottom) baseStyles += '!border-b-0 '; if (adj.hasLeft) baseStyles += '!border-l-0 '; if (adj.hasRight) baseStyles += '!border-r-0 ';
+                              }
 
                              return (
                                <div key={i} data-x={x} data-y={y} data-plot-id={cellData?.type === 'plot' ? cellData.plotId : undefined} className={`relative transition-colors duration-75 border ${baseStyles}`}>
@@ -687,18 +793,17 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                                     return (<>{adj.hasLeft && adj.hasRight && !adj.hasTop && !adj.hasBottom && <div className="w-full h-0 border-t-2 border-dashed border-yellow-500/40 pointer-events-none" />}{adj.hasTop && adj.hasBottom && !adj.hasLeft && !adj.hasRight && <div className="h-full w-0 border-l-2 border-dashed border-yellow-500/40 pointer-events-none" />}{adj.hasTop && adj.hasBottom && adj.hasLeft && adj.hasRight && <div className="w-2 h-2 bg-yellow-500/40 rounded-full pointer-events-none" />}</>);
                                  })()}
                                  {cellData?.type === 'park' && (
-                                    <>
-                                      <div className="absolute inset-0 pointer-events-none opacity-20" style={{ backgroundImage: 'radial-gradient(#10b981 1.5px, transparent 1.5px)', backgroundSize: '10px 10px' }}></div>
-                                      {((x + y) % 2 === 0) ? (
-                                        <TreePine className="absolute text-emerald-600/40 w-3/5 h-3/5 pointer-events-none" />
-                                      ) : (
-                                        <TreePine className="absolute text-emerald-500/30 w-2/5 h-2/5 pointer-events-none -translate-x-1 translate-y-1" />
-                                      )}
-                                    </>
+                                   <div 
+                                     className="absolute inset-0 pointer-events-none z-0 opacity-45" 
+                                     style={{ 
+                                       backgroundImage: `url("data:image/svg+xml;utf8,<svg width='40' height='40' xmlns='http://www.w3.org/2000/svg'><g stroke='%2316a34a' stroke-width='1.2' stroke-linecap='round' fill='none'><path d='M10,25 Q12,18 15,12 M10,25 Q15,22 20,18 M10,25 Q8,18 5,14' /><path d='M30,15 Q32,8 35,2 M30,15 Q35,12 40,8 M30,15 Q28,8 25,4' /></g></svg>")`,
+                                       backgroundSize: '30px 30px'
+                                     }} 
+                                   />
                                  )}
-                               </div>
-                             );
-                           })}
+                                </div>
+                              );
+                            })}
                          </div>
                          {/* 🌟 ซ่อนเส้นประรั้วในโหมดดูผังปกติ (แสดงเป็นเส้นบางเฉพาะตอนเปิดโหมดแก้ไขผัง เพื่อความสบายตาและไม่บดบังแปลงบ้าน) */}
                          {isEditMapMode && mapGrid.filter((c: any) => c.type === 'fence-h').map((c: any) => (<div key={c.id} className={`absolute border-t-2 border-dashed border-slate-300 z-20 pointer-events-none transition-all ${isDrawingInfraGlobal ? 'opacity-40 grayscale' : ''} ${isUtilityMode ? 'hidden' : ''}`} style={{ left: `${(c.x / gridCols) * 100}%`, top: `${(c.y / gridRows) * 100}%`, width: `${(1 / gridCols) * 100}%`, height: '4px', transform: 'translateY(-50%)' }} />))}
@@ -779,6 +884,24 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                               );
                          })}
 
+
+                          {/* 🌳 ป้ายกำกับชื่อสวนสาธารณะ (วางตรงกึ่งกลางของพื้นที่สวนทั้งโซนอย่างแม่นยำ) */}
+                          {parkBounds && (
+                            <div 
+                              className="absolute pointer-events-none z-[60] flex items-center justify-center transition-all"
+                              style={{ 
+                                left: `${(parkBounds.minX / gridCols) * 100}%`, 
+                                top: `${(parkBounds.minY / gridRows) * 100}%`, 
+                                width: `${((parkBounds.maxX - parkBounds.minX + 1) / gridCols) * 100}%`, 
+                                height: `${((parkBounds.maxY - parkBounds.minY + 1) / gridRows) * 100}%` 
+                              }}
+                            >
+                              <div className="whitespace-nowrap bg-white/95 backdrop-blur-xs px-3 sm:px-4 py-1.5 rounded-full border border-emerald-400 shadow-md flex items-center gap-1.5 text-emerald-950 font-black text-xs sm:text-sm">
+                                <span className="text-emerald-600 text-sm sm:text-base">🌳</span>
+                                <span>สวนสาธารณะ</span>
+                              </div>
+                            </div>
+                          )}
 
                           {/* 🌟 UX Blueprint: Smart Hover Tooltips & Contractor Filter 🌟 */}
                          {Object.entries(plotBounds).map(([plotId, bounds]:any) => {
@@ -1027,7 +1150,45 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                                             👤
                                          </span>
                                       )}
-                                      <MeterStatusBadges plot={plotInfo} size="xs" interactive={false} />
+                                      {(plotInfo.current_tenant_name || plotInfo.rental_program || plotInfo.sale_status === "Rented") && (
+                                         <span 
+                                            className="bg-teal-600 text-white text-[8px] sm:text-[9px] font-black px-1 sm:px-1.5 py-[1px] rounded shadow-2xs flex items-center gap-0.5 leading-none shrink-0" 
+                                            title={`บ้านเช่า (มีผู้พักอาศัย)${plotInfo.current_tenant_name ? `: ${plotInfo.current_tenant_name}` : ""}`}
+                                         >
+                                            <span>🏷️</span>
+                                            <span className="hidden sm:inline font-black">เช่า</span>
+                                         </span>
+                                      )}
+                                      {/* 🎁 ป้ายของแถม (Promotions - Read-only) */}
+                                       {(() => {
+                                          const promos = getPlotPromotions(plotInfo);
+                                          if (promos.length === 0) return null;
+                                          const installedCount = promos.filter((p: any) => p.status === 'installed').length;
+                                          const isAllInstalled = installedCount === promos.length;
+                                          const tooltipText = `🎁 รายการของแถม (${installedCount}/${promos.length} ติดตั้งแล้ว):\n` +
+                                            promos.map((p: any) => `• ${p.item_name} ${p.quantity > 1 ? `x${p.quantity}` : ''} [${p.status === 'installed' ? 'ติดตั้งแล้ว' : p.status === 'delivered' ? 'ของส่งแล้ว' : 'รอดำเนินการ'}]`).join('\n') +
+                                            '\n(คลิกเพื่อดูรายการละเอียด - ฝ่ายขายเป็นผู้บันทึก)';
+
+                                          return (
+                                             <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                   e.stopPropagation();
+                                                   setSelectedPromoPlot(plotInfo);
+                                                }}
+                                                className={`${
+                                                   isAllInstalled
+                                                      ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                                      : 'bg-amber-500 hover:bg-amber-600 text-white'
+                                                } text-[8px] sm:text-[9px] font-black px-1 sm:px-1.5 py-[1px] rounded shadow-2xs flex items-center gap-0.5 leading-none shrink-0 cursor-pointer transition-transform hover:scale-105`}
+                                                title={tooltipText}
+                                             >
+                                                <span>🎁</span>
+                                                <span className="font-black">{promos.length}</span>
+                                             </button>
+                                          );
+                                       })()}
+                                       <MeterStatusBadges plot={plotInfo} size="xs" interactive={false} />
                                    </div>
 
                                    {/* 🌟 บรรทัดที่ 2: ป้ายความต่าง แผน vs จริง (แบบที่ 1 - ขยายขนาดตัวเลขให้ชัดเจน) 🌟 */}
@@ -1036,12 +1197,9 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                                       const plannedVal = Math.round(Number(statusInfo.planned) || 0);
                                       const diff = actualVal - plannedVal;
 
+                                      // 🌟 เมื่อบ้านเสร็จแล้ว 100% หรือโอนแล้ว -> ซ่อนป้าย 100% เพื่อให้กล่องแปลงโล่งสะอาดตา (สีกรอบเขียวบอกสถานะแล้ว)
                                       if (plotInfo.is_completed || actualVal === 100) {
-                                         return (
-                                            <span className="relative z-10 text-[9px] sm:text-xs font-black px-1.5 sm:px-2 py-[2px] rounded-md bg-emerald-100 text-emerald-800 border border-emerald-300 leading-none mt-0.5 sm:mt-1 shadow-xs whitespace-nowrap" title={`เสร็จสมบูรณ์ 100% (แผน ${plannedVal}%)`}>
-                                               100%
-                                            </span>
-                                         );
+                                         return null;
                                       }
 
                                       if (actualVal > 0 || plannedVal > 0) {
@@ -1230,7 +1388,7 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                       </div>
                    </div>
                    
-                   <div className={`grid gap-3 sm:gap-6 ${isMobileLayout ? 'grid-cols-2' : 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 2xl:grid-cols-6'}`}>
+                   <div className={`grid gap-4 sm:gap-6 ${isMobileLayout ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-4'}`}>
                         {displayPlots.map((plot: any) => {
                         // 🌟 ดึงข้อมูล Status ของแปลงนั้นๆ เพื่อเอา % แผนงาน (planned) และ % งานจริง (actual) 🌟
                         const statusInfo = plotStatusCache[plot.id] || { actual: 0, planned: 0, status: 'none' };
@@ -1260,18 +1418,9 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                                 <Flag size={16} />
                               </button>
                             )}
-                            {/* ส่วนหัวของการ์ด และป้ายสถานะ */}
-                            <div className="flex justify-between items-start w-full mb-1 sm:mb-2">
-                              
-                            {isAdmin && handleTogglePlotCompleted && (
-                                <div className="flex gap-2 mb-3 z-20 relative">
-                                  
-                                  <button onClick={(e) => { e.stopPropagation(); handleTogglePlotCompleted(plot.id, !!plot.is_completed, statusInfo.actual, !!plot.has_customer); }} className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all border ${plot.is_completed ? 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100' : 'bg-[#f5f5f7] text-[#86868b] border-transparent hover:bg-slate-200'}`}>
-                                    🔑 {plot.is_completed ? 'โอนแล้ว' : 'พร้อมโอน'}
-                                  </button>
-                                </div>
-                            )}
-                              {/* 🌟 แสดง Banner การมาร์ก (Highlight) ถลึงทับขึ้นมาเลย */}
+                            {/* ส่วนหัวของการ์ด: จัดเลขแปลง + ปุ่มโอน + ป้ายสถานะให้กว้างขวางไม่บีบอัด */}
+                            <div className="flex justify-between items-start w-full mb-2 sm:mb-3 gap-2">
+                              {/* 🌟 แสดง Banner การมาร์ก (Highlight) */}
                               {plot.highlight_color && (
                                 <div className={`absolute top-0 left-0 w-full text-center py-1 sm:py-1.5 rounded-t-xl sm:rounded-t-[2.5rem] font-bold text-[10px] sm:text-xs text-white z-10 shadow-sm flex items-center justify-center gap-1.5
                                   ${plot.highlight_color === 'red' ? 'bg-rose-500' : ''}
@@ -1285,15 +1434,78 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                                   <Flag size={12} /> {plot.highlight_note || 'มีการมาร์กแปลงนี้'}
                                 </div>
                               )}
-                              <div className={`flex flex-col gap-1 ${plot.highlight_color ? 'mt-4 sm:mt-5' : ''}`}>
-                                <h3 className={`${isMobileLayout ? 'text-2xl' : 'text-4xl sm:text-5xl'} font-bold text-[#1d1d1f] truncate`}>{plot.plot_name || plot.id}</h3>
-                                <div className="flex gap-1.5 items-center flex-wrap">
-                                  {(plot.is_completed || plot.sale_status === 'transferred' || statusInfo.status === 'transferred') && <span className="bg-amber-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow-sm" title="โอนกรรมสิทธิ์แล้ว / สร้างเสร็จพร้อมโอน">🔑 โอนแล้ว</span>}
-                                  {plot.has_customer && <span className="bg-blue-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow-sm" title="มีลูกค้าจองแล้ว">👤 จองแล้ว</span>}
+
+                              <div className={`flex flex-col gap-1.5 min-w-0 flex-1 ${plot.highlight_color ? 'mt-4 sm:mt-5' : ''}`}>
+                                <div className="flex items-center gap-2.5 flex-wrap">
+                                  <h3 className="${isMobileLayout ? 'text-2xl' : 'text-3xl sm:text-4xl'} font-black text-[#1d1d1f] tracking-tight leading-none">
+                                    {plot.plot_name || plot.id}
+                                  </h3>
+                                  {isAdmin && handleTogglePlotCompleted && (
+                                    <button 
+                                      onClick={(e) => { e.stopPropagation(); handleTogglePlotCompleted(plot.id, !!plot.is_completed, statusInfo.actual, !!plot.has_customer); }} 
+                                      className={`py-1 px-2.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all border shrink-0 cursor-pointer ${
+                                        plot.is_completed ? 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100' : 'bg-[#f5f5f7] text-[#86868b] border-slate-200 hover:bg-slate-200'
+                                      }`}
+                                      title={plot.is_completed ? 'คลิกเพื่อเปลี่ยนเป็นพร้อมโอน' : 'คลิกเพื่อบันทึกโอนแล้ว'}
+                                    >
+                                      🔑 {plot.is_completed ? 'โอนแล้ว' : 'พร้อมโอน'}
+                                    </button>
+                                  )}
+                                </div>
+
+                                <div className="flex gap-1.5 items-center flex-wrap pt-0.5">
+                                  {(plot.is_completed || plot.sale_status === 'transferred' || statusInfo.status === 'transferred') && (
+                                    <span className="bg-amber-500 text-white text-[10px] px-2 py-0.5 rounded-full font-bold shadow-2xs" title="โอนกรรมสิทธิ์แล้ว / สร้างเสร็จพร้อมโอน">
+                                      🔑 โอนแล้ว
+                                    </span>
+                                  )}
+                                  {plot.has_customer && (
+                                    <span className="bg-blue-500 text-white text-[10px] px-2 py-0.5 rounded-full font-bold shadow-2xs" title="มีลูกค้าจองแล้ว">
+                                      👤 จองแล้ว
+                                    </span>
+                                  )}
+                                  {(plot.current_tenant_name || plot.rental_program || plot.sale_status === "Rented") && (
+                                    <span className="bg-teal-600 text-white text-[10px] px-2 py-0.5 rounded-full font-bold shadow-2xs flex items-center gap-1" title={`บ้านเช่า (มีผู้พักอาศัย)${plot.current_tenant_name ? `: ${plot.current_tenant_name}` : ""}`}>
+                                      🏷️ บ้านเช่า {plot.current_tenant_name ? `(${plot.current_tenant_name})` : ""}
+                                    </span>
+                                  )}
+                                  {/* 🎁 ป้ายของแถมในการ์ด */}
+                                  {(() => {
+                                     const cardPromos = getPlotPromotions(plot);
+                                     if (cardPromos.length === 0) return null;
+                                     const installedCount = cardPromos.filter((p: any) => p.status === 'installed').length;
+                                     const isAllInstalled = installedCount === cardPromos.length;
+                                     return (
+                                        <button
+                                           type="button"
+                                           onClick={(e) => {
+                                              e.stopPropagation();
+                                              setSelectedPromoPlot(plot);
+                                           }}
+                                           className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold shadow-2xs border transition-transform hover:scale-105 cursor-pointer ${
+                                              isAllInstalled 
+                                                ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
+                                                : 'bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100'
+                                           }`}
+                                           title="คลิกเพื่อดูรายการของแถมทั้งหมด (ฝ่ายขายบันทึกไว้)"
+                                        >
+                                           <span>🎁</span>
+                                           <span>ของแถม {cardPromos.length} รายการ</span>
+                                           <span className="text-[9px] opacity-80">({installedCount}/{cardPromos.length} ติดตั้งแล้ว)</span>
+                                        </button>
+                                     );
+                                  })()}
                                   <MeterStatusBadges plot={plot} size="sm" interactive={false} />
                                 </div>
                               </div>
-                              <span className={`text-[8px] sm:text-[10px] font-bold px-2 py-1 rounded-full ${statusInfo.status === 'delayed' ? 'bg-rose-100 text-rose-600' : statusInfo.status === 'completed' ? 'bg-emerald-100 text-emerald-600' : statusInfo.status === 'ahead' ? 'bg-indigo-100 text-indigo-600' : statusInfo.status === 'on-track' ? 'bg-blue-100 text-blue-600' : 'bg-[#f5f5f7] text-[#86868b]'}`}>
+
+                              <span className={`text-[9px] sm:text-[11px] font-bold px-2.5 py-1 rounded-full whitespace-nowrap shrink-0 shadow-2xs ${
+                                statusInfo.status === 'delayed' ? 'bg-rose-100 text-rose-700 border border-rose-200' :
+                                statusInfo.status === 'completed' ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' :
+                                statusInfo.status === 'ahead' ? 'bg-indigo-100 text-indigo-700 border border-indigo-200' :
+                                statusInfo.status === 'on-track' ? 'bg-blue-100 text-blue-700 border border-blue-200' :
+                                'bg-[#f5f5f7] text-[#86868b] border border-slate-200'
+                              }`}>
                                 {statusInfo.label}
                               </span>
                             </div>
@@ -1357,6 +1569,154 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                         );
                       })}
                    </div>
+                  </div>
+                )}
+
+                {/* 🎁 Read-Only Promotions Modal สำหรับฝ่ายก่อสร้างดูรายการของแถม */}
+                {selectedPromoPlot && (
+                  <div 
+                    className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in"
+                    onClick={() => setSelectedPromoPlot(null)}
+                  >
+                    <div 
+                      className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200 animate-in zoom-in-95"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {/* Header */}
+                      <div className="bg-gradient-to-r from-amber-500 to-amber-600 px-5 py-4 text-white flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-9 h-9 rounded-xl bg-white/20 backdrop-blur-xs flex items-center justify-center text-lg">
+                            🎁
+                          </div>
+                          <div>
+                            <h3 className="font-black text-base sm:text-lg leading-tight">
+                              รายการของแถม · แปลง {selectedPromoPlot.plot_name || selectedPromoPlot.id}
+                            </h3>
+                            <p className="text-[11px] text-amber-100 font-bold flex items-center gap-1.5 mt-0.5">
+                              <span>🔒 ฝ่ายก่อสร้างดูอย่างเดียว (Read-Only)</span>
+                              <span>•</span>
+                              <span>บันทึกโดยฝ่ายขาย</span>
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPromoPlot(null)}
+                          className="text-white/80 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
+                        >
+                          <X size={20} />
+                        </button>
+                      </div>
+
+                      {/* Content */}
+                      <div className="p-5 max-h-[70vh] overflow-y-auto space-y-3">
+                        {(() => {
+                          const promos = getPlotPromotions(selectedPromoPlot);
+                          if (promos.length === 0) {
+                            return (
+                              <div className="py-8 text-center text-slate-400">
+                                <Gift className="w-12 h-12 mx-auto mb-2 text-slate-300" />
+                                <p className="font-bold text-sm">ไม่มีรายการของแถมที่ต้องติดตั้งในแปลงนี้</p>
+                                <p className="text-xs text-slate-400 mt-1">(หากเป็นส่วนลดเงินสด จะไม่แสดงในหน้านี้)</p>
+                              </div>
+                            );
+                          }
+
+                          const installedCount = promos.filter((p: any) => p.status === 'installed').length;
+                          const deliveredCount = promos.filter((p: any) => p.status === 'delivered').length;
+                          const pendingCount = promos.filter((p: any) => p.status === 'pending' || !p.status).length;
+
+                          return (
+                            <>
+                              {/* Summary stat cards */}
+                              <div className="grid grid-cols-3 gap-2 text-center">
+                                <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5">
+                                  <span className="text-[10px] font-bold text-slate-500 block uppercase">ทั้งหมด</span>
+                                  <span className="text-lg font-black text-slate-800">{promos.length}</span>
+                                </div>
+                                <div className="bg-amber-50 border border-amber-200 rounded-xl p-2.5">
+                                  <span className="text-[10px] font-bold text-amber-700 block uppercase">รอติดตั้ง</span>
+                                  <span className="text-lg font-black text-amber-700">{pendingCount + deliveredCount}</span>
+                                </div>
+                                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2.5">
+                                  <span className="text-[10px] font-bold text-emerald-700 block uppercase">ติดตั้งแล้ว</span>
+                                  <span className="text-lg font-black text-emerald-700">{installedCount}</span>
+                                </div>
+                              </div>
+
+                              {/* Items List */}
+                              <div className="space-y-2 pt-2">
+                                <p className="text-xs font-black text-slate-700 uppercase tracking-wider">
+                                  รายละเอียดของแถมแต่ละชิ้น:
+                                </p>
+                                {promos.map((item: any, idx: number) => {
+                                  const isInstalled = item.status === 'installed';
+                                  const isDelivered = item.status === 'delivered';
+
+                                  return (
+                                    <div 
+                                      key={item.id || idx}
+                                      className="p-3 rounded-xl border border-slate-200 bg-white hover:border-amber-300 transition-colors shadow-2xs flex items-start justify-between gap-3"
+                                    >
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-2">
+                                          <span className="font-black text-sm text-slate-800">{item.item_name}</span>
+                                          {item.quantity > 1 && (
+                                            <span className="text-[10px] font-black bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded">
+                                              x{item.quantity}
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-500 font-bold">
+                                          <span className="bg-slate-100 px-2 py-0.5 rounded text-[10px] text-slate-600">
+                                            {item.category || 'ทั่วไป'}
+                                          </span>
+                                          {item.remarks && (
+                                            <span className="italic text-slate-400 truncate max-w-[200px]" title={item.remarks}>
+                                              หมายเหตุ: {item.remarks}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      <div className="shrink-0 text-right">
+                                        {isInstalled ? (
+                                          <span className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-700 bg-emerald-100 border border-emerald-300 px-2.5 py-1 rounded-full shadow-2xs">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> ติดตั้งแล้ว
+                                          </span>
+                                        ) : isDelivered ? (
+                                          <span className="inline-flex items-center gap-1 text-[10px] font-black text-blue-700 bg-blue-100 border border-blue-300 px-2.5 py-1 rounded-full shadow-2xs">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span> ของมาส่งแล้ว
+                                          </span>
+                                        ) : (
+                                          <span className="inline-flex items-center gap-1 text-[10px] font-black text-amber-700 bg-amber-100 border border-amber-300 px-2.5 py-1 rounded-full shadow-2xs">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span> รอดำเนินการ
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </>
+                          );
+                        })()}
+                      </div>
+
+                      {/* Footer */}
+                      <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex justify-between items-center text-xs">
+                        <span className="text-slate-400 font-bold text-[11px]">
+                          *หากต้องการเปลี่ยนแปลงสถานะ กรุณาแจ้งฝ่ายขาย
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPromoPlot(null)}
+                          className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl shadow-xs transition-colors cursor-pointer"
+                        >
+                          ปิดหน้าต่าง
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
 

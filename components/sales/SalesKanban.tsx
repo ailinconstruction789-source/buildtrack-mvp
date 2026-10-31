@@ -15,7 +15,7 @@ import CentralLeadBookingModal from './CentralLeadBookingModal';
 import SalesDealStatusModal, { type SalesDealEditorModel } from './SalesDealStatusModal';
 import { SALES_BANK_LOGOS as BANK_LOGOS } from '@/lib/sales/banks';
 import { salesDealStageOf, salesDealStages } from '@/lib/sales/dealStatus';
-import { customerDealDetails, extractExpectedTransferDate, updateExpectedTransferDateInNotes } from '@/lib/sales/customerDealDetails';
+import { customerDealDetails, extractAgreedPrices, extractExpectedTransferDate, updateExpectedTransferDateInNotes } from '@/lib/sales/customerDealDetails';
 import { crmSaleCustomer, SALES_WITH_CUSTOMER_SELECT } from '@/lib/sales/saleCustomer';
 import LeadPicker from './LeadPicker';
 import { RENTAL_PROGRAM_DETAILS } from '@/types/sales';
@@ -512,7 +512,7 @@ export default function SalesKanban({
           plotName: s.plots?.plot_name || matchingPlot?.plot_name || s.plot_id || null,
           bank: s.bank_name || (matchingLead?.notes ? customerDealDetails(matchingLead.notes).bank : '') || '',
           cancelReason: s.cancellation_reason || '',
-          landOfficePrice: s.land_office_price?.toString() || '',
+          landOfficePrice: s.land_office_price?.toString() || extractAgreedPrices(matchingLead?.notes).landAppraisalPrice?.toString() || matchingPlot?.land_appraisal_price?.toString() || '',
           salePrice: Number(s.sale_price ?? matchingPlot?.selling_price ?? 0),
           expectedTransferDate: customerExpectedTransferDay(s) || (matchingLead?.notes ? extractExpectedTransferDate(matchingLead.notes) : null) || (matchingLead?.expected_transfer_date ? customerBusinessDay(matchingLead.expected_transfer_date) : null),
           notes: matchingLead?.notes || s.notes || '',
@@ -659,7 +659,7 @@ export default function SalesKanban({
               plotName: l.interested_plot_name || matchingPlot?.plot_name || l.interested_plot_id || null,
               bank: customerDealDetails(l.notes).bank,
               cancelReason: l.lost_reason || '',
-              landOfficePrice: '',
+              landOfficePrice: extractAgreedPrices(l.notes).landAppraisalPrice?.toString() || matchingPlot?.land_appraisal_price?.toString() || '',
               salePrice: customerDealDetails(l.notes).salePrice ?? (matchingPlot?.selling_price ? Number(matchingPlot.selling_price) : 0),
               expectedTransferDate: extractExpectedTransferDate(l.notes) || (l.expected_transfer_date ? customerBusinessDay(l.expected_transfer_date) : null),
               notes: l.notes || '',
@@ -1178,7 +1178,7 @@ export default function SalesKanban({
           noteParts.push(`ยื่นผ่าน: ${editCustomerForm.bank}`);
         } else if (newStatus === 'Cancelled' && editCustomerForm.cancelReason) {
           noteParts.push(`เหตุผล: ${editCustomerForm.cancelReason}`);
-        } else if (newStatus === 'Approved' && editCustomerForm.landOfficePrice) {
+        } else if (['Approved', 'Transferred', 'Handover'].includes(newStatus) && editCustomerForm.landOfficePrice) {
           noteParts.push(`ราคา ท.ด. ฿${parseInt(editCustomerForm.landOfficePrice).toLocaleString()}`);
         }
         
@@ -3361,7 +3361,14 @@ export default function SalesKanban({
                                   aria-pressed={isSelected}
                                   disabled={editor?.locked}
                                   type="button"
-                                  onClick={() => setEditCustomerForm({...editCustomerForm, status: s})}
+                                  onClick={() => {
+                                    const plot = (projectPlotsData || []).find(p => p.id === editCustomerForm.plot || p.id === panelState.lead?.plot);
+                                    const fallbackAppraisal = plot?.land_appraisal_price ? String(plot.land_appraisal_price) : '';
+                                    const autoPrice = (['Approved', 'Transferred', 'Handover'].includes(s) && !editCustomerForm.landOfficePrice)
+                                      ? (panelState.lead?.landOfficePrice || fallbackAppraisal || '')
+                                      : editCustomerForm.landOfficePrice;
+                                    setEditCustomerForm({ ...editCustomerForm, status: s, landOfficePrice: autoPrice });
+                                  }}
                                   className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold border transition-all ${isSelected ? 'bg-[#0f172a] text-white border-[#0f172a] shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400 hover:bg-slate-50'}`}
                                 >
                                   <Icon size={14} className={isSelected ? 'text-white' : (config.color || 'text-slate-600')} />

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode, type Dispatch
 import dynamic from 'next/dynamic';
 import { supabase } from '@/lib/supabase';
 import { canEditSalesRole, getLeadStage } from '@/lib/sales/leadStage';
-import { customerDealDetails, customerDealSummary } from '@/lib/sales/customerDealDetails';
+import { customerDealDetails, customerDealSummary, extractAgreedPrices } from '@/lib/sales/customerDealDetails';
 import SalesOverlay from './SalesOverlay';
 import PostBookingLink from './PostBookingLink';
 import { crmSaleCustomer } from '@/lib/sales/saleCustomer';
@@ -46,10 +46,20 @@ const saleColumns = 'id,lead_id,plot_id,booking_route,crm_stage,contract_status,
 const str = (value: unknown) => value == null ? '' : String(value);
 function draftOf(lead: Row | null, sale: Row | null): Draft {
   const details = customerDealDetails(lead?.notes);
+  const agreed = extractAgreedPrices(lead?.notes);
   const crm = sale ? crmSaleCustomer(sale) : null;
-  return { name: str(lead?.customer_name ?? crm?.name), phone: str(lead?.phone ?? crm?.phone), occupation: str(lead?.occupation),
-    price: str(sale?.sale_price ?? details.salePrice), bank: str(sale?.bank_name) || details.bank, method: salesDealPaymentMethodOf(sale?.payment_method ? sale : { notes: lead?.notes, bank_name: str(sale?.bank_name) || details.bank }),
-    agentName: str(lead?.agent_name), landOfficePrice: str(sale?.land_office_price) };
+  const leadLandPrice = str((lead as any)?.landOfficePrice ?? (lead as any)?.land_office_price);
+  const landPrice = str(sale?.land_office_price) || leadLandPrice || (agreed.landAppraisalPrice !== null ? String(agreed.landAppraisalPrice) : '');
+  return {
+    name: str(lead?.customer_name ?? crm?.name),
+    phone: str(lead?.phone ?? crm?.phone),
+    occupation: str(lead?.occupation),
+    price: str(sale?.sale_price ?? details.salePrice ?? (agreed.salePrice !== null ? agreed.salePrice : '')),
+    bank: str(sale?.bank_name) || details.bank,
+    method: salesDealPaymentMethodOf(sale?.payment_method ? sale : { notes: lead?.notes, bank_name: str(sale?.bank_name) || details.bank }),
+    agentName: str(lead?.agent_name),
+    landOfficePrice: landPrice,
+  };
 }
 
 /** Lead and native Project Map share all post-booking progress and confirmation rules. */
@@ -124,7 +134,9 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
   }, [baseline]);
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  const leadId = typeof lead.leadId === 'string' && lead.leadId ? lead.leadId : (typeof lead.id === 'string' && lead.id ? lead.id : null);
+  const leadId = (lead.leadId !== undefined)
+    ? (typeof lead.leadId === 'string' && lead.leadId ? lead.leadId : null)
+    : (typeof lead.id === 'string' && lead.id && !String(lead.id).startsWith('registry-') ? lead.id : null);
   const suppliedSaleId = typeof lead.saleId === 'string' && lead.saleId ? lead.saleId : null;
   const projectName = str(lead.project_name || lead.projectName || lead.interest);
   const actorId = str(currentUser?.id);
@@ -185,6 +197,40 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
           if (result.error) throw result.error;
           if ((result.data?.length || 0) > 1) throw new Error('พบหลายรายการขาย กรุณาเลือกรายการที่ต้องการจาก Project Map');
           currentSale = result.data?.[0] || null;
+          if (!currentSale) {
+            const rawPlot = str(
+              lead.plot || lead.plotId || lead.plot_id ||
+              (Array.isArray(lead.interests) ? (lead.interests[0] as Row)?.plotId : null) ||
+              currentLead?.interested_plot_id || currentLead?.interested_plot_name
+            );
+            const cleanPlot = rawPlot ? rawPlot.replace(/^(AL\d+|YR|K\d+พิเศษ|K\d+|ไอลิน\s*\d+|ไอยริว|กานต์รวี\s*\d+)-?/i, '').trim() : '';
+            const candidatePlotName = str(currentLead?.interested_plot_name || lead.plotName || cleanPlot || rawPlot);
+            const proj = projectName || str(currentLead?.project_name);
+            let plotSaleRes = rawPlot
+              ? await supabase.from('sales').select(saleColumns).eq('plot_id', rawPlot).neq('contract_status', 'Cancelled').limit(2)
+              : null;
+            if (cancelled || currentReq !== requestSeq.current) return;
+            if ((!plotSaleRes?.data || plotSaleRes.data.length === 0) && cleanPlot && cleanPlot !== rawPlot) {
+              plotSaleRes = await supabase.from('sales').select(saleColumns).eq('plot_id', cleanPlot).neq('contract_status', 'Cancelled').limit(2);
+              if (cancelled || currentReq !== requestSeq.current) return;
+            }
+            if ((!plotSaleRes?.data || plotSaleRes.data.length === 0) && candidatePlotName && proj) {
+              const pRes = await supabase.from('plots').select('id').eq('plot_name', candidatePlotName).eq('project_name', proj).maybeSingle();
+              if (cancelled || currentReq !== requestSeq.current) return;
+              if (pRes?.data?.id && pRes.data.id !== rawPlot && pRes.data.id !== cleanPlot) {
+                plotSaleRes = await supabase.from('sales').select(saleColumns).eq('plot_id', pRes.data.id).neq('contract_status', 'Cancelled').limit(2);
+                if (cancelled || currentReq !== requestSeq.current) return;
+              }
+            }
+            if (plotSaleRes?.error) throw plotSaleRes.error;
+            if ((plotSaleRes?.data?.length || 0) > 1) throw new Error('พบหลายรายการขาย กรุณาเลือกรายการที่ต้องการจาก Project Map');
+            if (plotSaleRes?.data?.length === 1) {
+              const candidateSale = plotSaleRes.data[0];
+              if (!candidateSale.lead_id || candidateSale.lead_id === leadId) {
+                currentSale = candidateSale;
+              }
+            }
+          }
         }
         if (cancelled || currentReq !== requestSeq.current) return;
         const isLegacyUnlinkedSale = Boolean(currentSale && !currentSale.lead_id && leadId);
@@ -197,7 +243,8 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
             if (cancelled || currentReq !== requestSeq.current) return;
             setProtectedSale({ id: context.deal.id, stage: context.deal.stage, method: context.deal.paymentMethod,
               details: { name: context.customer.name, phone: context.customer.phone || '', occupation: '',
-                price: str(context.deal.salePrice), bank: context.deal.bankName || '', method: context.deal.paymentMethod || 'mortgage' }, history: context.history, editingAvailable: context.detailsEditingAvailable });
+                price: str(context.deal.salePrice), bank: context.deal.bankName || '', method: context.deal.paymentMethod || 'mortgage',
+                landOfficePrice: str((context.deal as any).landOfficePrice || (context.deal as any).land_office_price || currentSale?.land_office_price || '') }, history: context.history, editingAvailable: context.detailsEditingAvailable });
           } catch {
             if (!cancelled && currentReq === requestSeq.current) setError('อ่านสถานะดีลได้ แต่ข้อมูลลูกค้าและประวัติ CRM ยังโหลดไม่ได้ กรุณาลองเปิดใหม่ ลูกค้าเก่าไม่ต้องสร้าง Lead ย้อนหลัง');
           }
@@ -396,7 +443,7 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         const dealPrice = effectivePrice;
         const dealBank = effectiveBank;
         const dealMethod = effectiveMethod;
-        const added = `[${stamp} อัปเดตข้อมูลการขาย โดย ${currentUser?.username || currentUser?.displayName || 'ฝ่ายขาย'}] ${option.label}\n${customerDealSummary(dealPrice, dealBank)}\n• วิธีชำระเงิน: ${dealMethod === 'cash' ? 'เงินสด' : 'กู้ธนาคาร'}${submitted.reason ? '\n• เหตุผล: ' + submitted.reason : ''}${lifecycle ? '\n• วันที่ทำรายการ: ' + submitted.eventDate : ''}${submitted.note ? '\n' + submitted.note : ''}`;
+        const added = `[${stamp} อัปเดตข้อมูลการขาย โดย ${currentUser?.username || currentUser?.displayName || 'ฝ่ายขาย'}] ${option.label}\n${customerDealSummary(dealPrice, dealBank, effectiveLandOfficePrice)}\n• วิธีชำระเงิน: ${dealMethod === 'cash' ? 'เงินสด' : 'กู้ธนาคาร'}${submitted.reason ? '\n• เหตุผล: ' + submitted.reason : ''}${lifecycle ? '\n• วันที่ทำรายการ: ' + submitted.eventDate : ''}${submitted.note ? '\n' + submitted.note : ''}`;
         const patch: Row = { notes: `${added}\n\n${str(currentLead?.notes)}`, updated_at: stamp };
         if (stageChanged || leadInitial.current !== submitted.target) Object.assign(patch, { status: salesDealLeadStatus(submitted.target), crm_status: option.label });
         if (stageChanged && submitted.target === 'transferred') patch.transferred_date = new Date(submitted.eventDate + 'T12:00:00+07:00').toISOString();
@@ -406,7 +453,6 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         }
         let query = supabase.from('leads').update(patch).eq('id', resolved.leadId);
         query = currentLead?.updated_at == null ? query.is('updated_at', null) : query.eq('updated_at', currentLead.updated_at);
-        query = currentLead?.notes == null ? query.is('notes', null) : query.eq('notes', currentLead.notes);
         const { data, error: failure } = await query.select('id').single();
         if (failure) throw failure;
         if (!data?.id) throw new Error('ข้อมูลลูกค้าหรือประวัติในระบบเปลี่ยนไปแล้ว กรุณาโหลดข้อมูลล่าสุด');
@@ -426,7 +472,7 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         if (checkQ.data && Array.isArray(checkQ.data) && checkQ.data.length > 0) {
           progress.current.history = true;
         } else {
-          const detail = [submitted.reason, submitted.note, effectiveBank ? `ธนาคาร: ${effectiveBank}` : '', `วิธีชำระเงิน: ${effectiveMethod === 'cash' ? 'เงินสด' : 'กู้ธนาคาร'}`].filter(Boolean).join(' | ');
+          const detail = [submitted.reason, submitted.note, effectiveBank ? `ธนาคาร: ${effectiveBank}` : '', `วิธีชำระเงิน: ${effectiveMethod === 'cash' ? 'เงินสด' : 'กู้ธนาคาร'}`, effectiveLandOfficePrice ? `ราคา ทด.13: ฿${effectiveLandOfficePrice.toLocaleString('th-TH')}` : ''].filter(Boolean).join(' | ');
           const result = await supabase.from('status_history').insert({
             entity_type: resolved.leadId ? 'lead' : 'sale', entity_id: resolved.leadId || resolved.saleId,
             old_status: initial, new_status: submitted.target,
@@ -516,6 +562,7 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
           <div><dt className="font-semibold">เบอร์โทรศัพท์</dt><dd>{protectedSale.details.phone || 'ยังไม่ระบุ'}</dd></div>
           <div><dt className="font-semibold">สถานะปัจจุบัน</dt><dd>{stages.find(stage => stage.id === protectedSale.stage)?.label || protectedSale.stage}</dd></div>
           <div><dt className="font-semibold">ราคาขายสุทธิ</dt><dd>{protectedSale.details.price === '' ? 'ยังไม่ระบุ' : Number(protectedSale.details.price).toLocaleString('th-TH') + ' บาท'}</dd></div>
+          <div><dt className="font-semibold">ราคา ทด.13</dt><dd>{protectedSale.details.landOfficePrice ? Number(protectedSale.details.landOfficePrice).toLocaleString('th-TH') + ' บาท' : 'ยังไม่ระบุ'}</dd></div>
           <div><dt className="font-semibold">ธนาคาร</dt><dd>{protectedSale.details.bank || 'ยังไม่ระบุ'}</dd></div>
           <div><dt className="font-semibold">วิธีชำระเงิน</dt><dd>{protectedSale.method === 'cash' ? 'เงินสด' : protectedSale.method === 'mortgage' ? 'กู้ธนาคาร' : 'ยังไม่มีหลักฐานวิธีชำระเงิน'}</dd></div>
         </dl>
@@ -531,7 +578,7 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
           <PostBookingLink saleId={protectedSale.id} label="เปิดประวัติและงานหลังจอง →" />
         </>}
       </section> : editable ? <>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{field('name', 'ชื่อลูกค้า', !resolved?.leadId)}{field('phone', 'เบอร์โทรศัพท์', !resolved?.leadId)}{field('occupation', 'อาชีพ', !resolved?.leadId)}{field('price', 'ราคาขายสุทธิ')}<label className="block text-sm font-semibold">ธนาคาร / วิธีชำระเงิน<select aria-label="ธนาคาร" value={draft.bank} disabled={locked} onChange={e => { setDraft({ ...draft, bank: e.target.value, method: e.target.value === CASH_BANK_OPTION ? 'cash' : 'mortgage' }); setTarget(initial); setConfirmed(false); }} className="block w-full border rounded-xl p-2 mt-1 disabled:bg-slate-50">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{field('name', 'ชื่อลูกค้า', !resolved?.leadId)}{field('phone', 'เบอร์โทรศัพท์', !resolved?.leadId)}{field('occupation', 'อาชีพ', !resolved?.leadId)}{field('price', 'ราคาขายสุทธิ')}{field('landOfficePrice', 'ราคา ทด.13 (ประเมินที่ดิน)')}<label className="block text-sm font-semibold">ธนาคาร / วิธีชำระเงิน<select aria-label="ธนาคาร" value={draft.bank} disabled={locked} onChange={e => { setDraft({ ...draft, bank: e.target.value, method: e.target.value === CASH_BANK_OPTION ? 'cash' : 'mortgage' }); setTarget(initial); setConfirmed(false); }} className="block w-full border rounded-xl p-2 mt-1 disabled:bg-slate-50">
           <option value="">-- เลือกธนาคาร/เงินสด --</option>
           {SALES_BANK_NAMES.map(bank => <option key={bank} value={bank}>{bank}</option>)}
           <option value={CASH_BANK_OPTION}>💵 ซื้อเงินสด</option>
@@ -544,6 +591,22 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         {reasonRequired && <label className="block text-sm font-semibold">เหตุผล<textarea aria-label="เหตุผล" value={reason} disabled={locked} onChange={e => { setReason(e.target.value); setConfirmed(false); }} className="block w-full border rounded-xl p-2 mt-1" /></label>}
         {target !== initial && target === 'cancelled' && <label className="block text-sm font-semibold">ประเภทการยกเลิก<select aria-label="ประเภทการยกเลิก" value={cancelCategory} disabled={locked} onChange={e => { setCancelCategory(e.target.value); setConfirmed(false); }} className="block w-full border rounded-xl p-2 mt-1"><option value="booking_cancelled">ยกเลิกจอง</option><option value="downpayment_abandoned">ยุติการผ่อนดาวน์</option><option value="final_loan_rejection">สินเชื่อไม่ผ่านและยุติการซื้อ</option><option value="other">เหตุผลอื่น</option></select></label>}
         {lifecycle && <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+          {target === 'transferred' && (
+            <div className="bg-white/95 rounded-xl p-3 border border-amber-300 shadow-sm text-xs space-y-1.5">
+              <div className="font-bold text-slate-800 text-sm mb-1 flex items-center justify-between">
+                <span>ข้อมูลราคาในการโอนกรรมสิทธิ์</span>
+                <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full">ขั้นตอนโอน</span>
+              </div>
+              <div className="flex justify-between items-center text-slate-700 py-0.5 border-b border-slate-100">
+                <span>ราคาขายสุทธิ (ตกลง):</span>
+                <span className="font-bold text-slate-900">{draft.price ? `฿${Number(draft.price.replace(/,/g, '')).toLocaleString('th-TH')} บาท` : 'ยังไม่ระบุ'}</span>
+              </div>
+              <div className="flex justify-between items-center text-slate-700 py-0.5">
+                <span>📑 ยอด ทด.13 (ราคาจดทะเบียนที่ดิน):</span>
+                <span className="font-bold text-blue-700">{draft.landOfficePrice ? `฿${Number(draft.landOfficePrice.replace(/,/g, '')).toLocaleString('th-TH')} บาท` : <span className="text-amber-700 font-medium">ยังไม่ระบุ (สามารถระบุด้านบนได้)</span>}</span>
+              </div>
+            </div>
+          )}
           <label className="block text-sm font-semibold">วันที่ทำรายการ<input aria-label="วันที่ทำรายการ" type="date" value={eventDate} disabled={locked} onChange={e => { setEventDate(e.target.value); setConfirmed(false); }} className="block w-full border rounded-xl p-2 mt-1" /></label>
           <label className="flex gap-2 text-sm"><input type="checkbox" aria-label="ยืนยันรายการ" checked={confirmed} disabled={locked} onChange={e => setConfirmed(e.target.checked)} />ยืนยัน{stages.find(stage => stage.id === target)?.label} สำหรับลูกค้าและแปลงนี้</label>
           {!resolved?.saleId && <p className="text-sm text-red-700">ยังไม่มีรายการขายที่เชื่อมกับ Lead ต้องตรวจการเชื่อมข้อมูลก่อนบันทึกขั้นตอนนี้</p>}
