@@ -238,14 +238,24 @@ export default function TransferTrackingMatrixView({
       }
       setPromotions(allPromos);
 
-      // 9. Fetch Overall Progress from vw_plot_overall_status
+      // 9. Fetch Overall Progress directly from vw_plot_progress (construction standard)
       let allOverall: any[] = [];
       for (const chunk of chunks) {
-        const { data: oData } = await supabase
-          .from('vw_plot_overall_status')
-          .select('plot_id, actual_avg')
+        // Try vw_plot_progress first (source of truth for construction progress)
+        const { data: oData, error: oErr } = await supabase
+          .from('vw_plot_progress')
+          .select('plot_id, overall_progress')
           .in('plot_id', chunk);
-        if (oData) allOverall = [...allOverall, ...oData];
+        if (oData && !oErr) {
+          allOverall = [...allOverall, ...oData];
+        } else {
+          // Fallback to vw_plot_overall_status if vw_plot_progress fails
+          const { data: fallbackData } = await supabase
+            .from('vw_plot_overall_status')
+            .select('plot_id, actual_avg')
+            .in('plot_id', chunk);
+          if (fallbackData) allOverall = [...allOverall, ...fallbackData];
+        }
       }
       setPlotOverallProgress(allOverall);
 
@@ -384,11 +394,65 @@ export default function TransferTrackingMatrixView({
     }
   };
 
+  const handleToggleQCPass = async (plotId: string, currentVal: boolean) => {
+    try {
+      setUpdatingPlotId(plotId);
+      const targetPlot = plots.find(p => p.id === plotId);
+      if (!targetPlot) return;
+      const nextVal = !currentVal;
+      const oldNotes = targetPlot.handover_notes || '';
+      const cleanNotes = oldNotes.replace(/\[qc_pass:(done|pending)\]/g, '').trim();
+      const newNotes = cleanNotes 
+        ? `${cleanNotes} [qc_pass:${nextVal ? 'done' : 'pending'}]` 
+        : `[qc_pass:${nextVal ? 'done' : 'pending'}]`;
+
+      setPlots(prev => prev.map(p => p.id === plotId ? { ...p, handover_notes: newNotes } : p));
+      const { error } = await supabase.from('plots').update({ handover_notes: newNotes }).eq('id', plotId);
+      if (error) {
+        console.error('Error updating QC pass:', error);
+        setPlots(prev => prev.map(p => p.id === plotId ? { ...p, handover_notes: oldNotes } : p));
+      }
+    } catch (err) {
+      console.error('Toggle error:', err);
+    } finally {
+      setUpdatingPlotId(null);
+    }
+  };
+
+  const handleToggleChecklistTag = async (plotId: string, tagKey: string, currentVal: boolean) => {
+    try {
+      setUpdatingPlotId(plotId);
+      const targetPlot = plots.find(p => p.id === plotId);
+      if (!targetPlot) return;
+      const nextVal = !currentVal;
+      const oldNotes = targetPlot.handover_notes || '';
+      const regex = new RegExp(`\\[${tagKey}:(done|pending)\\]`, 'g');
+      const cleanNotes = oldNotes.replace(regex, '').trim();
+      const newNotes = cleanNotes 
+        ? `${cleanNotes} [${tagKey}:${nextVal ? 'done' : 'pending'}]` 
+        : `[${tagKey}:${nextVal ? 'done' : 'pending'}]`;
+
+      setPlots(prev => prev.map(p => p.id === plotId ? { ...p, handover_notes: newNotes } : p));
+      const { error } = await supabase.from('plots').update({ handover_notes: newNotes }).eq('id', plotId);
+      if (error) {
+        console.error(`Error updating ${tagKey}:`, error);
+        setPlots(prev => prev.map(p => p.id === plotId ? { ...p, handover_notes: oldNotes } : p));
+      }
+    } catch (err) {
+      console.error('Toggle error:', err);
+    } finally {
+      setUpdatingPlotId(null);
+    }
+  };
+
   // Process & Assemble Rows
   const rows = useMemo(() => {
-    // Map overall progress
+    // Map overall progress from vw_plot_progress
     const overallMap = new Map<string, number>();
-    plotOverallProgress.forEach(s => overallMap.set(String(s.plot_id), Math.round(Number(s.actual_avg || 0))));
+    plotOverallProgress.forEach(s => {
+      const val = Number(s.overall_progress ?? s.actual_avg ?? 0);
+      overallMap.set(String(s.plot_id), Math.round(val));
+    });
 
     // Map template IDs to task names
     const templateMap = new Map<string, string>();
@@ -430,11 +494,6 @@ export default function TransferTrackingMatrixView({
       // Customer name resolution
       const customerName = lead?.customer_name || plot.current_tenant_name || extractCustomerName(plot.highlight_note) || '-';
 
-      // Defects for this plot
-      const plotDefects = defects.filter(d => String(d.plot_id) === String(plot.id));
-      const hasUnresolvedDefects = plotDefects.some(d => (d.progress || 0) < 100 && d.status !== 'resolved');
-      const qcPass = plotDefects.length > 0 ? !hasUnresolvedDefects : (plot.is_completed || false);
-
       // Promotions (Termite treatment check)
       const plotPromos = promotions.filter(p => String(p.plot_id) === String(plot.id));
       const termitePromo = plotPromos.find(p => 
@@ -466,8 +525,29 @@ export default function TransferTrackingMatrixView({
         }
       }
 
-      // Construction progress (% ก่อสร้าง จริงจากระบบงานก่อสร้าง vw_plot_overall_status)
+      // Construction progress (% ก่อสร้าง จริงจากระบบงานก่อสร้าง vw_plot_progress)
       const progress = overallMap.get(String(plot.id)) ?? (plot.progress ?? 0);
+
+      // Defects for this plot & QC Pass evaluation
+      const plotDefects = defects.filter(d => String(d.plot_id) === String(plot.id));
+      const hasUnresolvedDefects = plotDefects.some(d => (d.progress || 0) < 100 && d.status !== 'resolved');
+
+      const manualQCPassTag = Boolean(plot.handover_notes && plot.handover_notes.includes('[qc_pass:done]'));
+      const manualQCPendingTag = Boolean(plot.handover_notes && plot.handover_notes.includes('[qc_pass:pending]'));
+
+      let qcStatus: 'passed' | 'failed' | 'pending';
+      if (manualQCPassTag) {
+        qcStatus = 'passed';
+      } else if (manualQCPendingTag) {
+        qcStatus = 'pending';
+      } else if (hasUnresolvedDefects) {
+        qcStatus = 'failed';
+      } else if (progress >= 100 || plot.is_completed) {
+        qcStatus = 'passed';
+      } else {
+        qcStatus = 'pending';
+      }
+      const qcPass = qcStatus === 'passed';
 
       // การก่อสร้างสิ้นสุด (Auto เมื่อครบ 100% หรือทำเครื่องหมายเสร็จสิ้น + One-click override)
       const manualFinishedTag = Boolean(plot.handover_notes && plot.handover_notes.includes('[construction_finished:done]'));
@@ -481,25 +561,40 @@ export default function TransferTrackingMatrixView({
       const latestPlanEndDate = endDates.length > 0 ? endDates[endDates.length - 1] : null;
       const expectedFinishDate = formatDateDMY(latestPlanEndDate);
 
-      // 🛠️ Field Work Checklist Calculations:
+      // 🛠️ Field Work Checklist Calculations (Real task progress + One-click toggle override):
       // 1. สุขภัณฑ์
-      const sanDone = getTaskDone(plot.id, 'สุขภัณฑ์');
+      const sanManualDone = Boolean(plot.handover_notes && plot.handover_notes.includes('[task_sanitary:done]'));
+      const sanManualPending = Boolean(plot.handover_notes && plot.handover_notes.includes('[task_sanitary:pending]'));
+      const sanDone = sanManualDone ? true : (sanManualPending ? false : getTaskDone(plot.id, 'สุขภัณฑ์'));
 
       // 2. ปั๊มน้ำ / ถังเก็บน้ำ
-      const pumpDone = getTaskDone(plot.id, 'ปั้มน้ำ') || getTaskDone(plot.id, 'ปั๊มน้ำ') || getTaskDone(plot.id, 'ถังเก็บน้ำ');
+      const pumpManualDone = Boolean(plot.handover_notes && plot.handover_notes.includes('[task_pump:done]'));
+      const pumpManualPending = Boolean(plot.handover_notes && plot.handover_notes.includes('[task_pump:pending]'));
+      const pumpAutoDone = getTaskDone(plot.id, 'ปั้มน้ำ') || getTaskDone(plot.id, 'ปั๊มน้ำ') || getTaskDone(plot.id, 'ถังเก็บน้ำ');
+      const pumpDone = pumpManualDone ? true : (pumpManualPending ? false : pumpAutoDone);
 
       // 3. ดินดำ: ให้นับถ้ามีความคืบหน้าในงานปูหญ้า (>0%) หรือมีงานปรับพื้นที่/ดินดำ
+      const soilManualDone = Boolean(plot.handover_notes && plot.handover_notes.includes('[task_soil:done]'));
+      const soilManualPending = Boolean(plot.handover_notes && plot.handover_notes.includes('[task_soil:pending]'));
       const grassProg = getTaskProgress(plot.id, 'หญ้า');
-      const soilDone = grassProg > 0 || getTaskDone(plot.id, 'ปรับพื้นที่') || getTaskDone(plot.id, 'ดินดำ');
+      const soilAutoDone = grassProg > 0 || getTaskDone(plot.id, 'ปรับพื้นที่') || getTaskDone(plot.id, 'ดินดำ');
+      const soilDone = soilManualDone ? true : (soilManualPending ? false : soilAutoDone);
 
       // 4. หญ้า: เมื่องานปูหญ้าเสร็จสมบูรณ์ 100%
-      const grassDone = grassProg >= 100;
+      const grassManualDone = Boolean(plot.handover_notes && plot.handover_notes.includes('[task_grass:done]'));
+      const grassManualPending = Boolean(plot.handover_notes && plot.handover_notes.includes('[task_grass:pending]'));
+      const grassDone = grassManualDone ? true : (grassManualPending ? false : grassProg >= 100);
 
       // 5. รั้ว
-      const fenceDone = getTaskDone(plot.id, 'รั้ว');
+      const fenceManualDone = Boolean(plot.handover_notes && plot.handover_notes.includes('[task_fence:done]'));
+      const fenceManualPending = Boolean(plot.handover_notes && plot.handover_notes.includes('[task_fence:pending]'));
+      const fenceDone = fenceManualDone ? true : (fenceManualPending ? false : getTaskDone(plot.id, 'รั้ว'));
 
       // 6. ทรายล้าง
-      const sandwashDone = getTaskDone(plot.id, 'ทรายล้าง');
+      const sandwashManualDone = Boolean(plot.handover_notes && plot.handover_notes.includes('[task_sandwash:done]'));
+      const sandwashManualPending = Boolean(plot.handover_notes && plot.handover_notes.includes('[task_sandwash:pending]'));
+      const sandwashAutoDone = getTaskDone(plot.id, 'ทรายล้าง');
+      const sandwashDone = sandwashManualDone ? true : (sandwashManualPending ? false : sandwashAutoDone);
 
       // 7. เคลือบทรายล้าง: ตรวจจาก tag ใน handover_notes หรือคลิกสลับสถานะ
       const hasCoatingDoneTag = Boolean(plot.handover_notes && plot.handover_notes.includes('[sandwash_coating:done]'));
@@ -558,6 +653,7 @@ export default function TransferTrackingMatrixView({
 
         // Core Statuses
         qcPass,
+        qcStatus,
         progress,
         isConstructionFinished,
         expectedFinishDate,
@@ -1074,16 +1170,22 @@ export default function TransferTrackingMatrixView({
                         </div>
                       </td>
 
-                      {/* QC Pass */}
-                      <td className="py-2.5 px-2 border-r border-slate-200">
-                        {r.qcPass ? (
-                          <span className="inline-block bg-[#16a34a] text-white p-1 rounded-md" title="QC Pass">
+                      {/* QC Pass (Auto + One-click toggle override) */}
+                      <td 
+                        onClick={() => handleToggleQCPass(r.id, r.qcPass)}
+                        title="คลิกเพื่อสลับสถานะ: QC PASS [✓] / รอตรวจ [-]"
+                        className="py-2.5 px-2 border-r border-slate-200 cursor-pointer select-none transition-all hover:bg-slate-100/70"
+                      >
+                        {r.qcStatus === 'passed' ? (
+                          <span className="inline-block bg-[#16a34a] text-white p-1 rounded-md" title="QC Pass (ผ่านการตรวจเรียบร้อย)">
                             <Check size={14} strokeWidth={3} />
                           </span>
-                        ) : (
-                          <span className="inline-block bg-[#dc2626] text-white p-1 rounded-md" title="มีงานแก้ / ยังไม่ผ่าน">
+                        ) : r.qcStatus === 'failed' ? (
+                          <span className="inline-block bg-[#dc2626] text-white p-1 rounded-md" title="มีงานแก้ที่ยังไม่เสร็จ (Defect ค้าง)">
                             <X size={14} strokeWidth={3} />
                           </span>
+                        ) : (
+                          <span className="text-slate-300 font-bold hover:text-slate-500" title="ยังไม่ถึงขั้นตอน QC / รอตรวจ">-</span>
                         )}
                       </td>
 
@@ -1153,34 +1255,70 @@ export default function TransferTrackingMatrixView({
                         {r.transferDate}
                       </td>
 
-                      {/* 🛠️ Field Work Checklist (Green/Red Cells) */}
+                      {/* 🛠️ Field Work Checklist (Green/Red Cells + One-click Toggle) */}
                       {/* สุขภัณฑ์ */}
-                      <td className={`py-2.5 px-2 border-r border-slate-200 ${r.sanDone ? 'bg-[#22c55e] text-white' : 'bg-[#ef4444] text-white'}`}>
+                      <td 
+                        onClick={() => handleToggleChecklistTag(r.id, 'task_sanitary', r.sanDone)}
+                        title="คลิกเพื่อสลับสถานะ: สุขภัณฑ์"
+                        className={`py-2.5 px-2 border-r border-slate-200 cursor-pointer select-none transition-all hover:brightness-110 active:scale-95 ${
+                          r.sanDone ? 'bg-[#22c55e] text-white hover:bg-emerald-600' : 'bg-[#ef4444] text-white hover:bg-rose-600'
+                        }`}
+                      >
                         {r.sanDone ? 'เรียบร้อย' : 'รอดำเนินการ'}
                       </td>
 
                       {/* ปั๊มน้ำ */}
-                      <td className={`py-2.5 px-2 border-r border-slate-200 ${r.pumpDone ? 'bg-[#22c55e] text-white' : 'bg-[#ef4444] text-white'}`}>
+                      <td 
+                        onClick={() => handleToggleChecklistTag(r.id, 'task_pump', r.pumpDone)}
+                        title="คลิกเพื่อสลับสถานะ: ปั๊มน้ำ"
+                        className={`py-2.5 px-2 border-r border-slate-200 cursor-pointer select-none transition-all hover:brightness-110 active:scale-95 ${
+                          r.pumpDone ? 'bg-[#22c55e] text-white hover:bg-emerald-600' : 'bg-[#ef4444] text-white hover:bg-rose-600'
+                        }`}
+                      >
                         {r.pumpDone ? 'เรียบร้อย' : 'รอดำเนินการ'}
                       </td>
 
                       {/* ดินดำ */}
-                      <td className={`py-2.5 px-2 border-r border-slate-200 ${r.soilDone ? 'bg-[#22c55e] text-white' : 'bg-[#ef4444] text-white'}`}>
+                      <td 
+                        onClick={() => handleToggleChecklistTag(r.id, 'task_soil', r.soilDone)}
+                        title="คลิกเพื่อสลับสถานะ: ดินดำ (ปูหญ้า)"
+                        className={`py-2.5 px-2 border-r border-slate-200 cursor-pointer select-none transition-all hover:brightness-110 active:scale-95 ${
+                          r.soilDone ? 'bg-[#22c55e] text-white hover:bg-emerald-600' : 'bg-[#ef4444] text-white hover:bg-rose-600'
+                        }`}
+                      >
                         {r.soilDone ? 'เรียบร้อย' : 'รอดำเนินการ'}
                       </td>
 
                       {/* หญ้า */}
-                      <td className={`py-2.5 px-2 border-r border-slate-200 ${r.grassDone ? 'bg-[#22c55e] text-white' : 'bg-[#ef4444] text-white'}`}>
+                      <td 
+                        onClick={() => handleToggleChecklistTag(r.id, 'task_grass', r.grassDone)}
+                        title="คลิกเพื่อสลับสถานะ: งานปูหญ้า"
+                        className={`py-2.5 px-2 border-r border-slate-200 cursor-pointer select-none transition-all hover:brightness-110 active:scale-95 ${
+                          r.grassDone ? 'bg-[#22c55e] text-white hover:bg-emerald-600' : 'bg-[#ef4444] text-white hover:bg-rose-600'
+                        }`}
+                      >
                         {r.grassDone ? 'เรียบร้อย' : 'รอดำเนินการ'}
                       </td>
 
                       {/* รั้ว */}
-                      <td className={`py-2.5 px-2 border-r border-slate-200 ${r.fenceDone ? 'bg-[#22c55e] text-white' : 'bg-[#ef4444] text-white'}`}>
+                      <td 
+                        onClick={() => handleToggleChecklistTag(r.id, 'task_fence', r.fenceDone)}
+                        title="คลิกเพื่อสลับสถานะ: งานรั้ว"
+                        className={`py-2.5 px-2 border-r border-slate-200 cursor-pointer select-none transition-all hover:brightness-110 active:scale-95 ${
+                          r.fenceDone ? 'bg-[#22c55e] text-white hover:bg-emerald-600' : 'bg-[#ef4444] text-white hover:bg-rose-600'
+                        }`}
+                      >
                         {r.fenceDone ? 'เรียบร้อย' : 'รอดำเนินการ'}
                       </td>
 
                       {/* ทรายล้าง */}
-                      <td className={`py-2.5 px-2 border-r border-slate-200 ${r.sandwashDone ? 'bg-[#22c55e] text-white' : 'bg-[#ef4444] text-white'}`}>
+                      <td 
+                        onClick={() => handleToggleChecklistTag(r.id, 'task_sandwash', r.sandwashDone)}
+                        title="คลิกเพื่อสลับสถานะ: ทรายล้าง"
+                        className={`py-2.5 px-2 border-r border-slate-200 cursor-pointer select-none transition-all hover:brightness-110 active:scale-95 ${
+                          r.sandwashDone ? 'bg-[#22c55e] text-white hover:bg-emerald-600' : 'bg-[#ef4444] text-white hover:bg-rose-600'
+                        }`}
+                      >
                         {r.sandwashDone ? 'เรียบร้อย' : 'รอดำเนินการ'}
                       </td>
 
