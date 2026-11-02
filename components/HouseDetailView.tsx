@@ -1139,31 +1139,37 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                               latestQCUpdate = latestUpdatesMap[key];
                             }
 
-                            const isSEApproved = (act: string) => act.includes('อนุมัติ') || act.includes('ผ่าน');
-                            const isSERejected = (act: string) => act.includes('สั่งแก้') || act.includes('ไม่อนุมัติ') || act.includes('ไม่ผ่าน') || act.includes('แจ้งแก้ไข');
+                            const isQCAction = (u: any) => u && (u.role === 'QC' || String(u.action || '').includes('QC'));
+                            const isSEAction = (u: any) => u && (u.role === 'Site Engineer' || String(u.action || '').includes('Site Engineer') || String(u.action || '').includes('วิศวกร'));
 
-                            const isQCApproved = (act: string) => act.includes('อนุมัติ') || act.includes('ผ่าน');
-                            const isQCRejected = (act: string) => act.includes('สั่งแก้') || act.includes('ไม่อนุมัติ') || act.includes('ไม่ผ่าน') || act.includes('แจ้งแก้ไข');
+                            const isQCApproved = (u: any) => isQCAction(u) && (String(u.action || '').includes('อนุมัติ') || String(u.action || '').includes('ผ่าน'));
+                            const isQCRejected = (u: any) => isQCAction(u) && (String(u.action || '').includes('สั่งแก้') || String(u.action || '').includes('ไม่อนุมัติ') || String(u.action || '').includes('ไม่ผ่าน') || String(u.action || '').includes('แจ้งแก้ไข'));
+
+                            const isSEApproved = (u: any) => isSEAction(u) && (String(u.action || '').includes('อนุมัติ') || String(u.action || '').includes('ผ่าน'));
+                            const isSERejected = (u: any) => isSEAction(u) && (String(u.action || '').includes('สั่งแก้') || String(u.action || '').includes('ไม่อนุมัติ') || String(u.action || '').includes('ไม่ผ่าน') || String(u.action || '').includes('แจ้งแก้ไข'));
 
                             let seStatus: 'passed' | 'pending' | 'rejected' | 'none' = 'none';
                             let qcStatus: 'passed' | 'pending' | 'rejected' | 'none' | 'na' = (task.require_qc === false) ? 'na' : 'none';
 
                             if (tProgress === 100) {
-                              if (isQCApproved(mapAction) || (latestQCUpdate && isQCApproved(latestQCUpdate.action || ''))) {
+                              if (isQCApproved(latestQCUpdate)) {
                                 seStatus = 'passed';
                                 qcStatus = task.require_qc === false ? 'na' : 'passed';
-                              } else if (isSEApproved(mapAction) || (latestSEUpdate && isSEApproved(latestSEUpdate.action || ''))) {
+                              } else if (isQCRejected(latestQCUpdate)) {
+                                seStatus = 'passed';
+                                qcStatus = 'rejected';
+                              } else if (isSEApproved(latestSEUpdate)) {
                                 seStatus = 'passed';
                                 qcStatus = task.require_qc === false ? 'na' : 'pending';
-                              } else if (mapAction === 'ส่งงาน 100%' || mapRole === 'Foreman') {
-                                seStatus = 'pending';
+                              } else if (isSERejected(latestSEUpdate)) {
+                                seStatus = 'rejected';
                                 qcStatus = task.require_qc === false ? 'na' : 'none';
                               } else {
-                                seStatus = 'passed';
-                                qcStatus = task.require_qc === false ? 'na' : 'passed';
+                                seStatus = 'pending';
+                                qcStatus = task.require_qc === false ? 'na' : 'none';
                               }
                             } else if (tProgress === 95) {
-                              if (isQCRejected(mapAction) || (mapRole === 'QC') || (latestQCUpdate && isQCRejected(latestQCUpdate.action || ''))) {
+                              if (isQCRejected(latestQCUpdate)) {
                                 seStatus = 'passed';
                                 qcStatus = 'rejected';
                               } else {
