@@ -15,8 +15,7 @@ const geistMono = Geist_Mono({
 
 const notoSansThai = Noto_Sans_Thai({
   variable: "--font-noto-sans-thai",
-  subsets: ["thai", "latin"],
-  weight: ["300", "400", "500", "600", "700"],
+  subsets: ["thai"],
 });
 
 export const metadata: Metadata = {
