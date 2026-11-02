@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect, useRef, useLayoutEffect } from 'react';
-import { firstBy, groupBy, parseConstructionRiskAlerts } from '@/lib/constructionReportsIndex';
+import { firstBy, groupBy, parseConstructionRiskAlerts, isRelevantExecutiveProject } from '@/lib/constructionReportsIndex';
 import { supabase } from '@/lib/supabase';
 import { TrendingUp, AlertTriangle, Target, ShieldAlert, Award, Users, Activity, CloudRain, Clock, CalendarClock, ArrowUpDown } from 'lucide-react';
 import { LineChart, Line, BarChart, Bar, ComposedChart, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
@@ -16,16 +16,14 @@ export default function OwnerAnalyticsDashboard({
   const activeProjectsList = useMemo(() => {
     return (projects || [])
       .filter((proj: any) => !proj.is_closed)
-      .filter((proj: any) => {
-        const projPlots = (plots || []).filter((p: any) => p.project_name === proj.name);
-        return projPlots.some((p: any) => p.progress < 100);
-      });
-  }, [projects, plots]);
+      .filter((proj: any) => isRelevantExecutiveProject(proj.name));
+  }, [projects]);
 
   const activePlots = useMemo(() => {
     return new Set(
       (plots || [])
         .filter((p: any) => {
+           if (!isRelevantExecutiveProject(p.project_name)) return false;
            if (selectedProjectId !== 'all') return p.project_name === selectedProjectId;
            return activeProjectsList.some((ap: any) => ap.name === p.project_name);
         })
@@ -55,6 +53,7 @@ export default function OwnerAnalyticsDashboard({
 
   const plannerScoringSummary = useMemo(() => {
     const relevantPlots = (plots || []).filter((p: any) => {
+      if (!isRelevantExecutiveProject(p.project_name)) return false;
       if (selectedProjectId !== 'all' && p.project_name !== selectedProjectId) return false;
       return true;
     });
@@ -1059,7 +1058,7 @@ export default function OwnerAnalyticsDashboard({
             onChange={(e) => setSelectedProjectId(e.target.value)}
             className="w-full sm:w-64 bg-white border border-slate-200 rounded-xl px-4 py-2 font-bold text-slate-700 outline-none focus:border-blue-500 shadow-sm cursor-pointer"
           >
-            <option value="all">ภาพรวมทุกโครงการ (ที่กำลังก่อสร้าง)</option>
+            <option value="all">ทุกโครงการ (ไอลิน 6 และโครงการใหม่)</option>
             {activeProjectsList.map((proj: any) => (
               <option key={proj.name} value={proj.name}>{proj.name}</option>
             ))}

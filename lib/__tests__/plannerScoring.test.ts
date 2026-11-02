@@ -156,4 +156,30 @@ describe('Project Planner Schedule Scoring System', () => {
       expect(updated).toContain('"revisions":1');
     });
   });
+
+  describe('isRelevantExecutiveProject', () => {
+    it('includes ไอลิน6 and ไอลิน 6', async () => {
+      const { isRelevantExecutiveProject } = await import('../constructionReportsIndex');
+      expect(isRelevantExecutiveProject('ไอลิน6')).toBe(true);
+      expect(isRelevantExecutiveProject('ไอลิน 6')).toBe(true);
+    });
+
+    it('excludes legacy projects: ไอลิน 2, 3, 4, โยริว, กานต์รวี', async () => {
+      const { isRelevantExecutiveProject } = await import('../constructionReportsIndex');
+      expect(isRelevantExecutiveProject('ไอลิน 2')).toBe(false);
+      expect(isRelevantExecutiveProject('ไอลิน 3')).toBe(false);
+      expect(isRelevantExecutiveProject('ไอลิน 4')).toBe(false);
+      expect(isRelevantExecutiveProject('โยริว')).toBe(false);
+      expect(isRelevantExecutiveProject('กานต์รวี4')).toBe(false);
+      expect(isRelevantExecutiveProject('กานต์รวี2')).toBe(false);
+      expect(isRelevantExecutiveProject('ลูกค้าทั่วไป')).toBe(false);
+    });
+
+    it('includes newly created future projects', async () => {
+      const { isRelevantExecutiveProject } = await import('../constructionReportsIndex');
+      expect(isRelevantExecutiveProject('ไอลิน 7')).toBe(true);
+      expect(isRelevantExecutiveProject('ไอลิน 8')).toBe(true);
+      expect(isRelevantExecutiveProject('เดอะพาร์ค วิลล่า')).toBe(true);
+    });
+  });
 });

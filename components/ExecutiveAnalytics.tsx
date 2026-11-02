@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { filterSchedulesByPlot, groupBy } from '@/lib/constructionReportsIndex';
+import { filterSchedulesByPlot, groupBy, isRelevantExecutiveProject } from '@/lib/constructionReportsIndex';
 import { Activity, DollarSign, Wallet, Hammer } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
@@ -12,16 +12,14 @@ export default function ExecutiveAnalytics({
   const activeProjectsList = useMemo(() => {
     return (projects || [])
       .filter((proj: any) => !proj.is_closed)
-      .filter((proj: any) => {
-        const projPlots = (rawPlots || []).filter((p: any) => p.project_name === proj.name);
-        return projPlots.some((p: any) => p.progress < 100);
-      });
-  }, [projects, rawPlots]);
+      .filter((proj: any) => isRelevantExecutiveProject(proj.name));
+  }, [projects]);
 
   const activePlots = useMemo(() => {
     return new Set(
       (rawPlots || [])
         .filter((p: any) => {
+           if (!isRelevantExecutiveProject(p.project_name)) return false;
            if (selectedProjectId !== 'all') return p.project_name === selectedProjectId;
            return activeProjectsList.some((ap: any) => ap.name === p.project_name);
         })
@@ -226,7 +224,7 @@ export default function ExecutiveAnalytics({
             onChange={(e) => setSelectedProjectId(e.target.value)}
             className="w-full sm:w-64 bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-700 outline-none focus:border-blue-500 shadow-sm cursor-pointer"
           >
-            <option value="all">ภาพรวมทุกโครงการ (ที่กำลังก่อสร้าง)</option>
+            <option value="all">ทุกโครงการ (ไอลิน 6 และโครงการใหม่)</option>
             {activeProjectsList.map((proj: any) => (
               <option key={proj.name} value={proj.name}>{proj.name}</option>
             ))}

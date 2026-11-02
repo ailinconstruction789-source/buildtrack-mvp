@@ -138,3 +138,25 @@ export function calculateWeeklyProgressAtCutoff(
   }
   return !hasValidData || totalCost === 0 ? fallbackCurrent : totalWeightedProgress / totalCost;
 }
+
+/**
+ * Projects excluded from the Executive Analytics Dashboard (Legacy projects).
+ * Only 'ไอลิน 6' / 'ไอลิน6' and new projects created in the future are included.
+ */
+export const LEGACY_EXECUTIVE_PROJECTS = new Set([
+  'ไอลิน 2', 'ไอลิน2',
+  'ไอลิน 3', 'ไอลิน3',
+  'ไอลิน 4', 'ไอลิน4',
+  'กานต์รวี2', 'กานต์รวี 2',
+  'กานต์รวี4', 'กานต์รวี 4',
+  'โยริว',
+  'ลูกค้าทั่วไป'
+]);
+
+export function isRelevantExecutiveProject(projectName: string | null | undefined): boolean {
+  const clean = (projectName || '').trim();
+  if (!clean) return false;
+  if (clean === 'ไอลิน6' || clean === 'ไอลิน 6') return true;
+  if (LEGACY_EXECUTIVE_PROJECTS.has(clean)) return false;
+  return true;
+}
