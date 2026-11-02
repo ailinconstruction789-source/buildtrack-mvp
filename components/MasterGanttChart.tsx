@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Calendar, ChevronLeft, ChevronRight, Home, CheckCircle } from 'lucide-react';
 import { constructionScheduleGanttLanes, constructionScheduleGanttRange, constructionScheduleHouseTypeIndex } from '@/lib/constructionSchedule';
 import { useConstructionScheduleToday } from '@/hooks/constructionScheduleToday';
+import { parsePlotBaseline, getScoreBadgeStyle } from '@/lib/plannerScoring';
 
 const MasterGanttChart = function MasterGanttChart({
   view, plots, taskTemplates, schedules, latestUpdatesMap, projects, contractors, assignments
@@ -111,11 +112,27 @@ const MasterGanttChart = function MasterGanttChart({
                   return (
                     <div key={pIdx} className={`flex border-b-2 border-slate-300 transition-colors group hover:bg-indigo-50/60 ${bgClass}`}>
                        {/* Plot Column */}
-                       <div className={`w-[180px] shrink-0 border-r border-slate-200 p-3 sticky left-0 z-20 shadow-[2px_0_10px_rgba(0,0,0,0.02)] group-hover:bg-indigo-50/60 transition-colors ${bgClass}`}>
+                       <div className={`w-[195px] shrink-0 border-r border-slate-200 p-3 sticky left-0 z-20 shadow-[2px_0_10px_rgba(0,0,0,0.02)] group-hover:bg-indigo-50/60 transition-colors ${bgClass}`}>
                           <div className="sticky top-24">
-                             <p className="font-black text-sm text-slate-800 flex items-center gap-2">
-                                <span className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-700 flex items-center justify-center border border-indigo-100 shadow-sm">{plot.plot_name || plot.id}</span>
-                             </p>
+                             <div className="flex items-center justify-between">
+                                <p className="font-black text-sm text-slate-800 flex items-center gap-2">
+                                   <span className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-700 flex items-center justify-center border border-indigo-100 shadow-sm">{plot.plot_name || plot.id}</span>
+                                </p>
+                                {(() => {
+                                   const base = parsePlotBaseline(plot);
+                                   if (!base.isLocked) return null;
+                                   const style = getScoreBadgeStyle(base.score);
+                                   return (
+                                     <span 
+                                       title={`คะแนนแผนงาน: ${base.score} คะแนน (${style.grade})${base.revisions > 0 ? ` ขยายเวลา ${base.revisions} ครั้ง` : ''}`} 
+                                       className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-black border ${style.bg} ${style.text} ${style.border}`}
+                                     >
+                                       <span className={`w-1.5 h-1.5 rounded-full ${style.dot}`} />
+                                       {base.score}
+                                     </span>
+                                   );
+                                })()}
+                             </div>
                              <p className="text-[10px] font-bold text-slate-400 mt-1 pl-10 truncate">{plot.project_name}</p>
                           </div>
                        </div>

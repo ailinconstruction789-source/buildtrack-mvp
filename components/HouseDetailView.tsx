@@ -12,6 +12,16 @@ import MeterStatusBadges from './MeterStatusBadges';
 import TodayUpdatedBadge from './TodayUpdatedBadge';
 import { buildHouseTaskIndex } from '@/lib/houseTaskIndex';
 import { evaluatePlotCompletionAndSaleStatus } from '@/lib/plotStatusEvaluator';
+import { 
+  calculatePlanningScore,
+  getScoreBadgeStyle,
+  parsePlotBaseline,
+  lockPlotBaseline,
+  recordScheduleDelayRevision,
+  PlotBaselineData
+} from '@/lib/plannerScoring';
+import ScheduleRevisionModal from './ScheduleRevisionModal';
+import ScheduleHistoryModal from './ScheduleHistoryModal';
 
 interface HouseDetailViewProps {
   view: string;
@@ -84,6 +94,8 @@ interface HouseDetailViewProps {
   contractors?: any[];
   activeHouseTab?: string;
   setActiveHouseTab?: (t: string) => void;
+  isOwner?: boolean;
+  currentUserName?: string;
 }
 
 const renderSEBadge = (
@@ -222,8 +234,181 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
     defects, setDefects,
     showAlert, showToast,
     materialReceipts, setMaterialReceipts, handleForceCompleteAllTasks,
-    isUploadingLayer, contractors, simulatedStatus, editingHouseType
+    isUploadingLayer, contractors, simulatedStatus, editingHouseType,
+    isOwner: propsIsOwner, currentUserName: propsCurrentUserName
   } = props;
+
+  const isOwner = propsIsOwner || currentUserRole?.toLowerCase() === 'owner';
+  const currentUserName = propsCurrentUserName || (currentUserRole === 'Project Planner' ? 'Project Planner' : currentUserRole);
+
+  // States for Project Planner Baseline & Scoring
+  const [scheduleHistoryOpen, setScheduleHistoryOpen] = React.useState(false);
+  const [revisionModalData, setRevisionModalData] = React.useState<{
+    isOpen: boolean;
+    previousEnd: string;
+    newEnd: string;
+    diffDays: number;
+    currentScore: number;
+    nextScore: number;
+    revisionCount: number;
+  }>({
+    isOpen: false,
+    previousEnd: '',
+    newEnd: '',
+    diffDays: 0,
+    currentScore: 100,
+    nextScore: 100,
+    revisionCount: 0
+  });
+  const [isRevisionSubmitting, setIsRevisionSubmitting] = React.useState(false);
+  const [isLockingBaseline, setIsLockingBaseline] = React.useState(false);
+
+  const baseline: PlotBaselineData = React.useMemo(() => parsePlotBaseline(selectedPlot), [selectedPlot]);
+  const scoreStyle = React.useMemo(() => getScoreBadgeStyle(baseline.score), [baseline.score]);
+
+  const handleScheduleSaveCheck = () => {
+    const inputTaskIds = Object.keys(scheduleInputs || {});
+    const activeEdits = inputTaskIds.filter(taskId => {
+      const plan = scheduleInputs[taskId];
+      return plan && plan.start && plan.end;
+    });
+
+    if (activeEdits.length === 0) {
+      if (showAlert) showAlert('แจ้งเตือน', 'ไม่มีการแก้ไขข้อมูล หรือกรอกวันที่ไม่ครบครับ');
+      return;
+    }
+
+    for (const taskId of activeEdits) {
+      const p = scheduleInputs[taskId];
+      if (new Date(p.end) < new Date(p.start)) {
+        if (showAlert) showAlert('Error', 'วันสิ้นสุดต้องอยู่หลังวันเริ่มงานครับ');
+        return;
+      }
+    }
+
+    const plotTasks = (taskTemplates || []).filter((t: any) => t.house_type_id === selectedPlot?.house_type_id);
+    let latestEndTs = -Infinity;
+    let latestEndDateStr = '';
+
+    plotTasks.forEach((task: any) => {
+      const edited = scheduleInputs[task.id];
+      const existing = schedules?.[`${selectedPlot.id}-${task.id}`];
+      const taskEnd = edited?.end || existing?.planned_end;
+      if (taskEnd) {
+        const ts = new Date(taskEnd).getTime();
+        if (ts > latestEndTs) {
+          latestEndTs = ts;
+          latestEndDateStr = String(taskEnd).split('T')[0];
+        }
+      }
+    });
+
+    if (baseline.isLocked && baseline.end && latestEndTs > -Infinity) {
+      const baselineEndTs = new Date(baseline.end).getTime();
+      if (latestEndTs > baselineEndTs) {
+        const diffDays = Math.max(1, Math.ceil((latestEndTs - baselineEndTs) / 86400000));
+        const nextRevCount = (baseline.revisions || 0) + 1;
+        const nextScore = calculatePlanningScore(nextRevCount);
+
+        setRevisionModalData({
+          isOpen: true,
+          previousEnd: baseline.end,
+          newEnd: latestEndDateStr,
+          diffDays,
+          currentScore: baseline.score,
+          nextScore,
+          revisionCount: nextRevCount
+        });
+        return;
+      }
+    }
+
+    handleSaveAllSchedules();
+  };
+
+  const handleConfirmScheduleRevision = async (reason: string) => {
+    setIsRevisionSubmitting(true);
+    try {
+      const res = await recordScheduleDelayRevision(
+        supabase,
+        selectedPlot,
+        baseline,
+        baseline.start || '',
+        revisionModalData.newEnd,
+        currentUserName,
+        reason
+      );
+
+      if (!res.success) {
+        if (showAlert) showAlert('Error', res.error || 'เกิดข้อผิดพลาดในการบันทึกการปรับแผน');
+        return;
+      }
+
+      setRevisionModalData(prev => ({ ...prev, isOpen: false }));
+      await handleSaveAllSchedules();
+
+      if (showToast) {
+        showToast(`บันทึกการปรับขยายแผนงานเรียบร้อยแล้ว (คะแนนคงเหลือ ${res.newScore} คะแนน)`, 'success');
+      }
+    } catch (err: any) {
+      if (showAlert) showAlert('Error', err.message);
+    } finally {
+      setIsRevisionSubmitting(false);
+    }
+  };
+
+  const handleInitiateLockBaseline = async () => {
+    const plotTasks = (taskTemplates || []).filter((t: any) => t.house_type_id === selectedPlot?.house_type_id);
+    let minStartTs = Infinity;
+    let minStartStr = '';
+    let maxEndTs = -Infinity;
+    let maxEndStr = '';
+
+    plotTasks.forEach((task: any) => {
+      const edited = scheduleInputs[task.id];
+      const existing = schedules?.[`${selectedPlot.id}-${task.id}`];
+      const start = edited?.start || existing?.planned_start;
+      const end = edited?.end || existing?.planned_end;
+
+      if (start) {
+        const sTs = new Date(start).getTime();
+        if (sTs < minStartTs) {
+          minStartTs = sTs;
+          minStartStr = String(start).split('T')[0];
+        }
+      }
+      if (end) {
+        const eTs = new Date(end).getTime();
+        if (eTs > maxEndTs) {
+          maxEndTs = eTs;
+          maxEndStr = String(end).split('T')[0];
+        }
+      }
+    });
+
+    if (minStartTs === Infinity || maxEndTs === -Infinity) {
+      if (showAlert) showAlert('แจ้งเตือน', 'กรุณากำหนดวันเริ่มและวันสิ้นสุดของแผนงานในแปลงนี้ให้เรียบร้อยก่อนทำการล็อก Baseline ครับ');
+      return;
+    }
+
+    const confirmMsg = `ยืนยันการล็อกแผนงานหลัก (Baseline) สำหรับแปลง ${selectedPlot.plot_name || selectedPlot.id} หรือไม่?\n\n• วันเริ่มงาน: ${minStartStr}\n• วันสิ้นสุดโครงการ: ${maxEndStr}\n• คะแนนเริ่มต้น: 100 คะแนน\n\n(หลังจากล็อก Baseline หากมีการขยายวันสิ้นสุดโครงการ คะแนนจะถูกหักตามขั้นบันได)`;
+    if (!confirm(confirmMsg)) return;
+
+    setIsLockingBaseline(true);
+    try {
+      const res = await lockPlotBaseline(supabase, selectedPlot, minStartStr, maxEndStr, currentUserName);
+      if (res.success) {
+        if (showToast) showToast('ล็อกแผนงานหลัก (Baseline) เรียบร้อยแล้ว (100 คะแนน)', 'success');
+        if (fetchAllData) await fetchAllData();
+      } else {
+        if (showAlert) showAlert('Error', res.error || 'เกิดข้อผิดพลาดในการล็อก Baseline');
+      }
+    } catch (err: any) {
+      if (showAlert) showAlert('Error', err.message);
+    } finally {
+      setIsLockingBaseline(false);
+    }
+  };
 
   const currentPlotStatus = selectedPlot ? getPlotOverallStatus(selectedPlot.id) : null;
   const houseTaskIndex = React.useMemo(() => buildHouseTaskIndex(selectedPlot?.id, assignments, allUpdatesRecord),
@@ -628,6 +813,48 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                             selectedPlot?.progress === 100 ? <span className="text-emerald-500 font-bold">เสร็จ</span> :
                             <span className="text-blue-500 font-bold">กำลังทำ</span>}
                         </div>
+
+                        {/* 🎯 คะแนนแผนงาน (Planner Schedule Scoring) */}
+                        <div className="text-xs border-l border-slate-600 pl-4">
+                          <span className="text-slate-400 font-bold uppercase block text-[9px]">คะแนนแผนงาน</span>
+                          {baseline.isLocked ? (
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <button
+                                type="button"
+                                onClick={() => setScheduleHistoryOpen(true)}
+                                title={`คลิกเพื่อดูประวัติการปรับแผนงาน (${baseline.revisions > 0 ? `ขยายเวลา ${baseline.revisions} ครั้ง` : 'ตรงตามแผน 100%'})`}
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-black border transition-transform hover:scale-105 cursor-pointer ${scoreStyle.bg} ${scoreStyle.text} ${scoreStyle.border}`}
+                              >
+                                <span className={`w-1.5 h-1.5 rounded-full ${scoreStyle.dot}`} />
+                                <span>{baseline.score} คะแนน</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setScheduleHistoryOpen(true)}
+                                className="text-[9px] text-slate-400 hover:text-slate-200 underline font-medium cursor-pointer"
+                                title="ดูประวัติการปรับแผน"
+                              >
+                                ประวัติ
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <span className="text-slate-400 text-[10px] font-bold">รอ Baseline</span>
+                              {(isProjectPlanner || isAdmin || isOwner) && (
+                                <button
+                                  type="button"
+                                  onClick={handleInitiateLockBaseline}
+                                  disabled={isLockingBaseline}
+                                  className="px-2 py-0.5 rounded text-[9px] font-black bg-indigo-600 hover:bg-indigo-500 text-white transition-all shadow-xs flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                                  title="ล็อก Baseline วันที่ปัจจุบันเป็นเกณฑ์ 100 คะแนน"
+                                >
+                                  {isLockingBaseline ? <Loader2 className="animate-spin" size={10} /> : null}
+                                  🔒 ล็อก Baseline
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
                     </div>
 
                     {/* ส่วนขวา: ปุ่มจัดการ */}
@@ -661,7 +888,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                       {(isProjectPlanner || currentUserRole === 'Site Engineer') && (
                         <div className="flex gap-1">
                           {isProjectPlanner && <button onClick={() => setCopyModalOpen(true)} className="bg-slate-700 text-slate-200 px-2 py-1 rounded text-[10px] hover:bg-slate-600 border border-slate-600 font-bold">คัดลอก</button>}
-                          <button onClick={handleSaveAllSchedules} disabled={isSubmitting} className="bg-rose-600 text-white px-2 py-1 rounded text-[10px] hover:bg-rose-700 font-bold flex items-center justify-center gap-1 min-w-[50px] disabled:opacity-70 disabled:cursor-not-allowed">
+                          <button onClick={handleScheduleSaveCheck} disabled={isSubmitting} className="bg-rose-600 text-white px-2 py-1 rounded text-[10px] hover:bg-rose-700 font-bold flex items-center justify-center gap-1 min-w-[50px] disabled:opacity-70 disabled:cursor-not-allowed cursor-pointer">
                              {isSubmitting ? <Loader2 className="animate-spin" size={12}/> : null}
                              {isSubmitting ? 'กำลังบันทึก...' : 'บันทึกแผน'}
                           </button>
@@ -1858,6 +2085,35 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
             )}
           </div>
         </div>
+      )}
+
+      {/* ⚠️ Project Planner Schedule Extension Revision Modal */}
+      {revisionModalData.isOpen && (
+        <ScheduleRevisionModal
+          isOpen={revisionModalData.isOpen}
+          onClose={() => setRevisionModalData(prev => ({ ...prev, isOpen: false }))}
+          onConfirm={handleConfirmScheduleRevision}
+          plotName={selectedPlot.plot_name || selectedPlot.id}
+          previousEnd={revisionModalData.previousEnd}
+          newEnd={revisionModalData.newEnd}
+          diffDays={revisionModalData.diffDays}
+          currentScore={revisionModalData.currentScore}
+          nextScore={revisionModalData.nextScore}
+          revisionCount={revisionModalData.revisionCount}
+          isSubmitting={isRevisionSubmitting}
+        />
+      )}
+
+      {/* 📜 Schedule History & Exemption Modal */}
+      {scheduleHistoryOpen && (
+        <ScheduleHistoryModal
+          isOpen={scheduleHistoryOpen}
+          onClose={() => setScheduleHistoryOpen(false)}
+          plot={selectedPlot}
+          isAdminOrOwner={isAdmin || isOwner}
+          currentUserName={currentUserName}
+          onRefresh={fetchAllData}
+        />
       )}
 
     </>

@@ -5,6 +5,7 @@ import { TrendingUp, AlertTriangle, Target, ShieldAlert, Award, Users, Activity,
 import { LineChart, Line, BarChart, Bar, ComposedChart, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
 import WeeklyHeatmap from './Analytics/WeeklyHeatmap';
 import BillingCycleHeatmap from './Analytics/BillingCycleHeatmap';
+import { parsePlotBaseline, getScoreBadgeStyle } from '@/lib/plannerScoring';
 
 export default function OwnerAnalyticsDashboard({
   projects, plots, taskTemplates, schedules: rawSchedules, defects, allUpdatesRecord: rawAllUpdatesRecord, foremenList, latestUpdatesMap: rawLatestUpdatesMap, contractors, assignments, weatherInfo, qcSePerformance
@@ -51,6 +52,51 @@ export default function OwnerAnalyticsDashboard({
   const activeUnderConstructionPlotIds = useMemo(() => {
     return new Set(activeUnderConstructionPlots.map((p: any) => String(p.id)));
   }, [activeUnderConstructionPlots]);
+
+  const plannerScoringSummary = useMemo(() => {
+    const relevantPlots = (plots || []).filter((p: any) => {
+      if (selectedProjectId !== 'all' && p.project_name !== selectedProjectId) return false;
+      return true;
+    });
+
+    let totalScore = 0;
+    let lockedCount = 0;
+    const distribution: Record<number, number> = { 100: 0, 75: 0, 50: 0, 25: 0, 0: 0 };
+    const penalizedPlots: any[] = [];
+
+    relevantPlots.forEach((p: any) => {
+      const base = parsePlotBaseline(p);
+      if (base.isLocked) {
+        lockedCount++;
+        totalScore += base.score;
+        if (base.score >= 100) distribution[100]++;
+        else if (base.score >= 75) distribution[75]++;
+        else if (base.score >= 50) distribution[50]++;
+        else if (base.score >= 25) distribution[25]++;
+        else distribution[0]++;
+
+        if (base.revisions > 0) {
+          penalizedPlots.push({
+            plot: p,
+            score: base.score,
+            revisions: base.revisions,
+            start: base.start,
+            end: base.end
+          });
+        }
+      }
+    });
+
+    const avgScore = lockedCount > 0 ? Math.round((totalScore / lockedCount) * 10) / 10 : 100;
+
+    return {
+      totalPlots: relevantPlots.length,
+      lockedCount,
+      avgScore,
+      distribution,
+      penalizedPlots
+    };
+  }, [plots, selectedProjectId]);
 
   const schedules = useMemo(() => {
     const res: any = {};
@@ -1256,6 +1302,96 @@ export default function OwnerAnalyticsDashboard({
                คลิกปุ่ม "วิเคราะห์เดี๋ยวนี้" เพื่อให้ AI ประมวลผลบทวิเคราะห์ 4 เสาหลักของโครงการ
             </div>
          )}
+      </div>
+
+      {/* 🎯 Project Planner Schedule Scoring Summary */}
+      <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5">
+          <div>
+            <h3 className="font-black text-lg text-slate-800 flex items-center gap-2">
+              <Award className="text-amber-500" />
+              คุณภาพการวางแผนงานก่อสร้าง (Project Planning Quality)
+            </h3>
+            <p className="text-xs text-slate-500 mt-1 font-medium">
+              ประเมินความแม่นยำของแผนงานตามเกณฑ์คะแนนบันได (100 ➔ 75 ➔ 50 ➔ 25 ➔ 0 คะแนน เมื่อมีการขยายเวลาส่งมอบ)
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="text-right">
+              <span className="text-[10px] uppercase font-bold text-slate-400 block">คะแนนเฉลี่ยโครงการ</span>
+              <div className="flex items-center gap-2">
+                <span className="text-2xl font-black text-slate-900">{plannerScoringSummary.avgScore}</span>
+                <span className="text-xs font-bold text-slate-400">/ 100</span>
+                {(() => {
+                  const style = getScoreBadgeStyle(plannerScoringSummary.avgScore);
+                  return (
+                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-black border ${style.bg} ${style.text} ${style.border}`}>
+                      {style.grade}
+                    </span>
+                  );
+                })()}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Breakdown chips */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5 mb-4">
+          <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-center">
+            <span className="text-[10px] font-bold text-slate-400 block mb-0.5">ล็อก Baseline แล้ว</span>
+            <span className="text-base font-black text-slate-800">
+              {plannerScoringSummary.lockedCount} <span className="text-[11px] font-bold text-slate-500">/ {plannerScoringSummary.totalPlots} แปลง</span>
+            </span>
+          </div>
+
+          <div className="bg-emerald-50/70 p-3 rounded-xl border border-emerald-200 text-center">
+            <span className="text-[10px] font-bold text-emerald-600 block mb-0.5">100 คะแนน (ตรงแผน)</span>
+            <span className="text-base font-black text-emerald-700">{plannerScoringSummary.distribution[100]} แปลง</span>
+          </div>
+
+          <div className="bg-blue-50/70 p-3 rounded-xl border border-blue-200 text-center">
+            <span className="text-[10px] font-bold text-blue-600 block mb-0.5">75 คะแนน (ขยาย 1 ครั้ง)</span>
+            <span className="text-base font-black text-blue-700">{plannerScoringSummary.distribution[75]} แปลง</span>
+          </div>
+
+          <div className="bg-amber-50/70 p-3 rounded-xl border border-amber-200 text-center">
+            <span className="text-[10px] font-bold text-amber-600 block mb-0.5">50 คะแนน (ขยาย 2 ครั้ง)</span>
+            <span className="text-base font-black text-amber-700">{plannerScoringSummary.distribution[50]} แปลง</span>
+          </div>
+
+          <div className="bg-orange-50/70 p-3 rounded-xl border border-orange-200 text-center">
+            <span className="text-[10px] font-bold text-orange-600 block mb-0.5">25 คะแนน (ขยาย 3 ครั้ง)</span>
+            <span className="text-base font-black text-orange-700">{plannerScoringSummary.distribution[25]} แปลง</span>
+          </div>
+
+          <div className="bg-rose-50/70 p-3 rounded-xl border border-rose-200 text-center">
+            <span className="text-[10px] font-bold text-rose-600 block mb-0.5">0 คะแนน (วิกฤต 4+ ครั้ง)</span>
+            <span className="text-base font-black text-rose-700">{plannerScoringSummary.distribution[0]} แปลง</span>
+          </div>
+        </div>
+
+        {/* List of plots needing attention (revisions > 0) */}
+        {plannerScoringSummary.penalizedPlots.length > 0 && (
+          <div className="pt-3 border-t border-slate-100">
+            <span className="text-[11px] font-bold text-slate-500 block mb-2">
+              แปลงที่มีการปรับขยายเวลา ({plannerScoringSummary.penalizedPlots.length} แปลง):
+            </span>
+            <div className="flex flex-wrap gap-2">
+              {plannerScoringSummary.penalizedPlots.map((item: any, i: number) => {
+                const style = getScoreBadgeStyle(item.score);
+                return (
+                  <div key={i} className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border ${style.bg} ${style.border}`}>
+                    <span className="font-black text-slate-800">แปลง {item.plot.plot_name || item.plot.id}</span>
+                    <span className="text-slate-400">|</span>
+                    <span className={`font-black ${style.text}`}>{item.score} คะแนน</span>
+                    <span className="text-[10px] text-slate-500">(ขยาย {item.revisions} ครั้ง)</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

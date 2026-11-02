@@ -57,6 +57,30 @@ export interface Plot {
   electric_meter_image_url?: string;
   electric_meter_installed_date?: string;
   electric_meter_meter_no?: string;
+  // Project Planner Baseline & Scoring
+  baseline_planned_start?: string;
+  baseline_planned_end?: string;
+  baseline_locked_at?: string;
+  baseline_locked_by?: string;
+  schedule_delay_revisions?: number;
+  schedule_planning_score?: number;
+  handover_notes?: string;
+}
+
+export interface PlotScheduleRevision {
+  id: string;
+  plot_id: string;
+  revised_by: string;
+  previous_planned_end: string;
+  new_planned_end: string;
+  diff_days: number;
+  previous_score: number;
+  new_score: number;
+  reason?: string;
+  is_exempted?: boolean;
+  exempted_by?: string;
+  exempted_at?: string;
+  created_at: string;
 }
 
 export interface Contractor {

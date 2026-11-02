@@ -5273,6 +5273,8 @@ export default function ConstructionApp() {
                   activeHouseTab={activeHouseTab} setActiveHouseTab={setActiveHouseTab}
                   fetchAllData={fetchAllData} resetHandoverCycle={resetHandoverCycle} updateInspectionRound={updateInspectionRound}
                   showAlert={showAlert} showToast={showToast}
+                  isOwner={isOwner}
+                  currentUserName={loggedInUser?.username || loggedInUser?.name || currentUserRole}
                 />
               )}
 
