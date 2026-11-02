@@ -150,6 +150,38 @@ export const kanbanStatusToStage = (status: string): string => {
   }
 };
 
+export function parseStageFromNoteText(text?: string | null): string | null {
+  if (!text) return null;
+  const t = text.toLowerCase();
+  if (t.includes('รอโอน') || t.includes('transfer pending') || t.includes('transfer_pending')) return 'TransferPending';
+  if (t.includes('โอน') || t.includes('transfer')) return 'Transferred';
+  if (t.includes('อนุมัติ') || t.includes('approved')) return 'Approved';
+  if (t.includes('สินเชื่อ') || t.includes('loan') || t.includes('กู้') || t.includes('pre-approve') || t.includes('pre-approval')) return 'LoanProcessing';
+  if (t.includes('เตรียมเอกสาร') || t.includes('document') || t.includes('รอยื่น')) return 'DocumentPrep';
+  if (t.includes('สัญญา') || t.includes('contract')) return 'Contracted';
+  if (t.includes('ดาวน์') || t.includes('downpayment')) return 'DownPayment';
+  if (t.includes('ยกเลิก') || t.includes('cancel')) return 'Cancelled';
+  if (t.includes('จอง') || t.includes('book') || t.includes('reserved')) return 'Reserved';
+  return null;
+}
+
+export function extractMilestonesFromLeadNotes(notes?: string | null, defaultAgent: string = ''): Array<{ status: string; timestamp: string; note: string }> {
+  if (!notes || typeof notes !== 'string') return [];
+  const regex = /\[([0-9]{4}-[0-9]{2}-[0-9]{2}(?:T[^\s\]]+)?)[^\]]*โดย\s+([^\]]+)\]\s*([^\r\n]+)/g;
+  const milestones: Array<{ status: string; timestamp: string; note: string }> = [];
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(notes)) !== null) {
+    const timestamp = match[1];
+    const agent = match[2]?.trim() || defaultAgent;
+    const rawStage = match[3]?.trim() || '';
+    const mapped = parseStageFromNoteText(rawStage);
+    if (mapped) {
+      milestones.push({ status: mapped, timestamp, note: agent });
+    }
+  }
+  return milestones;
+}
+
 export default function SalesKanban({ 
   project: externalProject, 
   projects, 
@@ -247,7 +279,28 @@ export default function SalesKanban({
       };
     });
 
-    const merged = mergeSalesTimeline(mappedRows, panelState.lead?.history || []);
+    const noteMilestones = extractMilestonesFromLeadNotes(panelState.lead?.notes, panelState.lead?.agentName || panelState.lead?.agent_name || '');
+    const currentLeadStage = panelState.lead?.status
+      ? (STATUS_CONFIG[panelState.lead.status] ? panelState.lead.status : stageToKanbanStatus(panelState.lead.status))
+      : (panelState.lead?.crm_status ? (parseStageFromNoteText(panelState.lead.crm_status) || stageToKanbanStatus(panelState.lead.crm_status)) : null);
+
+    const baseHistory = panelState.lead?.history || [];
+    const baseStatuses = new Set([
+      ...mappedRows.map(r => r.status),
+      ...baseHistory.map((h: any) => h.status)
+    ]);
+
+    const filteredNoteMilestones = noteMilestones.filter(m => !baseStatuses.has(m.status));
+    filteredNoteMilestones.forEach(m => baseStatuses.add(m.status));
+
+    const currentFallback = (currentLeadStage && currentLeadStage !== 'Visit' && !baseStatuses.has(currentLeadStage)) ? [{
+      status: currentLeadStage,
+      timestamp: panelState.lead?.updated_at || panelState.lead?.created_at || new Date().toISOString(),
+      note: panelState.lead?.agentName || panelState.lead?.agent_name || ''
+    }] : [];
+
+    const fallbackHistory = [...baseHistory, ...filteredNoteMilestones, ...currentFallback];
+    const merged = mergeSalesTimeline(mappedRows, fallbackHistory);
     const deduped: typeof merged = [];
     for (const item of merged) {
       const day = customerBusinessDay(item.timestamp);

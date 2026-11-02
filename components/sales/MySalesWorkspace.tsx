@@ -30,6 +30,7 @@ import SalesOverlay from './SalesOverlay';
 import { salesDealActionLabel, salesDealStageOf } from '@/lib/sales/dealStatus';
 import { getLeadStage, canStartSalesDeal, canEditSalesRole } from '@/lib/sales/leadStage';
 import { isCancelledBookingLead } from '@/lib/sales/leadLifecycle';
+import { stageToKanbanStatus, parseStageFromNoteText } from './SalesKanban';
 const RentalActionModal = dynamic(() => import('./RentalActionModal'));
 const SalesDealStatusModal = dynamic(() => import('./SalesDealStatusModal'));
 
@@ -1037,6 +1038,32 @@ export default function MySalesWorkspace({
         .eq('id', leadId);
 
       if (error) throw error;
+      // Log to status_history so Project Map timeline and reporting reflect this transition
+      try {
+        const canonicalStatus = parseStageFromNoteText(stageLabel) || parseStageFromNoteText(newCrmStatus) || stageToKanbanStatus(stageLabel) || stageLabel;
+        const histRows: any[] = [{
+          entity_type: 'lead',
+          entity_id: leadId,
+          old_status: lead?.status || null,
+          new_status: canonicalStatus,
+          changed_by: `${myDisplayName} (${stageLabel})`,
+          created_at: now.toISOString()
+        }];
+        if (lead?.saleId) {
+          histRows.push({
+            entity_type: 'sale',
+            entity_id: lead.saleId,
+            old_status: lead?.status || null,
+            new_status: canonicalStatus,
+            changed_by: `${myDisplayName} (${stageLabel})`,
+            created_at: now.toISOString()
+          });
+        }
+        await supabase.from('status_history').insert(histRows);
+      } catch (histErr) {
+        console.warn('Could not record status_history in MySalesWorkspace:', histErr);
+      }
+
       setNotice(`ปรับสถานะลูกค้าเป็น "${stageLabel}" แล้ว`);
       fetchData(true);
     } catch (err: any) {
