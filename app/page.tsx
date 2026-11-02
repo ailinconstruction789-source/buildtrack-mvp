@@ -36,6 +36,7 @@ const HousePromotionsView = dynamic(() => import('@/components/HousePromotionsVi
 const QCPerformanceDashboard = dynamic(() => import('@/components/QCPerformanceDashboard'));
 const ExecutiveAnalytics = dynamic(() => import('@/components/ExecutiveAnalytics'));
 const MasterGanttChart = dynamic(() => import('@/components/MasterGanttChart'));
+const PlannerScoringDashboard = dynamic(() => import('@/components/PlannerScoringDashboard'));
 const SalesKanban = dynamic(() => import('@/components/sales/SalesKanban'));
 const SalesDashboardExcelStyle = dynamic(() => import('@/components/sales/SalesDashboardExcelStyle'));
 const DailyVisitsScheduleView = dynamic(() => import('@/components/sales/DailyVisitsScheduleView'));
@@ -4157,6 +4158,22 @@ export default function ConstructionApp() {
                   assignments={assignments}
                 />
               )}
+              {/* 🏆 View: Construction Planning Scores (คะแนนแผนงานก่อสร้าง) */}
+              {view === 'planner-scoring' && (
+                <PlannerScoringDashboard
+                  projects={projects}
+                  plots={plots}
+                  isAdmin={isAdmin}
+                  isOwner={isOwner}
+                  isProjectPlanner={isProjectPlanner}
+                  currentUserName={loggedInUser?.username || loggedInUser?.name || currentUserRole}
+                  fetchAllData={fetchAllData}
+                  onSelectPlot={(plot: any) => {
+                    setSelectedPlot(plot);
+                    setView('house-detail');
+                  }}
+                />
+              )}
               {/* 🏢 View: Dashboard */}
               {view === 'dashboard' && (
                 <DashboardOverview
@@ -5579,6 +5596,12 @@ export default function ConstructionApp() {
                 <button onClick={() => setView('master-gantt')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'master-gantt' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
                   <Grid size={20} className={activeView === 'master-gantt' ? 'fill-blue-100' : ''} />
                   <span className="text-[9px] font-black mt-1">Gantt</span>
+                </button>
+              )}
+              {(isAdmin || isProjectPlanner || isOwner) && (
+                <button onClick={() => setView('planner-scoring')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'planner-scoring' ? 'text-amber-600' : 'text-slate-400 hover:text-slate-600'}`}>
+                  <Award size={20} className={activeView === 'planner-scoring' ? 'fill-amber-100' : ''} />
+                  <span className="text-[9px] font-black mt-1">คะแนนแผน</span>
                 </button>
               )}
               {(isAdmin || isProjectPlanner || isQC || isSiteEngineer || isOwner || isForeman) && (

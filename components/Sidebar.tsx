@@ -386,6 +386,7 @@ const Sidebar = React.memo(({
                       <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3 px-2">Planning & Schedule</p>
                       <nav className="space-y-1">
                         <button onClick={() => setView('master-gantt')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'master-gantt' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Grid size={18} /> Master Gantt Chart</button>
+                        <button onClick={() => { setView('planner-scoring'); setSelectedProject(null); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'planner-scoring' ? 'bg-amber-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Award size={18} /> คะแนนแผนงานก่อสร้าง</button>
                       </nav>
                     </div>
                   )}

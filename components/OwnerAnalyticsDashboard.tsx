@@ -1,21 +1,16 @@
 import React, { useMemo, useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { firstBy, groupBy, parseConstructionRiskAlerts, isRelevantExecutiveProject } from '@/lib/constructionReportsIndex';
 import { supabase } from '@/lib/supabase';
-import { TrendingUp, AlertTriangle, Target, ShieldAlert, Award, Users, Activity, CloudRain, Clock, CalendarClock, ArrowUpDown, Search, Lock, History, ChevronRight } from 'lucide-react';
+import { TrendingUp, AlertTriangle, Target, ShieldAlert, Award, Users, Activity, CloudRain, Clock, CalendarClock, ArrowUpDown } from 'lucide-react';
 import { LineChart, Line, BarChart, Bar, ComposedChart, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
 import WeeklyHeatmap from './Analytics/WeeklyHeatmap';
 import BillingCycleHeatmap from './Analytics/BillingCycleHeatmap';
-import { parsePlotBaseline, getScoreBadgeStyle } from '@/lib/plannerScoring';
-import ScheduleHistoryModal from './ScheduleHistoryModal';
 
 export default function OwnerAnalyticsDashboard({
   projects, plots, taskTemplates, schedules: rawSchedules, defects, allUpdatesRecord: rawAllUpdatesRecord, foremenList, latestUpdatesMap: rawLatestUpdatesMap, contractors, assignments, weatherInfo, qcSePerformance
 }: any) {
 
   const [selectedProjectId, setSelectedProjectId] = useState<string>('all');
-  const [scoreFilterTab, setScoreFilterTab] = useState<'all' | 'locked' | 'unlocked' | '100' | '75' | '50' | '25' | '0'>('all');
-  const [scoreSearchText, setScoreSearchText] = useState('');
-  const [historyModalPlot, setHistoryModalPlot] = useState<any | null>(null);
 
   const activeProjectsList = useMemo(() => {
     return (projects || [])
@@ -55,92 +50,6 @@ export default function OwnerAnalyticsDashboard({
     return new Set(activeUnderConstructionPlots.map((p: any) => String(p.id)));
   }, [activeUnderConstructionPlots]);
 
-  const plannerScoringSummary = useMemo(() => {
-    const relevantPlots = (plots || []).filter((p: any) => {
-      if (!isRelevantExecutiveProject(p.project_name)) return false;
-      if (selectedProjectId !== 'all' && p.project_name !== selectedProjectId) return false;
-      return true;
-    });
-
-    let totalScore = 0;
-    let lockedCount = 0;
-    const distribution: Record<number, number> = { 100: 0, 75: 0, 50: 0, 25: 0, 0: 0 };
-    const penalizedPlots: any[] = [];
-
-    const allPlotItems = relevantPlots.map((p: any) => {
-      const base = parsePlotBaseline(p);
-      if (base.isLocked) {
-        lockedCount++;
-        totalScore += base.score;
-        if (base.score >= 100) distribution[100]++;
-        else if (base.score >= 75) distribution[75]++;
-        else if (base.score >= 50) distribution[50]++;
-        else if (base.score >= 25) distribution[25]++;
-        else distribution[0]++;
-
-        if (base.revisions > 0) {
-          penalizedPlots.push({
-            plot: p,
-            score: base.score,
-            revisions: base.revisions,
-            start: base.start,
-            end: base.end
-          });
-        }
-      }
-      return {
-        plot: p,
-        baseline: base,
-        score: base.score,
-        isLocked: base.isLocked,
-        revisions: base.revisions,
-        start: base.start,
-        end: base.end,
-        lockedAt: base.lockedAt
-      };
-    }).sort((a: any, b: any) => {
-      const nameA = String(a.plot.plot_name || a.plot.id);
-      const nameB = String(b.plot.plot_name || b.plot.id);
-      return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
-    });
-
-    const avgScore = lockedCount > 0 ? Math.round((totalScore / lockedCount) * 10) / 10 : 100;
-    const unlockedCount = relevantPlots.length - lockedCount;
-
-    return {
-      totalPlots: relevantPlots.length,
-      lockedCount,
-      unlockedCount,
-      avgScore,
-      distribution,
-      penalizedPlots,
-      allPlotItems
-    };
-  }, [plots, selectedProjectId]);
-
-  const filteredPlotScores = useMemo(() => {
-    return (plannerScoringSummary.allPlotItems || []).filter((item: any) => {
-      if (scoreFilterTab === 'locked' && !item.isLocked) return false;
-      if (scoreFilterTab === 'unlocked' && item.isLocked) return false;
-      if (scoreFilterTab === '100' && (!item.isLocked || item.score < 100)) return false;
-      if (scoreFilterTab === '75' && (!item.isLocked || item.score !== 75)) return false;
-      if (scoreFilterTab === '50' && (!item.isLocked || item.score !== 50)) return false;
-      if (scoreFilterTab === '25' && (!item.isLocked || item.score !== 25)) return false;
-      if (scoreFilterTab === '0' && (!item.isLocked || item.score !== 0)) return false;
-
-      if (scoreSearchText.trim()) {
-        const query = scoreSearchText.trim().toLowerCase();
-        const plotName = String(item.plot.plot_name || item.plot.id || '').toLowerCase();
-        const projName = String(item.plot.project_name || '').toLowerCase();
-        const houseType = String(item.plot.house_type || '').toLowerCase();
-        if (!plotName.includes(query) && !projName.includes(query) && !houseType.includes(query)) {
-          return false;
-        }
-      }
-
-      return true;
-    });
-  }, [plannerScoringSummary.allPlotItems, scoreFilterTab, scoreSearchText]);
 
   const schedules = useMemo(() => {
     const res: any = {};
@@ -1348,295 +1257,21 @@ export default function OwnerAnalyticsDashboard({
          )}
       </div>
 
-      {/* 🎯 Project Planner Schedule Scoring Summary */}
-      <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-5 pb-5 border-b border-slate-100">
+      {/* 🎯 Quick Information Banner */}
+      <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/80 p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 bg-amber-500 text-white rounded-xl shadow-sm">
+            <Award size={20} />
+          </div>
           <div>
-            <h3 className="font-black text-lg text-slate-800 flex items-center gap-2">
-              <Award className="text-amber-500" />
-              คุณภาพการวางแผนงานก่อสร้าง (Project Planning Quality)
-            </h3>
-            <p className="text-xs text-slate-500 mt-1 font-medium">
-              ประเมินความแม่นยำของแผนงานตามเกณฑ์คะแนนบันได (100 ➔ 75 ➔ 50 ➔ 25 ➔ 0 คะแนน เมื่อมีการขยายเวลาส่งมอบ)
+            <h4 className="font-black text-sm text-slate-800">
+              คะแนนแผนงานก่อสร้าง (Construction Planning Scores)
+            </h4>
+            <p className="text-xs text-slate-500 font-medium">
+              ระบบประเมินความแม่นยำของแผนงานตามเกณฑ์คะแนนบันได 100 ➔ 0 คะแนน ถูกย้ายไปยังเมนูเฉพาะ "คะแนนแผนงานก่อสร้าง" ที่แถบเมนูด้านซ้ายแล้ว
             </p>
           </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Inline Project Selector */}
-            <div className="flex items-center gap-2 bg-slate-100/90 px-3 py-1.5 rounded-xl border border-slate-200">
-              <span className="text-xs font-bold text-slate-500 whitespace-nowrap">โครงการ:</span>
-              <select
-                value={selectedProjectId}
-                onChange={(e) => setSelectedProjectId(e.target.value)}
-                className="bg-white text-slate-800 text-xs font-bold py-1 px-2.5 rounded-lg border border-slate-200 shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
-              >
-                <option value="all">ทุกโครงการ (ไอลิน 6 และโครงการใหม่)</option>
-                {activeProjectsList.map((p: any) => (
-                  <option key={p.id} value={p.name}>{p.name}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Average Score Badge */}
-            <div className="text-right pl-2 border-l border-slate-200">
-              <span className="text-[10px] uppercase font-bold text-slate-400 block">คะแนนเฉลี่ยโครงการ</span>
-              <div className="flex items-center gap-2">
-                <span className="text-2xl font-black text-slate-900">{plannerScoringSummary.avgScore}</span>
-                <span className="text-xs font-bold text-slate-400">/ 100</span>
-                {(() => {
-                  const style = getScoreBadgeStyle(plannerScoringSummary.avgScore);
-                  return (
-                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-black border ${style.bg} ${style.text} ${style.border}`}>
-                      {style.grade}
-                    </span>
-                  );
-                })()}
-              </div>
-            </div>
-          </div>
         </div>
-
-        {/* Interactive Filter Tabs (Clickable Breakdown Chips) */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 mb-4">
-          <button
-            type="button"
-            onClick={() => setScoreFilterTab('all')}
-            className={`p-2.5 rounded-xl border text-center transition-all cursor-pointer ${
-              scoreFilterTab === 'all'
-                ? 'bg-slate-800 text-white border-slate-800 shadow-md ring-2 ring-slate-400'
-                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-            }`}
-          >
-            <span className={`text-[10px] font-bold block mb-0.5 ${scoreFilterTab === 'all' ? 'text-slate-300' : 'text-slate-400'}`}>ทั้งหมด</span>
-            <span className="text-sm font-black">{plannerScoringSummary.totalPlots} แปลง</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setScoreFilterTab('locked')}
-            className={`p-2.5 rounded-xl border text-center transition-all cursor-pointer ${
-              scoreFilterTab === 'locked'
-                ? 'bg-indigo-600 text-white border-indigo-600 shadow-md ring-2 ring-indigo-300'
-                : 'bg-indigo-50/60 text-indigo-900 border-indigo-200 hover:bg-indigo-100/60'
-            }`}
-          >
-            <span className={`text-[10px] font-bold block mb-0.5 ${scoreFilterTab === 'locked' ? 'text-indigo-200' : 'text-indigo-600'}`}>ล็อกแล้ว</span>
-            <span className="text-sm font-black">{plannerScoringSummary.lockedCount} แปลง</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setScoreFilterTab('unlocked')}
-            className={`p-2.5 rounded-xl border text-center transition-all cursor-pointer ${
-              scoreFilterTab === 'unlocked'
-                ? 'bg-slate-600 text-white border-slate-600 shadow-md ring-2 ring-slate-300'
-                : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
-            }`}
-          >
-            <span className={`text-[10px] font-bold block mb-0.5 ${scoreFilterTab === 'unlocked' ? 'text-slate-300' : 'text-slate-500'}`}>รอตั้ง Baseline</span>
-            <span className="text-sm font-black">{plannerScoringSummary.unlockedCount} แปลง</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setScoreFilterTab('100')}
-            className={`p-2.5 rounded-xl border text-center transition-all cursor-pointer ${
-              scoreFilterTab === '100'
-                ? 'bg-emerald-600 text-white border-emerald-600 shadow-md ring-2 ring-emerald-300'
-                : 'bg-emerald-50/70 text-emerald-800 border-emerald-200 hover:bg-emerald-100/70'
-            }`}
-          >
-            <span className={`text-[10px] font-bold block mb-0.5 ${scoreFilterTab === '100' ? 'text-emerald-200' : 'text-emerald-600'}`}>100 (ตรงแผน)</span>
-            <span className="text-sm font-black">{plannerScoringSummary.distribution[100]} แปลง</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setScoreFilterTab('75')}
-            className={`p-2.5 rounded-xl border text-center transition-all cursor-pointer ${
-              scoreFilterTab === '75'
-                ? 'bg-blue-600 text-white border-blue-600 shadow-md ring-2 ring-blue-300'
-                : 'bg-blue-50/70 text-blue-800 border-blue-200 hover:bg-blue-100/70'
-            }`}
-          >
-            <span className={`text-[10px] font-bold block mb-0.5 ${scoreFilterTab === '75' ? 'text-blue-200' : 'text-blue-600'}`}>75 (ขยาย 1 ครั้ง)</span>
-            <span className="text-sm font-black">{plannerScoringSummary.distribution[75]} แปลง</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setScoreFilterTab('50')}
-            className={`p-2.5 rounded-xl border text-center transition-all cursor-pointer ${
-              scoreFilterTab === '50'
-                ? 'bg-amber-600 text-white border-amber-600 shadow-md ring-2 ring-amber-300'
-                : 'bg-amber-50/70 text-amber-800 border-amber-200 hover:bg-amber-100/70'
-            }`}
-          >
-            <span className={`text-[10px] font-bold block mb-0.5 ${scoreFilterTab === '50' ? 'text-amber-200' : 'text-amber-600'}`}>50 (ขยาย 2 ครั้ง)</span>
-            <span className="text-sm font-black">{plannerScoringSummary.distribution[50]} แปลง</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setScoreFilterTab('25')}
-            className={`p-2.5 rounded-xl border text-center transition-all cursor-pointer ${
-              scoreFilterTab === '25'
-                ? 'bg-orange-600 text-white border-orange-600 shadow-md ring-2 ring-orange-300'
-                : 'bg-orange-50/70 text-orange-800 border-orange-200 hover:bg-orange-100/70'
-            }`}
-          >
-            <span className={`text-[10px] font-bold block mb-0.5 ${scoreFilterTab === '25' ? 'text-orange-200' : 'text-orange-600'}`}>25 (ขยาย 3 ครั้ง)</span>
-            <span className="text-sm font-black">{plannerScoringSummary.distribution[25]} แปลง</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setScoreFilterTab('0')}
-            className={`p-2.5 rounded-xl border text-center transition-all cursor-pointer ${
-              scoreFilterTab === '0'
-                ? 'bg-rose-600 text-white border-rose-600 shadow-md ring-2 ring-rose-300'
-                : 'bg-rose-50/70 text-rose-800 border-rose-200 hover:bg-rose-100/70'
-            }`}
-          >
-            <span className={`text-[10px] font-bold block mb-0.5 ${scoreFilterTab === '0' ? 'text-rose-200' : 'text-rose-600'}`}>0 (วิกฤต 4+)</span>
-            <span className="text-sm font-black">{plannerScoringSummary.distribution[0]} แปลง</span>
-          </button>
-        </div>
-
-        {/* Search & Counter Toolbar */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 pb-3 border-t border-slate-100 mb-3">
-          <div className="relative w-full sm:w-80">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
-            <input
-              type="text"
-              value={scoreSearchText}
-              onChange={(e) => setScoreSearchText(e.target.value)}
-              placeholder="ค้นหาเลขแปลง หรือแบบบ้าน..."
-              className="w-full pl-9 pr-7 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all"
-            />
-            {scoreSearchText && (
-              <button
-                type="button"
-                onClick={() => setScoreSearchText('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold"
-              >
-                ✕
-              </button>
-            )}
-          </div>
-
-          <div className="text-xs text-slate-500 font-bold w-full sm:w-auto text-left sm:text-right">
-            แสดง <span className="text-slate-800 font-black">{filteredPlotScores.length}</span> จากทั้งหมด <span className="text-slate-800 font-black">{plannerScoringSummary.totalPlots}</span> แปลง
-            {scoreFilterTab !== 'all' && (
-              <button
-                type="button"
-                onClick={() => setScoreFilterTab('all')}
-                className="ml-2 text-indigo-600 hover:underline text-[11px] font-bold"
-              >
-                (แสดงทั้งหมด)
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Plot Scores Directory List */}
-        {filteredPlotScores.length === 0 ? (
-          <div className="py-8 text-center text-slate-400 font-bold text-xs bg-slate-50 rounded-2xl border border-slate-200">
-            ไม่พบแปลงตามเงื่อนไขที่เลือก ({scoreFilterTab !== 'all' ? `ตัวกรอง: ${scoreFilterTab}` : ''} {scoreSearchText ? `คำค้นหา: "${scoreSearchText}"` : ''})
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 max-h-[460px] overflow-y-auto pr-1">
-            {filteredPlotScores.map((item: any) => {
-              const style = item.isLocked ? getScoreBadgeStyle(item.score) : null;
-              return (
-                <div
-                  key={item.plot.id}
-                  className="p-3.5 rounded-2xl border border-slate-200 bg-white hover:border-amber-300 hover:shadow-sm transition-all flex flex-col justify-between"
-                >
-                  <div>
-                    <div className="flex items-start justify-between gap-2 mb-2">
-                      <div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-black text-sm text-slate-900">
-                            แปลง {item.plot.plot_name || item.plot.id}
-                          </span>
-                          <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
-                            {item.plot.project_name || 'ไอลิน 6'}
-                          </span>
-                        </div>
-                        {item.plot.house_type && (
-                          <span className="text-[11px] text-slate-500 font-medium block mt-0.5">
-                            แบบบ้าน: {item.plot.house_type}
-                          </span>
-                        )}
-                      </div>
-
-                      {item.isLocked && style ? (
-                        <div className="text-right shrink-0">
-                          <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-black border ${style.bg} ${style.text} ${style.border}`}>
-                            {item.score} คะแนน
-                          </span>
-                          <span className="text-[10px] font-bold text-slate-400 block mt-0.5">
-                            ({style.grade})
-                          </span>
-                        </div>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-500 border border-slate-200 shrink-0">
-                          ⏳ รอตั้ง Baseline
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="text-[11px] bg-slate-50 p-2.5 rounded-xl mb-3 space-y-1.5">
-                      <div className="flex items-center justify-between text-slate-600">
-                        <span className="text-slate-400">สถานะ Baseline:</span>
-                        <span className="font-bold">
-                          {item.isLocked ? (
-                            <span className="text-emerald-700 flex items-center gap-1">
-                              <Lock size={11} className="text-emerald-600" />
-                              {item.start} ➔ {item.end}
-                            </span>
-                          ) : (
-                            <span className="text-slate-400">ยังไม่ล็อก (เริ่มที่ 100 คะแนน)</span>
-                          )}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center justify-between text-slate-600">
-                        <span className="text-slate-400">ประวัติการขยายเวลา:</span>
-                        <span className="font-bold">
-                          {item.revisions > 0 ? (
-                            <span className="text-rose-600 font-black">
-                              ขยาย {item.revisions} ครั้ง (-{item.baseline.penaltyScore} คะแนน)
-                            </span>
-                          ) : item.isLocked ? (
-                            <span className="text-emerald-600 font-bold">ตรงตามแผนหลัก</span>
-                          ) : (
-                            <span className="text-slate-400">-</span>
-                          )}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
-                    <span className="text-[10px] text-slate-400 truncate max-w-[140px]">
-                      โฟร์แมน: {item.plot.foreman || '-'}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setHistoryModalPlot(item.plot)}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold text-indigo-600 hover:bg-indigo-50 border border-indigo-100 hover:border-indigo-300 transition-colors cursor-pointer"
-                    >
-                      <History size={13} />
-                      ดูประวัติแผนงาน
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1870,16 +1505,6 @@ export default function OwnerAnalyticsDashboard({
         </div>
 
       </div>
-
-      {historyModalPlot && (
-        <ScheduleHistoryModal
-          isOpen={true}
-          onClose={() => setHistoryModalPlot(null)}
-          plot={historyModalPlot}
-          isAdminOrOwner={true}
-          currentUserName="Executive"
-        />
-      )}
     </div>
   );
 }
