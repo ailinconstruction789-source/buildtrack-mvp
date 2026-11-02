@@ -22,6 +22,7 @@ import {
 } from '@/lib/plannerScoring';
 import ScheduleRevisionModal from './ScheduleRevisionModal';
 import ScheduleHistoryModal from './ScheduleHistoryModal';
+import LockBaselineModal from './LockBaselineModal';
 
 interface HouseDetailViewProps {
   view: string;
@@ -262,6 +263,15 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
   });
   const [isRevisionSubmitting, setIsRevisionSubmitting] = React.useState(false);
   const [isLockingBaseline, setIsLockingBaseline] = React.useState(false);
+  const [lockBaselineModalData, setLockBaselineModalData] = React.useState<{
+    isOpen: boolean;
+    startDate: string;
+    endDate: string;
+  }>({
+    isOpen: false,
+    startDate: '',
+    endDate: ''
+  });
 
   const baseline: PlotBaselineData = React.useMemo(() => parsePlotBaseline(selectedPlot), [selectedPlot]);
   const scoreStyle = React.useMemo(() => getScoreBadgeStyle(baseline.score), [baseline.score]);
@@ -357,7 +367,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
     }
   };
 
-  const handleInitiateLockBaseline = async () => {
+  const handleInitiateLockBaseline = () => {
     const plotTasks = (taskTemplates || []).filter((t: any) => t.house_type_id === selectedPlot?.house_type_id);
     let minStartTs = Infinity;
     let minStartStr = '';
@@ -391,13 +401,25 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
       return;
     }
 
-    const confirmMsg = `ยืนยันการล็อกแผนงานหลัก (Baseline) สำหรับแปลง ${selectedPlot.plot_name || selectedPlot.id} หรือไม่?\n\n• วันเริ่มงาน: ${minStartStr}\n• วันสิ้นสุดโครงการ: ${maxEndStr}\n• คะแนนเริ่มต้น: 100 คะแนน\n\n(หลังจากล็อก Baseline หากมีการขยายวันสิ้นสุดโครงการ คะแนนจะถูกหักตามขั้นบันได)`;
-    if (!confirm(confirmMsg)) return;
+    setLockBaselineModalData({
+      isOpen: true,
+      startDate: minStartStr,
+      endDate: maxEndStr
+    });
+  };
 
+  const handleConfirmLockBaseline = async () => {
     setIsLockingBaseline(true);
     try {
-      const res = await lockPlotBaseline(supabase, selectedPlot, minStartStr, maxEndStr, currentUserName);
+      const res = await lockPlotBaseline(
+        supabase,
+        selectedPlot,
+        lockBaselineModalData.startDate,
+        lockBaselineModalData.endDate,
+        currentUserName
+      );
       if (res.success) {
+        setLockBaselineModalData(prev => ({ ...prev, isOpen: false }));
         if (showToast) showToast('ล็อกแผนงานหลัก (Baseline) เรียบร้อยแล้ว (100 คะแนน)', 'success');
         if (fetchAllData) await fetchAllData();
       } else {
@@ -2113,6 +2135,20 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
           isAdminOrOwner={isAdmin || isOwner}
           currentUserName={currentUserName}
           onRefresh={fetchAllData}
+        />
+      )}
+
+      {/* 🔒 Lock Baseline Confirmation Modal */}
+      {lockBaselineModalData.isOpen && (
+        <LockBaselineModal
+          isOpen={lockBaselineModalData.isOpen}
+          onClose={() => setLockBaselineModalData(prev => ({ ...prev, isOpen: false }))}
+          onConfirm={handleConfirmLockBaseline}
+          plotName={selectedPlot.plot_name || selectedPlot.id}
+          projectName={selectedPlot.project_name}
+          startDate={lockBaselineModalData.startDate}
+          endDate={lockBaselineModalData.endDate}
+          isSubmitting={isLockingBaseline}
         />
       )}
 

@@ -23,6 +23,7 @@ export default function ScheduleHistoryModal({
   const [loading, setLoading] = useState(true);
   const [revisions, setRevisions] = useState<any[]>([]);
   const [exemptingId, setExemptingId] = useState<string | null>(null);
+  const [confirmExemptRev, setConfirmExemptRev] = useState<any | null>(null);
   const [plotData, setPlotData] = useState<any>(plot);
 
   useEffect(() => {
@@ -113,10 +114,6 @@ export default function ScheduleHistoryModal({
   };
 
   const handleExempt = async (rev: any) => {
-    if (!confirm('ยืนยันอนุมัติยกเว้นบทลงโทษ (เหตุสุดวิสัย / ปัจจัยภายนอก) สำหรับการปรับแผนนี้หรือไม่?\nคะแนนแผนงานจะได้รับการคืน +25 คะแนน')) {
-      return;
-    }
-
     setExemptingId(rev.id);
     try {
       const result = await exemptSchedulePenalty(
@@ -129,7 +126,6 @@ export default function ScheduleHistoryModal({
       );
 
       if (result.success) {
-        // Update local state
         setPlotData((prev: any) => ({
           ...prev,
           schedule_delay_revisions: result.newRevisions,
@@ -144,6 +140,7 @@ export default function ScheduleHistoryModal({
           )
         );
 
+        setConfirmExemptRev(null);
         if (onRefresh) onRefresh();
       } else {
         alert(result.error || 'เกิดข้อผิดพลาดในการยกเว้นบทลงโทษ');
@@ -289,9 +286,9 @@ export default function ScheduleHistoryModal({
                   ) : isAdminOrOwner ? (
                     <button
                       type="button"
-                      onClick={() => handleExempt(rev)}
+                      onClick={() => setConfirmExemptRev(rev)}
                       disabled={exemptingId === rev.id}
-                      className="inline-flex items-center gap-1 text-[10px] font-black text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-2.5 py-1 rounded-lg transition-colors disabled:opacity-50"
+                      className="inline-flex items-center gap-1 text-[10px] font-black text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-2.5 py-1 rounded-lg transition-colors disabled:opacity-50 cursor-pointer"
                       title="อนุมัติยกเว้นบทลงโทษเนื่องจากเหตุสุดวิสัย คืนคะแนน +25"
                     >
                       {exemptingId === rev.id ? (
@@ -303,6 +300,38 @@ export default function ScheduleHistoryModal({
                     </button>
                   ) : null}
                 </div>
+
+                {/* Inline Confirmation for Force Majeure Exemption */}
+                {confirmExemptRev?.id === rev.id && (
+                  <div className="mt-3 p-3 bg-amber-50 rounded-xl border border-amber-200 animate-in fade-in duration-150">
+                    <p className="text-xs font-bold text-amber-900 mb-1 flex items-center gap-1">
+                      <AlertCircle size={14} className="text-amber-600" />
+                      ยืนยันอนุมัติยกเว้นบทลงโทษ (เหตุสุดวิสัย / ปัจจัยภายนอก) หรือไม่?
+                    </p>
+                    <p className="text-[10px] text-amber-700 mb-2.5">
+                      การยกเว้นโทษจะไม่นับการขยายเวลาครั้งนี้ และจะทำการคืนคะแนนแผนงาน +25 คะแนน ให้แก่แปลงนี้
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setConfirmExemptRev(null)}
+                        disabled={exemptingId === rev.id}
+                        className="px-3 py-1 rounded-lg bg-white border border-amber-300 text-slate-700 text-[10px] font-bold hover:bg-amber-100/50 cursor-pointer"
+                      >
+                        ยกเลิก
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleExempt(rev)}
+                        disabled={exemptingId === rev.id}
+                        className="px-3 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[10px] font-black shadow-xs flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                      >
+                        {exemptingId === rev.id ? <Loader2 className="animate-spin" size={10} /> : <ShieldCheck size={11} />}
+                        <span>ยืนยันอนุมัติคืนคะแนน (+25)</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             ))
           )}
