@@ -151,6 +151,7 @@ export default function CentralLeadBookingModal({
   const saveCheckpoint = useRef<{
     fingerprint: string; leadId: string | null; promotionsDeleted: boolean;
     promotionsSaved: boolean; activitySaved: boolean; plotSaved: boolean;
+    statusHistorySaved?: boolean;
     saleId: string | null; saleSaved: boolean; saleAttempted: boolean;
     summary: string | null; occurredAt: string | null;
   } | null>(null);
@@ -525,7 +526,7 @@ export default function CentralLeadBookingModal({
     }
     const checkpoint = saveCheckpoint.current || {
       fingerprint, leadId: null, promotionsDeleted: false, promotionsSaved: false,
-      activitySaved: false, plotSaved: false, saleId: null, saleSaved: false, saleAttempted: false,
+      activitySaved: false, plotSaved: false, statusHistorySaved: false, saleId: null, saleSaved: false, saleAttempted: false,
       summary: null, occurredAt: null
     };
     let phase = 'ข้อมูลลูกค้า';
@@ -735,6 +736,39 @@ export default function CentralLeadBookingModal({
           .eq('id', resolvedPlotId);
         if (error) throw error;
         checkpoint.plotSaved = true;
+      }
+
+      // 5. Audit trail: Record status_history for the booking
+      if (leadId && !checkpoint.statusHistorySaved) {
+        phase = 'ประวัติสถานะ';
+        const changedByDisplay = (agentName || '').trim() || currentUser?.username || 'Sales';
+        const historyRows: any[] = [
+          {
+            entity_type: 'lead',
+            entity_id: leadId,
+            old_status: initialCustomer?.status || 'Visit',
+            new_status: 'Reserved',
+            changed_by: changedByDisplay,
+            created_at: now.toISOString()
+          }
+        ];
+        if (checkpoint.saleId) {
+          historyRows.push({
+            entity_type: 'sale',
+            entity_id: checkpoint.saleId,
+            old_status: null,
+            new_status: 'Reserved',
+            changed_by: changedByDisplay,
+            created_at: now.toISOString()
+          });
+        }
+        const { error: histErr } = await supabase
+          .from('status_history')
+          .insert(historyRows);
+        if (histErr) {
+          console.warn('Could not record status_history for booking:', histErr);
+        }
+        checkpoint.statusHistorySaved = true;
       }
 
       const successNotice = `บันทึกการจองแปลง "${plotId}" (${projectName}) ให้ "${effectiveName}" สำเร็จแล้ว! (ราคาขายสุทธิ: ฿${netSellingPrice.toLocaleString('th-TH')} บาท, เงินจอง: ฿${depositNum.toLocaleString('th-TH')} บาท)`;

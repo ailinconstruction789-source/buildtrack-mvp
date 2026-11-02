@@ -536,8 +536,8 @@ export default function SalesKanban({
           rental_end_date: matchingLead?.rental_end_date ? String(matchingLead.rental_end_date).split('T')[0] : null,
           rental_status: matchingLead?.rental_status || null,
           history: [
-            ...(bookDate ? [{ status: 'Reserved', timestamp: bookDate, note: s.agent_name || '' }] : []),
-            ...(transferDate ? [{ status: 'Transferred', timestamp: transferDate, note: s.agent_name || '' }] : []),
+            ...(bookDate ? [{ status: 'Reserved', timestamp: bookDate, note: matchingLead?.agent_name || matchingLead?.sales_owner || s.agent_name || '' }] : []),
+            ...(transferDate ? [{ status: 'Transferred', timestamp: transferDate, note: matchingLead?.agent_name || matchingLead?.sales_owner || s.agent_name || '' }] : []),
             ...(cancelDate ? [{ status: 'Cancelled', timestamp: cancelDate, note: s.cancellation_reason || '' }] : [])
           ]
         };
@@ -682,8 +682,8 @@ export default function SalesKanban({
               rental_end_date: l.rental_end_date ? String(l.rental_end_date).split('T')[0] : null,
               rental_status: l.rental_status || null,
               history: [
-                ...(bookDate ? [{ status: 'Reserved', timestamp: bookDate, note: l.agent_name || '' }] : []),
-                ...(transferDate ? [{ status: 'Transferred', timestamp: transferDate, note: l.agent_name || '' }] : [])
+                ...(bookDate ? [{ status: 'Reserved', timestamp: bookDate, note: l.agent_name || l.sales_owner || l.created_by_agent || '' }] : []),
+                ...(transferDate ? [{ status: 'Transferred', timestamp: transferDate, note: l.agent_name || l.sales_owner || l.created_by_agent || '' }] : [])
               ]
             });
           }
@@ -3554,7 +3554,7 @@ export default function SalesKanban({
                                   </div>
                                   <span className="text-[10px] text-slate-400 font-medium bg-slate-50 px-2 py-0.5 rounded-full">{timeStr ? `${dateStr} ${timeStr}` : dateStr}</span>
                                 </div>
-                                <p className="text-xs text-slate-500 font-medium mt-1">ผู้ทำรายการ: {h.note || 'System'}</p>
+                                <p className="text-xs text-slate-500 font-medium mt-1">ผู้ทำรายการ: {h.note || panelState.lead?.agentName || panelState.lead?.agent_name || 'System'}</p>
                               </div>
                             </div>
                           );
