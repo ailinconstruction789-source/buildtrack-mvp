@@ -12,6 +12,7 @@ import {
   calculateForemanAggregates,
   calculateSiteEngineerAggregates,
   calculateProjectPlannerScore,
+  assignPlotSiteEngineer,
   ForemanScoreSummary,
   SiteEngineerScoreSummary,
   ProjectPlannerScoreSummary
@@ -56,21 +57,42 @@ export default function PlannerScoringDashboard({
   const [selectedSeFilter, setSelectedSeFilter] = useState<string | null>(null);
   const [updatingPlotSeId, setUpdatingPlotSeId] = useState<string | null>(null);
 
-  // Extract lists of Site Engineers and Foremen from allUsers
+  // Extract lists of Site Engineers and Foremen from allUsers (deduplicated by name)
   const siteEngineersList = useMemo(() => {
-    return (allUsers || []).filter((u: any) => (u.role || '').toLowerCase() === 'site engineer');
+    const list = (allUsers || []).filter((u: any) => (u.role || '').toLowerCase() === 'site engineer');
+    const seen = new Set<string>();
+    return list.filter((u: any) => {
+      const name = u.username || u.name;
+      if (!name || seen.has(name)) return false;
+      seen.add(name);
+      return true;
+    });
   }, [allUsers]);
 
   const effectiveForemenList = useMemo(() => {
-    if (foremenList && foremenList.length > 0) return foremenList;
-    return (allUsers || []).filter((u: any) => (u.role || '').toLowerCase() === 'foreman');
+    const list = (foremenList && foremenList.length > 0)
+      ? foremenList
+      : (allUsers || []).filter((u: any) => (u.role || '').toLowerCase() === 'foreman');
+    const seen = new Set<string>();
+    return list.filter((u: any) => {
+      const name = u.username || u.name;
+      if (!name || seen.has(name)) return false;
+      seen.add(name);
+      return true;
+    });
   }, [allUsers, foremenList]);
 
-  // Filter projects to only active and relevant executive projects (excludes legacy projects)
+  // Filter projects to only active and relevant executive projects (deduplicated by name)
   const activeProjectsList = useMemo(() => {
-    return (projects || [])
+    const list = (projects || [])
       .filter((proj: any) => !proj.is_closed)
       .filter((proj: any) => isRelevantExecutiveProject(proj.name));
+    const seen = new Set<string>();
+    return list.filter((p: any) => {
+      if (!p.name || seen.has(p.name)) return false;
+      seen.add(p.name);
+      return true;
+    });
   }, [projects]);
 
   // Filtered relevant plots for scoring
@@ -178,14 +200,14 @@ export default function PlannerScoringDashboard({
     }
   };
 
-  const handleAssignSiteEngineer = async (plotId: string, seName: string) => {
-    setUpdatingPlotSeId(plotId);
+  const handleAssignSiteEngineer = async (plot: any, seName: string) => {
+    if (!plot) return;
+    setUpdatingPlotSeId(plot.id);
     try {
-      const { error } = await supabase
-        .from('plots')
-        .update({ site_engineer: seName })
-        .eq('id', plotId);
-      if (error) throw error;
+      const res = await assignPlotSiteEngineer(supabase, plot, seName);
+      if (!res.success) {
+        console.warn('Assign site engineer warning:', res.error);
+      }
       if (fetchAllData) await fetchAllData();
     } catch (err: any) {
       console.error('Failed to assign site engineer:', err);
@@ -227,8 +249,8 @@ export default function PlannerScoringDashboard({
                 className="bg-slate-800 text-white text-xs font-bold py-1.5 px-3 rounded-xl border border-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
               >
                 <option value="all">ทุกโครงการ (ไอลิน 6 และโครงการใหม่)</option>
-                {activeProjectsList.map((p: any) => (
-                  <option key={p.id} value={p.name}>{p.name}</option>
+                {activeProjectsList.map((p: any, idx: number) => (
+                  <option key={p.name || p.id || `proj-${idx}`} value={p.name}>{p.name}</option>
                 ))}
               </select>
             </div>
@@ -924,17 +946,20 @@ export default function PlannerScoringDashboard({
                         <span className="text-[10px] text-slate-400 font-bold block">Site Engineer</span>
                         {isAdmin || isOwner || isProjectPlanner ? (
                           <select
-                            value={item.siteEngineer || ''}
-                            onChange={(e) => handleAssignSiteEngineer(item.plot.id, e.target.value)}
+                            value={item.siteEngineer || 'วิศวกรส่วนกลาง'}
+                            onChange={(e) => handleAssignSiteEngineer(item.plot, e.target.value)}
                             disabled={updatingPlotSeId === item.plot.id}
                             className="text-[11px] font-bold bg-white border border-slate-300 rounded-md px-1.5 py-0.5 text-slate-800 mt-0.5 w-full outline-none focus:border-blue-500 cursor-pointer"
                           >
                             <option value="วิศวกรส่วนกลาง">วิศวกรส่วนกลาง</option>
-                            {siteEngineersList.map((se: any) => (
-                              <option key={se.id} value={se.username || se.name}>
-                                {se.username || se.name}
-                              </option>
-                            ))}
+                            {siteEngineersList.map((se: any, i: number) => {
+                              const seName = se.username || se.name;
+                              return (
+                                <option key={se.id || seName || `se-${i}`} value={seName}>
+                                  {seName}
+                                </option>
+                              );
+                            })}
                           </select>
                         ) : (
                           <span className="font-black text-slate-800 flex items-center gap-1 truncate mt-0.5">

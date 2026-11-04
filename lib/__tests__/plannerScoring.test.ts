@@ -220,4 +220,53 @@ describe('Cascading Construction Planning KPI System', () => {
       expect(result.grade).toBe('ดีเยี่ยม');
     });
   });
+
+  describe('assignPlotSiteEngineer & Tag Merging', () => {
+    it('preserves isLocked=false and retains siteEngineer when assigning SE to an unlocked plot', () => {
+      const plot = {
+        id: 'โยริว-1',
+        handover_notes: null,
+        site_engineer: null
+      };
+
+      const tag = buildPlotBaselineNoteTag(plot.handover_notes, {
+        siteEngineer: 'วิศวกร กิตติ'
+      });
+
+      const updatedPlot = {
+        ...plot,
+        handover_notes: tag
+      };
+
+      const parsed = parsePlotBaseline(updatedPlot);
+      expect(parsed.isLocked).toBe(false);
+      expect(parsed.siteEngineer).toBe('วิศวกร กิตติ');
+      expect(parsed.score).toBe(100);
+    });
+
+    it('merges siteEngineer into existing locked baseline without wiping baseline dates', () => {
+      const plot = {
+        id: 'โยริว-2',
+        handover_notes: '[planner_baseline:{"start":"2026-01-01","end":"2026-06-01","lockedAt":"2026-01-01T00:00:00.000Z","revisions":1,"score":75,"foremanName":"DEN"}]'
+      };
+
+      const tag = buildPlotBaselineNoteTag(plot.handover_notes, {
+        siteEngineer: 'วิศวกร สมศักดิ์'
+      });
+
+      const updatedPlot = {
+        ...plot,
+        handover_notes: tag
+      };
+
+      const parsed = parsePlotBaseline(updatedPlot);
+      expect(parsed.isLocked).toBe(true);
+      expect(parsed.start).toBe('2026-01-01');
+      expect(parsed.end).toBe('2026-06-01');
+      expect(parsed.revisions).toBe(1);
+      expect(parsed.score).toBe(75);
+      expect(parsed.foremanName).toBe('DEN');
+      expect(parsed.siteEngineer).toBe('วิศวกร สมศักดิ์');
+    });
+  });
 });

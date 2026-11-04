@@ -168,20 +168,37 @@ export function parsePlotBaseline(plot: any): PlotBaselineData {
     };
   }
 
-  const foremanName = plot.foreman_name || plot.foreman || null;
-  const foremanAssignedAt = plot.foreman_assigned_at || null;
-  const siteEngineer = plot.site_engineer || null;
+  // Parse tag from handover_notes first if present
+  let notesMeta: any = {};
+  if (plot.handover_notes && typeof plot.handover_notes === 'string') {
+    const match = plot.handover_notes.match(/\[planner_baseline:(\{.*?\})\]/);
+    if (match && match[1]) {
+      try {
+        notesMeta = JSON.parse(match[1]);
+      } catch (err) {
+        // ignore parse error
+      }
+    }
+  }
+
+  const foremanName = plot.foreman_name || plot.foreman || notesMeta.foremanName || null;
+  const foremanAssignedAt = plot.foreman_assigned_at || notesMeta.foremanAssignedAt || null;
+  const siteEngineer = plot.site_engineer || notesMeta.siteEngineer || null;
 
   // 1. Check native columns first
   if (plot.baseline_locked_at || plot.baseline_planned_end) {
-    const revisions = Number(plot.schedule_delay_revisions ?? 0);
-    const score = Number(plot.schedule_planning_score ?? calculatePlanningScore(revisions));
+    const revisions = Number(plot.schedule_delay_revisions ?? notesMeta.revisions ?? 0);
+    const score = Number(plot.schedule_planning_score ?? notesMeta.score ?? calculatePlanningScore(revisions));
     return {
       isLocked: true,
-      start: plot.baseline_planned_start ? String(plot.baseline_planned_start).split('T')[0] : null,
-      end: plot.baseline_planned_end ? String(plot.baseline_planned_end).split('T')[0] : null,
-      lockedAt: plot.baseline_locked_at || null,
-      lockedBy: plot.baseline_locked_by || 'Project Planner',
+      start: plot.baseline_planned_start
+        ? String(plot.baseline_planned_start).split('T')[0]
+        : (notesMeta.start ? String(notesMeta.start).split('T')[0] : null),
+      end: plot.baseline_planned_end
+        ? String(plot.baseline_planned_end).split('T')[0]
+        : (notesMeta.end ? String(notesMeta.end).split('T')[0] : null),
+      lockedAt: plot.baseline_locked_at || notesMeta.lockedAt || null,
+      lockedBy: plot.baseline_locked_by || notesMeta.lockedBy || 'Project Planner',
       revisions,
       score,
       foremanName,
@@ -191,29 +208,21 @@ export function parsePlotBaseline(plot: any): PlotBaselineData {
   }
 
   // 2. Fallback to handover_notes tag: [planner_baseline:{...}]
-  if (plot.handover_notes && typeof plot.handover_notes === 'string') {
-    const match = plot.handover_notes.match(/\[planner_baseline:(\{.*?\})\]/);
-    if (match && match[1]) {
-      try {
-        const parsed = JSON.parse(match[1]);
-        const revisions = Number(parsed.revisions ?? 0);
-        const score = Number(parsed.score ?? calculatePlanningScore(revisions));
-        return {
-          isLocked: true,
-          start: parsed.start ? String(parsed.start).split('T')[0] : null,
-          end: parsed.end ? String(parsed.end).split('T')[0] : null,
-          lockedAt: parsed.lockedAt || null,
-          lockedBy: parsed.lockedBy || 'Project Planner',
-          revisions,
-          score,
-          foremanName: parsed.foremanName || foremanName,
-          foremanAssignedAt: parsed.foremanAssignedAt || foremanAssignedAt,
-          siteEngineer: parsed.siteEngineer || siteEngineer
-        };
-      } catch (err) {
-        console.warn('Failed to parse planner_baseline tag from handover_notes', err);
-      }
-    }
+  if (notesMeta.lockedAt || notesMeta.end || notesMeta.isLocked) {
+    const revisions = Number(notesMeta.revisions ?? 0);
+    const score = Number(notesMeta.score ?? calculatePlanningScore(revisions));
+    return {
+      isLocked: true,
+      start: notesMeta.start ? String(notesMeta.start).split('T')[0] : null,
+      end: notesMeta.end ? String(notesMeta.end).split('T')[0] : null,
+      lockedAt: notesMeta.lockedAt || null,
+      lockedBy: notesMeta.lockedBy || 'Project Planner',
+      revisions,
+      score,
+      foremanName,
+      foremanAssignedAt,
+      siteEngineer
+    };
   }
 
   return {
@@ -232,33 +241,46 @@ export function parsePlotBaseline(plot: any): PlotBaselineData {
 
 /**
  * Creates or updates the [planner_baseline:{...}] tag inside handover_notes string.
+ * Merges with existing tag data so fields are not lost.
  */
 export function buildPlotBaselineNoteTag(
   oldNotes: string | null | undefined,
   data: {
-    start: string;
-    end: string;
-    lockedAt: string;
-    lockedBy: string;
-    revisions: number;
-    score: number;
+    start?: string | null;
+    end?: string | null;
+    lockedAt?: string | null;
+    lockedBy?: string | null;
+    revisions?: number;
+    score?: number;
     foremanName?: string | null;
     foremanAssignedAt?: string | null;
     siteEngineer?: string | null;
+    isLocked?: boolean;
   }
 ): string {
+  let existingData: any = {};
+  if (oldNotes && typeof oldNotes === 'string') {
+    const match = oldNotes.match(/\[planner_baseline:(\{.*?\})\]/);
+    if (match && match[1]) {
+      try {
+        existingData = JSON.parse(match[1]);
+      } catch (e) {
+        // ignore parse error
+      }
+    }
+  }
+
   const cleanNotes = (oldNotes || '').replace(/\[planner_baseline:\{.*?\}\]/g, '').trim();
-  const tagJson = JSON.stringify({
-    start: data.start,
-    end: data.end,
-    lockedAt: data.lockedAt,
-    lockedBy: data.lockedBy,
-    revisions: data.revisions,
-    score: data.score,
-    foremanName: data.foremanName || null,
-    foremanAssignedAt: data.foremanAssignedAt || null,
-    siteEngineer: data.siteEngineer || null
+  const merged: any = {
+    ...existingData,
+    ...data
+  };
+
+  Object.keys(merged).forEach((k) => {
+    if (merged[k] === undefined) delete merged[k];
   });
+
+  const tagJson = JSON.stringify(merged);
   const tag = `[planner_baseline:${tagJson}]`;
   return cleanNotes ? `${cleanNotes} ${tag}` : tag;
 }
@@ -543,6 +565,53 @@ export async function lockPlotBaseline(
   } catch (err: any) {
     console.error('Error locking baseline:', err);
     return { success: false, error: err.message || 'เกิดข้อผิดพลาดในการล็อกแผนงาน' };
+  }
+}
+
+/**
+ * Assigns a Site Engineer to a plot.
+ * Supports dual-write: updates native `site_engineer` column if present,
+ * and updates `handover_notes` tag [planner_baseline:{...}] so it works
+ * reliably even if the database migration hasn't been applied yet.
+ */
+export async function assignPlotSiteEngineer(
+  supabase: any,
+  plot: any,
+  seName: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    if (!plot) return { success: false, error: 'Plot not found' };
+
+    let nativeError: any = null;
+    try {
+      const res = await supabase
+        .from('plots')
+        .update({ site_engineer: seName })
+        .eq('id', plot.id);
+      nativeError = res.error;
+    } catch (e: any) {
+      nativeError = e;
+    }
+
+    // Always update handover_notes fallback so metadata is preserved
+    const updatedNotes = buildPlotBaselineNoteTag(plot.handover_notes, {
+      siteEngineer: seName
+    });
+
+    const { error: notesError } = await supabase
+      .from('plots')
+      .update({ handover_notes: updatedNotes })
+      .eq('id', plot.id);
+
+    if (notesError && nativeError) {
+      console.warn('Fallback handover_notes update failed:', notesError.message);
+      return { success: false, error: notesError.message };
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    console.error('assignPlotSiteEngineer error:', err);
+    return { success: false, error: err?.message || 'Failed to assign site engineer' };
   }
 }
 
