@@ -5,17 +5,11 @@ import {
   Calendar,
   ChevronLeft,
   ChevronRight,
-  CheckCircle2,
-  Clock,
-  AlertTriangle,
   User,
-  Building2,
   Sparkles,
   ArrowRight,
   X,
   ExternalLink,
-  Flame,
-  Check,
 } from 'lucide-react';
 import {
   getMonthlyForemanInspectionCompliance,
@@ -40,10 +34,6 @@ interface ForemanInspectionCalendarProps {
 }
 
 const WEEKDAY_NAMES = ['อา.', 'จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.'];
-const THAI_MONTH_NAMES = [
-  'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
-  'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
-];
 
 export default function ForemanInspectionCalendar({
   plots = [],
@@ -127,7 +117,7 @@ export default function ForemanInspectionCalendar({
     allUpdatesRecord,
     activeForeman,
     snapshots,
-    todayDateStr,
+    todayStr,
   ]);
 
   // Month navigation
@@ -345,9 +335,9 @@ export default function ForemanInspectionCalendar({
                 onClick={() => {
                   setSelectedDayDetail(day);
                 }}
-                className={`min-h-[75px] sm:min-h-[95px] p-2 sm:p-2.5 rounded-2xl border transition-all flex flex-col justify-between cursor-pointer relative group ${cellBg} ${
-                  day.isToday ? 'ring-2 ring-blue-500 shadow-md' : ''
-                }`}
+                className={`min-h-[75px] sm:min-h-[95px] p-2 sm:p-2.5 rounded-2xl border transition-all flex flex-col justify-between relative group ${
+                  isClickable ? 'cursor-pointer hover:shadow-md' : 'cursor-default'
+                } ${cellBg} ${day.isToday ? 'ring-2 ring-blue-500 shadow-md' : ''}`}
                 title={`คลิกดูรายละเอียดวันที่ ${day.date}`}
               >
                 {/* Cell Header: Day number + Today indicator */}
