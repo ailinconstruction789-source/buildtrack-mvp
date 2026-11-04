@@ -25,6 +25,9 @@ import {
   CheckSquare,
   ShieldCheck,
   ExternalLink,
+  Wrench,
+  ShieldAlert,
+  Flame,
 } from 'lucide-react';
 import {
   ROADBLOCK_REASONS,
@@ -36,8 +39,10 @@ import {
   saveForemanDailySnapshot,
   loadForemanDailySnapshot,
   recordForemanTaskRoadblockReason,
+  getForemanReworkItems,
   type ForemanDailyTask,
   type ForemanDailySummary,
+  type ForemanReworkItem,
   type RoadblockReasonId,
 } from '@/lib/foremanDuty';
 
@@ -50,6 +55,7 @@ interface ForemanWorkspaceViewProps {
   allUpdatesRecord?: any[];
   allUsers?: any[];
   foremenList?: any[];
+  defects?: any[];
   loggedInUser?: any;
   currentUserRole?: string;
   isAdmin?: boolean;
@@ -58,6 +64,7 @@ interface ForemanWorkspaceViewProps {
   isProjectPlanner?: boolean;
   isForeman?: boolean;
   onNavigateToTaskChat: (plot: any, task: any) => void;
+  onNavigateToDefectChat?: (plot: any, defect: any) => void;
   onSelectPlot?: (plot: any) => void;
   fetchAllData?: () => Promise<void>;
 }
@@ -71,6 +78,7 @@ export default function ForemanWorkspaceView({
   allUpdatesRecord = [],
   allUsers = [],
   foremenList = [],
+  defects = [],
   loggedInUser,
   currentUserRole = '',
   isAdmin = false,
@@ -79,9 +87,13 @@ export default function ForemanWorkspaceView({
   isProjectPlanner = false,
   isForeman = false,
   onNavigateToTaskChat,
+  onNavigateToDefectChat,
   onSelectPlot,
   fetchAllData,
 }: ForemanWorkspaceViewProps) {
+  // Main view mode: 'schedule' (งานตามแผน) or 'rework' (งานที่ต้องแก้ไข & Defect)
+  const [mainTab, setMainTab] = useState<'schedule' | 'rework'>('schedule');
+
   // Today's date in local YYYY-MM-DD
   const todayStr = useMemo(() => {
     const d = new Date();
@@ -111,11 +123,15 @@ export default function ForemanWorkspaceView({
   // Project filter
   const [selectedProject, setSelectedProject] = useState<string>('all');
 
-  // Status tab filter: 'all' | 'pending' | 'updated' | 'roadblock'
+  // Schedule status tab filter: 'all' | 'pending' | 'updated' | 'roadblock'
   const [activeTab, setActiveTab] = useState<'all' | 'pending' | 'updated' | 'roadblock'>('all');
 
-  // Search query
+  // Rework filter: 'all' | 'defect' | 'task_rework'
+  const [reworkFilter, setReworkFilter] = useState<'all' | 'defect' | 'task_rework'>('all');
+
+  // Search queries
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [reworkSearch, setReworkSearch] = useState<string>('');
 
   // Snapshots loaded from database/cache
   const [snapshots, setSnapshots] = useState<any[]>([]);
@@ -197,12 +213,29 @@ export default function ForemanWorkspaceView({
     selectedProject,
   ]);
 
-  // KPI Summary
+  // Compute active rework items (Defects + Rejected tasks)
+  const reworkItems: ForemanReworkItem[] = useMemo(() => {
+    const items = getForemanReworkItems({
+      plots,
+      defects,
+      allUpdatesRecord,
+      taskTemplates,
+      foremanName: selectedForeman,
+    });
+
+    if (selectedProject !== 'all') {
+      return items.filter(i => i.project_name === selectedProject);
+    }
+
+    return items;
+  }, [plots, defects, allUpdatesRecord, taskTemplates, selectedForeman, selectedProject]);
+
+  // KPI Summary for Daily Tasks
   const summary: ForemanDailySummary = useMemo(() => {
     return computeForemanDailySummary(dailyTasks);
   }, [dailyTasks]);
 
-  // Filtered tasks for display
+  // Filtered daily tasks for display
   const filteredTasks = useMemo(() => {
     return dailyTasks.filter(t => {
       // Tab filter
@@ -223,6 +256,23 @@ export default function ForemanWorkspaceView({
       return true;
     });
   }, [dailyTasks, activeTab, searchQuery]);
+
+  // Filtered rework items for display
+  const filteredReworkItems = useMemo(() => {
+    return reworkItems.filter(item => {
+      if (reworkFilter !== 'all' && item.type !== reworkFilter) return false;
+      if (reworkSearch.trim()) {
+        const q = reworkSearch.toLowerCase().trim();
+        const mPlot = item.plot_name.toLowerCase().includes(q);
+        const mTitle = item.title.toLowerCase().includes(q);
+        const mDesc = (item.description || '').toLowerCase().includes(q);
+        const mTask = (item.task_name || '').toLowerCase().includes(q);
+        const mContractor = (item.contractor_name || '').toLowerCase().includes(q);
+        if (!mPlot && !mTitle && !mDesc && !mTask && !mContractor) return false;
+      }
+      return true;
+    });
+  }, [reworkItems, reworkFilter, reworkSearch]);
 
   // Date navigation handlers
   const handlePrevDay = () => {
@@ -259,7 +309,6 @@ export default function ForemanWorkspaceView({
 
   const isViewingPast = selectedDate < todayStr;
   const isViewingToday = selectedDate === todayStr;
-  const isViewingFuture = selectedDate > todayStr;
 
   // Automatic Background Snapshot Synchronization
   useEffect(() => {
@@ -351,6 +400,30 @@ export default function ForemanWorkspaceView({
     }
   };
 
+  // Quick navigate to defect chat
+  const handleOpenDefectChat = (item: ForemanReworkItem) => {
+    const plot = plots.find(p => String(p.id) === String(item.plot_id));
+    if (plot && onNavigateToDefectChat && item.defectObj) {
+      onNavigateToDefectChat(plot, item.defectObj);
+    }
+  };
+
+  // Quick navigate to rework task chat
+  const handleOpenReworkTaskChat = (item: ForemanReworkItem) => {
+    const plot = plots.find(p => String(p.id) === String(item.plot_id));
+    const task =
+      item.taskObj ||
+      taskTemplates.find(t => String(t.id) === String(item.task_template_id)) || {
+        id: item.task_template_id || 0,
+        task_name: item.task_name || 'งานก่อสร้าง',
+        task_order: 1,
+      };
+
+    if (plot && onNavigateToTaskChat) {
+      onNavigateToTaskChat(plot, task);
+    }
+  };
+
   return (
     <div className="space-y-6 pb-20 animate-in fade-in duration-300">
       {/* 🌟 Top Banner / Header */}
@@ -362,18 +435,18 @@ export default function ForemanWorkspaceView({
           <div className="space-y-2">
             <div className="inline-flex items-center gap-2 px-3 py-1 bg-amber-500/20 text-amber-300 rounded-full text-xs font-black tracking-wide border border-amber-500/30">
               <HardHat size={14} className="stroke-[2.5]" />
-              <span>ห้องทำงานโฟร์แมน • DAILY WORK DISPATCH</span>
+              <span>ห้องทำงานโฟร์แมน • FOREMAN WORKSPACE</span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white flex items-center gap-3">
               <span>งานประจำวันและการเข้าตรวจไซต์</span>
             </h1>
             <p className="text-slate-300 text-sm max-w-2xl leading-relaxed">
-              ติดตามงานก่อสร้างตามแผนประจำวันของโฟร์แมน อัปเดตความคืบหน้าเข้าห้องแชท หรือแจ้งเหตุผลงานไม่เริ่ม
-              พร้อมระบบแช่แข็งประวัติแผนงานย้อนหลัง (Point-in-Time Snapshot)
+              ติดตามงานก่อสร้างตามแผนประจำวันของโฟร์แมน ตรวจสอบงานที่ถูกสั่งแก้ไข/Defect ค้าง
+              พร้อมระบบแช่แข็งประวัติแผนงานย้อนหลังอัตโนมัติ (Auto-Snapshot)
             </p>
           </div>
 
-          {/* Quick Date Switcher in Header */}
+          {/* Quick Date Switcher in Header (Enabled for Schedule mode) */}
           <div className="bg-white/10 backdrop-blur-md p-3 rounded-2xl border border-white/15 flex flex-col sm:flex-row items-center gap-3 shrink-0">
             <div className="flex items-center gap-1.5">
               <button
@@ -418,8 +491,80 @@ export default function ForemanWorkspaceView({
         </div>
       </div>
 
+      {/* 🚀 Primary Mode Switcher (2 Big Tabs) */}
+      <div className="flex items-center gap-3 border-b border-slate-200 pb-2">
+        <button
+          onClick={() => setMainTab('schedule')}
+          className={`flex items-center gap-2.5 px-5 py-3 rounded-2xl text-xs sm:text-sm font-black transition-all cursor-pointer ${
+            mainTab === 'schedule'
+              ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
+              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/80'
+          }`}
+        >
+          <CalendarDays size={18} />
+          <span>งานตามแผนประจำวัน</span>
+          <span
+            className={`px-2 py-0.5 rounded-full text-[11px] font-black ${
+              mainTab === 'schedule' ? 'bg-blue-700 text-blue-100' : 'bg-slate-100 text-slate-600'
+            }`}
+          >
+            {dailyTasks.length}
+          </span>
+        </button>
+
+        <button
+          onClick={() => setMainTab('rework')}
+          className={`flex items-center gap-2.5 px-5 py-3 rounded-2xl text-xs sm:text-sm font-black transition-all cursor-pointer ${
+            mainTab === 'rework'
+              ? 'bg-rose-600 text-white shadow-md shadow-rose-500/20'
+              : 'bg-white text-slate-600 hover:bg-rose-50 hover:text-rose-700 border border-slate-200/80'
+          }`}
+        >
+          <Wrench size={18} />
+          <span>งานที่ต้องแก้ไข & Defect</span>
+          {reworkItems.length > 0 && (
+            <span
+              className={`px-2 py-0.5 rounded-full text-[11px] font-black animate-pulse ${
+                mainTab === 'rework' ? 'bg-rose-800 text-rose-100' : 'bg-rose-100 text-rose-700'
+              }`}
+            >
+              {reworkItems.length}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* ⚠️ Actionable Rework Banner (Shown in Schedule mode if rework items exist) */}
+      {mainTab === 'schedule' && reworkItems.length > 0 && (
+        <div className="bg-gradient-to-r from-rose-50 via-amber-50 to-rose-50 border border-rose-200/90 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs animate-in slide-in-from-top-2">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-rose-500 text-white rounded-xl shadow-xs shrink-0">
+              <Flame size={18} className="animate-bounce" />
+            </div>
+            <div>
+              <p className="text-sm font-black text-rose-950 flex items-center gap-2">
+                <span>มีงานที่ต้องแก้ไข & Defect ค้างอยู่ {reworkItems.length} รายการ</span>
+                <span className="px-2 py-0.5 bg-rose-200/80 text-rose-800 text-[10px] font-black rounded-full">
+                  ต้องเร่งดำเนินการ
+                </span>
+              </p>
+              <p className="text-xs text-rose-800 font-medium mt-0.5">
+                มีงวดงานที่โดน QC สั่งแจ้งแก้ไข หรือ Defect ที่ยังรอการแก้ไขในแปลงที่คุณรับผิดชอบ
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setMainTab('rework')}
+            className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-black rounded-xl transition-all shadow-xs shrink-0 cursor-pointer flex items-center gap-1.5 active:scale-95 whitespace-nowrap"
+          >
+            <span>ดูรายการงานแก้ไข ({reworkItems.length})</span>
+            <ArrowRight size={14} />
+          </button>
+        </div>
+      )}
+
       {/* 📜 Past Date Historical Snapshot Notice */}
-      {isViewingPast && (
+      {mainTab === 'schedule' && isViewingPast && (
         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center justify-between gap-4 text-amber-900 shadow-xs animate-in slide-in-from-top-2">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-amber-100 rounded-xl text-amber-700 shrink-0">
@@ -430,7 +575,7 @@ export default function ForemanWorkspaceView({
                 📜 คุณกำลังดูบันทึกประวัติแผนงานย้อนหลัง ณ {thaiDateLabel}
               </p>
               <p className="text-xs text-amber-700 mt-0.5">
-                ข้อมูลแผนงานและการตรวจงานจะถูกแช่แข็งตามสภาพจริง ณ วันดังกล่าว ไม่ถูกกระทบจากการขยายหรือเปลี่ยนแผนในอนาคต
+                ข้อมูลแผนงานและการตรวจงานถูกแช่แข็งตามสภาพจริง ณ วันดังกล่าว ไม่ถูกกระทบจากการขยายหรือเปลี่ยนแผนในอนาคต
               </p>
             </div>
           </div>
@@ -443,7 +588,7 @@ export default function ForemanWorkspaceView({
         </div>
       )}
 
-      {/* ⚙️ Toolbar: Foreman Selector, Project Filter, Search & Snapshot Actions */}
+      {/* ⚙️ Toolbar: Foreman Selector, Project Filter, Search & Auto-Save Badge */}
       <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200/80 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-3">
           {/* Foreman Selector */}
@@ -496,15 +641,18 @@ export default function ForemanWorkspaceView({
           </div>
         </div>
 
-        {/* Search & Freeze Snapshot */}
+        {/* Search & Auto-Save Status Badge */}
         <div className="flex items-center gap-2">
           <div className="relative flex-1 sm:w-64">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
-              placeholder="ค้นหาแปลง, ชื่องาน, ช่าง..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
+              placeholder={mainTab === 'schedule' ? 'ค้นหาแปลง, ชื่องาน, ช่าง...' : 'ค้นหารายการแก้ไข, แปลง, ช่าง...'}
+              value={mainTab === 'schedule' ? searchQuery : reworkSearch}
+              onChange={e => {
+                if (mainTab === 'schedule') setSearchQuery(e.target.value);
+                else setReworkSearch(e.target.value);
+              }}
               className="w-full bg-slate-50 border border-slate-200 text-xs font-medium rounded-xl pl-9 pr-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
             />
           </div>
@@ -529,288 +677,524 @@ export default function ForemanWorkspaceView({
         </div>
       </div>
 
-      {/* 📊 KPI Summary Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
-        {/* Total Tasks */}
-        <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-xs flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500">งานตามแผนวันนี้</span>
-            <div className="p-2 bg-blue-50 text-blue-600 rounded-xl">
-              <CalendarDays size={18} />
-            </div>
-          </div>
-          <div className="mt-2">
-            <div className="text-2xl font-black text-slate-900">{summary.totalTasks}</div>
-            <p className="text-[11px] text-slate-400 font-medium mt-0.5">
-              กระจายใน {summary.plotsCount} แปลงบ้าน
-            </p>
-          </div>
-        </div>
-
-        {/* Updated Today */}
-        <div className="bg-white rounded-2xl p-4 border border-emerald-200/80 shadow-xs flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-emerald-700">อัปเดตแล้ววันนี้</span>
-            <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl">
-              <CheckCircle2 size={18} />
-            </div>
-          </div>
-          <div className="mt-2">
-            <div className="text-2xl font-black text-emerald-600">{summary.updatedTasks}</div>
-            <p className="text-[11px] text-emerald-700 font-medium mt-0.5">
-              {summary.totalTasks > 0
-                ? `${Math.round((summary.updatedTasks / summary.totalTasks) * 100)}% ของงานทั้งหมด`
-                : 'ไม่มีงานตกค้าง'}
-            </p>
-          </div>
-        </div>
-
-        {/* Roadblocks Reported */}
-        <div className="bg-white rounded-2xl p-4 border border-amber-200/80 shadow-xs flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-amber-700">แจ้งติดปัญหา</span>
-            <div className="p-2 bg-amber-50 text-amber-600 rounded-xl">
-              <AlertTriangle size={18} />
-            </div>
-          </div>
-          <div className="mt-2">
-            <div className="text-2xl font-black text-amber-600">{summary.roadblockTasks}</div>
-            <p className="text-[11px] text-amber-700 font-medium mt-0.5">มีบันทึกเหตุผลรองรับ</p>
-          </div>
-        </div>
-
-        {/* Pending Tasks */}
-        <div className="bg-white rounded-2xl p-4 border border-rose-200/80 shadow-xs flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-rose-700">ยังไม่อัปเดต</span>
-            <div className="p-2 bg-rose-50 text-rose-600 rounded-xl">
-              <Clock size={18} />
-            </div>
-          </div>
-          <div className="mt-2">
-            <div className="text-2xl font-black text-rose-600">{summary.pendingTasks}</div>
-            <p className="text-[11px] text-rose-700 font-medium mt-0.5">รอโฟร์แมนเข้าตรวจสอบ</p>
-          </div>
-        </div>
-
-        {/* Daily Compliance Gauge */}
-        <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl p-4 text-white shadow-md flex flex-col justify-between col-span-2 lg:col-span-1">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-blue-100">อัตราการตรวจงาน</span>
-            <Sparkles size={18} className="text-amber-300" />
-          </div>
-          <div className="mt-2">
-            <div className="text-3xl font-black tracking-tight">{summary.complianceRate}%</div>
-            <div className="w-full bg-blue-900/40 rounded-full h-2 mt-2 overflow-hidden">
-              <div
-                className="bg-amber-300 h-2 rounded-full transition-all duration-500"
-                style={{ width: `${summary.complianceRate}%` }}
-              />
-            </div>
-            <p className="text-[10px] text-blue-100 font-semibold mt-1">
-              (อัปเดตงาน + แจ้งติดปัญหา)
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* 🏷️ Filter Tabs */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-3">
-        <button
-          onClick={() => setActiveTab('all')}
-          className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
-            activeTab === 'all'
-              ? 'bg-blue-600 text-white shadow-sm'
-              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-          }`}
-        >
-          ทั้งหมด ({dailyTasks.length})
-        </button>
-        <button
-          onClick={() => setActiveTab('pending')}
-          className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
-            activeTab === 'pending'
-              ? 'bg-rose-600 text-white shadow-sm'
-              : 'bg-white text-rose-700 hover:bg-rose-50 border border-rose-200'
-          }`}
-        >
-          ⏳ ยังไม่อัปเดต ({summary.pendingTasks})
-        </button>
-        <button
-          onClick={() => setActiveTab('updated')}
-          className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
-            activeTab === 'updated'
-              ? 'bg-emerald-600 text-white shadow-sm'
-              : 'bg-white text-emerald-700 hover:bg-emerald-50 border border-emerald-200'
-          }`}
-        >
-          ✅ อัปเดตแล้ว ({summary.updatedTasks})
-        </button>
-        <button
-          onClick={() => setActiveTab('roadblock')}
-          className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
-            activeTab === 'roadblock'
-              ? 'bg-amber-600 text-white shadow-sm'
-              : 'bg-white text-amber-700 hover:bg-amber-50 border border-amber-200'
-          }`}
-        >
-          ⚠️ แจ้งติดปัญหา ({summary.roadblockTasks})
-        </button>
-      </div>
-
-      {/* 📋 Task Cards List */}
-      {filteredTasks.length === 0 ? (
-        <div className="bg-white rounded-3xl p-12 text-center border border-slate-200/80 shadow-xs space-y-3">
-          <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto">
-            <CheckSquare size={32} />
-          </div>
-          <h3 className="text-lg font-black text-slate-800">ไม่มีงานตามเงื่อนไขที่เลือก</h3>
-          <p className="text-sm text-slate-500 max-w-md mx-auto">
-            {activeTab === 'pending'
-              ? 'ยินดีด้วย! คุณได้เข้าตรวจและอัปเดตงานตามแผนของวันนี้ครบถ้วนแล้ว'
-              : 'ไม่พบรายการงานตามแผนที่ตรงกับเงื่อนไขการค้นหาหรือตัวกรองในขณะนี้'}
-          </p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {filteredTasks.map(task => {
-            const reasonMeta = getRoadblockReason(task.status_reason);
-
-            return (
-              <div
-                key={task.id}
-                className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs hover:shadow-md transition-all flex flex-col justify-between group"
-              >
-                <div>
-                  {/* Card Header: Plot & Status Badge */}
-                  <div className="flex items-start justify-between gap-3 mb-3">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="px-2.5 py-1 bg-blue-50 text-blue-700 font-black text-xs rounded-lg border border-blue-200">
-                          {task.plot_name}
-                        </span>
-                        <span className="text-[11px] text-slate-400 font-bold">
-                          {task.project_name}
-                        </span>
-                      </div>
-                      {selectedForeman === 'all' && (
-                        <p className="text-[11px] text-slate-500 font-semibold flex items-center gap-1">
-                          <User size={12} className="text-slate-400" />
-                          <span>โฟร์แมน: {task.foreman_name}</span>
-                        </p>
-                      )}
-                    </div>
-
-                    {/* Status Badge */}
-                    {task.is_updated_today ? (
-                      <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-black rounded-lg flex items-center gap-1 shrink-0">
-                        <CheckCircle2 size={13} className="stroke-[2.5]" />
-                        <span>อัปเดตแล้ววันนี้</span>
-                      </span>
-                    ) : task.status_reason ? (
-                      <span className="px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-black rounded-lg flex items-center gap-1 shrink-0">
-                        <span>{reasonMeta?.icon || '⚠️'}</span>
-                        <span className="truncate max-w-[120px]">{reasonMeta?.label || 'ติดปัญหา'}</span>
-                      </span>
-                    ) : (
-                      <span className="px-2.5 py-1 bg-rose-50 text-rose-700 border border-rose-200 text-[11px] font-black rounded-lg flex items-center gap-1 shrink-0">
-                        <Clock size={13} />
-                        <span>ยังไม่อัปเดต</span>
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Task Name & Order */}
-                  <div className="mb-3">
-                    <h4 className="text-base font-black text-slate-900 group-hover:text-blue-600 transition-colors">
-                      {task.task_name}
-                    </h4>
-                    <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1.5 font-medium">
-                      <Calendar size={13} className="text-slate-400" />
-                      <span>
-                        ตามแผน: {task.planned_start} ถึง {task.planned_end}
-                      </span>
-                    </p>
-                  </div>
-
-                  {/* Progress bar */}
-                  <div className="space-y-1.5 mb-3 bg-slate-50 p-3 rounded-xl border border-slate-100">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-slate-500 font-bold">ความคืบหน้าปัจจุบัน</span>
-                      <span className="font-black text-slate-800">{task.current_progress}%</span>
-                    </div>
-                    <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
-                      <div
-                        className={`h-2 rounded-full transition-all duration-300 ${
-                          task.current_progress >= 100
-                            ? 'bg-emerald-500'
-                            : task.current_progress > 0
-                            ? 'bg-blue-600'
-                            : 'bg-slate-300'
-                        }`}
-                        style={{ width: `${Math.min(100, Math.max(0, task.current_progress))}%` }}
-                      />
-                    </div>
-                    {task.contractor_name && (
-                      <p className="text-[11px] text-slate-500 font-medium truncate pt-1">
-                        👷 ผู้รับเหมา: <span className="font-bold text-slate-700">{task.contractor_name}</span>
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Reason Callout if reported */}
-                  {task.status_reason && !task.is_updated_today && (
-                    <div className="mb-3 p-3 bg-amber-50/80 rounded-xl border border-amber-200/80 text-amber-900 space-y-1">
-                      <div className="text-xs font-black flex items-center gap-1.5 text-amber-800">
-                        <span>{reasonMeta?.icon}</span>
-                        <span>{reasonMeta?.label}</span>
-                      </div>
-                      {task.status_note && (
-                        <p className="text-[11px] text-amber-700 font-medium leading-relaxed">
-                          หมายเหตุ: {task.status_note}
-                        </p>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Update note if updated today */}
-                  {task.is_updated_today && task.last_action && (
-                    <div className="mb-3 p-2.5 bg-emerald-50/70 rounded-xl border border-emerald-100 text-[11px] text-emerald-800 font-medium">
-                      บันทึกวันนี้: <span className="font-bold">{task.last_action}</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Card Action Buttons */}
-                <div className="pt-3 border-t border-slate-100 flex items-center gap-2">
-                  <button
-                    onClick={() => handleOpenChat(task)}
-                    className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black shadow-xs active:scale-95 transition-all cursor-pointer"
-                    title="เข้าห้องแชทและบันทึกอัปเดตงานนี้"
-                  >
-                    <MessageSquare size={14} className="stroke-[2.5]" />
-                    <span>เข้าห้องแชท / อัปเดต</span>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setSelectedTaskForRoadblock(task);
-                      setSelectedReasonId(task.status_reason || 'material_issue');
-                      setRoadblockNote(task.status_note || '');
-                    }}
-                    className={`p-2 rounded-xl text-xs font-bold border transition-all active:scale-95 cursor-pointer ${
-                      task.status_reason
-                        ? 'bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100'
-                        : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-amber-700'
-                    }`}
-                    title="แจ้งเหตุผลไม่เริ่มงาน / ติดปัญหา"
-                  >
-                    <AlertTriangle size={15} />
-                  </button>
+      {/* ============================================================== */}
+      {/* 📅 MODE 1: DAILY SCHEDULED TASKS (งานตามแผนประจำวัน) */}
+      {/* ============================================================== */}
+      {mainTab === 'schedule' && (
+        <div className="space-y-6">
+          {/* 📊 KPI Summary Cards */}
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
+            {/* Total Tasks */}
+            <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-xs flex flex-col justify-between">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-500">งานตามแผนวันนี้</span>
+                <div className="p-2 bg-blue-50 text-blue-600 rounded-xl">
+                  <CalendarDays size={18} />
                 </div>
               </div>
-            );
-          })}
+              <div className="mt-2">
+                <div className="text-2xl font-black text-slate-900">{summary.totalTasks}</div>
+                <p className="text-[11px] text-slate-400 font-medium mt-0.5">
+                  กระจายใน {summary.plotsCount} แปลงบ้าน
+                </p>
+              </div>
+            </div>
+
+            {/* Updated Today */}
+            <div className="bg-white rounded-2xl p-4 border border-emerald-200/80 shadow-xs flex flex-col justify-between">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-emerald-700">อัปเดตแล้ววันนี้</span>
+                <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl">
+                  <CheckCircle2 size={18} />
+                </div>
+              </div>
+              <div className="mt-2">
+                <div className="text-2xl font-black text-emerald-600">{summary.updatedTasks}</div>
+                <p className="text-[11px] text-emerald-700 font-medium mt-0.5">
+                  {summary.totalTasks > 0
+                    ? `${Math.round((summary.updatedTasks / summary.totalTasks) * 100)}% ของงานทั้งหมด`
+                    : 'ไม่มีงานตกค้าง'}
+                </p>
+              </div>
+            </div>
+
+            {/* Roadblocks Reported */}
+            <div className="bg-white rounded-2xl p-4 border border-amber-200/80 shadow-xs flex flex-col justify-between">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-amber-700">แจ้งติดปัญหา</span>
+                <div className="p-2 bg-amber-50 text-amber-600 rounded-xl">
+                  <AlertTriangle size={18} />
+                </div>
+              </div>
+              <div className="mt-2">
+                <div className="text-2xl font-black text-amber-600">{summary.roadblockTasks}</div>
+                <p className="text-[11px] text-amber-700 font-medium mt-0.5">มีบันทึกเหตุผลรองรับ</p>
+              </div>
+            </div>
+
+            {/* Pending Tasks */}
+            <div className="bg-white rounded-2xl p-4 border border-rose-200/80 shadow-xs flex flex-col justify-between">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-rose-700">ยังไม่อัปเดต</span>
+                <div className="p-2 bg-rose-50 text-rose-600 rounded-xl">
+                  <Clock size={18} />
+                </div>
+              </div>
+              <div className="mt-2">
+                <div className="text-2xl font-black text-rose-600">{summary.pendingTasks}</div>
+                <p className="text-[11px] text-rose-700 font-medium mt-0.5">รอโฟร์แมนเข้าตรวจสอบ</p>
+              </div>
+            </div>
+
+            {/* Daily Compliance Gauge */}
+            <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl p-4 text-white shadow-md flex flex-col justify-between col-span-2 lg:col-span-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-blue-100">อัตราการตรวจงาน</span>
+                <Sparkles size={18} className="text-amber-300" />
+              </div>
+              <div className="mt-2">
+                <div className="text-3xl font-black tracking-tight">{summary.complianceRate}%</div>
+                <div className="w-full bg-blue-900/40 rounded-full h-2 mt-2 overflow-hidden">
+                  <div
+                    className="bg-amber-300 h-2 rounded-full transition-all duration-500"
+                    style={{ width: `${summary.complianceRate}%` }}
+                  />
+                </div>
+                <p className="text-[10px] text-blue-100 font-semibold mt-1">
+                  (อัปเดตงาน + แจ้งติดปัญหา)
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* 🏷️ Filter Tabs for Schedule */}
+          <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-3">
+            <button
+              onClick={() => setActiveTab('all')}
+              className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                activeTab === 'all'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+              }`}
+            >
+              ทั้งหมด ({dailyTasks.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('pending')}
+              className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                activeTab === 'pending'
+                  ? 'bg-rose-600 text-white shadow-sm'
+                  : 'bg-white text-rose-700 hover:bg-rose-50 border border-rose-200'
+              }`}
+            >
+              ⏳ ยังไม่อัปเดต ({summary.pendingTasks})
+            </button>
+            <button
+              onClick={() => setActiveTab('updated')}
+              className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                activeTab === 'updated'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'bg-white text-emerald-700 hover:bg-emerald-50 border border-emerald-200'
+              }`}
+            >
+              ✅ อัปเดตแล้ว ({summary.updatedTasks})
+            </button>
+            <button
+              onClick={() => setActiveTab('roadblock')}
+              className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                activeTab === 'roadblock'
+                  ? 'bg-amber-600 text-white shadow-sm'
+                  : 'bg-white text-amber-700 hover:bg-amber-50 border border-amber-200'
+              }`}
+            >
+              ⚠️ แจ้งติดปัญหา ({summary.roadblockTasks})
+            </button>
+          </div>
+
+          {/* 📋 Task Cards List */}
+          {filteredTasks.length === 0 ? (
+            <div className="bg-white rounded-3xl p-12 text-center border border-slate-200/80 shadow-xs space-y-3">
+              <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto">
+                <CheckSquare size={32} />
+              </div>
+              <h3 className="text-lg font-black text-slate-800">ไม่มีงานตามเงื่อนไขที่เลือก</h3>
+              <p className="text-sm text-slate-500 max-w-md mx-auto">
+                {activeTab === 'pending'
+                  ? 'ยินดีด้วย! คุณได้เข้าตรวจและอัปเดตงานตามแผนของวันนี้ครบถ้วนแล้ว'
+                  : 'ไม่พบรายการงานตามแผนที่ตรงกับเงื่อนไขการค้นหาหรือตัวกรองในขณะนี้'}
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {filteredTasks.map(task => {
+                const reasonMeta = getRoadblockReason(task.status_reason);
+
+                return (
+                  <div
+                    key={task.id}
+                    className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs hover:shadow-md transition-all flex flex-col justify-between group"
+                  >
+                    <div>
+                      {/* Card Header: Plot & Status Badge */}
+                      <div className="flex items-start justify-between gap-3 mb-3">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="px-2.5 py-1 bg-blue-50 text-blue-700 font-black text-xs rounded-lg border border-blue-200">
+                              {task.plot_name}
+                            </span>
+                            <span className="text-[11px] text-slate-400 font-bold">
+                              {task.project_name}
+                            </span>
+                          </div>
+                          {selectedForeman === 'all' && (
+                            <p className="text-[11px] text-slate-500 font-semibold flex items-center gap-1">
+                              <User size={12} className="text-slate-400" />
+                              <span>โฟร์แมน: {task.foreman_name}</span>
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Status Badge */}
+                        {task.is_updated_today ? (
+                          <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-black rounded-lg flex items-center gap-1 shrink-0">
+                            <CheckCircle2 size={13} className="stroke-[2.5]" />
+                            <span>อัปเดตแล้ววันนี้</span>
+                          </span>
+                        ) : task.status_reason ? (
+                          <span className="px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-black rounded-lg flex items-center gap-1 shrink-0">
+                            <span>{reasonMeta?.icon || '⚠️'}</span>
+                            <span className="truncate max-w-[120px]">{reasonMeta?.label || 'ติดปัญหา'}</span>
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-1 bg-rose-50 text-rose-700 border border-rose-200 text-[11px] font-black rounded-lg flex items-center gap-1 shrink-0">
+                            <Clock size={13} />
+                            <span>ยังไม่อัปเดต</span>
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Task Name & Order */}
+                      <div className="mb-3">
+                        <h4 className="text-base font-black text-slate-900 group-hover:text-blue-600 transition-colors">
+                          {task.task_name}
+                        </h4>
+                        <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1.5 font-medium">
+                          <Calendar size={13} className="text-slate-400" />
+                          <span>
+                            ตามแผน: {task.planned_start} ถึง {task.planned_end}
+                          </span>
+                        </p>
+                      </div>
+
+                      {/* Progress bar */}
+                      <div className="space-y-1.5 mb-3 bg-slate-50 p-3 rounded-xl border border-slate-100">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-slate-500 font-bold">ความคืบหน้าปัจจุบัน</span>
+                          <span className="font-black text-slate-800">{task.current_progress}%</span>
+                        </div>
+                        <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                          <div
+                            className={`h-2 rounded-full transition-all duration-300 ${
+                              task.current_progress >= 100
+                                ? 'bg-emerald-500'
+                                : task.current_progress > 0
+                                ? 'bg-blue-600'
+                                : 'bg-slate-300'
+                            }`}
+                            style={{ width: `${Math.min(100, Math.max(0, task.current_progress))}%` }}
+                          />
+                        </div>
+                        {task.contractor_name && (
+                          <p className="text-[11px] text-slate-500 font-medium truncate pt-1">
+                            👷 ผู้รับเหมา: <span className="font-bold text-slate-700">{task.contractor_name}</span>
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Reason Callout if reported */}
+                      {task.status_reason && !task.is_updated_today && (
+                        <div className="mb-3 p-3 bg-amber-50/80 rounded-xl border border-amber-200/80 text-amber-900 space-y-1">
+                          <div className="text-xs font-black flex items-center gap-1.5 text-amber-800">
+                            <span>{reasonMeta?.icon}</span>
+                            <span>{reasonMeta?.label}</span>
+                          </div>
+                          {task.status_note && (
+                            <p className="text-[11px] text-amber-700 font-medium leading-relaxed">
+                              หมายเหตุ: {task.status_note}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Update note if updated today */}
+                      {task.is_updated_today && task.last_action && (
+                        <div className="mb-3 p-2.5 bg-emerald-50/70 rounded-xl border border-emerald-100 text-[11px] text-emerald-800 font-medium">
+                          บันทึกวันนี้: <span className="font-bold">{task.last_action}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Card Action Buttons */}
+                    <div className="pt-3 border-t border-slate-100 flex items-center gap-2">
+                      <button
+                        onClick={() => handleOpenChat(task)}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black shadow-xs active:scale-95 transition-all cursor-pointer"
+                        title="เข้าห้องแชทและบันทึกอัปเดตงานนี้"
+                      >
+                        <MessageSquare size={14} className="stroke-[2.5]" />
+                        <span>เข้าห้องแชท / อัปเดต</span>
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          setSelectedTaskForRoadblock(task);
+                          setSelectedReasonId(task.status_reason || 'material_issue');
+                          setRoadblockNote(task.status_note || '');
+                        }}
+                        className={`p-2 rounded-xl text-xs font-bold border transition-all active:scale-95 cursor-pointer ${
+                          task.status_reason
+                            ? 'bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100'
+                            : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-amber-700'
+                        }`}
+                        title="แจ้งเหตุผลไม่เริ่มงาน / ติดปัญหา"
+                      >
+                        <AlertTriangle size={15} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* 🛠️ MODE 2: REWORKS & DEFECTS (งานที่ต้องแก้ไข & Defect ค้าง) */}
+      {/* ============================================================== */}
+      {mainTab === 'rework' && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          {/* Summary KPIs for Rework */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            <div className="bg-white rounded-2xl p-4 border border-rose-200/80 shadow-xs flex flex-col justify-between">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-500">งานรอแก้ไขทั้งหมด</span>
+                <div className="p-2 bg-rose-50 text-rose-600 rounded-xl">
+                  <Wrench size={18} />
+                </div>
+              </div>
+              <div className="mt-2">
+                <div className="text-2xl font-black text-rose-600">{reworkItems.length}</div>
+                <p className="text-[11px] text-slate-400 font-medium mt-0.5">Defect + งวดงานไม่ผ่าน</p>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl p-4 border border-purple-200/80 shadow-xs flex flex-col justify-between">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-500">Defect ค้างตรวจ</span>
+                <div className="p-2 bg-purple-50 text-purple-600 rounded-xl">
+                  <ShieldAlert size={18} />
+                </div>
+              </div>
+              <div className="mt-2">
+                <div className="text-2xl font-black text-purple-600">
+                  {reworkItems.filter(i => i.type === 'defect').length}
+                </div>
+                <p className="text-[11px] text-slate-400 font-medium mt-0.5">รายการตรวจ Defect</p>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl p-4 border border-amber-200/80 shadow-xs flex flex-col justify-between">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-500">งวดงานโดนแจ้งแก้ไข</span>
+                <div className="p-2 bg-amber-50 text-amber-600 rounded-xl">
+                  <AlertTriangle size={18} />
+                </div>
+              </div>
+              <div className="mt-2">
+                <div className="text-2xl font-black text-amber-600">
+                  {reworkItems.filter(i => i.type === 'task_rework').length}
+                </div>
+                <p className="text-[11px] text-slate-400 font-medium mt-0.5">QC สั่งแก้ในระบบ</p>
+              </div>
+            </div>
+
+            <div className="bg-gradient-to-br from-rose-600 to-red-700 rounded-2xl p-4 text-white shadow-md flex flex-col justify-between">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-rose-100">รายการเร่งด่วน (High)</span>
+                <Flame size={18} className="text-amber-300 animate-pulse" />
+              </div>
+              <div className="mt-2">
+                <div className="text-3xl font-black tracking-tight">
+                  {reworkItems.filter(i => i.severity === 'high').length}
+                </div>
+                <p className="text-[10px] text-rose-100 font-semibold mt-1">ต้องรีบประสานช่างด่วน</p>
+              </div>
+            </div>
+          </div>
+
+          {/* 🏷️ Filter Chips for Rework */}
+          <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-3">
+            <button
+              onClick={() => setReworkFilter('all')}
+              className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                reworkFilter === 'all'
+                  ? 'bg-rose-600 text-white shadow-sm'
+                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+              }`}
+            >
+              ทั้งหมด ({reworkItems.length})
+            </button>
+            <button
+              onClick={() => setReworkFilter('defect')}
+              className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                reworkFilter === 'defect'
+                  ? 'bg-purple-600 text-white shadow-sm'
+                  : 'bg-white text-purple-700 hover:bg-purple-50 border border-purple-200'
+              }`}
+            >
+              🛠️ Defects รายการตรวจแก้ ({reworkItems.filter(i => i.type === 'defect').length})
+            </button>
+            <button
+              onClick={() => setReworkFilter('task_rework')}
+              className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                reworkFilter === 'task_rework'
+                  ? 'bg-amber-600 text-white shadow-sm'
+                  : 'bg-white text-amber-700 hover:bg-amber-50 border border-amber-200'
+              }`}
+            >
+              ⚠️ งวดงานที่โดนแจ้งแก้ไข ({reworkItems.filter(i => i.type === 'task_rework').length})
+            </button>
+          </div>
+
+          {/* Rework Items List */}
+          {filteredReworkItems.length === 0 ? (
+            <div className="bg-white rounded-3xl p-12 text-center border border-slate-200/80 shadow-xs space-y-3">
+              <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
+                <CheckCircle2 size={32} />
+              </div>
+              <h3 className="text-lg font-black text-slate-800">ไม่มีงานที่ต้องแก้ไขในขณะนี้</h3>
+              <p className="text-sm text-slate-500 max-w-md mx-auto">
+                ยอดเยี่ยมมาก! ไม่มีรายการ Defect ค้าง หรือรายการงวดงานที่ถูกสั่งแก้ไขในแปลงที่คุณรับผิดชอบ
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {filteredReworkItems.map(item => (
+                <div
+                  key={item.id}
+                  className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs hover:shadow-md transition-all flex flex-col justify-between group"
+                >
+                  <div>
+                    {/* Header: Plot, Type & Severity */}
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="px-2.5 py-1 bg-blue-50 text-blue-700 font-black text-xs rounded-lg border border-blue-200">
+                            {item.plot_name}
+                          </span>
+                          <span className="text-[11px] text-slate-400 font-bold">
+                            {item.project_name}
+                          </span>
+                        </div>
+                        {selectedForeman === 'all' && (
+                          <p className="text-[11px] text-slate-500 font-semibold flex items-center gap-1">
+                            <User size={12} className="text-slate-400" />
+                            <span>โฟร์แมน: {item.foreman_name}</span>
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Type Badge */}
+                      <span
+                        className={`px-2.5 py-1 text-[11px] font-black rounded-lg border flex items-center gap-1 shrink-0 ${
+                          item.type === 'defect'
+                            ? 'bg-purple-50 text-purple-700 border-purple-200'
+                            : 'bg-amber-50 text-amber-800 border-amber-200'
+                        }`}
+                      >
+                        {item.type === 'defect' ? <ShieldAlert size={12} /> : <AlertTriangle size={12} />}
+                        <span>{item.type === 'defect' ? 'Defect' : 'งวดงานไม่ผ่าน'}</span>
+                      </span>
+                    </div>
+
+                    {/* Title & Task */}
+                    <div className="mb-3 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
+                            item.severity === 'high'
+                              ? 'bg-rose-100 text-rose-700'
+                              : item.severity === 'low'
+                              ? 'bg-blue-100 text-blue-700'
+                              : 'bg-amber-100 text-amber-800'
+                          }`}
+                        >
+                          {item.severity === 'high' ? 'ด่วนมาก' : item.severity === 'low' ? 'ปกติ' : 'ปานกลาง'}
+                        </span>
+                        <span className="text-xs font-bold text-slate-500">{item.task_name}</span>
+                      </div>
+
+                      <h4 className="text-base font-black text-slate-900 group-hover:text-rose-600 transition-colors">
+                        {item.title}
+                      </h4>
+
+                      {item.description && item.description !== item.title && (
+                        <p className="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-100 leading-relaxed font-medium">
+                          {item.description}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Details: Reporter & Contractor */}
+                    <div className="space-y-1 mb-3 text-xs text-slate-500 font-medium">
+                      {item.reporter && (
+                        <p className="flex items-center gap-1.5">
+                          <User size={13} className="text-slate-400" />
+                          <span>ผู้สั่งตรวจ/แจ้ง: <strong className="text-slate-700">{item.reporter}</strong></span>
+                        </p>
+                      )}
+                      {item.contractor_name && (
+                        <p className="flex items-center gap-1.5">
+                          <HardHat size={13} className="text-slate-400" />
+                          <span>ช่างรับผิดชอบ: <strong className="text-slate-700">{item.contractor_name}</strong></span>
+                        </p>
+                      )}
+                      {item.created_at && (
+                        <p className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                          <Clock size={12} />
+                          <span>บันทึกเมื่อ: {new Date(item.created_at).toLocaleDateString('th-TH')}</span>
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Action Button */}
+                  <div className="pt-3 border-t border-slate-100">
+                    {item.type === 'defect' ? (
+                      <button
+                        onClick={() => handleOpenDefectChat(item)}
+                        className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-black shadow-xs active:scale-95 transition-all cursor-pointer"
+                        title="เข้าห้องแชท Defect เพื่อตรวจสอบและส่งงานแก้ไข"
+                      >
+                        <MessageSquare size={14} className="stroke-[2.5]" />
+                        <span>เข้าห้องแชท Defect / ส่งงานแก้ไข</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleOpenReworkTaskChat(item)}
+                        className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black shadow-xs active:scale-95 transition-all cursor-pointer"
+                        title="เข้าห้องแชทงวดงานเพื่อดูข้อความสั่งแก้และอัปเดตงานใหม่"
+                      >
+                        <MessageSquare size={14} className="stroke-[2.5]" />
+                        <span>เข้าห้องแชทงวดงาน / แก้ไขงาน</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

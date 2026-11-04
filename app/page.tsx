@@ -3513,7 +3513,7 @@ export default function ConstructionApp() {
                  )}
                  {view === 'defect-progress' && (
                     <button onClick={() => setView(defectReturnView || 'house-detail')} className="text-sm font-bold text-slate-500 hover:text-blue-600 flex items-center gap-1.5 hover:-translate-x-1 transition-transform">
-                       <ArrowLeft size={16}/> BACK TO {defectReturnView === 'daily-activities' ? 'DAILY ACTIVITIES' : defectReturnView === 'global-feed' ? 'LIVE FEED' : defectReturnView === 'dashboard' ? 'DASHBOARD' : 'PLOT'}
+                       <ArrowLeft size={16}/> BACK TO {defectReturnView === 'foreman-workspace' ? 'FOREMAN WORKSPACE' : defectReturnView === 'daily-activities' ? 'DAILY ACTIVITIES' : defectReturnView === 'global-feed' ? 'LIVE FEED' : defectReturnView === 'dashboard' ? 'DASHBOARD' : 'PLOT'}
                     </button>
                  )}
               </div>
@@ -4199,6 +4199,13 @@ export default function ConstructionApp() {
                   onSelectPlot={(plot: any) => {
                     setSelectedPlot(plot);
                     setView('house-detail');
+                  }}
+                  defects={defects}
+                  onNavigateToDefectChat={(plot: any, defect: any) => {
+                    setSelectedPlot(plot);
+                    setSelectedDefect(defect);
+                    setDefectReturnView('foreman-workspace');
+                    setView('defect-progress');
                   }}
                   onNavigateToTaskChat={(plot: any, task: any) => {
                     setSelectedPlot(plot);

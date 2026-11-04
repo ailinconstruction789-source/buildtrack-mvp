@@ -552,3 +552,205 @@ export async function recordForemanTaskRoadblockReason(
 
   return { success: true };
 }
+
+export interface ForemanReworkItem {
+  id: string;
+  type: 'defect' | 'task_rework';
+  plot_id: string;
+  plot_name: string;
+  project_name: string;
+  foreman_name: string;
+  title: string;
+  description?: string;
+  task_name?: string;
+  task_template_id?: string | number;
+  severity?: 'high' | 'medium' | 'low';
+  status: string;
+  status_label: string;
+  created_at?: string;
+  reporter?: string;
+  contractor_name?: string;
+  defectObj?: any;
+  taskObj?: any;
+}
+
+export interface GetForemanReworkOptions {
+  plots: any[];
+  defects?: any[];
+  allUpdatesRecord?: any[];
+  taskTemplates?: any[];
+  foremanName?: string;
+}
+
+/**
+ * Extracts all active defects and rejected tasks requiring rectification
+ * for the specified foreman.
+ */
+export function getForemanReworkItems(options: GetForemanReworkOptions): ForemanReworkItem[] {
+  const {
+    plots = [],
+    defects = [],
+    allUpdatesRecord = [],
+    taskTemplates = [],
+    foremanName = 'all'
+  } = options;
+
+  if (!Array.isArray(plots)) return [];
+
+  const isTargetAll = !foremanName || foremanName.toLowerCase() === 'all';
+  const targetFmLower = foremanName ? foremanName.toLowerCase().trim() : '';
+
+  // 1. Build fast plot lookup
+  const plotMap = new Map<string, any>();
+  const matchedPlotIds = new Set<string>();
+
+  plots.forEach(plot => {
+    const plotIdStr = String(plot.id);
+    plotMap.set(plotIdStr, plot);
+    const pFm = getPlotForemanName(plot);
+    if (isTargetAll || pFm.toLowerCase() === targetFmLower) {
+      matchedPlotIds.add(plotIdStr);
+    }
+  });
+
+  // 2. Build task templates lookup
+  const taskMap = new Map<string, any>();
+  if (Array.isArray(taskTemplates)) {
+    taskTemplates.forEach(t => {
+      taskMap.set(String(t.id), t);
+    });
+  }
+
+  const reworkItems: ForemanReworkItem[] = [];
+
+  // 3. Collect active Defects
+  if (Array.isArray(defects)) {
+    defects.forEach(d => {
+      const plotIdStr = String(d.plot_id);
+      if (!matchedPlotIds.has(plotIdStr)) return;
+
+      const plot = plotMap.get(plotIdStr);
+      if (!plot) return;
+
+      const pFm = getPlotForemanName(plot) || 'ยังไม่ระบุโฟร์แมน';
+      const statusLower = (d.status || '').toLowerCase();
+      const isClosed =
+        statusLower === 'resolved' ||
+        statusLower === 'closed' ||
+        statusLower === 'completed' ||
+        statusLower === 'approved' ||
+        d.progress === 100;
+
+      if (isClosed) return;
+
+      const taskId = d.task_id || d.task_template_id;
+      const task = taskId ? taskMap.get(String(taskId)) : null;
+
+      let severity: 'high' | 'medium' | 'low' = 'medium';
+      const sevLower = (d.severity || '').toLowerCase();
+      if (sevLower.includes('high') || sevLower.includes('urgent') || sevLower.includes('เร่งด่วน')) {
+        severity = 'high';
+      } else if (sevLower.includes('low') || sevLower.includes('น้อย')) {
+        severity = 'low';
+      }
+
+      const statusLabel =
+        statusLower === 'in_progress' || statusLower === 'in progress'
+          ? 'กำลังดำเนินการ'
+          : statusLower === 'pending_verification'
+          ? 'รอ QC ตรวจซ้ำ'
+          : 'รอการแก้ไข';
+
+      reworkItems.push({
+        id: `defect-${d.id}`,
+        type: 'defect',
+        plot_id: plotIdStr,
+        plot_name: plot.name || plot.plot_number || `แปลง ${plot.id}`,
+        project_name: plot.project_name || 'ไอลิน',
+        foreman_name: pFm,
+        title: d.description || d.title || 'รายการ Defect รอแก้ไข',
+        description: d.description || '',
+        task_name: task?.task_name || d.task_name || 'งานทั่วไป',
+        task_template_id: taskId,
+        severity,
+        status: d.status || 'open',
+        status_label: statusLabel,
+        created_at: d.created_at,
+        reporter: d.reporter || d.reported_by || 'QC',
+        contractor_name: d.contractor_name || '',
+        defectObj: d,
+        taskObj: task,
+      });
+    });
+  }
+
+  // 4. Collect tasks where latest update is "แจ้งแก้ไข" or "ไม่อนุมัติ"
+  if (Array.isArray(allUpdatesRecord)) {
+    // Group updates by `${plot_id}-${task_template_id}`
+    const updatesByTask = new Map<string, any[]>();
+    allUpdatesRecord.forEach(u => {
+      const plotIdStr = String(u.plot_id);
+      if (!matchedPlotIds.has(plotIdStr)) return;
+      if (!u.task_template_id) return;
+
+      const key = `${plotIdStr}-${u.task_template_id}`;
+      if (!updatesByTask.has(key)) {
+        updatesByTask.set(key, []);
+      }
+      updatesByTask.get(key)!.push(u);
+    });
+
+    updatesByTask.forEach((updatesList, key) => {
+      // Sort newest first
+      updatesList.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      const latest = updatesList[0];
+      if (!latest) return;
+
+      const act = String(latest.action || '');
+      const isRejected = act.includes('แจ้งแก้ไข') || act.includes('ไม่อนุมัติ') || act.includes('ตีกลับ') || act.includes('ไม่ผ่าน');
+
+      if (!isRejected) return;
+
+      // Check if task has already been resolved or approved after this rejection
+      if (latest.progress === 100 && (act.includes('อนุมัติ') || act.includes('ผ่าน'))) {
+        return;
+      }
+
+      const [plotIdStr, taskIdStr] = key.split('-');
+      const plot = plotMap.get(plotIdStr);
+      if (!plot) return;
+
+      const pFm = getPlotForemanName(plot) || 'ยังไม่ระบุโฟร์แมน';
+      const task = taskMap.get(taskIdStr);
+
+      reworkItems.push({
+        id: `task-rework-${key}`,
+        type: 'task_rework',
+        plot_id: plotIdStr,
+        plot_name: plot.name || plot.plot_number || `แปลง ${plot.id}`,
+        project_name: plot.project_name || 'ไอลิน',
+        foreman_name: pFm,
+        title: `งวดงานไม่ผ่าน: ${task?.task_name || 'งานก่อสร้าง'}`,
+        description: latest.text || latest.action || 'QC สั่งแจ้งแก้ไขงวดงาน',
+        task_name: task?.task_name || 'งานก่อสร้าง',
+        task_template_id: taskIdStr,
+        severity: 'high',
+        status: 'rework_required',
+        status_label: 'QC สั่งแก้ไข',
+        created_at: latest.created_at,
+        reporter: latest.user_name || latest.role || 'QC',
+        contractor_name: latest.contractor_name || '',
+        taskObj: task || { id: taskIdStr, task_name: 'งานก่อสร้าง', task_order: 1 },
+      });
+    });
+  }
+
+  // Sort newest first
+  reworkItems.sort((a, b) => {
+    const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+    const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+    return timeB - timeA;
+  });
+
+  return reworkItems;
+}

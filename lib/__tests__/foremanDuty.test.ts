@@ -6,6 +6,7 @@ import {
   getPlotForemanName,
   getForemanScheduledTasksForDate,
   computeForemanDailySummary,
+  getForemanReworkItems,
 } from '../foremanDuty';
 
 describe('foremanDuty helper library', () => {
@@ -245,6 +246,66 @@ describe('foremanDuty helper library', () => {
       const summary = computeForemanDailySummary([]);
       expect(summary.totalTasks).toBe(0);
       expect(summary.complianceRate).toBe(100);
+    });
+  });
+
+  describe('getForemanReworkItems', () => {
+    const mockPlots = [
+      { id: 'p1', name: 'A-01', foreman_name: 'LEAB', project_name: 'ไอลิน 6' },
+      { id: 'p2', name: 'A-02', foreman_name: 'VIEW', project_name: 'ไอลิน 6' },
+    ];
+
+    const mockDefects = [
+      { id: 1, plot_id: 'p1', task_id: 't1', description: 'เสาเอียง', status: 'open', severity: 'high' },
+      { id: 2, plot_id: 'p1', task_id: 't2', description: 'สีลอก', status: 'resolved', severity: 'low' }, // resolved -> should be excluded
+      { id: 3, plot_id: 'p2', task_id: 't1', description: 'กระเบื้องแตก', status: 'open', severity: 'medium' },
+    ];
+
+    const mockUpdates = [
+      {
+        id: 99,
+        plot_id: 'p1',
+        task_template_id: 't3',
+        action: 'QC ตรวจไม่ผ่าน สั่งแจ้งแก้ไข',
+        text: 'รอยต่อคานไม่เรียบเนียน',
+        created_at: '2026-11-04T12:00:00Z',
+      },
+    ];
+
+    const mockTemplates = [
+      { id: 't1', task_name: 'งานเสา' },
+      { id: 't2', task_name: 'งานทาสี' },
+      { id: 't3', task_name: 'งานคาน' },
+    ];
+
+    it('collects active defects and rejected tasks for a specific foreman', () => {
+      const leabItems = getForemanReworkItems({
+        plots: mockPlots,
+        defects: mockDefects,
+        allUpdatesRecord: mockUpdates,
+        taskTemplates: mockTemplates,
+        foremanName: 'LEAB',
+      });
+
+      // Defect 1 (open) + Task Rework 99 = 2 items
+      expect(leabItems.length).toBe(2);
+      expect(leabItems.some(i => i.type === 'defect' && i.description === 'เสาเอียง')).toBe(true);
+      expect(leabItems.some(i => i.type === 'task_rework' && i.title.includes('งานคาน'))).toBe(true);
+      // Defect 2 is resolved -> not included
+      expect(leabItems.some(i => i.description === 'สีลอก')).toBe(false);
+    });
+
+    it('collects all items when foremanName is "all"', () => {
+      const allItems = getForemanReworkItems({
+        plots: mockPlots,
+        defects: mockDefects,
+        allUpdatesRecord: mockUpdates,
+        taskTemplates: mockTemplates,
+        foremanName: 'all',
+      });
+
+      // Defect 1 (p1), Defect 3 (p2), Task Rework 99 (p1) = 3 items
+      expect(allItems.length).toBe(3);
     });
   });
 });
