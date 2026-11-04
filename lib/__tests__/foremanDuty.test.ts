@@ -7,6 +7,7 @@ import {
   getForemanScheduledTasksForDate,
   computeForemanDailySummary,
   getForemanReworkItems,
+  getMonthlyForemanInspectionCompliance,
 } from '../foremanDuty';
 
 describe('foremanDuty helper library', () => {
@@ -306,6 +307,58 @@ describe('foremanDuty helper library', () => {
 
       // Defect 1 (p1), Defect 3 (p2), Task Rework 99 (p1) = 3 items
       expect(allItems.length).toBe(3);
+    });
+  });
+
+  describe('getMonthlyForemanInspectionCompliance', () => {
+    const mockPlots = [
+      { id: 'p1', name: 'A-01', foreman_name: 'LEAB', project_name: 'ไอลิน 6' },
+    ];
+    const mockTemplates = [
+      { id: 't1', task_name: 'งานเสา' },
+    ];
+    const mockSchedules = {
+      'p1-t1': { planned_start: '2026-11-01', planned_end: '2026-11-05' },
+    };
+    const mockUpdates = [
+      { plot_id: 'p1', task_template_id: 't1', created_at: '2026-11-02T10:00:00Z', action: 'เทเสา 50%' },
+    ];
+
+    it('generates 30 days for November 2026 and computes compliance per day', () => {
+      const monthly = getMonthlyForemanInspectionCompliance({
+        year: 2026,
+        month: 11,
+        plots: mockPlots,
+        taskTemplates: mockTemplates,
+        schedules: mockSchedules,
+        allUpdatesRecord: mockUpdates,
+        foremanName: 'LEAB',
+        todayDateStr: '2026-11-04',
+      });
+
+      expect(monthly.days.length).toBe(30);
+      expect(monthly.monthLabel).toContain('พฤศจิกายน');
+
+      // Nov 2: Has schedule & update -> 100% complete
+      const nov2 = monthly.days.find(d => d.date === '2026-11-02');
+      expect(nov2?.totalScheduled).toBe(1);
+      expect(nov2?.updated).toBe(1);
+      expect(nov2?.status).toBe('complete');
+
+      // Nov 3: Has schedule, no update -> missed
+      const nov3 = monthly.days.find(d => d.date === '2026-11-03');
+      expect(nov3?.totalScheduled).toBe(1);
+      expect(nov3?.updated).toBe(0);
+      expect(nov3?.status).toBe('missed');
+
+      // Nov 10: Out of schedule range -> empty
+      const nov10 = monthly.days.find(d => d.date === '2026-11-10');
+      expect(nov10?.totalScheduled).toBe(0);
+      expect(nov10?.status).toBe('empty');
+
+      // Nov 15: In future -> future
+      const nov15 = monthly.days.find(d => d.date === '2026-11-15');
+      expect(nov15?.isFuture).toBe(true);
     });
   });
 });

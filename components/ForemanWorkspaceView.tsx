@@ -45,6 +45,7 @@ import {
   type ForemanReworkItem,
   type RoadblockReasonId,
 } from '@/lib/foremanDuty';
+import ForemanInspectionCalendar from './ForemanInspectionCalendar';
 
 interface ForemanWorkspaceViewProps {
   plots: any[];
@@ -92,7 +93,7 @@ export default function ForemanWorkspaceView({
   fetchAllData,
 }: ForemanWorkspaceViewProps) {
   // Main view mode: 'schedule' (งานตามแผน) or 'rework' (งานที่ต้องแก้ไข & Defect)
-  const [mainTab, setMainTab] = useState<'schedule' | 'rework'>('schedule');
+  const [mainTab, setMainTab] = useState<'schedule' | 'rework' | 'calendar'>('schedule');
 
   // Today's date in local YYYY-MM-DD
   const todayStr = useMemo(() => {
@@ -532,6 +533,20 @@ export default function ForemanWorkspaceView({
             </span>
           )}
         </button>
+      
+        {(isAdmin || isOwner || isSiteEngineer || isProjectPlanner) && (
+          <button
+            onClick={() => setMainTab('calendar')}
+            className={`flex items-center gap-2.5 px-5 py-3 rounded-2xl text-xs sm:text-sm font-black transition-all cursor-pointer ${
+              mainTab === 'calendar'
+                ? 'bg-amber-600 text-white shadow-md shadow-amber-500/20'
+                : 'bg-white text-slate-600 hover:bg-amber-50 hover:text-amber-800 border border-slate-200/80'
+            }`}
+          >
+            <Calendar size={18} />
+            <span>ปฏิทินตรวจงานรายเดือน (Owner)</span>
+          </button>
+        )}
       </div>
 
       {/* ⚠️ Actionable Rework Banner (Shown in Schedule mode if rework items exist) */}
@@ -589,7 +604,8 @@ export default function ForemanWorkspaceView({
       )}
 
       {/* ⚙️ Toolbar: Foreman Selector, Project Filter, Search & Auto-Save Badge */}
-      <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200/80 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
+      {mainTab !== 'calendar' && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200/80 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-3">
           {/* Foreman Selector */}
           <div className="flex items-center gap-2">
@@ -676,6 +692,7 @@ export default function ForemanWorkspaceView({
           </div>
         </div>
       </div>
+      )}
 
       {/* ============================================================== */}
       {/* 📅 MODE 1: DAILY SCHEDULED TASKS (งานตามแผนประจำวัน) */}
@@ -1196,6 +1213,27 @@ export default function ForemanWorkspaceView({
             </div>
           )}
         </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* 📅 MODE 3: MONTHLY AUDIT CALENDAR (ปฏิทินตรวจงานรายเดือน) */}
+      {/* ============================================================== */}
+      {mainTab === 'calendar' && (
+        <ForemanInspectionCalendar
+          plots={plots}
+          taskTemplates={taskTemplates}
+          schedules={schedules}
+          assignments={assignments}
+          allUpdatesRecord={allUpdatesRecord}
+          foremenList={foremenList}
+          selectedForeman={selectedForeman}
+          onSelectForeman={setSelectedForeman}
+          snapshots={snapshots}
+          onSelectDate={(dateStr) => {
+            setSelectedDate(dateStr);
+            setMainTab('schedule');
+          }}
+        />
       )}
 
       {/* ⚠️ Roadblock Reason Modal */}

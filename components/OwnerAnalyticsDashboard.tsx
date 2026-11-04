@@ -5,6 +5,7 @@ import { TrendingUp, AlertTriangle, Target, ShieldAlert, Award, Users, Activity,
 import { LineChart, Line, BarChart, Bar, ComposedChart, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
 import WeeklyHeatmap from './Analytics/WeeklyHeatmap';
 import BillingCycleHeatmap from './Analytics/BillingCycleHeatmap';
+import ForemanInspectionCalendar from './ForemanInspectionCalendar';
 
 export default function OwnerAnalyticsDashboard({
   projects, plots, taskTemplates, schedules: rawSchedules, defects, allUpdatesRecord: rawAllUpdatesRecord, foremenList, latestUpdatesMap: rawLatestUpdatesMap, contractors, assignments, weatherInfo, qcSePerformance
@@ -1491,6 +1492,19 @@ export default function OwnerAnalyticsDashboard({
               </tbody>
             </table>
           </div>
+        </div>
+
+        {/* 6. Foreman Daily Inspection Audit Calendar */}
+        <div className="lg:col-span-2">
+          <ForemanInspectionCalendar
+            plots={plots}
+            taskTemplates={taskTemplates}
+            schedules={rawSchedules}
+            assignments={assignments}
+            allUpdatesRecord={rawAllUpdatesRecord}
+            foremenList={foremenList}
+            title="ปฏิทินตรวจสอบการเข้างานของโฟร์แมนประจำเดือน (Foreman Inspection Audit)"
+          />
         </div>
 
         {/* 5. Performance Heatmaps (Weekly & Billing Cycle) */}
