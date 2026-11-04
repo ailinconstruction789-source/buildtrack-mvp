@@ -376,26 +376,197 @@ export function calculateForemanAggregates(
   });
 }
 
+export type SEForemanMap = Record<string, string[]>;
+
+/**
+ * Auto-detects SE -> Foremen mapping based on current plots data.
+ */
+export function autoDetectSEForemanMap(plots: any[]): SEForemanMap {
+  const map: SEForemanMap = {};
+  (plots || []).forEach((p: any) => {
+    const se = (p.site_engineer || '').trim();
+    const fm = (p.foreman_name || p.foreman || '').trim();
+    if (se && fm && se !== 'วิศวกรส่วนกลาง' && se !== 'วิศวกรส่วนกลาง (Site Engineer)') {
+      if (!map[se]) map[se] = [];
+      if (!map[se].includes(fm)) map[se].push(fm);
+    }
+  });
+  return map;
+}
+
+/**
+ * Resolves the effective Site Engineer for a plot based on the SE -> Foremen team mapping.
+ */
+export function getEffectiveSEForPlot(plot: any, seForemanMap?: SEForemanMap): string | null {
+  const fm = (plot.foreman_name || plot.foreman || '').trim();
+  if (fm && seForemanMap) {
+    for (const [seName, foremen] of Object.entries(seForemanMap)) {
+      if (foremen && foremen.includes(fm)) {
+        return seName;
+      }
+    }
+  }
+  return plot.site_engineer || null;
+}
+
+/**
+ * Saves SE -> Foremen mapping to task_updates audit trail, localStorage,
+ * and batch-updates plots.site_engineer in Supabase.
+ */
+export async function saveSEForemanMap(
+  supabase: any,
+  seForemanMap: SEForemanMap,
+  updatedBy: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    // 1. Cache to localStorage
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('buildtrack_se_foreman_map', JSON.stringify(seForemanMap));
+      } catch (e) {
+        // ignore storage error
+      }
+    }
+
+    // 2. Audit log to task_updates
+    try {
+      await supabase.from('task_updates').insert([
+        {
+          plot_id: null,
+          role: 'Site Engineer',
+          action: 'ASSIGN_SE_FOREMEN',
+          user_name: updatedBy,
+          text_content: JSON.stringify(seForemanMap)
+        }
+      ]);
+    } catch (auditErr) {
+      console.warn('task_updates audit insert warning:', auditErr);
+    }
+
+    // 3. Batch update plots table in Supabase so plots reflect the assigned SE
+    for (const [seName, foremen] of Object.entries(seForemanMap)) {
+      if (foremen && foremen.length > 0) {
+        try {
+          await supabase
+            .from('plots')
+            .update({ site_engineer: seName })
+            .in('foreman_name', foremen);
+        } catch (e) {
+          console.warn(`Failed to batch update plots for SE ${seName}:`, e);
+        }
+      }
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    console.error('saveSEForemanMap error:', err);
+    return { success: false, error: err?.message || 'Failed to save SE-foreman mapping' };
+  }
+}
+
+/**
+ * Loads SE -> Foremen mapping from task_updates, localStorage, or auto-detect from plots.
+ */
+export async function loadSEForemanMap(
+  supabase: any,
+  plots?: any[]
+): Promise<SEForemanMap> {
+  // 1. Try reading latest record from task_updates
+  try {
+    const { data, error } = await supabase
+      .from('task_updates')
+      .select('text_content')
+      .eq('action', 'ASSIGN_SE_FOREMEN')
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (!error && data && data.length > 0 && data[0].text_content) {
+      const parsed = JSON.parse(data[0].text_content);
+      if (parsed && typeof parsed === 'object') {
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem('buildtrack_se_foreman_map', JSON.stringify(parsed));
+          } catch {}
+        }
+        return parsed;
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  // 2. Fallback to localStorage
+  if (typeof window !== 'undefined') {
+    try {
+      const cached = localStorage.getItem('buildtrack_se_foreman_map');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    } catch (e) {}
+  }
+
+  // 3. Fallback: Auto-detect from plots in memory
+  return autoDetectSEForemanMap(plots || []);
+}
+
 /**
  * Rule 2 & 3 (Agreed): Aggregates planning scores grouped by Site Engineer.
+ * Uses SE -> Foremen mapping (if provided) so plots roll up to their SE automatically.
  * Weighted average = Sum of scores of all plots under SE / Total locked plots under SE.
  */
 export function calculateSiteEngineerAggregates(
   plots: any[],
-  siteEngineersList?: any[]
+  siteEngineersList?: any[],
+  seForemanMap?: SEForemanMap
 ): SiteEngineerScoreSummary[] {
   const groups: Record<string, any[]> = {};
-
-  (plots || []).forEach((p: any) => {
-    const seName = (p.site_engineer || 'วิศวกรส่วนกลาง (Site Engineer)').trim();
-    if (!groups[seName]) groups[seName] = [];
-    groups[seName].push(p);
-  });
+  const seForemenListMap: Record<string, Set<string>> = {};
 
   (siteEngineersList || []).forEach((se: any) => {
     const name = (se.username || se.name || '').trim();
-    if (name && !groups[name]) {
-      groups[name] = [];
+    if (name) {
+      if (!groups[name]) groups[name] = [];
+      if (!seForemenListMap[name]) seForemenListMap[name] = new Set<string>();
+    }
+  });
+
+  if (seForemanMap) {
+    Object.keys(seForemanMap).forEach((seName) => {
+      const name = seName.trim();
+      if (name) {
+        if (!groups[name]) groups[name] = [];
+        if (!seForemenListMap[name]) seForemenListMap[name] = new Set<string>();
+        (seForemanMap[seName] || []).forEach((fm) => seForemenListMap[name].add(fm.trim()));
+      }
+    });
+  }
+
+  const resolveSE = (p: any): string => {
+    const fm = (p.foreman_name || p.foreman || '').trim();
+    if (fm && seForemanMap) {
+      for (const [seName, foremen] of Object.entries(seForemanMap)) {
+        if (foremen && foremen.includes(fm)) {
+          return seName;
+        }
+      }
+    }
+    const native = (p.site_engineer || '').trim();
+    if (native && native !== 'วิศวกรส่วนกลาง' && native !== 'วิศวกรส่วนกลาง (Site Engineer)') {
+      return native;
+    }
+    return 'วิศวกรส่วนกลาง';
+  };
+
+  (plots || []).forEach((p: any) => {
+    const seName = resolveSE(p);
+    if (!groups[seName]) groups[seName] = [];
+    groups[seName].push(p);
+
+    const fm = (p.foreman_name || p.foreman || '').trim();
+    if (fm) {
+      if (!seForemenListMap[seName]) seForemenListMap[seName] = new Set<string>();
+      seForemenListMap[seName].add(fm);
     }
   });
 
@@ -403,13 +574,9 @@ export function calculateSiteEngineerAggregates(
     const plotList = groups[name];
     let totalScore = 0;
     let lockedCount = 0;
-    const foremenSet = new Set<string>();
 
     plotList.forEach((p: any) => {
       const base = parsePlotBaseline(p);
-      const fm = p.foreman_name || p.foreman;
-      if (fm) foremenSet.add(fm.trim());
-
       if (base.isLocked) {
         lockedCount++;
         totalScore += base.score;
@@ -426,7 +593,7 @@ export function calculateSiteEngineerAggregates(
       weightedAvgScore: weightedAvg,
       grade: badgeStyle.grade,
       badgeStyle,
-      foremen: Array.from(foremenSet),
+      foremen: Array.from(seForemenListMap[name] || []),
       plots: plotList
     };
   }).sort((a, b) => b.weightedAvgScore - a.weightedAvgScore);

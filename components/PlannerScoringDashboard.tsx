@@ -1,10 +1,10 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { 
   Award, Lock, Search, History, CheckCircle2, ChevronRight, RefreshCw, 
   AlertTriangle, ShieldCheck, Home, ArrowRight, Info, Filter, User, 
-  HardHat, Users, CheckCircle, BarChart3, Layers, CalendarClock
+  HardHat, Users, CheckCircle, BarChart3, Layers, CalendarClock, Settings
 } from 'lucide-react';
 import { 
   parsePlotBaseline, 
@@ -13,6 +13,10 @@ import {
   calculateSiteEngineerAggregates,
   calculateProjectPlannerScore,
   assignPlotSiteEngineer,
+  loadSEForemanMap,
+  saveSEForemanMap,
+  getEffectiveSEForPlot,
+  SEForemanMap,
   ForemanScoreSummary,
   SiteEngineerScoreSummary,
   ProjectPlannerScoreSummary
@@ -20,6 +24,7 @@ import {
 import { isRelevantExecutiveProject } from '@/lib/constructionReportsIndex';
 import { supabase } from '@/lib/supabase';
 import ScheduleHistoryModal from './ScheduleHistoryModal';
+import SEForemanAssignmentModal from './SEForemanAssignmentModal';
 
 interface PlannerScoringDashboardProps {
   projects: any[];
@@ -56,6 +61,17 @@ export default function PlannerScoringDashboard({
   const [selectedForemanFilter, setSelectedForemanFilter] = useState<string | null>(null);
   const [selectedSeFilter, setSelectedSeFilter] = useState<string | null>(null);
   const [updatingPlotSeId, setUpdatingPlotSeId] = useState<string | null>(null);
+  const [seForemanMap, setSeForemanMap] = useState<SEForemanMap>({});
+  const [showSeTeamModal, setShowSeTeamModal] = useState(false);
+
+  // Load SE-Foreman Mapping on mount or when plots change
+  useEffect(() => {
+    let active = true;
+    loadSEForemanMap(supabase, plots).then((map) => {
+      if (active) setSeForemanMap(map);
+    });
+    return () => { active = false; };
+  }, [plots]);
 
   // Extract lists of Site Engineers and Foremen from allUsers (deduplicated by name)
   const siteEngineersList = useMemo(() => {
@@ -111,8 +127,8 @@ export default function PlannerScoringDashboard({
 
   // 2. Calculate Site Engineer Aggregates (Weighted Average - Rule 2)
   const siteEngineerSummaries: SiteEngineerScoreSummary[] = useMemo(() => {
-    return calculateSiteEngineerAggregates(relevantPlots, siteEngineersList);
-  }, [relevantPlots, siteEngineersList]);
+    return calculateSiteEngineerAggregates(relevantPlots, siteEngineersList, seForemanMap);
+  }, [relevantPlots, siteEngineersList, seForemanMap]);
 
   // 3. Calculate Project Planner Hybrid Score (30% Baseline Setup + 70% Site Execution - Rule 7)
   const plannerSummary: ProjectPlannerScoreSummary = useMemo(() => {
@@ -123,6 +139,7 @@ export default function PlannerScoringDashboard({
   const allPlotItems = useMemo(() => {
     return relevantPlots.map((p: any) => {
       const base = parsePlotBaseline(p);
+      const effectiveSe = getEffectiveSEForPlot(p, seForemanMap) || p.site_engineer || base.siteEngineer || 'วิศวกรส่วนกลาง';
       return {
         plot: p,
         baseline: base,
@@ -133,14 +150,14 @@ export default function PlannerScoringDashboard({
         end: base.end,
         lockedAt: base.lockedAt,
         foremanName: p.foreman_name || p.foreman || 'ยังไม่ระบุ',
-        siteEngineer: p.site_engineer || 'วิศวกรส่วนกลาง'
+        siteEngineer: effectiveSe
       };
     }).sort((a: any, b: any) => {
       const nameA = String(a.plot.plot_name || a.plot.id);
       const nameB = String(b.plot.plot_name || b.plot.id);
       return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
     });
-  }, [relevantPlots]);
+  }, [relevantPlots, seForemanMap]);
 
   // Breakdown distribution of scores
   const scoreDistribution = useMemo(() => {
@@ -544,15 +561,27 @@ export default function PlannerScoringDashboard({
                 คำนวณตาม <strong>สูตรถ่วงน้ำหนัก (Plot-Weighted Average)</strong> จากคะแนนของทุกแปลงที่อยู่ในความดูแลของวิศวกร
               </p>
             </div>
-            {selectedSeFilter && (
-              <button
-                type="button"
-                onClick={() => setSelectedSeFilter(null)}
-                className="text-xs font-bold text-blue-600 hover:underline cursor-pointer"
-              >
-                ✕ แสดงวิศวกรทุกคน
-              </button>
-            )}
+            <div className="flex items-center gap-2">
+              {(isAdmin || isOwner || isProjectPlanner) && (
+                <button
+                  type="button"
+                  onClick={() => setShowSeTeamModal(true)}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black transition-all shadow-sm shadow-blue-600/20 cursor-pointer"
+                >
+                  <Users size={14} />
+                  ⚙️ ผูกทีมโฟร์แมนเข้ากับ SE
+                </button>
+              )}
+              {selectedSeFilter && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedSeFilter(null)}
+                  className="text-xs font-bold text-blue-600 hover:underline cursor-pointer"
+                >
+                  ✕ แสดงวิศวกรทุกคน
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Site Engineer Cards Grid */}
@@ -632,7 +661,20 @@ export default function PlannerScoringDashboard({
                     <span className="text-[11px] font-bold text-blue-600">
                       {isSelected ? '✓ กำลังกรองแปลงด้านล่าง' : 'คลิกเพื่อกรองเฉพาะแปลงในสายงาน'}
                     </span>
-                    <ChevronRight size={14} className="text-slate-400" />
+                    {(isAdmin || isOwner || isProjectPlanner) ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowSeTeamModal(true);
+                        }}
+                        className="text-[11px] font-bold text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1 cursor-pointer bg-blue-50 px-2 py-0.5 rounded-md"
+                      >
+                        <Settings size={12} /> จัดการทีม
+                      </button>
+                    ) : (
+                      <ChevronRight size={14} className="text-slate-400" />
+                    )}
                   </div>
                 </div>
               );
@@ -951,30 +993,23 @@ export default function PlannerScoringDashboard({
                       </div>
 
                       <div className="truncate border-l border-slate-200 pl-2">
-                        <span className="text-[10px] text-slate-400 font-bold block">Site Engineer</span>
-                        {isAdmin || isOwner || isProjectPlanner ? (
-                          <select
-                            value={item.siteEngineer || 'วิศวกรส่วนกลาง'}
-                            onChange={(e) => handleAssignSiteEngineer(item.plot, e.target.value)}
-                            disabled={updatingPlotSeId === item.plot.id}
-                            className="text-[11px] font-bold bg-white border border-slate-300 rounded-md px-1.5 py-0.5 text-slate-800 mt-0.5 w-full outline-none focus:border-blue-500 cursor-pointer"
-                          >
-                            <option value="วิศวกรส่วนกลาง">วิศวกรส่วนกลาง</option>
-                            {siteEngineersList.map((se: any, i: number) => {
-                              const seName = se.username || se.name;
-                              return (
-                                <option key={se.id || seName || `se-${i}`} value={seName}>
-                                  {seName}
-                                </option>
-                              );
-                            })}
-                          </select>
-                        ) : (
-                          <span className="font-black text-slate-800 flex items-center gap-1 truncate mt-0.5">
+                        <span className="text-[10px] text-slate-400 font-bold block">Site Engineer (ตามทีม)</span>
+                        <div className="flex items-center justify-between gap-1 mt-0.5">
+                          <span className="font-black text-slate-800 flex items-center gap-1 truncate text-xs" title={`สังกัดทีม Site Engineer: ${item.siteEngineer}`}>
                             <User size={12} className="text-blue-500 shrink-0" />
                             {item.siteEngineer}
                           </span>
-                        )}
+                          {(isAdmin || isOwner || isProjectPlanner) && (
+                            <button
+                              type="button"
+                              onClick={() => setShowSeTeamModal(true)}
+                              className="text-[10px] font-bold text-blue-600 hover:underline shrink-0 cursor-pointer"
+                              title="จัดการผูกทีมโฟร์แมนเข้ากับ SE"
+                            >
+                              ผูกทีม
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
 
@@ -1053,6 +1088,24 @@ export default function PlannerScoringDashboard({
           isAdminOrOwner={isAdmin || isOwner}
           currentUserName={currentUserName}
           onRefresh={fetchAllData}
+        />
+      )}
+
+      {/* SE - Foremen Team Assignment Modal */}
+      {showSeTeamModal && (
+        <SEForemanAssignmentModal
+          isOpen={showSeTeamModal}
+          onClose={() => setShowSeTeamModal(false)}
+          siteEngineers={siteEngineersList}
+          foremenList={effectiveForemenList}
+          plots={plots}
+          initialMap={seForemanMap}
+          onSave={async (newMap) => {
+            setSeForemanMap(newMap);
+            await saveSEForemanMap(supabase, newMap, currentUserName);
+            if (fetchAllData) await fetchAllData();
+          }}
+          currentUserName={currentUserName}
         />
       )}
     </div>

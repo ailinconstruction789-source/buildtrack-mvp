@@ -7,7 +7,9 @@ import {
   calculateForemanPlotScore,
   calculateForemanAggregates,
   calculateSiteEngineerAggregates,
-  calculateProjectPlannerScore
+  calculateProjectPlannerScore,
+  autoDetectSEForemanMap,
+  getEffectiveSEForPlot
 } from '../plannerScoring';
 
 describe('Cascading Construction Planning KPI System', () => {
@@ -267,6 +269,60 @@ describe('Cascading Construction Planning KPI System', () => {
       expect(parsed.score).toBe(75);
       expect(parsed.foremanName).toBe('DEN');
       expect(parsed.siteEngineer).toBe('วิศวกร สมศักดิ์');
+    });
+  });
+
+  describe('SE -> Foremen Team Mapping (Option 1)', () => {
+    it('auto-detects SE -> Foremen mapping from existing plots correctly', () => {
+      const samplePlots = [
+        { id: '1', foreman_name: 'VIEW', site_engineer: 'BANK' },
+        { id: '2', foreman_name: 'LEAB', site_engineer: 'BANK' },
+        { id: '3', foreman_name: 'DEN', site_engineer: 'SE ก้อง' },
+        { id: '4', foreman_name: 'LEAB', site_engineer: 'BANK' }
+      ];
+
+      const detected = autoDetectSEForemanMap(samplePlots);
+      expect(detected['BANK']).toContain('VIEW');
+      expect(detected['BANK']).toContain('LEAB');
+      expect(detected['SE ก้อง']).toContain('DEN');
+      expect(detected['BANK'].length).toBe(2);
+    });
+
+    it('resolves effective SE for a plot based on the foreman team map', () => {
+      const seMap = {
+        'BANK': ['VIEW', 'LEAB'],
+        'SE ก้อง': ['DEN']
+      };
+
+      const plotView = { id: 'p1', foreman_name: 'VIEW', site_engineer: null };
+      const plotDen = { id: 'p2', foreman_name: 'DEN', site_engineer: null };
+      const plotOther = { id: 'p3', foreman_name: 'Unknown', site_engineer: 'Custom SE' };
+
+      expect(getEffectiveSEForPlot(plotView, seMap)).toBe('BANK');
+      expect(getEffectiveSEForPlot(plotDen, seMap)).toBe('SE ก้อง');
+      expect(getEffectiveSEForPlot(plotOther, seMap)).toBe('Custom SE');
+    });
+
+    it('rolls up all plots of foremen to the assigned SE in calculateSiteEngineerAggregates', () => {
+      const seMap = {
+        'BANK': ['VIEW', 'LEAB']
+      };
+
+      const plots = [
+        { id: '1', foreman_name: 'VIEW', baseline_locked_at: '2026-01-01', schedule_planning_score: 100 },
+        { id: '2', foreman_name: 'VIEW', baseline_locked_at: '2026-01-01', schedule_planning_score: 75 },
+        { id: '3', foreman_name: 'LEAB', baseline_locked_at: '2026-01-01', schedule_planning_score: 50 },
+        { id: '4', foreman_name: 'DEN', baseline_locked_at: '2026-01-01', schedule_planning_score: 100 }
+      ];
+
+      const result = calculateSiteEngineerAggregates(plots, [{ username: 'BANK' }], seMap);
+      const bankSe = result.find(s => s.name === 'BANK');
+      expect(bankSe).toBeDefined();
+      expect(bankSe!.totalPlots).toBe(3); // Plots 1, 2, 3 belong to VIEW & LEAB
+      expect(bankSe!.foremen).toContain('VIEW');
+      expect(bankSe!.foremen).toContain('LEAB');
+      // Weighted average: (100 + 75 + 50) / 3 = 225 / 3 = 75
+      expect(bankSe!.weightedAvgScore).toBe(75);
     });
   });
 });
