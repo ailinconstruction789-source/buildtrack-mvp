@@ -336,7 +336,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
     handleSaveAllSchedules();
   };
 
-  const handleConfirmScheduleRevision = async (reason: string) => {
+  const handleConfirmScheduleRevision = async (reason: string, options?: any) => {
     setIsRevisionSubmitting(true);
     try {
       const res = await recordScheduleDelayRevision(
@@ -346,7 +346,12 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
         baseline.start || '',
         revisionModalData.newEnd,
         currentUserName,
-        reason
+        reason,
+        {
+          ...options,
+          foremanName: selectedPlot.foreman_name || selectedPlot.foreman,
+          siteEngineerName: selectedPlot.site_engineer
+        }
       );
 
       if (!res.success) {
@@ -358,7 +363,12 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
       await handleSaveAllSchedules();
 
       if (showToast) {
-        showToast(`บันทึกการปรับขยายแผนงานเรียบร้อยแล้ว (คะแนนคงเหลือ ${res.newScore} คะแนน)`, 'success');
+        showToast(
+          options?.isExempt 
+            ? `บันทึกการขยายแผนงาน (เหตุสุดวิสัย) เรียบร้อยแล้ว (คะแนนคงที่ ${res.newScore} คะแนน)`
+            : `บันทึกการปรับขยายแผนงานเรียบร้อยแล้ว (คะแนนคงเหลือ ${res.newScore} คะแนน)`,
+          'success'
+        );
       }
     } catch (err: any) {
       if (showAlert) showAlert('Error', err.message);
@@ -2123,6 +2133,8 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
           nextScore={revisionModalData.nextScore}
           revisionCount={revisionModalData.revisionCount}
           isSubmitting={isRevisionSubmitting}
+          foremanName={selectedPlot.foreman_name || selectedPlot.foreman}
+          siteEngineerName={selectedPlot.site_engineer}
         />
       )}
 

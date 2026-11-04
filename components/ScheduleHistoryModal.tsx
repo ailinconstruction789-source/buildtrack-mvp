@@ -234,13 +234,28 @@ export default function ScheduleHistoryModal({
                 }`}
               >
                 <div className="flex items-start justify-between gap-2 mb-2">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
                     <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
                       ครั้งที่ {revisions.length - idx}
                     </span>
-                    <span className="text-xs font-bold text-slate-700">{rev.revised_by || 'Project Planner'}</span>
+                    <span className="text-xs font-bold text-slate-700">{rev.revised_by || 'Site Engineer'}</span>
+                    {rev.foreman_name && (
+                      <span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded">
+                        โฟร์แมน: {rev.foreman_name}
+                      </span>
+                    )}
+                    {rev.site_engineer_name && (
+                      <span className="text-[10px] font-bold text-blue-800 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded">
+                        SE: {rev.site_engineer_name}
+                      </span>
+                    )}
+                    {rev.revision_type && rev.revision_type !== 'normal_delay' && (
+                      <span className="text-[10px] font-black text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
+                        {rev.revision_type === 'force_majeure' ? 'เหตุสุดวิสัย' : rev.revision_type}
+                      </span>
+                    )}
                   </div>
-                  <span className="text-[10px] text-slate-400 font-medium">
+                  <span className="text-[10px] text-slate-400 font-medium whitespace-nowrap">
                     {formatDateTime(rev.created_at)}
                   </span>
                 </div>

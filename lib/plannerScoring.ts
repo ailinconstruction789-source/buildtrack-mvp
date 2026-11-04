@@ -1,16 +1,14 @@
 // ==============================================================================
-// Project Planner Schedule Scoring System (Option 2 - Ladder Step Reduction)
+// Cascading Construction Planning KPI System (Foreman -> Site Engineer -> Project Planner)
 //
-// Rules:
-// 1. Initial Schedule Setup: Planner inputs dates freely. On lock, baseline is locked (100 pts).
-// 2. Internal Schedule Changes: If final completion date does NOT extend, no penalty (100 pts).
-// 3. Shortened Schedule (Finishing earlier): No penalty (remains 100 pts).
-// 4. Delay Extension (Extending final completion date past baseline):
-//    - 1st extension: 75 pts (-25)
-//    - 2nd extension: 50 pts (-25)
-//    - 3rd extension: 25 pts (-25)
-//    - 4th+ extension: 0 pts (min 0)
-// 5. Force Majeure Exemption: Owner/Admin can approve an exemption, restoring points.
+// Rules (Agreed Blueprint):
+// 1. Plot Score: Starts at 100 on Baseline lock. Non-exempt delay extensions deduct 25 pts ladder-style (100 -> 75 -> 50 -> 25 -> 0).
+// 2. Foreman Score: Responsible for individual plots assigned. If a plot is delayed, foreman is penalized.
+// 3. Site Engineer Score: Weighted average of all plots under this SE (sum of scores of plots / total plots).
+// 4. Project Planner Score: 30% Baseline Setup Score (% of plots with baseline locked) + 70% Site Execution Score (SE average).
+// 5. Foreman Handover: When a plot is reassigned, new foreman starts at 100 for that plot; only delays on/after assignment date deduct points.
+// 6. Force Majeure: Approved external exemptions do NOT deduct points (score stays at current score, e.g. 75 remains 75).
+// 7. Authority: SE, Planner, or Owner/Admin approves schedule extensions in the system.
 // ==============================================================================
 
 export interface PlotBaselineData {
@@ -21,6 +19,10 @@ export interface PlotBaselineData {
   lockedBy: string | null;
   revisions: number;
   score: number;
+  foremanName?: string | null;
+  foremanAssignedAt?: string | null;
+  siteEngineer?: string | null;
+  exemptionsCount?: number;
 }
 
 export interface ScoreBadgeStyle {
@@ -34,13 +36,46 @@ export interface ScoreBadgeStyle {
   grade: string;
 }
 
+export interface ForemanScoreSummary {
+  name: string;
+  totalPlots: number;
+  lockedPlots: number;
+  avgScore: number;
+  grade: string;
+  badgeStyle: ScoreBadgeStyle;
+  plots: any[];
+  penalizedPlotsCount: number;
+}
+
+export interface SiteEngineerScoreSummary {
+  name: string;
+  totalPlots: number;
+  lockedPlots: number;
+  weightedAvgScore: number;
+  grade: string;
+  badgeStyle: ScoreBadgeStyle;
+  foremen: string[];
+  plots: any[];
+}
+
+export interface ProjectPlannerScoreSummary {
+  overallScore: number;
+  baselineSetupScore: number; // 30% weight
+  siteExecutionScore: number; // 70% weight
+  totalPlots: number;
+  lockedPlots: number;
+  lockPercentage: number;
+  grade: string;
+  badgeStyle: ScoreBadgeStyle;
+}
+
 /**
- * Calculates the planning score based on the ladder reduction formula:
- * 0 delay extensions = 100
- * 1 delay extension  = 75
- * 2 delay extensions = 50
- * 3 delay extensions = 25
- * 4+ delay extensions = 0
+ * Calculates the planning score based on ladder step reduction formula:
+ * 0 delays = 100
+ * 1 delay  = 75
+ * 2 delays = 50
+ * 3 delays = 25
+ * 4+ delays = 0
  */
 export function calculatePlanningScore(delayRevisions: number): number {
   const safeCount = Math.max(0, Math.floor(delayRevisions || 0));
@@ -51,71 +86,71 @@ export function calculatePlanningScore(delayRevisions: number): number {
  * Returns Tailwind classes and human-readable label for a given score.
  */
 export function getScoreBadgeStyle(score: number): ScoreBadgeStyle {
-  const safeScore = Math.max(0, Math.min(100, score ?? 100));
+  const safeScore = Math.max(0, Math.min(100, Math.round(score ?? 100)));
 
-  if (safeScore >= 100) {
+  if (safeScore >= 90) {
     return {
-      score: 100,
+      score: safeScore,
       bg: 'bg-emerald-50 dark:bg-emerald-950/40',
       text: 'text-emerald-700 dark:text-emerald-300',
       border: 'border-emerald-300 dark:border-emerald-600',
       ring: 'ring-emerald-400/30',
       dot: 'bg-emerald-500',
-      label: '100 คะแนน (ดีเยี่ยม)',
+      label: `${safeScore} คะแนน (ดีเยี่ยม)`,
       grade: 'ดีเยี่ยม'
     };
   }
   if (safeScore >= 75) {
     return {
-      score: 75,
+      score: safeScore,
       bg: 'bg-blue-50 dark:bg-blue-950/40',
       text: 'text-blue-700 dark:text-blue-300',
       border: 'border-blue-300 dark:border-blue-600',
       ring: 'ring-blue-400/30',
       dot: 'bg-blue-500',
-      label: '75 คะแนน (ดี)',
+      label: `${safeScore} คะแนน (ดี)`,
       grade: 'ดี'
     };
   }
   if (safeScore >= 50) {
     return {
-      score: 50,
+      score: safeScore,
       bg: 'bg-amber-50 dark:bg-amber-950/40',
       text: 'text-amber-700 dark:text-amber-300',
       border: 'border-amber-300 dark:border-amber-600',
       ring: 'ring-amber-400/30',
       dot: 'bg-amber-500',
-      label: '50 คะแนน (พอใช้)',
+      label: `${safeScore} คะแนน (พอใช้)`,
       grade: 'พอใช้'
     };
   }
   if (safeScore >= 25) {
     return {
-      score: 25,
+      score: safeScore,
       bg: 'bg-orange-50 dark:bg-orange-950/40',
       text: 'text-orange-700 dark:text-orange-300',
       border: 'border-orange-300 dark:border-orange-600',
       ring: 'ring-orange-400/30',
       dot: 'bg-orange-500',
-      label: '25 คะแนน (ต้องปรับปรุง)',
+      label: `${safeScore} คะแนน (ต้องปรับปรุง)`,
       grade: 'ต้องปรับปรุง'
     };
   }
   return {
-    score: 0,
+    score: safeScore,
     bg: 'bg-rose-50 dark:bg-rose-950/40',
     text: 'text-rose-700 dark:text-rose-300',
     border: 'border-rose-300 dark:border-rose-600',
     ring: 'ring-rose-400/30',
     dot: 'bg-rose-500',
-    label: '0 คะแนน (ล่าช้าวิกฤต)',
+    label: `${safeScore} คะแนน (ล่าช้าวิกฤต)`,
     grade: 'ล่าช้าวิกฤต'
   };
 }
 
 /**
- * Parses baseline info from a Plot row.
- * Resilient to whether native columns have been migrated or if data is stored in handover_notes tag.
+ * Parses baseline and assignment info from a Plot row.
+ * Resilient to whether native columns are present or data is stored in handover_notes tag.
  */
 export function parsePlotBaseline(plot: any): PlotBaselineData {
   if (!plot) {
@@ -126,9 +161,16 @@ export function parsePlotBaseline(plot: any): PlotBaselineData {
       lockedAt: null,
       lockedBy: null,
       revisions: 0,
-      score: 100
+      score: 100,
+      foremanName: null,
+      foremanAssignedAt: null,
+      siteEngineer: null
     };
   }
+
+  const foremanName = plot.foreman_name || plot.foreman || null;
+  const foremanAssignedAt = plot.foreman_assigned_at || null;
+  const siteEngineer = plot.site_engineer || null;
 
   // 1. Check native columns first
   if (plot.baseline_locked_at || plot.baseline_planned_end) {
@@ -141,7 +183,10 @@ export function parsePlotBaseline(plot: any): PlotBaselineData {
       lockedAt: plot.baseline_locked_at || null,
       lockedBy: plot.baseline_locked_by || 'Project Planner',
       revisions,
-      score
+      score,
+      foremanName,
+      foremanAssignedAt,
+      siteEngineer
     };
   }
 
@@ -160,7 +205,10 @@ export function parsePlotBaseline(plot: any): PlotBaselineData {
           lockedAt: parsed.lockedAt || null,
           lockedBy: parsed.lockedBy || 'Project Planner',
           revisions,
-          score
+          score,
+          foremanName: parsed.foremanName || foremanName,
+          foremanAssignedAt: parsed.foremanAssignedAt || foremanAssignedAt,
+          siteEngineer: parsed.siteEngineer || siteEngineer
         };
       } catch (err) {
         console.warn('Failed to parse planner_baseline tag from handover_notes', err);
@@ -175,7 +223,10 @@ export function parsePlotBaseline(plot: any): PlotBaselineData {
     lockedAt: null,
     lockedBy: null,
     revisions: 0,
-    score: 100
+    score: 100,
+    foremanName,
+    foremanAssignedAt,
+    siteEngineer
   };
 }
 
@@ -191,6 +242,9 @@ export function buildPlotBaselineNoteTag(
     lockedBy: string;
     revisions: number;
     score: number;
+    foremanName?: string | null;
+    foremanAssignedAt?: string | null;
+    siteEngineer?: string | null;
   }
 ): string {
   const cleanNotes = (oldNotes || '').replace(/\[planner_baseline:\{.*?\}\]/g, '').trim();
@@ -200,15 +254,217 @@ export function buildPlotBaselineNoteTag(
     lockedAt: data.lockedAt,
     lockedBy: data.lockedBy,
     revisions: data.revisions,
-    score: data.score
+    score: data.score,
+    foremanName: data.foremanName || null,
+    foremanAssignedAt: data.foremanAssignedAt || null,
+    siteEngineer: data.siteEngineer || null
   });
   const tag = `[planner_baseline:${tagJson}]`;
   return cleanNotes ? `${cleanNotes} ${tag}` : tag;
 }
 
 /**
+ * Rule 5 (Agreed): Calculates a foreman's planning score for a specific plot.
+ * If the plot was handed over (reassigned), only counts delay revisions that occurred
+ * on or after foreman_assigned_at.
+ */
+export function calculateForemanPlotScore(plot: any, revisionsList?: any[]): number {
+  const base = parsePlotBaseline(plot);
+  if (!base.isLocked) return 100;
+
+  // If no revision list provided, return current plot baseline score
+  if (!revisionsList || !Array.isArray(revisionsList) || revisionsList.length === 0) {
+    return base.score;
+  }
+
+  const assignedAtMs = base.foremanAssignedAt ? new Date(base.foremanAssignedAt).getTime() : 0;
+
+  // Filter revisions that belong to current foreman's tenure and are NOT exempt
+  const relevantRevisions = revisionsList.filter((rev: any) => {
+    if (rev.plot_id && rev.plot_id !== plot.id) return false;
+    if (rev.is_exempted) return false;
+
+    // Check revision created date against assignment date if set
+    if (assignedAtMs > 0 && rev.created_at) {
+      const revTimeMs = new Date(rev.created_at).getTime();
+      if (revTimeMs < assignedAtMs) return false;
+    }
+
+    return true;
+  });
+
+  return calculatePlanningScore(relevantRevisions.length);
+}
+
+/**
+ * Aggregates planning scores grouped by Foreman.
+ */
+export function calculateForemanAggregates(
+  plots: any[],
+  foremenList?: any[]
+): ForemanScoreSummary[] {
+  const groups: Record<string, any[]> = {};
+
+  (plots || []).forEach((p: any) => {
+    const name = (p.foreman_name || p.foreman || 'ยังไม่ระบุโฟร์แมน').trim();
+    if (!groups[name]) groups[name] = [];
+    groups[name].push(p);
+  });
+
+  // Also include any foremen from foremenList who may not have plots assigned yet
+  (foremenList || []).forEach((f: any) => {
+    const name = (f.username || f.name || '').trim();
+    if (name && !groups[name]) {
+      groups[name] = [];
+    }
+  });
+
+  return Object.keys(groups).map((name) => {
+    const plotList = groups[name];
+    let totalScore = 0;
+    let lockedCount = 0;
+    let penalizedCount = 0;
+
+    plotList.forEach((p: any) => {
+      const base = parsePlotBaseline(p);
+      if (base.isLocked) {
+        lockedCount++;
+        totalScore += base.score;
+        if (base.score < 100) penalizedCount++;
+      }
+    });
+
+    const avgScore = lockedCount > 0 ? Math.round((totalScore / lockedCount) * 10) / 10 : 100;
+    const badgeStyle = getScoreBadgeStyle(avgScore);
+
+    return {
+      name,
+      totalPlots: plotList.length,
+      lockedPlots: lockedCount,
+      avgScore,
+      grade: badgeStyle.grade,
+      badgeStyle,
+      plots: plotList,
+      penalizedPlotsCount: penalizedCount
+    };
+  }).sort((a, b) => {
+    // Sort descending by score, then by plot count
+    if (b.avgScore !== a.avgScore) return b.avgScore - a.avgScore;
+    return b.totalPlots - a.totalPlots;
+  });
+}
+
+/**
+ * Rule 2 & 3 (Agreed): Aggregates planning scores grouped by Site Engineer.
+ * Weighted average = Sum of scores of all plots under SE / Total locked plots under SE.
+ */
+export function calculateSiteEngineerAggregates(
+  plots: any[],
+  siteEngineersList?: any[]
+): SiteEngineerScoreSummary[] {
+  const groups: Record<string, any[]> = {};
+
+  (plots || []).forEach((p: any) => {
+    const seName = (p.site_engineer || 'วิศวกรส่วนกลาง (Site Engineer)').trim();
+    if (!groups[seName]) groups[seName] = [];
+    groups[seName].push(p);
+  });
+
+  (siteEngineersList || []).forEach((se: any) => {
+    const name = (se.username || se.name || '').trim();
+    if (name && !groups[name]) {
+      groups[name] = [];
+    }
+  });
+
+  return Object.keys(groups).map((name) => {
+    const plotList = groups[name];
+    let totalScore = 0;
+    let lockedCount = 0;
+    const foremenSet = new Set<string>();
+
+    plotList.forEach((p: any) => {
+      const base = parsePlotBaseline(p);
+      const fm = p.foreman_name || p.foreman;
+      if (fm) foremenSet.add(fm.trim());
+
+      if (base.isLocked) {
+        lockedCount++;
+        totalScore += base.score;
+      }
+    });
+
+    const weightedAvg = lockedCount > 0 ? Math.round((totalScore / lockedCount) * 10) / 10 : 100;
+    const badgeStyle = getScoreBadgeStyle(weightedAvg);
+
+    return {
+      name,
+      totalPlots: plotList.length,
+      lockedPlots: lockedCount,
+      weightedAvgScore: weightedAvg,
+      grade: badgeStyle.grade,
+      badgeStyle,
+      foremen: Array.from(foremenSet),
+      plots: plotList
+    };
+  }).sort((a, b) => b.weightedAvgScore - a.weightedAvgScore);
+}
+
+/**
+ * Rule 7 (Agreed): Calculates Project Planner Score using Hybrid 30% / 70% model.
+ * 30% = Baseline Setup Score (% of plots locked with baseline)
+ * 70% = Site Execution Score (Weighted average of Site Engineers)
+ */
+export function calculateProjectPlannerScore(
+  plots: any[],
+  seAggregates?: SiteEngineerScoreSummary[]
+): ProjectPlannerScoreSummary {
+  const totalPlots = (plots || []).length;
+  let lockedCount = 0;
+  let totalPlotScore = 0;
+
+  (plots || []).forEach((p: any) => {
+    const base = parsePlotBaseline(p);
+    if (base.isLocked) {
+      lockedCount++;
+      totalPlotScore += base.score;
+    }
+  });
+
+  // 1. 30% Baseline Setup Score
+  const lockPercentage = totalPlots > 0 ? Math.round((lockedCount / totalPlots) * 100) : 100;
+  const baselineSetupScore = lockPercentage;
+
+  // 2. 70% Site Execution Score
+  let siteExecutionScore = 100;
+  if (seAggregates && seAggregates.length > 0) {
+    const totalSePlots = seAggregates.reduce((acc, se) => acc + se.lockedPlots, 0);
+    if (totalSePlots > 0) {
+      const sumWeighted = seAggregates.reduce((acc, se) => acc + se.weightedAvgScore * se.lockedPlots, 0);
+      siteExecutionScore = Math.round((sumWeighted / totalSePlots) * 10) / 10;
+    }
+  } else if (lockedCount > 0) {
+    siteExecutionScore = Math.round((totalPlotScore / lockedCount) * 10) / 10;
+  }
+
+  // 3. Combined Hybrid Score (30% + 70%)
+  const overallScore = Math.round(baselineSetupScore * 0.3 + siteExecutionScore * 0.7);
+  const badgeStyle = getScoreBadgeStyle(overallScore);
+
+  return {
+    overallScore,
+    baselineSetupScore,
+    siteExecutionScore,
+    totalPlots,
+    lockedPlots: lockedCount,
+    lockPercentage,
+    grade: badgeStyle.grade,
+    badgeStyle
+  };
+}
+
+/**
  * Locks the baseline schedule for a plot.
- * Saves to Supabase plots table (both native columns and notes fallback) and logs to task_updates.
  */
 export async function lockPlotBaseline(
   supabase: any,
@@ -219,16 +475,21 @@ export async function lockPlotBaseline(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const nowIso = new Date().toISOString();
+    const foremanName = plot.foreman_name || plot.foreman || null;
+    const siteEngineer = plot.site_engineer || null;
+
     const notesWithTag = buildPlotBaselineNoteTag(plot.handover_notes, {
       start,
       end,
       lockedAt: nowIso,
       lockedBy,
       revisions: 0,
-      score: 100
+      score: 100,
+      foremanName,
+      foremanAssignedAt: plot.foreman_assigned_at || nowIso,
+      siteEngineer
     });
 
-    // 1. Try updating with native columns + handover_notes
     let updatePayload: any = {
       baseline_planned_start: start,
       baseline_planned_end: end,
@@ -244,9 +505,7 @@ export async function lockPlotBaseline(
       .update(updatePayload)
       .eq('id', plot.id);
 
-    // If native column does not exist yet in schema cache, fallback to handover_notes only
     if (error && (error.code === 'PGRST204' || error.message?.includes('column'))) {
-      console.warn('Native baseline columns not found, using handover_notes fallback:', error.message);
       const fallbackResult = await supabase
         .from('plots')
         .update({ handover_notes: notesWithTag })
@@ -256,7 +515,6 @@ export async function lockPlotBaseline(
       throw error;
     }
 
-    // 2. Insert audit log into task_updates (always succeeds & provides immutable activity history)
     try {
       await supabase.from('task_updates').insert([
         {
@@ -271,6 +529,8 @@ export async function lockPlotBaseline(
             baseline_end: end,
             locked_at: nowIso,
             locked_by: lockedBy,
+            foreman: foremanName,
+            site_engineer: siteEngineer,
             score: 100
           })
         }
@@ -287,8 +547,9 @@ export async function lockPlotBaseline(
 }
 
 /**
- * Records a schedule delay revision, updates the plot score using the ladder steps,
- * saves to plot_schedule_revisions and task_updates.
+ * Rule 6 (Agreed): Records a schedule delay revision.
+ * If isExempt === true (Force Majeure / Procurement Exemption), the score does NOT decrease (retains current score).
+ * If isExempt === false, ladder deduction applies (-25 pts).
  */
 export async function recordScheduleDelayRevision(
   supabase: any,
@@ -297,27 +558,45 @@ export async function recordScheduleDelayRevision(
   newStart: string,
   newEnd: string,
   revisedBy: string,
-  reason: string
+  reason: string,
+  options?: {
+    isExempt?: boolean;
+    revisionType?: string;
+    foremanName?: string;
+    siteEngineerName?: string;
+  }
 ): Promise<{ success: boolean; newScore: number; newRevisions: number; error?: string }> {
   try {
     const prevEnd = currentBaseline.end || newEnd;
     const diffMs = new Date(newEnd).getTime() - new Date(prevEnd).getTime();
     const diffDays = Math.max(1, Math.ceil(diffMs / 86400000));
+    const isExempt = Boolean(options?.isExempt);
+    const revisionType = options?.revisionType || (isExempt ? 'force_majeure' : 'normal_delay');
+    const foremanName = options?.foremanName || plot.foreman_name || plot.foreman || null;
+    const siteEngineerName = options?.siteEngineerName || plot.site_engineer || null;
 
-    const nextRevisions = (currentBaseline.revisions || 0) + 1;
-    const nextScore = calculatePlanningScore(nextRevisions);
+    // Rule 6: If exempt, score stays at current score (does not deduct 25 pts)
+    const nextRevisions = isExempt
+      ? (currentBaseline.revisions || 0)
+      : (currentBaseline.revisions || 0) + 1;
+    const nextScore = isExempt
+      ? currentBaseline.score
+      : calculatePlanningScore(nextRevisions);
+
     const nowIso = new Date().toISOString();
 
     const notesWithTag = buildPlotBaselineNoteTag(plot.handover_notes, {
       start: currentBaseline.start || newStart,
-      end: newEnd, // Current active end
+      end: newEnd,
       lockedAt: currentBaseline.lockedAt || nowIso,
       lockedBy: currentBaseline.lockedBy || revisedBy,
       revisions: nextRevisions,
-      score: nextScore
+      score: nextScore,
+      foremanName,
+      foremanAssignedAt: currentBaseline.foremanAssignedAt || null,
+      siteEngineer: siteEngineerName
     });
 
-    // 1. Update plots table
     let updatePayload: any = {
       schedule_delay_revisions: nextRevisions,
       schedule_planning_score: nextScore,
@@ -329,7 +608,6 @@ export async function recordScheduleDelayRevision(
       .update(updatePayload)
       .eq('id', plot.id);
 
-    // Fallback if column not migrated yet
     if (error && (error.code === 'PGRST204' || error.message?.includes('column'))) {
       const fallbackResult = await supabase
         .from('plots')
@@ -340,7 +618,6 @@ export async function recordScheduleDelayRevision(
       throw error;
     }
 
-    // 2. Try inserting into plot_schedule_revisions table
     try {
       await supabase.from('plot_schedule_revisions').insert([
         {
@@ -351,31 +628,41 @@ export async function recordScheduleDelayRevision(
           diff_days: diffDays,
           previous_score: currentBaseline.score,
           new_score: nextScore,
-          reason: reason || 'ปรับแผนงานก่อสร้างล่าช้า',
-          is_exempted: false
+          reason: reason || (isExempt ? 'ปรับขยายวันสิ้นสุด (เหตุสุดวิสัย - ยกเว้นการหักคะแนน)' : 'ปรับแผนงานก่อสร้างล่าช้า'),
+          is_exempted: isExempt,
+          revision_type: revisionType,
+          foreman_name: foremanName,
+          site_engineer_name: siteEngineerName,
+          exempted_by: isExempt ? revisedBy : null,
+          exempted_at: isExempt ? nowIso : null
         }
       ]);
     } catch (revErr) {
       console.warn('plot_schedule_revisions insert fallback:', revErr);
     }
 
-    // 3. Insert audit log into task_updates
     try {
       await supabase.from('task_updates').insert([
         {
           plot_id: plot.id,
           task_template_id: null,
-          role: 'Project Planner',
+          role: 'Site Engineer',
           action: 'REVISE_SCHEDULE',
           user_name: revisedBy,
           text_content: JSON.stringify({
-            message: `ปรับขยายวันสิ้นสุดโครงการ (+${diffDays} วัน) คะแนนลดเหลือ ${nextScore}`,
+            message: isExempt
+              ? `ปรับขยายวันสิ้นสุด (+${diffDays} วัน) กรณีพิเศษ/เหตุสุดวิสัย (คงคะแนนเดิม ${nextScore})`
+              : `ปรับขยายวันสิ้นสุด (+${diffDays} วัน) โฟร์แมน (${foremanName || '-'}) คะแนนปรับเป็น ${nextScore}`,
             previous_planned_end: prevEnd,
             new_planned_end: newEnd,
             diff_days: diffDays,
             previous_score: currentBaseline.score,
             new_score: nextScore,
             revision_count: nextRevisions,
+            is_exempted: isExempt,
+            revision_type: revisionType,
+            foreman: foremanName,
+            site_engineer: siteEngineerName,
             reason: reason || 'ปรับแผนงานก่อสร้างล่าช้า'
           })
         }
@@ -401,8 +688,7 @@ export async function recordScheduleDelayRevision(
 }
 
 /**
- * Exempts a schedule delay penalty (Force Majeure / เหตุสุดวิสัย) by Owner/Admin.
- * Restores 25 points (reducing delay revision count by 1).
+ * Retroactively exempts a schedule delay penalty by Owner/Admin, restoring 25 points.
  */
 export async function exemptSchedulePenalty(
   supabase: any,
@@ -423,10 +709,12 @@ export async function exemptSchedulePenalty(
       lockedAt: currentBaseline.lockedAt || nowIso,
       lockedBy: currentBaseline.lockedBy || 'Project Planner',
       revisions: nextRevisions,
-      score: nextScore
+      score: nextScore,
+      foremanName: currentBaseline.foremanName,
+      foremanAssignedAt: currentBaseline.foremanAssignedAt,
+      siteEngineer: currentBaseline.siteEngineer
     });
 
-    // 1. Update plot table
     let updatePayload: any = {
       schedule_delay_revisions: nextRevisions,
       schedule_planning_score: nextScore,
@@ -448,7 +736,6 @@ export async function exemptSchedulePenalty(
       throw error;
     }
 
-    // 2. If revisionId provided, update plot_schedule_revisions
     if (revisionId) {
       try {
         await supabase
@@ -456,7 +743,8 @@ export async function exemptSchedulePenalty(
           .update({
             is_exempted: true,
             exempted_by: exemptedBy,
-            exempted_at: nowIso
+            exempted_at: nowIso,
+            exemption_reason: reason || 'อนุมัติยกเว้นบทลงโทษ (เหตุสุดวิสัย / จัดซื้อ / ปัจจัยภายนอก)'
           })
           .eq('id', revisionId);
       } catch (revErr) {
@@ -464,7 +752,6 @@ export async function exemptSchedulePenalty(
       }
     }
 
-    // 3. Log to task_updates
     try {
       await supabase.from('task_updates').insert([
         {
@@ -474,7 +761,7 @@ export async function exemptSchedulePenalty(
           action: 'EXEMPT_SCHEDULE_PENALTY',
           user_name: exemptedBy,
           text_content: JSON.stringify({
-            message: `อนุมัติยกเว้นบทลงโทษแผนงาน (เหตุสุดวิสัย) โดย ${exemptedBy}: คะแนนปรับเป็น ${nextScore}`,
+            message: `อนุมัติยกเว้นบทลงโทษแผนงาน (${reason || 'เหตุสุดวิสัย'}) โดย ${exemptedBy}: คืนคะแนนเป็น ${nextScore}`,
             exempted_by: exemptedBy,
             exempted_at: nowIso,
             reason: reason || 'เหตุสุดวิสัย / ปัจจัยภายนอก',

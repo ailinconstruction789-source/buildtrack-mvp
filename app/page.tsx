@@ -4163,6 +4163,8 @@ export default function ConstructionApp() {
                 <PlannerScoringDashboard
                   projects={projects}
                   plots={plots}
+                  allUsers={allUsers}
+                  foremenList={foremenList}
                   isAdmin={isAdmin}
                   isOwner={isOwner}
                   isProjectPlanner={isProjectPlanner}
