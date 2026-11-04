@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Calendar,
   ChevronLeft,
@@ -10,10 +10,13 @@ import {
   ArrowRight,
   X,
   ExternalLink,
+  Loader2,
+  RotateCw,
 } from 'lucide-react';
 import {
   getMonthlyForemanInspectionCompliance,
   getPlotForemanName,
+  loadForemanMonthlySnapshots,
   type MonthInspectionSummary,
   type DayInspectionCompliance,
 } from '@/lib/foremanDuty';
@@ -31,6 +34,7 @@ interface ForemanInspectionCalendarProps {
   snapshots?: any[];
   title?: string;
   compact?: boolean;
+  isLoading?: boolean;
 }
 
 const WEEKDAY_NAMES = ['อา.', 'จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.'];
@@ -47,7 +51,8 @@ export default function ForemanInspectionCalendar({
   onSelectDate,
   snapshots = [],
   title = 'ปฏิทินตรวจสอบการเข้างานของโฟร์แมน (Owner Audit Calendar)',
-  compact = false,
+  compact: _compact = false,
+  isLoading: propIsLoading = false,
 }: ForemanInspectionCalendarProps) {
   const now = useMemo(() => new Date(), []);
   const todayStr = useMemo(() => {
@@ -72,6 +77,49 @@ export default function ForemanInspectionCalendar({
 
   // Selected Day Modal for Drill-down
   const [selectedDayDetail, setSelectedDayDetail] = useState<DayInspectionCompliance | null>(null);
+
+  // Loaded monthly snapshots and fetch state
+  const [monthlySnapshots, setMonthlySnapshots] = useState<any[]>(snapshots || []);
+  const [isLoadingSnapshots, setIsLoadingSnapshots] = useState<boolean>(true);
+  const [refreshKey, setRefreshKey] = useState<number>(0);
+
+  // Fetch monthly snapshots whenever month, year, foreman, or refresh is triggered
+  useEffect(() => {
+    let isCancelled = false;
+    setIsLoadingSnapshots(true);
+
+    loadForemanMonthlySnapshots(currentYear, currentMonth, activeForeman)
+      .then(snaps => {
+        if (!isCancelled) {
+          const merged = [...(snapshots || []), ...(snaps || [])];
+          const uniqueMap = new Map();
+          merged.forEach(s => {
+            const k = s.id ? `id_${s.id}` : `${s.snapshot_date}_${s.plot_id}_${s.foreman_name}`;
+            uniqueMap.set(k, s);
+          });
+          setMonthlySnapshots(Array.from(uniqueMap.values()));
+        }
+      })
+      .catch(err => {
+        console.warn('Error loading monthly snapshots:', err);
+      })
+      .finally(() => {
+        if (!isCancelled) {
+          setIsLoadingSnapshots(false);
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [currentYear, currentMonth, activeForeman, snapshots, refreshKey]);
+
+  const handleManualRefresh = () => {
+    setRefreshKey(k => k + 1);
+  };
+
+  // Overall loading flag (true if fetching snapshots or parent data is not yet available)
+  const isDataLoading = propIsLoading || isLoadingSnapshots || plots.length === 0;
 
   // Available foremen list
   const availableForemen = useMemo(() => {
@@ -104,7 +152,7 @@ export default function ForemanInspectionCalendar({
       assignments,
       allUpdatesRecord,
       foremanName: activeForeman,
-      existingSnapshots: snapshots,
+      existingSnapshots: monthlySnapshots,
       todayDateStr: todayStr,
     });
   }, [
@@ -116,7 +164,7 @@ export default function ForemanInspectionCalendar({
     assignments,
     allUpdatesRecord,
     activeForeman,
-    snapshots,
+    monthlySnapshots,
     todayStr,
   ]);
 
@@ -151,7 +199,7 @@ export default function ForemanInspectionCalendar({
 
   return (
     <div className="bg-white rounded-3xl p-5 sm:p-7 border border-slate-200/80 shadow-sm space-y-6 animate-in fade-in duration-200">
-      {/* Top Header: Title, Month Navigation, Foreman Selector */}
+      {/* Top Header: Title, Month Navigation, Foreman Selector & Refresh */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-100">
         <div className="space-y-1">
           <div className="inline-flex items-center gap-2 px-3 py-1 bg-amber-50 text-amber-800 rounded-full text-xs font-black border border-amber-200/80">
@@ -166,7 +214,7 @@ export default function ForemanInspectionCalendar({
           </p>
         </div>
 
-        {/* Toolbar: Stepper & Foreman Selector */}
+        {/* Toolbar: Stepper & Foreman Selector & Manual Refresh */}
         <div className="flex flex-wrap items-center gap-2.5">
           {/* Foreman Selector */}
           <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5">
@@ -208,6 +256,7 @@ export default function ForemanInspectionCalendar({
             </button>
           </div>
 
+          {/* Reset to Today / Current Month */}
           {(currentYear !== now.getFullYear() || currentMonth !== now.getMonth() + 1) && (
             <button
               onClick={handleResetToCurrentMonth}
@@ -216,11 +265,43 @@ export default function ForemanInspectionCalendar({
               เดือนนี้
             </button>
           )}
+
+          {/* Manual Refresh Button */}
+          <button
+            onClick={handleManualRefresh}
+            className="p-2 hover:bg-slate-100 text-slate-500 hover:text-slate-800 rounded-xl border border-slate-200 transition-all cursor-pointer active:scale-95"
+            title="รีเฟรชข้อมูลปฏิทิน"
+          >
+            <RotateCw size={14} className={isLoadingSnapshots ? 'animate-spin text-blue-600' : ''} />
+          </button>
         </div>
       </div>
 
+      {/* ⏳ Loading Status Notification (เพื่อความชัดเจน ไม่ให้ Owner สับสนว่าไม่ได้ทำ) */}
+      {isDataLoading && (
+        <div className="flex items-center justify-between gap-3 p-3.5 bg-blue-50/90 border border-blue-200/90 rounded-2xl text-blue-900 shadow-xs animate-in fade-in duration-200">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-blue-600 text-white rounded-xl shadow-xs shrink-0">
+              <Loader2 size={16} className="animate-spin" />
+            </div>
+            <div>
+              <p className="text-xs sm:text-sm font-black flex items-center gap-2 text-blue-950">
+                <span>กำลังเรียกข้อมูลและประมวลผลการเข้าตรวจงาน...</span>
+                <span className="inline-block w-2 h-2 rounded-full bg-blue-600 animate-ping" />
+              </p>
+              <p className="text-[11px] text-blue-700 font-medium">
+                ระบบกำลังเชื่อมต่อดึงประวัติการอัปเดตงานและบันทึกประวัติย้อนหลัง กรุณารอสักครู่
+              </p>
+            </div>
+          </div>
+          <span className="text-[11px] font-bold text-blue-700 bg-white px-2.5 py-1 rounded-xl border border-blue-200 shrink-0 hidden sm:inline-block shadow-2xs">
+            กำลังโหลดข้อมูล...
+          </span>
+        </div>
+      )}
+
       {/* 📊 Monthly Summary Scorecards */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+      <div className={`grid grid-cols-2 lg:grid-cols-5 gap-3 transition-opacity duration-300 ${isDataLoading ? 'opacity-85' : 'opacity-100'}`}>
         {/* Average Compliance Rate */}
         <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl p-4 text-white shadow-md flex flex-col justify-between col-span-2 lg:col-span-1">
           <div className="flex items-center justify-between">
@@ -296,7 +377,7 @@ export default function ForemanInspectionCalendar({
         </div>
 
         {/* Calendar Day Cells */}
-        <div className="grid grid-cols-7 gap-1.5 sm:gap-2">
+        <div className={`grid grid-cols-7 gap-1.5 sm:gap-2 transition-opacity duration-300 ${isDataLoading ? 'opacity-85' : 'opacity-100'}`}>
           {/* Empty prefix padding for days before month start */}
           {Array.from({ length: firstDayOfWeek }).map((_, idx) => (
             <div key={`empty-prefix-${idx}`} className="min-h-[75px] sm:min-h-[90px] rounded-2xl bg-slate-50/40 border border-dashed border-slate-100" />

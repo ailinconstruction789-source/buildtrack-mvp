@@ -92,8 +92,23 @@ export default function ForemanWorkspaceView({
   onSelectPlot,
   fetchAllData,
 }: ForemanWorkspaceViewProps) {
-  // Main view mode: 'schedule' (งานตามแผน) or 'rework' (งานที่ต้องแก้ไข & Defect)
-  const [mainTab, setMainTab] = useState<'schedule' | 'rework' | 'calendar'>('schedule');
+  // Check if current user has Owner role
+  const isOwnerUser = isOwner || currentUserRole?.toLowerCase() === 'owner';
+
+  // Main view mode: 'schedule' (งานตามแผน) | 'rework' (งานที่ต้องแก้ไข & Defect) | 'calendar' (ปฏิทินตรวจงานรายเดือน)
+  // 🌟 For Owner, default to 'calendar' as requested; for others, default to 'schedule'
+  const [mainTab, setMainTab] = useState<'schedule' | 'rework' | 'calendar'>(() => {
+    return isOwnerUser ? 'calendar' : 'schedule';
+  });
+
+  // Keep in sync if isOwnerUser resolves after initial mount
+  const hasInitializedTabRef = useRef(false);
+  useEffect(() => {
+    if (!hasInitializedTabRef.current && isOwnerUser) {
+      setMainTab('calendar');
+      hasInitializedTabRef.current = true;
+    }
+  }, [isOwnerUser]);
 
   // Today's date in local YYYY-MM-DD
   const todayStr = useMemo(() => {

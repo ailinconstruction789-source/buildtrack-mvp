@@ -468,6 +468,65 @@ export async function loadForemanDailySnapshot(
 }
 
 /**
+ * Loads all duty snapshots for a specific month (year and month 1-12) and foreman.
+ * Used by the Owner Audit Calendar to accurately render past days and show loading progress.
+ */
+export async function loadForemanMonthlySnapshots(
+  year: number,
+  month: number,
+  foremanName?: string
+): Promise<any[]> {
+  const startStr = `${year}-${String(month).padStart(2, '0')}-01`;
+  const endDay = new Date(year, month, 0).getDate();
+  const endStr = `${year}-${String(month).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`;
+  const targetFmLower = foremanName ? foremanName.toLowerCase().trim() : '';
+
+  try {
+    let query = supabase
+      .from('foreman_daily_duty_snapshots')
+      .select('*')
+      .gte('snapshot_date', startStr)
+      .lte('snapshot_date', endStr);
+
+    if (targetFmLower && targetFmLower !== 'all') {
+      query = query.ilike('foreman_name', targetFmLower);
+    }
+
+    const { data, error } = await query;
+    if (!error && Array.isArray(data)) {
+      return data;
+    }
+  } catch (err) {
+    // Fall back to local storage
+  }
+
+  // Fallback: search localStorage
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const results: any[] = [];
+      const prefix = `bt_foreman_snapshot_${year}-${String(month).padStart(2, '0')}`;
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(prefix)) {
+          const raw = localStorage.getItem(key);
+          if (raw) {
+            try {
+              const parsed = JSON.parse(raw);
+              if (Array.isArray(parsed)) results.push(...parsed);
+            } catch (_) {}
+          }
+        }
+      }
+      return results;
+    }
+  } catch (err) {
+    // ignore
+  }
+
+  return [];
+}
+
+/**
  * Records a roadblock / non-start reason for a specific task.
  * Updates both the snapshot and creates a notification update in task_updates.
  */
