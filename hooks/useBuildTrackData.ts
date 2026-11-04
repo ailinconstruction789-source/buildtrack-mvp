@@ -468,8 +468,8 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
       // ข้อมูลประวัติงานฉบับเต็มจะถูกโหลดแบบ On-Demand เฉพาะเมื่อเปิดดูแปลงนั้นๆ (fetchPlotDetails)
       // หรือเมื่อเข้าหน้ารายงานผู้บริหาร (fetchOwnerAnalyticsData) เพื่อประหยัด RAM และเน็ตมือถือหน้างาน
 
-    } catch (error) {
-      console.error('Error fetching core data:', error);
+    } catch (error: any) {
+      console.error('Error fetching core data:', error?.message || error?.details || error);
       if (isCurrentRequest()) {
         setLoading(false);
         setLoadedProfileKey(loadProfileKey);

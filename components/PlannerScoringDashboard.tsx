@@ -204,13 +204,21 @@ export default function PlannerScoringDashboard({
     if (!plot) return;
     setUpdatingPlotSeId(plot.id);
     try {
+      // Optimistic in-memory update for instant feedback
+      plot.site_engineer = seName;
       const res = await assignPlotSiteEngineer(supabase, plot, seName);
       if (!res.success) {
         console.warn('Assign site engineer warning:', res.error);
       }
-      if (fetchAllData) await fetchAllData();
+      if (fetchAllData) {
+        try {
+          await fetchAllData();
+        } catch (fetchErr: any) {
+          console.warn('Background refresh after assigning SE:', fetchErr?.message || fetchErr);
+        }
+      }
     } catch (err: any) {
-      console.error('Failed to assign site engineer:', err);
+      console.error('Failed to assign site engineer:', err?.message || err);
     } finally {
       setUpdatingPlotSeId(null);
     }
