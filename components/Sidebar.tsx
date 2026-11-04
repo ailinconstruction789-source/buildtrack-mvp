@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, ClipboardList, Home, PieChart, BarChartHorizontal, TrendingUp, Building2, Users, Lightbulb, Grid, Calendar, Activity, ShieldAlert, PlusCircle, MapIcon, Building, DollarSign, Monitor, FileSpreadsheet, Wrench, FolderOpen, Smartphone, ChevronRight, Gift, CalendarDays, FileText, ShieldCheck, Key, User, Award, Target, Clock } from 'lucide-react';
+import { LayoutDashboard, ClipboardList, Home, PieChart, BarChartHorizontal, TrendingUp, Building2, Users, Lightbulb, Grid, Calendar, Activity, ShieldAlert, PlusCircle, MapIcon, Building, DollarSign, Monitor, FileSpreadsheet, Wrench, FolderOpen, Smartphone, ChevronRight, Gift, CalendarDays, FileText, ShieldCheck, Key, User, Award, Target, Clock, HardHat } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
 
@@ -125,6 +125,9 @@ const Sidebar = React.memo(({
                       )}
                       {(isAdmin || isOwner || isSiteEngineer || isForeman || isQC || isProjectPlanner) && (
                         <button onClick={() => { setView('daily-activities'); setSelectedProject(null); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'daily-activities' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Clock size={18} /> ดูกิจกรรมประจำวัน</button>
+                      )}
+                      {(isAdmin || isOwner || isSiteEngineer || isForeman || isProjectPlanner) && (
+                        <button onClick={() => { setView('foreman-workspace'); setSelectedProject(null); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'foreman-workspace' ? 'bg-amber-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><HardHat size={18} /> ห้องทำงานโฟร์แมน</button>
                       )}
                       <button onClick={() => { setView('dashboard'); setSelectedProject(null); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'dashboard' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Home size={18} /> Dashboard</button>
                       {(isAdmin || isProjectPlanner || isQC || isSiteEngineer || isOwner || isForeman) && (

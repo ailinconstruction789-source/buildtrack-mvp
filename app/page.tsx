@@ -37,6 +37,7 @@ const QCPerformanceDashboard = dynamic(() => import('@/components/QCPerformanceD
 const ExecutiveAnalytics = dynamic(() => import('@/components/ExecutiveAnalytics'));
 const MasterGanttChart = dynamic(() => import('@/components/MasterGanttChart'));
 const PlannerScoringDashboard = dynamic(() => import('@/components/PlannerScoringDashboard'));
+const ForemanWorkspaceView = dynamic(() => import('@/components/ForemanWorkspaceView'));
 const SalesKanban = dynamic(() => import('@/components/sales/SalesKanban'));
 const SalesDashboardExcelStyle = dynamic(() => import('@/components/sales/SalesDashboardExcelStyle'));
 const DailyVisitsScheduleView = dynamic(() => import('@/components/sales/DailyVisitsScheduleView'));
@@ -3507,7 +3508,7 @@ export default function ConstructionApp() {
                  )}
                  {view === 'task-progress' && (
                     <button onClick={() => setView(taskReturnView)} className="text-sm font-bold text-slate-500 hover:text-blue-600 flex items-center gap-1.5 hover:-translate-x-1 transition-transform">
-                       <ArrowLeft size={16}/> BACK TO {taskReturnView === 'daily-activities' ? 'DAILY ACTIVITIES' : taskReturnView === 'global-feed' ? 'LIVE FEED' : taskReturnView === 'dashboard' ? 'DASHBOARD' : 'PLOT'}
+                       <ArrowLeft size={16}/> BACK TO {taskReturnView === 'foreman-workspace' ? 'FOREMAN WORKSPACE' : taskReturnView === 'daily-activities' ? 'DAILY ACTIVITIES' : taskReturnView === 'global-feed' ? 'LIVE FEED' : taskReturnView === 'dashboard' ? 'DASHBOARD' : 'PLOT'}
                     </button>
                  )}
                  {view === 'defect-progress' && (
@@ -4173,6 +4174,37 @@ export default function ConstructionApp() {
                   onSelectPlot={(plot: any) => {
                     setSelectedPlot(plot);
                     setView('house-detail');
+                  }}
+                />
+              )}
+              {/* 👷 View: Foreman Workspace (ห้องทำงานโฟร์แมน) */}
+              {view === 'foreman-workspace' && (
+                <ForemanWorkspaceView
+                  plots={plots}
+                  projects={projects}
+                  taskTemplates={taskTemplates}
+                  schedules={schedules}
+                  assignments={assignments}
+                  allUpdatesRecord={allUpdatesRecord}
+                  allUsers={allUsers}
+                  foremenList={foremenList}
+                  loggedInUser={loggedInUser}
+                  currentUserRole={currentUserRole}
+                  isAdmin={isAdmin}
+                  isOwner={isOwner}
+                  isSiteEngineer={isSiteEngineer}
+                  isProjectPlanner={isProjectPlanner}
+                  isForeman={isForeman}
+                  fetchAllData={fetchAllData}
+                  onSelectPlot={(plot: any) => {
+                    setSelectedPlot(plot);
+                    setView('house-detail');
+                  }}
+                  onNavigateToTaskChat={(plot: any, task: any) => {
+                    setSelectedPlot(plot);
+                    setSelectedTask(task);
+                    setTaskReturnView('foreman-workspace');
+                    setView('task-progress');
                   }}
                 />
               )}
@@ -5604,6 +5636,12 @@ export default function ConstructionApp() {
                 <button onClick={() => setView('planner-scoring')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'planner-scoring' ? 'text-amber-600' : 'text-slate-400 hover:text-slate-600'}`}>
                   <Award size={20} className={activeView === 'planner-scoring' ? 'fill-amber-100' : ''} />
                   <span className="text-[9px] font-black mt-1">คะแนนแผน</span>
+                </button>
+              )}
+              {(isAdmin || isOwner || isSiteEngineer || isForeman || isProjectPlanner) && (
+                <button onClick={() => { setView('foreman-workspace'); setSelectedProject(null); }} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'foreman-workspace' ? 'text-amber-600' : 'text-slate-400 hover:text-slate-600'}`}>
+                  <HardHat size={20} className={activeView === 'foreman-workspace' ? 'fill-amber-100' : ''} />
+                  <span className="text-[9px] font-black mt-1">โฟร์แมน</span>
                 </button>
               )}
               {(isAdmin || isProjectPlanner || isQC || isSiteEngineer || isOwner || isForeman) && (
