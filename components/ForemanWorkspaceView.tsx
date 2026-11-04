@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   HardHat,
   Calendar,
@@ -120,8 +120,8 @@ export default function ForemanWorkspaceView({
   // Snapshots loaded from database/cache
   const [snapshots, setSnapshots] = useState<any[]>([]);
   const [isLoadingSnapshots, setIsLoadingSnapshots] = useState<boolean>(false);
-  const [isSavingSnapshot, setIsSavingSnapshot] = useState<boolean>(false);
-  const [saveSuccessNotice, setSaveSuccessNotice] = useState<boolean>(false);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('saved');
+  const lastAutoSaveSignatureRef = useRef<string>('');
 
   // Roadblock Reason Modal State
   const [selectedTaskForRoadblock, setSelectedTaskForRoadblock] = useState<ForemanDailyTask | null>(null);
@@ -261,25 +261,48 @@ export default function ForemanWorkspaceView({
   const isViewingToday = selectedDate === todayStr;
   const isViewingFuture = selectedDate > todayStr;
 
-  // Save / freeze current snapshot
-  const handleSaveSnapshot = async () => {
-    setIsSavingSnapshot(true);
-    try {
-      await saveForemanDailySnapshot(
-        dailyTasks,
-        selectedDate,
-        selectedForeman,
-        loggedInUser?.username || loggedInUser?.name || 'User'
-      );
-      setSaveSuccessNotice(true);
-      setTimeout(() => setSaveSuccessNotice(false), 3000);
-      await loadSnapshotForCurrentView();
-    } catch (err) {
-      console.error('Failed to save snapshot', err);
-    } finally {
-      setIsSavingSnapshot(false);
-    }
-  };
+  // Automatic Background Snapshot Synchronization
+  useEffect(() => {
+    if (!dailyTasks || dailyTasks.length === 0) return;
+
+    // Content signature of current view & compliance status
+    const currentSignature = `${selectedDate}::${selectedForeman}::${dailyTasks.length}::${summary.updatedTasks}::${summary.roadblockTasks}`;
+
+    if (lastAutoSaveSignatureRef.current === currentSignature) return;
+
+    // Auto-save is triggered for today's tasks or when viewing a past date that has no snapshot yet
+    const shouldAutoSave = isViewingToday || (isViewingPast && snapshots.length === 0);
+    if (!shouldAutoSave) return;
+
+    const timer = setTimeout(async () => {
+      setAutoSaveStatus('saving');
+      try {
+        await saveForemanDailySnapshot(
+          dailyTasks,
+          selectedDate,
+          selectedForeman,
+          loggedInUser?.username || loggedInUser?.name || 'AutoSync'
+        );
+        lastAutoSaveSignatureRef.current = currentSignature;
+        setAutoSaveStatus('saved');
+      } catch (err) {
+        console.warn('Background auto-save notice:', err);
+        setAutoSaveStatus('saved');
+      }
+    }, 600);
+
+    return () => clearTimeout(timer);
+  }, [
+    dailyTasks,
+    selectedDate,
+    selectedForeman,
+    summary.updatedTasks,
+    summary.roadblockTasks,
+    isViewingToday,
+    isViewingPast,
+    snapshots.length,
+    loggedInUser,
+  ]);
 
   // Submit Roadblock Reason
   const handleSubmitRoadblock = async () => {
@@ -486,25 +509,23 @@ export default function ForemanWorkspaceView({
             />
           </div>
 
-          <button
-            onClick={handleSaveSnapshot}
-            disabled={isSavingSnapshot}
-            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black transition-all shadow-xs cursor-pointer active:scale-95 ${
-              saveSuccessNotice
-                ? 'bg-emerald-600 text-white'
-                : 'bg-slate-800 hover:bg-slate-900 text-white'
-            }`}
-            title="บันทึกแช่แข็งสถานะงานประจำวันลงในระบบประวัติ"
+          {/* ☁️ Auto-Save Status Badge */}
+          <div
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black transition-all border shrink-0 bg-emerald-50 border-emerald-200/90 text-emerald-800 shadow-xs"
+            title="ระบบแช่แข็งและบันทึกประวัติแผนงานประจำวันให้อัตโนมัติในเบื้องหลัง"
           >
-            {isSavingSnapshot ? (
-              <RefreshCw size={14} className="animate-spin" />
-            ) : saveSuccessNotice ? (
-              <Check size={14} />
+            {autoSaveStatus === 'saving' ? (
+              <>
+                <RefreshCw size={13} className="animate-spin text-emerald-600" />
+                <span>กำลังบันทึกอัตโนมัติ...</span>
+              </>
             ) : (
-              <ShieldCheck size={14} />
+              <>
+                <CheckCircle2 size={13} className="stroke-[2.5] text-emerald-600" />
+                <span>บันทึกประวัติอัตโนมัติแล้ว</span>
+              </>
             )}
-            <span>{saveSuccessNotice ? 'แช่แข็งประวัติแล้ว!' : 'แช่แข็ง Snapshot'}</span>
-          </button>
+          </div>
         </div>
       </div>
 
