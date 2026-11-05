@@ -63,6 +63,15 @@ export default function PlannerScoringDashboard({
   const [updatingPlotSeId, setUpdatingPlotSeId] = useState<string | null>(null);
   const [seForemanMap, setSeForemanMap] = useState<SEForemanMap>({});
   const [showSeTeamModal, setShowSeTeamModal] = useState(false);
+  const [allRevisions, setAllRevisions] = useState<any[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    supabase.from('plot_schedule_revisions').select('id, plot_id, created_at, is_exempted, foreman_name').then(({ data, error }) => {
+      if (!error && data && active) setAllRevisions(data);
+    });
+    return () => { active = false; };
+  }, [plots]);
 
   // Load SE-Foreman Mapping on mount or when plots change
   useEffect(() => {
@@ -122,8 +131,8 @@ export default function PlannerScoringDashboard({
 
   // 1. Calculate Foreman Aggregates
   const foremanSummaries: ForemanScoreSummary[] = useMemo(() => {
-    return calculateForemanAggregates(relevantPlots, effectiveForemenList);
-  }, [relevantPlots, effectiveForemenList]);
+    return calculateForemanAggregates(relevantPlots, effectiveForemenList, allRevisions);
+  }, [relevantPlots, effectiveForemenList, allRevisions]);
 
   // 2. Calculate Site Engineer Aggregates (Weighted Average - Rule 2)
   const siteEngineerSummaries: SiteEngineerScoreSummary[] = useMemo(() => {
@@ -1101,8 +1110,11 @@ export default function PlannerScoringDashboard({
           plots={plots}
           initialMap={seForemanMap}
           onSave={async (newMap) => {
+            const res = await saveSEForemanMap(supabase, newMap, currentUserName, seForemanMap);
+            if (!res.success) {
+              throw new Error(res.error || 'บันทึกการจัดทีม Site Engineer ไม่สำเร็จ');
+            }
             setSeForemanMap(newMap);
-            await saveSEForemanMap(supabase, newMap, currentUserName);
             if (fetchAllData) await fetchAllData();
           }}
           currentUserName={currentUserName}

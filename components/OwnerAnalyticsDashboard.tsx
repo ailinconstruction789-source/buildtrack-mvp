@@ -1498,8 +1498,9 @@ export default function OwnerAnalyticsDashboard({
         <div className="lg:col-span-2">
           <ForemanInspectionCalendar
             plots={plots}
+            projectName={selectedProjectId}
             taskTemplates={taskTemplates}
-            schedules={rawSchedules}
+            schedules={schedules}
             assignments={assignments}
             allUpdatesRecord={rawAllUpdatesRecord}
             foremenList={foremenList}

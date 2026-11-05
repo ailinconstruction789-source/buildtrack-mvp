@@ -35,7 +35,10 @@ interface ForemanInspectionCalendarProps {
   title?: string;
   compact?: boolean;
   isLoading?: boolean;
+  projectName?: string;
 }
+
+const EMPTY_SNAPSHOTS: any[] = [];
 
 const WEEKDAY_NAMES = ['อา.', 'จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.'];
 
@@ -49,7 +52,8 @@ export default function ForemanInspectionCalendar({
   selectedForeman: propForeman,
   onSelectForeman,
   onSelectDate,
-  snapshots = [],
+  snapshots = EMPTY_SNAPSHOTS,
+  projectName,
   title = 'ปฏิทินตรวจสอบการเข้างานของโฟร์แมน (Owner Audit Calendar)',
   compact: _compact = false,
   isLoading: propIsLoading = false,
@@ -83,15 +87,55 @@ export default function ForemanInspectionCalendar({
   const [isLoadingSnapshots, setIsLoadingSnapshots] = useState<boolean>(true);
   const [refreshKey, setRefreshKey] = useState<number>(0);
 
+  const snapshotsRef = React.useRef(snapshots);
+  snapshotsRef.current = snapshots;
+  const snapshotsFingerprint = useMemo(() => {
+    if (!snapshots || snapshots.length === 0) return '0';
+    return `${snapshots.length}:` + snapshots.map(s =>
+      `${s.id || ''}_${s.snapshot_date || ''}_${s.plot_id || ''}_${s.task_template_id || ''}_${s.planned_start || ''}_${s.planned_end || ''}_${s.is_updated_today ? 1 : 0}_${s.status_reason || ''}_${s.status_note || ''}_${s.current_progress || 0}`
+    ).join(';');
+  }, [snapshots]);
+
+  const plotsFingerprint = useMemo(() => {
+    if (!plots || plots.length === 0) return '0';
+    return plots.map(p => `${p.id}:${getPlotForemanName(p) || ''}`).join('|');
+  }, [plots]);
+
+  const activeRequestRef = React.useRef<{ year: number; month: number; foreman: string; project: string }>({
+    year: 0,
+    month: 0,
+    foreman: '',
+    project: ''
+  });
+
   // Fetch monthly snapshots whenever month, year, foreman, or refresh is triggered
   useEffect(() => {
     let isCancelled = false;
+    const reqYear = currentYear;
+    const reqMonth = currentMonth;
+    const reqForeman = activeForeman;
+    const reqProject = projectName || 'all';
+    activeRequestRef.current = { year: reqYear, month: reqMonth, foreman: reqForeman, project: reqProject };
+
     setIsLoadingSnapshots(true);
 
-    loadForemanMonthlySnapshots(currentYear, currentMonth, activeForeman)
+    const relevantPlotIds = reqForeman && reqForeman !== 'all'
+      ? (plots || []).filter(p => (getPlotForemanName(p) || '').toLowerCase() === reqForeman.toLowerCase()).map(p => p.id)
+      : [];
+
+    loadForemanMonthlySnapshots(reqYear, reqMonth, reqForeman, projectName, undefined, { plotIds: relevantPlotIds })
       .then(snaps => {
         if (!isCancelled) {
-          const merged = [...(snapshots || []), ...(snaps || [])];
+          if (
+            activeRequestRef.current.year !== reqYear ||
+            activeRequestRef.current.month !== reqMonth ||
+            activeRequestRef.current.foreman !== reqForeman ||
+            activeRequestRef.current.project !== reqProject
+          ) {
+            return;
+          }
+          const currentPropsSnapshots = snapshotsRef.current || [];
+          const merged = [...currentPropsSnapshots, ...(snaps || [])];
           const uniqueMap = new Map();
           merged.forEach(s => {
             const k = s.id ? `id_${s.id}` : `${s.snapshot_date}_${s.plot_id}_${s.foreman_name}`;
@@ -105,14 +149,21 @@ export default function ForemanInspectionCalendar({
       })
       .finally(() => {
         if (!isCancelled) {
-          setIsLoadingSnapshots(false);
+          if (
+            activeRequestRef.current.year === reqYear &&
+            activeRequestRef.current.month === reqMonth &&
+            activeRequestRef.current.foreman === reqForeman &&
+            activeRequestRef.current.project === reqProject
+          ) {
+            setIsLoadingSnapshots(false);
+          }
         }
       });
 
     return () => {
       isCancelled = true;
     };
-  }, [currentYear, currentMonth, activeForeman, snapshots, refreshKey]);
+  }, [currentYear, currentMonth, activeForeman, projectName, snapshotsFingerprint, plotsFingerprint, refreshKey]);
 
   const handleManualRefresh = () => {
     setRefreshKey(k => k + 1);
@@ -141,30 +192,91 @@ export default function ForemanInspectionCalendar({
     return Array.from(set.values()).sort((a, b) => a.localeCompare(b, 'th'));
   }, [foremenList, plots]);
 
+  const targetProject = projectName && projectName !== 'all' ? projectName.trim() : null;
+
+  // Filter plots by project
+  const scopedPlots = useMemo(() => {
+    if (!targetProject) return plots;
+    return (plots || []).filter(p => p.project_name === targetProject);
+  }, [plots, targetProject]);
+
+  const scopedPlotIds = useMemo(() => {
+    if (!targetProject) return null;
+    return new Set(scopedPlots.map(p => String(p.id)));
+  }, [scopedPlots, targetProject]);
+
+  // Filter schedules by scoped plots (Finding H: support hyphenated plot IDs such as A-01)
+  const scopedSchedules = useMemo(() => {
+    if (!scopedPlotIds || !schedules) return schedules;
+    const res: Record<string, any> = {};
+    Object.keys(schedules).forEach(k => {
+      const scheduleItem = schedules[k];
+      if (scheduleItem?.plot_id && scopedPlotIds.has(String(scheduleItem.plot_id))) {
+        res[k] = scheduleItem;
+        return;
+      }
+      for (const pid of scopedPlotIds) {
+        if (k === pid || k.startsWith(`${pid}-`) || k.startsWith(`${pid}_`)) {
+          res[k] = scheduleItem;
+          return;
+        }
+      }
+    });
+    return res;
+  }, [schedules, scopedPlotIds]);
+
+  // Filter updates by scoped plots
+  const scopedUpdates = useMemo(() => {
+    if (!scopedPlotIds) return allUpdatesRecord;
+    return (allUpdatesRecord || []).filter(u => scopedPlotIds.has(String(u.plot_id)));
+  }, [allUpdatesRecord, scopedPlotIds]);
+
+  // Filter monthly snapshots by project (Issue 7: merge live snapshots into monthlySnapshots by identity)
+  const scopedMonthlySnapshots = useMemo(() => {
+    const map = new Map<string, any>();
+    (monthlySnapshots || []).forEach(s => {
+      const k = s.id ? `id_${s.id}` : `${s.snapshot_date}_${s.plot_id}_${s.task_template_id}`;
+      map.set(k, s);
+    });
+    (snapshots || []).forEach(s => {
+      const k = s.id ? `id_${s.id}` : `${s.snapshot_date}_${s.plot_id}_${s.task_template_id}`;
+      map.set(k, s);
+    });
+    const merged = Array.from(map.values());
+    if (!targetProject) return merged;
+    return merged.filter(s => {
+      if (s.project_name === targetProject) return true;
+      if (scopedPlotIds && scopedPlotIds.has(String(s.plot_id))) return true;
+      return false;
+    });
+  }, [snapshots, monthlySnapshots, targetProject, scopedPlotIds]);
+
   // Compute monthly data
   const monthlyData: MonthInspectionSummary = useMemo(() => {
     return getMonthlyForemanInspectionCompliance({
       year: currentYear,
       month: currentMonth,
-      plots,
+      plots: scopedPlots,
       taskTemplates,
-      schedules,
+      schedules: scopedSchedules,
       assignments,
-      allUpdatesRecord,
+      allUpdatesRecord: scopedUpdates,
       foremanName: activeForeman,
-      existingSnapshots: monthlySnapshots,
+      projectName,
+      existingSnapshots: scopedMonthlySnapshots,
       todayDateStr: todayStr,
     });
   }, [
     currentYear,
     currentMonth,
-    plots,
+    scopedPlots,
     taskTemplates,
-    schedules,
+    scopedSchedules,
     assignments,
-    allUpdatesRecord,
+    scopedUpdates,
     activeForeman,
-    monthlySnapshots,
+    projectName,
+    scopedMonthlySnapshots,
     todayStr,
   ]);
 

@@ -15,6 +15,8 @@ export interface PlotBaselineData {
   isLocked: boolean;
   start: string | null;
   end: string | null;
+  originalEnd?: string | null;
+  latestApprovedEnd?: string | null;
   lockedAt: string | null;
   lockedBy: string | null;
   revisions: number;
@@ -158,6 +160,8 @@ export function parsePlotBaseline(plot: any): PlotBaselineData {
       isLocked: false,
       start: null,
       end: null,
+      originalEnd: null,
+      latestApprovedEnd: null,
       lockedAt: null,
       lockedBy: null,
       revisions: 0,
@@ -185,6 +189,14 @@ export function parsePlotBaseline(plot: any): PlotBaselineData {
   const foremanAssignedAt = plot.foreman_assigned_at || notesMeta.foremanAssignedAt || null;
   const siteEngineer = plot.site_engineer || notesMeta.siteEngineer || null;
 
+  const originalEnd = plot.baseline_planned_end
+    ? String(plot.baseline_planned_end).split('T')[0]
+    : (notesMeta.start_baseline_end ? String(notesMeta.start_baseline_end).split('T')[0] : (notesMeta.end ? String(notesMeta.end).split('T')[0] : null));
+
+  const latestApprovedEnd = notesMeta.end
+    ? String(notesMeta.end).split('T')[0]
+    : (plot.latest_planned_end ? String(plot.latest_planned_end).split('T')[0] : originalEnd);
+
   // 1. Check native columns first
   if (plot.baseline_locked_at || plot.baseline_planned_end) {
     const revisions = Number(plot.schedule_delay_revisions ?? notesMeta.revisions ?? 0);
@@ -194,9 +206,9 @@ export function parsePlotBaseline(plot: any): PlotBaselineData {
       start: plot.baseline_planned_start
         ? String(plot.baseline_planned_start).split('T')[0]
         : (notesMeta.start ? String(notesMeta.start).split('T')[0] : null),
-      end: plot.baseline_planned_end
-        ? String(plot.baseline_planned_end).split('T')[0]
-        : (notesMeta.end ? String(notesMeta.end).split('T')[0] : null),
+      end: originalEnd,
+      originalEnd,
+      latestApprovedEnd,
       lockedAt: plot.baseline_locked_at || notesMeta.lockedAt || null,
       lockedBy: plot.baseline_locked_by || notesMeta.lockedBy || 'Project Planner',
       revisions,
@@ -215,6 +227,8 @@ export function parsePlotBaseline(plot: any): PlotBaselineData {
       isLocked: true,
       start: notesMeta.start ? String(notesMeta.start).split('T')[0] : null,
       end: notesMeta.end ? String(notesMeta.end).split('T')[0] : null,
+      originalEnd: notesMeta.start_baseline_end || notesMeta.end || null,
+      latestApprovedEnd,
       lockedAt: notesMeta.lockedAt || null,
       lockedBy: notesMeta.lockedBy || 'Project Planner',
       revisions,
@@ -229,6 +243,8 @@ export function parsePlotBaseline(plot: any): PlotBaselineData {
     isLocked: false,
     start: null,
     end: null,
+    originalEnd: null,
+    latestApprovedEnd: null,
     lockedAt: null,
     lockedBy: null,
     revisions: 0,
@@ -323,7 +339,8 @@ export function calculateForemanPlotScore(plot: any, revisionsList?: any[]): num
  */
 export function calculateForemanAggregates(
   plots: any[],
-  foremenList?: any[]
+  foremenList?: any[],
+  revisionsList?: any[]
 ): ForemanScoreSummary[] {
   const groups: Record<string, any[]> = {};
 
@@ -351,8 +368,10 @@ export function calculateForemanAggregates(
       const base = parsePlotBaseline(p);
       if (base.isLocked) {
         lockedCount++;
-        totalScore += base.score;
-        if (base.score < 100) penalizedCount++;
+        // Finding 6: Use calculateForemanPlotScore to respect foreman tenure
+        const foremanScore = calculateForemanPlotScore(p, revisionsList);
+        totalScore += foremanScore;
+        if (foremanScore < 100) penalizedCount++;
       }
     });
 
@@ -416,44 +435,158 @@ export function getEffectiveSEForPlot(plot: any, seForemanMap?: SEForemanMap): s
 export async function saveSEForemanMap(
   supabase: any,
   seForemanMap: SEForemanMap,
-  updatedBy: string
+  updatedBy: string,
+  previousMap?: SEForemanMap
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    // 1. Cache to localStorage
+    // Finding 10: Determine foremen who were assigned or removed
+    const currentAssignedForemen = new Set<string>();
+    Object.values(seForemanMap || {}).forEach(list => {
+      (list || []).forEach(f => {
+        const trimmed = f && f.trim();
+        if (trimmed) currentAssignedForemen.add(trimmed);
+      });
+    });
+
+    const removedForemen = new Set<string>();
+    if (previousMap) {
+      Object.values(previousMap).forEach(list => {
+        (list || []).forEach(f => {
+          const trimmed = f && f.trim();
+          if (trimmed && !currentAssignedForemen.has(trimmed)) {
+            removedForemen.add(trimmed);
+          }
+        });
+      });
+    }
+
+    const allAffectedForemen = new Set<string>([...currentAssignedForemen, ...removedForemen]);
+
+    // Finding F3: Capture genuine persisted pre-operation state from plots table
+    const prePlotState = new Map<string, string | null>();
+    const plotsTable = supabase.from('plots');
+    if (allAffectedForemen.size > 0 && typeof plotsTable?.select === 'function') {
+      const { data: prePlots, error: preErr } = await plotsTable
+        .select('id, foreman_name, site_engineer')
+        .in('foreman_name', Array.from(allAffectedForemen));
+
+      if (preErr) {
+        return {
+          success: false,
+          error: `ไม่สามารถตรวจสอบสถานะแปลงก่อนบันทึกทีมงาน: ${preErr.message}`
+        };
+      }
+
+      if (Array.isArray(prePlots)) {
+        prePlots.forEach((p: any) => {
+          if (p && p.id) {
+            prePlotState.set(String(p.id), p.site_engineer ?? null);
+          }
+        });
+      }
+    }
+
+    const rollbackPlotsToPrevious = async (): Promise<{ success: boolean; error?: string }> => {
+      const rbErrors: string[] = [];
+      try {
+        if (prePlotState.size > 0) {
+          // Group plot IDs by their exact original site_engineer (Finding F3)
+          const byOriginalSE = new Map<string | null, string[]>();
+          for (const [plotId, origSE] of prePlotState.entries()) {
+            const list = byOriginalSE.get(origSE) || [];
+            list.push(plotId);
+            byOriginalSE.set(origSE, list);
+          }
+
+          for (const [origSE, plotIds] of byOriginalSE.entries()) {
+            if (plotIds.length > 0) {
+              const { error: rbErr } = await supabase
+                .from('plots')
+                .update({ site_engineer: origSE })
+                .in('id', plotIds);
+              if (rbErr) {
+                rbErrors.push(rbErr.message);
+                console.error('Rollback plots mapping error for', plotIds, rbErr);
+              }
+            }
+          }
+        } else if (previousMap) {
+          for (const [prevSE, prevForemen] of Object.entries(previousMap)) {
+            if (prevForemen && prevForemen.length > 0) {
+              const { error: rbErr } = await supabase
+                .from('plots')
+                .update({ site_engineer: prevSE })
+                .in('foreman_name', prevForemen);
+              if (rbErr) rbErrors.push(rbErr.message);
+            }
+          }
+        }
+      } catch (err: any) {
+        rbErrors.push(err?.message || String(err));
+      }
+      if (rbErrors.length > 0) {
+        return { success: false, error: `การย้อนข้อมูลล้มเหลว: ${rbErrors.join('; ')}` };
+      }
+      return { success: true };
+    };
+
+    // 1. Batch update plots table in Supabase FIRST so plots reflect the assigned SE
+    for (const [seName, foremen] of Object.entries(seForemanMap)) {
+      if (foremen && foremen.length > 0) {
+        const { error: plotError } = await supabase
+          .from('plots')
+          .update({ site_engineer: seName })
+          .in('foreman_name', foremen);
+        if (plotError) {
+          const rbResult = await rollbackPlotsToPrevious();
+          return {
+            success: false,
+            error: rbResult.success ? plotError.message : `${plotError.message} (Rollback: ${rbResult.error})`
+          };
+        }
+      }
+    }
+
+    // 2. Clear site_engineer on plots for removed foremen (Finding 10)
+    if (removedForemen.size > 0) {
+      const removedList = Array.from(removedForemen);
+      const { error: clearError } = await supabase
+        .from('plots')
+        .update({ site_engineer: null })
+        .in('foreman_name', removedList);
+      if (clearError) {
+        const rbResult = await rollbackPlotsToPrevious();
+        return {
+          success: false,
+          error: rbResult.success ? clearError.message : `${clearError.message} (Rollback: ${rbResult.error})`
+        };
+      }
+    }
+
+    // 3. ONLY after plots are successfully updated in database, record audit log to task_updates
+    const { error: auditError } = await supabase.from('task_updates').insert([
+      {
+        plot_id: null,
+        role: 'Site Engineer',
+        action: 'ASSIGN_SE_FOREMEN',
+        user_name: updatedBy,
+        text_content: JSON.stringify(seForemanMap)
+      }
+    ]);
+    if (auditError) {
+      const rbResult = await rollbackPlotsToPrevious();
+      return {
+        success: false,
+        error: rbResult.success ? auditError.message : `${auditError.message} (Rollback: ${rbResult.error})`
+      };
+    }
+
+    // 4. Cache to localStorage ONLY after DB writes succeeded without error! (Finding 9)
     if (typeof window !== 'undefined') {
       try {
         localStorage.setItem('buildtrack_se_foreman_map', JSON.stringify(seForemanMap));
       } catch (e) {
         // ignore storage error
-      }
-    }
-
-    // 2. Audit log to task_updates
-    try {
-      await supabase.from('task_updates').insert([
-        {
-          plot_id: null,
-          role: 'Site Engineer',
-          action: 'ASSIGN_SE_FOREMEN',
-          user_name: updatedBy,
-          text_content: JSON.stringify(seForemanMap)
-        }
-      ]);
-    } catch (auditErr) {
-      console.warn('task_updates audit insert warning:', auditErr);
-    }
-
-    // 3. Batch update plots table in Supabase so plots reflect the assigned SE
-    for (const [seName, foremen] of Object.entries(seForemanMap)) {
-      if (foremen && foremen.length > 0) {
-        try {
-          await supabase
-            .from('plots')
-            .update({ site_engineer: seName })
-            .in('foreman_name', foremen);
-        } catch (e) {
-          console.warn(`Failed to batch update plots for SE ${seName}:`, e);
-        }
       }
     }
 
@@ -464,13 +597,12 @@ export async function saveSEForemanMap(
   }
 }
 
-/**
- * Loads SE -> Foremen mapping from task_updates, localStorage, or auto-detect from plots.
- */
 export async function loadSEForemanMap(
   supabase: any,
   plots?: any[]
 ): Promise<SEForemanMap> {
+  let loadedMap: SEForemanMap | null = null;
+
   // 1. Try reading latest record from task_updates
   try {
     const { data, error } = await supabase
@@ -483,12 +615,7 @@ export async function loadSEForemanMap(
     if (!error && data && data.length > 0 && data[0].text_content) {
       const parsed = JSON.parse(data[0].text_content);
       if (parsed && typeof parsed === 'object') {
-        if (typeof window !== 'undefined') {
-          try {
-            localStorage.setItem('buildtrack_se_foreman_map', JSON.stringify(parsed));
-          } catch {}
-        }
-        return parsed;
+        loadedMap = parsed;
       }
     }
   } catch (e) {
@@ -496,17 +623,48 @@ export async function loadSEForemanMap(
   }
 
   // 2. Fallback to localStorage
-  if (typeof window !== 'undefined') {
+  if (!loadedMap && typeof window !== 'undefined') {
     try {
       const cached = localStorage.getItem('buildtrack_se_foreman_map');
       if (cached) {
         const parsed = JSON.parse(cached);
-        if (parsed && typeof parsed === 'object') return parsed;
+        if (parsed && typeof parsed === 'object') loadedMap = parsed;
       }
     } catch (e) {}
   }
 
-  // 3. Fallback: Auto-detect from plots in memory
+  // 3. Reconcile with plots ground truth (Finding D)
+  if (plots && plots.length > 0) {
+    const detectedFromPlots = autoDetectSEForemanMap(plots);
+    if (!loadedMap) {
+      loadedMap = detectedFromPlots;
+    } else {
+      // If plots table reflects updated site engineers, overlay them
+      for (const [se, foremen] of Object.entries(detectedFromPlots)) {
+        if (!loadedMap[se]) loadedMap[se] = [];
+        for (const fm of foremen) {
+          for (const otherSE of Object.keys(loadedMap)) {
+            if (otherSE !== se && Array.isArray(loadedMap[otherSE])) {
+              loadedMap[otherSE] = loadedMap[otherSE].filter((f: string) => f !== fm);
+            }
+          }
+          if (!loadedMap[se].includes(fm)) {
+            loadedMap[se].push(fm);
+          }
+        }
+      }
+    }
+  }
+
+  if (loadedMap) {
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('buildtrack_se_foreman_map', JSON.stringify(loadedMap));
+      } catch {}
+    }
+    return loadedMap;
+  }
+
   return autoDetectSEForemanMap(plots || []);
 }
 
@@ -803,8 +961,18 @@ export async function recordScheduleDelayRevision(
   }
 ): Promise<{ success: boolean; newScore: number; newRevisions: number; error?: string }> {
   try {
-    const prevEnd = currentBaseline.end || newEnd;
+    const prevEnd = currentBaseline.latestApprovedEnd || currentBaseline.end || newEnd;
     const diffMs = new Date(newEnd).getTime() - new Date(prevEnd).getTime();
+
+    // If newEnd does not extend beyond latestApprovedEnd, do not deduct score
+    if (diffMs <= 0) {
+      return {
+        success: true,
+        newScore: currentBaseline.score,
+        newRevisions: currentBaseline.revisions || 0
+      };
+    }
+
     const diffDays = Math.max(1, Math.ceil(diffMs / 86400000));
     const isExempt = Boolean(options?.isExempt);
     const revisionType = options?.revisionType || (isExempt ? 'force_majeure' : 'normal_delay');
@@ -836,7 +1004,212 @@ export async function recordScheduleDelayRevision(
     let updatePayload: any = {
       schedule_delay_revisions: nextRevisions,
       schedule_planning_score: nextScore,
-      handover_notes: notesWithTag
+      handover_notes: notesWithTag,
+      baseline_planned_end: newEnd
+    };
+
+    // Check if revision already committed on prior attempt (Issue F1: verify both revision and plots table commit)
+    const revTable = supabase.from('plot_schedule_revisions');
+    if (typeof revTable?.select === 'function') {
+      try {
+        const { data: existingRev, error: revSelectError } = await revTable
+          .select('id, new_score, new_planned_end, is_exempted, diff_days, created_at')
+          .eq('plot_id', plot.id)
+          .eq('new_planned_end', newEnd)
+          .order('created_at', { ascending: false })
+          .limit(1);
+
+      if (revSelectError) {
+        if (revSelectError.code === '42P01' || revSelectError.message?.includes('does not exist')) {
+          console.warn('plot_schedule_revisions table not found; skipping revision check');
+        } else {
+          console.error('Error checking existing schedule revision:', revSelectError);
+          return {
+            success: false,
+            newScore: currentBaseline.score,
+            newRevisions: currentBaseline.revisions || 0,
+            error: `ไม่สามารถตรวจสอบประวัติการปรับแผนเดิม: ${revSelectError.message}`
+          };
+        }
+      } else if (existingRev && existingRev.length > 0) {
+        const targetScore = existingRev[0].new_score ?? nextScore;
+        const targetRevisions = isExempt
+          ? (currentBaseline.revisions || 0)
+          : (currentBaseline.revisions || 0) + 1;
+
+        // Verify if plots table ALSO reflects this commit (Finding F1.2)
+        const { data: plotRows, error: plotCheckError } = await supabase
+          .from('plots')
+          .select('id, schedule_planning_score, schedule_delay_revisions, handover_notes, baseline_planned_end')
+          .eq('id', plot.id)
+          .limit(1);
+
+        if (plotCheckError) {
+          return {
+            success: false,
+            newScore: currentBaseline.score,
+            newRevisions: currentBaseline.revisions || 0,
+            error: `ไม่สามารถตรวจสอบสถานะแปลง: ${plotCheckError.message}`
+          };
+        }
+
+        const curPlot = plotRows && plotRows[0];
+        const hasScoreCommitted = Boolean(curPlot && (
+          curPlot.schedule_planning_score === targetScore ||
+          (curPlot.handover_notes && curPlot.handover_notes.includes(`"score":${targetScore}`))
+        ));
+        const hasEndCommitted = Boolean(curPlot && (
+          curPlot.baseline_planned_end === newEnd ||
+          (curPlot.handover_notes && curPlot.handover_notes.includes(`"end":"${newEnd}"`))
+        ));
+        const hasRevisionsCommitted = isExempt
+          ? true
+          : Boolean(curPlot && (
+              curPlot.schedule_delay_revisions === targetRevisions ||
+              (curPlot.handover_notes && curPlot.handover_notes.includes(`"revisions":${targetRevisions}`))
+            ));
+
+        const isPlotCommitted = hasScoreCommitted && hasEndCommitted && hasRevisionsCommitted;
+
+        if (isPlotCommitted) {
+          return {
+            success: true,
+            newScore: targetScore,
+            newRevisions: targetRevisions
+          };
+        }
+
+        // Incomplete prior attempt: finish updating plots table!
+        const finishNotes = (targetScore === nextScore && targetRevisions === nextRevisions)
+          ? notesWithTag
+          : buildPlotBaselineNoteTag(curPlot?.handover_notes || plot.handover_notes, {
+              start: currentBaseline.start || newStart,
+              end: newEnd,
+              lockedAt: currentBaseline.lockedAt || nowIso,
+              lockedBy: currentBaseline.lockedBy || revisedBy,
+              revisions: targetRevisions,
+              score: targetScore,
+              foremanName,
+              foremanAssignedAt: currentBaseline.foremanAssignedAt || null,
+              siteEngineer: siteEngineerName
+            });
+
+        const finishPayload: any = {
+          schedule_delay_revisions: targetRevisions,
+          schedule_planning_score: targetScore,
+          handover_notes: finishNotes,
+          baseline_planned_end: newEnd
+        };
+
+        let finishRes = await supabase
+          .from('plots')
+          .update(finishPayload)
+          .eq('id', plot.id);
+
+        if (finishRes.error && (finishRes.error.code === 'PGRST204' || finishRes.error.message?.includes('column'))) {
+          delete finishPayload.baseline_planned_end;
+          finishRes = await supabase
+            .from('plots')
+            .update(finishPayload)
+            .eq('id', plot.id);
+          if (finishRes.error && (finishRes.error.code === 'PGRST204' || finishRes.error.message?.includes('column'))) {
+            finishRes = await supabase
+              .from('plots')
+              .update({ handover_notes: finishNotes })
+              .eq('id', plot.id);
+          }
+        }
+
+        if (finishRes.error) {
+          return {
+            success: false,
+            newScore: currentBaseline.score,
+            newRevisions: currentBaseline.revisions || 0,
+            error: finishRes.error.message || 'ไม่สามารถบันทึกคะแนนการปรับแผนลงตารางแปลงได้'
+          };
+        }
+
+        return {
+          success: true,
+          newScore: targetScore,
+          newRevisions: targetRevisions
+        };
+      }
+    } catch (checkErr: any) {
+      if (checkErr?.code === '42P01' || checkErr?.message?.includes('does not exist')) {
+        // Table not existing pre-migration: ignore and proceed
+      } else {
+        console.error('Unexpected error in revision check:', checkErr);
+        return {
+          success: false,
+          newScore: currentBaseline.score,
+          newRevisions: currentBaseline.revisions || 0,
+          error: checkErr?.message || 'เกิดข้อผิดพลาดในการตรวจสอบประวัติการปรับแผน'
+        };
+      }
+    }
+  }
+
+    // 1. Insert revision record into plot_schedule_revisions FIRST
+    let insertedRevisionId: string | null = null;
+    const revisionRow = {
+      plot_id: plot.id,
+      revised_by: revisedBy,
+      previous_planned_end: prevEnd,
+      new_planned_end: newEnd,
+      diff_days: diffDays,
+      previous_score: currentBaseline.score,
+      new_score: nextScore,
+      reason: reason || (isExempt ? 'ปรับขยายวันสิ้นสุด (เหตุสุดวิสัย - ยกเว้นการหักคะแนน)' : 'ปรับแผนงานก่อสร้างล่าช้า'),
+      is_exempted: isExempt,
+      revision_type: revisionType,
+      foreman_name: foremanName,
+      site_engineer_name: siteEngineerName,
+      exempted_by: isExempt ? revisedBy : null,
+      exempted_at: isExempt ? nowIso : null
+    };
+
+    try {
+      const insertBuilder = supabase
+        .from('plot_schedule_revisions')
+        .insert([revisionRow]);
+      const { data: revData, error: revErr } = typeof insertBuilder.select === 'function'
+        ? await insertBuilder.select('id')
+        : await insertBuilder;
+      if (revErr) {
+        // Table not existing pre-migration: allow metadata fallback
+        if (revErr.code === '42P01' || revErr.code === 'PGRST204' || revErr.message?.includes('does not exist')) {
+          console.warn('plot_schedule_revisions table not found; falling back to metadata tag');
+        } else {
+          return {
+            success: false,
+            newScore: currentBaseline.score,
+            newRevisions: currentBaseline.revisions || 0,
+            error: revErr.message || 'ไม่สามารถบันทึกประวัติการปรับแผนได้ (ระงับการหักคะแนน)'
+          };
+        }
+      } else if (revData && revData[0]?.id) {
+        insertedRevisionId = revData[0].id;
+      }
+    } catch (revCatchErr: any) {
+      if (revCatchErr?.code === '42P01' || revCatchErr?.message?.includes('does not exist')) {
+        console.warn('plot_schedule_revisions table not found; falling back to metadata tag');
+      } else {
+        return {
+          success: false,
+          newScore: currentBaseline.score,
+          newRevisions: currentBaseline.revisions || 0,
+          error: revCatchErr?.message || 'ไม่สามารถบันทึกประวัติการปรับแผนได้ (ระงับการหักคะแนน)'
+        };
+      }
+    }
+
+    // 2. Update plots table with score deduction and revisions count
+    updatePayload = {
+      schedule_delay_revisions: nextRevisions,
+      schedule_planning_score: nextScore,
+      handover_notes: notesWithTag,
+      baseline_planned_end: newEnd
     };
 
     let { error } = await supabase
@@ -845,36 +1218,49 @@ export async function recordScheduleDelayRevision(
       .eq('id', plot.id);
 
     if (error && (error.code === 'PGRST204' || error.message?.includes('column'))) {
+      delete updatePayload.baseline_planned_end;
       const fallbackResult = await supabase
         .from('plots')
-        .update({ handover_notes: notesWithTag })
+        .update(updatePayload)
         .eq('id', plot.id);
-      if (fallbackResult.error) throw fallbackResult.error;
-    } else if (error) {
-      throw error;
-    }
 
-    try {
-      await supabase.from('plot_schedule_revisions').insert([
-        {
-          plot_id: plot.id,
-          revised_by: revisedBy,
-          previous_planned_end: prevEnd,
-          new_planned_end: newEnd,
-          diff_days: diffDays,
-          previous_score: currentBaseline.score,
-          new_score: nextScore,
-          reason: reason || (isExempt ? 'ปรับขยายวันสิ้นสุด (เหตุสุดวิสัย - ยกเว้นการหักคะแนน)' : 'ปรับแผนงานก่อสร้างล่าช้า'),
-          is_exempted: isExempt,
-          revision_type: revisionType,
-          foreman_name: foremanName,
-          site_engineer_name: siteEngineerName,
-          exempted_by: isExempt ? revisedBy : null,
-          exempted_at: isExempt ? nowIso : null
+      if (fallbackResult.error && (fallbackResult.error.code === 'PGRST204' || fallbackResult.error.message?.includes('column'))) {
+        const metadataFallback = await supabase
+          .from('plots')
+          .update({ handover_notes: notesWithTag })
+          .eq('id', plot.id);
+        if (metadataFallback.error) {
+          if (insertedRevisionId) {
+            try {
+              const { error: delErr } = await supabase.from('plot_schedule_revisions').delete().eq('id', insertedRevisionId);
+              if (delErr) console.warn('Rollback delete notice:', delErr.message);
+            } catch (delCatch) {
+              console.warn('Rollback inserted revision notice:', delCatch);
+            }
+          }
+          throw metadataFallback.error;
         }
-      ]);
-    } catch (revErr) {
-      console.warn('plot_schedule_revisions insert fallback:', revErr);
+      } else if (fallbackResult.error) {
+        if (insertedRevisionId) {
+          try {
+            const { error: delErr } = await supabase.from('plot_schedule_revisions').delete().eq('id', insertedRevisionId);
+            if (delErr) console.warn('Rollback delete notice:', delErr.message);
+          } catch (delCatch) {
+            console.warn('Rollback inserted revision notice:', delCatch);
+          }
+        }
+        throw fallbackResult.error;
+      }
+    } else if (error) {
+      if (insertedRevisionId) {
+        try {
+          const { error: delErr } = await supabase.from('plot_schedule_revisions').delete().eq('id', insertedRevisionId);
+          if (delErr) console.warn('Rollback delete notice:', delErr.message);
+        } catch (delCatch) {
+          console.warn('Rollback inserted revision notice:', delCatch);
+        }
+      }
+      throw error;
     }
 
     try {
@@ -894,17 +1280,18 @@ export async function recordScheduleDelayRevision(
             diff_days: diffDays,
             previous_score: currentBaseline.score,
             new_score: nextScore,
-            revision_count: nextRevisions,
+            reason: reason || 'ปรับแผนงานล่าช้า',
             is_exempted: isExempt,
             revision_type: revisionType,
-            foreman: foremanName,
-            site_engineer: siteEngineerName,
-            reason: reason || 'ปรับแผนงานก่อสร้างล่าช้า'
+            foreman_name: foremanName,
+            site_engineer_name: siteEngineerName,
+            revised_by: revisedBy,
+            revised_at: nowIso
           })
         }
       ]);
     } catch (auditErr) {
-      console.warn('task_updates audit insert fallback:', auditErr);
+      console.warn('Failed to insert task_updates audit log for REVISE_SCHEDULE:', auditErr);
     }
 
     return {
@@ -917,15 +1304,13 @@ export async function recordScheduleDelayRevision(
     return {
       success: false,
       newScore: currentBaseline.score,
-      newRevisions: currentBaseline.revisions,
+      newRevisions: currentBaseline.revisions || 0,
       error: err.message || 'เกิดข้อผิดพลาดในการบันทึกการปรับแผน'
     };
   }
 }
 
-/**
- * Retroactively exempts a schedule delay penalty by Owner/Admin, restoring 25 points.
- */
+
 export async function exemptSchedulePenalty(
   supabase: any,
   plot: any,

@@ -38,7 +38,7 @@ interface HouseDetailViewProps {
   isSummaryDelayed: boolean;
   isProjectPlanner: boolean;
   setCopyModalOpen: (b: boolean) => void;
-  handleSaveAllSchedules: () => void;
+  handleSaveAllSchedules: (options?: { skipClearInputs?: boolean }) => void | Promise<{ success: boolean; error?: string } | any>;
   isSubmitting: boolean;
   houseTypes: any[];
   taskTemplates: any[];
@@ -313,8 +313,9 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
       }
     });
 
-    if (baseline.isLocked && baseline.end && latestEndTs > -Infinity) {
-      const baselineEndTs = new Date(baseline.end).getTime();
+    const effectiveApprovedEnd = baseline.latestApprovedEnd || baseline.end;
+    if (baseline.isLocked && effectiveApprovedEnd && latestEndTs > -Infinity) {
+      const baselineEndTs = new Date(effectiveApprovedEnd).getTime();
       if (latestEndTs > baselineEndTs) {
         const diffDays = Math.max(1, Math.ceil((latestEndTs - baselineEndTs) / 86400000));
         const nextRevCount = (baseline.revisions || 0) + 1;
@@ -322,7 +323,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
 
         setRevisionModalData({
           isOpen: true,
-          previousEnd: baseline.end,
+          previousEnd: effectiveApprovedEnd,
           newEnd: latestEndDateStr,
           diffDays,
           currentScore: baseline.score,
@@ -338,6 +339,11 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
 
   const handleConfirmScheduleRevision = async (reason: string, options?: any) => {
     setIsRevisionSubmitting(true);
+    const saveRes: any = await handleSaveAllSchedules({ skipClearInputs: true });
+    if (saveRes && saveRes.success === false) {
+      setIsRevisionSubmitting(false);
+      return;
+    }
     try {
       const res = await recordScheduleDelayRevision(
         supabase,
@@ -359,8 +365,11 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
         return;
       }
 
+      if (setScheduleInputs) {
+        setScheduleInputs({});
+      }
       setRevisionModalData(prev => ({ ...prev, isOpen: false }));
-      await handleSaveAllSchedules();
+
 
       if (showToast) {
         showToast(

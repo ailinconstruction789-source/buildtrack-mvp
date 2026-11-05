@@ -33,6 +33,7 @@ export default function SEForemanAssignmentModal({
   const [selectedSe, setSelectedSe] = useState<string>('');
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [customSeName, setCustomSeName] = useState('');
   const [showAddSeInput, setShowAddSeInput] = useState(false);
 
@@ -170,13 +171,15 @@ export default function SEForemanAssignmentModal({
   // Save handler
   const handleSave = async () => {
     setIsSaving(true);
+    setSaveError(null);
     try {
       await onSave(mapState);
       setSaveSuccess(true);
       setTimeout(() => {
         onClose();
       }, 800);
-    } catch (err) {
+    } catch (err: any) {
+      setSaveError(err?.message || 'เกิดข้อผิดพลาดในการบันทึกข้อมูล กรุณาลองใหม่อีกครั้ง');
       console.error('Failed to save SE-foreman mapping:', err);
     } finally {
       setIsSaving(false);
@@ -383,6 +386,13 @@ export default function SEForemanAssignmentModal({
           </div>
 
         </div>
+
+        {saveError && (
+          <div className="mx-5 mb-2 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+            <AlertCircle size={15} className="shrink-0 text-rose-600" />
+            <span className="font-semibold">{saveError}</span>
+          </div>
+        )}
 
         {/* Footer */}
         <div className="p-4 md:p-5 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-3 shrink-0">

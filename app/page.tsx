@@ -1374,18 +1374,31 @@ export default function ConstructionApp() {
     if (pInfo && pProject && tInfo) { setSelectedProject(pProject); setSelectedPlot(pInfo); setSelectedTask(tInfo); setView('task-progress'); }
   };
 
-  const handleSaveAllSchedules = async () => {
+  const handleSaveAllSchedules = async (options?: { skipClearInputs?: boolean }): Promise<{ success: boolean; error?: string }> => {
     setIsSubmitting(true);
     try {
       const payloads: any[] = []; Object.keys(scheduleInputs).forEach(taskId => { const plan = scheduleInputs[taskId]; if (plan.start && plan.end) { payloads.push({ plot_id: selectedPlot.id, task_template_id: taskId, planned_start: plan.start, planned_end: plan.end }); } });
-      if (payloads.length === 0) { setIsSubmitting(false); return showAlert('แจ้งเตือน', 'ไม่มีการแก้ไขข้อมูล หรือกรอกวันที่ไม่ครบครับ'); }
+      if (payloads.length === 0) {
+        setIsSubmitting(false);
+        if (options?.skipClearInputs) {
+          return { success: true };
+        }
+        showAlert('แจ้งเตือน', 'ไม่มีการแก้ไขข้อมูล หรือกรอกวันที่ไม่ครบครับ');
+        return { success: false, error: 'ไม่มีการแก้ไขข้อมูล หรือกรอกวันที่ไม่ครบครับ' };
+      }
       // 🌟 ตรวจสอบวันที่ทุกรายการก่อน ก่อนที่จะแตะ Database 🌟
       for (const p of payloads) { if (new Date(p.planned_end) < new Date(p.planned_start)) throw new Error('วันสิ้นสุดต้องอยู่หลังวันเริ่มงานครับ'); }
       // 🌟 upsert แบบ batch ครั้งเดียว แทนการ delete+insert ทีละรายการ (atomic & fast) 🌟
       const { error } = await supabase.from('plot_task_schedules').upsert(payloads, { onConflict: 'plot_id,task_template_id' });
       if (error) throw error;
-      showToast('บันทึกแผนงานทั้งหมดเรียบร้อยแล้ว', "success"); setScheduleInputs({}); await fetchAllData();
-    } catch (e: any) { showAlert('Error', (e as Error).message); } setIsSubmitting(false);
+      if (!options?.skipClearInputs) {
+        showToast('บันทึกแผนงานทั้งหมดเรียบร้อยแล้ว', "success");
+        setScheduleInputs({});
+      }
+      await fetchAllData();
+      setIsSubmitting(false);
+      return { success: true };
+    } catch (e: any) { showAlert('Error', (e as Error).message); setIsSubmitting(false); return { success: false, error: (e as Error).message }; }
   };
 
   // 🌟 ฟังก์ชันดึงแผนงานแบบมีระบบ Auto-Shift (เลื่อนวันให้อัตโนมัติ)
@@ -1996,6 +2009,7 @@ export default function ConstructionApp() {
           id: newId,
           house_type_id: editPlotModal.house_type_id,
           foreman_name: editPlotModal.foreman_name,
+          ...(editPlotModal.foreman_name !== editPlotModal.plot?.foreman_name ? { foreman_assigned_at: new Date().toISOString() } : {}),
           selling_price: parseFloat(editPlotModal.selling_price) || 0
         })
         .eq('id', oldId);
