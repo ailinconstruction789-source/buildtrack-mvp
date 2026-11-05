@@ -9,6 +9,8 @@ import {
   CheckCircle2,
   Clock,
   AlertTriangle,
+  AlertCircle,
+  Cloud,
   MessageSquare,
   Search,
   Filter,
@@ -148,7 +150,7 @@ export default function ForemanWorkspaceView({
   const [selectedProject, setSelectedProject] = useState<string>('all');
 
   // Schedule status tab filter: 'all' | 'pending' | 'updated' | 'roadblock'
-  const [activeTab, setActiveTab] = useState<'all' | 'pending' | 'updated' | 'roadblock'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'pending' | 'updated' | 'roadblock' | 'completed_early'>('all');
 
   // Rework filter: 'all' | 'defect' | 'task_rework'
   const [reworkFilter, setReworkFilter] = useState<'all' | 'defect' | 'task_rework'>('all');
@@ -161,14 +163,19 @@ export default function ForemanWorkspaceView({
 
   // Snapshots loaded from database/cache
   const [snapshots, setSnapshots] = useState<any[]>([]);
+  type SnapshotLoadStatus = 'idle' | 'loading' | 'loaded_data' | 'loaded_empty' | 'cached_offline' | 'failed';
   const [isLoadingSnapshots, setIsLoadingSnapshots] = useState<boolean>(false);
-  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('saved');
+  const [snapshotLoadStatus, setSnapshotLoadStatus] = useState<SnapshotLoadStatus>('idle');
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'cached_offline' | 'error'>('idle');
+  const [roadblockSubmitError, setRoadblockSubmitError] = useState<string | null>(null);
   const lastAutoSaveSignatureRef = useRef<string>('');
+  const activeScopeRef = useRef<{ date: string; foreman: string }>({ date: '', foreman: '' });
 
   // Roadblock Reason Modal State
   const [selectedTaskForRoadblock, setSelectedTaskForRoadblock] = useState<ForemanDailyTask | null>(null);
   const [selectedReasonId, setSelectedReasonId] = useState<string>('material_issue');
   const [roadblockNote, setRoadblockNote] = useState<string>('');
+  const [roadblockSubmissionId, setRoadblockSubmissionId] = useState<string>('');
   const [isSubmittingReason, setIsSubmittingReason] = useState<boolean>(false);
 
   // Build unique foremen options from users list and plots
@@ -193,14 +200,42 @@ export default function ForemanWorkspaceView({
 
   // Load snapshot when date or foreman changes
   const loadSnapshotForCurrentView = useCallback(async () => {
+    const targetDate = selectedDate;
+    const targetForeman = selectedForeman;
+    activeScopeRef.current = { date: targetDate, foreman: targetForeman };
     setIsLoadingSnapshots(true);
+    setSnapshotLoadStatus('loading');
     try {
-      const data = await loadForemanDailySnapshot(selectedDate, selectedForeman);
-      setSnapshots(data || []);
+      const relevantPlotIds = targetForeman && targetForeman !== 'all'
+        ? (plots || []).filter(p => (getPlotForemanName(p) || '').toLowerCase() === targetForeman.toLowerCase()).map(p => p.id)
+        : [];
+      const res: any = await loadForemanDailySnapshot(targetDate, targetForeman, undefined, { plotIds: relevantPlotIds });
+      if (activeScopeRef.current.date === targetDate && activeScopeRef.current.foreman === targetForeman) {
+        const tasks = Array.isArray(res) ? res : (res?.data || []);
+        const status = res?.status || (Array.isArray(res) ? (res.length > 0 ? 'success' : 'empty') : 'error');
+        if (status === 'error') {
+          setSnapshotLoadStatus('failed');
+          setSnapshots([]);
+          setAutoSaveStatus('error');
+        } else if (status === 'cache_fallback') {
+          // Stale cache: display offline view only, do NOT auto-save to remote (Issue 2)
+          setSnapshots(tasks);
+          setSnapshotLoadStatus('cached_offline');
+          setAutoSaveStatus('cached_offline');
+        } else {
+          setSnapshots(tasks);
+          setSnapshotLoadStatus(tasks.length > 0 ? 'loaded_data' : 'loaded_empty');
+        }
+      }
     } catch (err) {
       console.warn('Error loading foreman daily snapshot:', err);
+      if (activeScopeRef.current.date === targetDate && activeScopeRef.current.foreman === targetForeman) {
+        setSnapshotLoadStatus('failed');
+      }
     } finally {
-      setIsLoadingSnapshots(false);
+      if (activeScopeRef.current.date === targetDate && activeScopeRef.current.foreman === targetForeman) {
+        setIsLoadingSnapshots(false);
+      }
     }
   }, [selectedDate, selectedForeman]);
 
@@ -366,28 +401,54 @@ export default function ForemanWorkspaceView({
     if (!dailyTasks || dailyTasks.length === 0) return;
 
     // Content signature of current view & compliance status
-    const currentSignature = `${selectedDate}::${selectedForeman}::${dailyTasks.length}::${summary.updatedTasks}::${summary.roadblockTasks}`;
+    if (isLoadingSnapshots || snapshotLoadStatus === 'loading' || snapshotLoadStatus === 'failed' || snapshotLoadStatus === 'cached_offline' || snapshotLoadStatus === 'idle') {
+      return;
+    }
+
+    const contentSignature = dailyTasks
+      .map(t => `${t.id}:${t.current_progress}:${t.is_updated_today ? 1 : 0}:${t.status_reason || ''}:${t.status_note || ''}`)
+      .join('|');
+    const currentSignature = `${selectedDate}::${selectedForeman}::${contentSignature}`;
 
     if (lastAutoSaveSignatureRef.current === currentSignature) return;
 
     // Auto-save is triggered for today's tasks or when viewing a past date that has no snapshot yet
-    const shouldAutoSave = isViewingToday || (isViewingPast && snapshots.length === 0);
-    if (!shouldAutoSave) return;
+    if (!isViewingToday) return;
+
+
+    const timerDate = selectedDate;
+    const timerForeman = selectedForeman;
 
     const timer = setTimeout(async () => {
+      if (
+        activeScopeRef.current.date !== timerDate ||
+        activeScopeRef.current.foreman !== timerForeman
+      ) {
+        return;
+      }
       setAutoSaveStatus('saving');
       try {
-        await saveForemanDailySnapshot(
+        const saveRes = await saveForemanDailySnapshot(
           dailyTasks,
-          selectedDate,
-          selectedForeman,
+          timerDate,
+          timerForeman,
           loggedInUser?.username || loggedInUser?.name || 'AutoSync'
         );
-        lastAutoSaveSignatureRef.current = currentSignature;
-        setAutoSaveStatus('saved');
+        if (saveRes && saveRes.success) {
+          if (saveRes.isRemoteSynced) {
+            lastAutoSaveSignatureRef.current = currentSignature;
+            setAutoSaveStatus('saved');
+          } else if (saveRes.storage === 'local_cache') {
+            setAutoSaveStatus('cached_offline');
+          } else {
+            setAutoSaveStatus('saved');
+          }
+        } else {
+          setAutoSaveStatus('error');
+        }
       } catch (err) {
         console.warn('Background auto-save notice:', err);
-        setAutoSaveStatus('saved');
+        setAutoSaveStatus('error');
       }
     }, 600);
 
@@ -399,8 +460,8 @@ export default function ForemanWorkspaceView({
     summary.updatedTasks,
     summary.roadblockTasks,
     isViewingToday,
-    isViewingPast,
-    snapshots.length,
+    isLoadingSnapshots,
+    snapshotLoadStatus,
     loggedInUser,
   ]);
 
@@ -408,15 +469,23 @@ export default function ForemanWorkspaceView({
   const handleSubmitRoadblock = async () => {
     if (!selectedTaskForRoadblock) return;
     setIsSubmittingReason(true);
+    setRoadblockSubmitError(null);
     try {
       const updatedBy = loggedInUser?.username || loggedInUser?.name || 'Foreman';
-      await recordForemanTaskRoadblockReason(
+      const res = await recordForemanTaskRoadblockReason(
         selectedTaskForRoadblock,
         selectedDate,
         selectedReasonId,
         roadblockNote,
-        updatedBy
+        updatedBy,
+        undefined,
+        { clientSubmissionId: roadblockSubmissionId }
       );
+
+      if (!res || !res.success) {
+        setRoadblockSubmitError(res?.error || 'เกิดข้อผิดพลาดในการบันทึกเหตุผล กรุณาลองใหม่อีกครั้ง');
+        return;
+      }
 
       // Refresh snapshot data
       await loadSnapshotForCurrentView();
@@ -424,11 +493,13 @@ export default function ForemanWorkspaceView({
         fetchAllData().catch(() => {});
       }
 
-      // Close modal
+      // Close modal on success
       setSelectedTaskForRoadblock(null);
       setRoadblockNote('');
-    } catch (err) {
+      setRoadblockSubmissionId('');
+    } catch (err: any) {
       console.error('Error submitting roadblock reason:', err);
+      setRoadblockSubmitError(err?.message || 'เกิดข้อผิดพลาดในการบันทึกเหตุผล');
     } finally {
       setIsSubmittingReason(false);
     }
@@ -725,18 +796,41 @@ export default function ForemanWorkspaceView({
 
           {/* ☁️ Auto-Save Status Badge */}
           <div
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black transition-all border shrink-0 bg-emerald-50 border-emerald-200/90 text-emerald-800 shadow-xs"
-            title="ระบบแช่แข็งและบันทึกประวัติแผนงานประจำวันให้อัตโนมัติในเบื้องหลัง"
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black transition-all border shrink-0 shadow-xs ${
+              autoSaveStatus === 'cached_offline'
+                ? 'bg-amber-50 border-amber-200/90 text-amber-800'
+                : autoSaveStatus === 'error'
+                ? 'bg-red-50 border-red-200/90 text-red-800'
+                : autoSaveStatus === 'idle'
+                ? 'bg-slate-50 border-slate-200/90 text-slate-600'
+                : 'bg-emerald-50 border-emerald-200/90 text-emerald-800'
+            }`}
+            title="ระบบบันทึกประวัติแผนงานประจำวันให้อัตโนมัติในเบื้องหลัง"
           >
             {autoSaveStatus === 'saving' ? (
               <>
                 <RefreshCw size={13} className="animate-spin text-emerald-600" />
                 <span>กำลังบันทึกอัตโนมัติ...</span>
               </>
-            ) : (
+            ) : autoSaveStatus === 'cached_offline' ? (
+              <>
+                <CheckCircle2 size={13} className="stroke-[2.5] text-amber-600" />
+                <span>บันทึกลงแคชเครื่องแล้ว (ออฟไลน์)</span>
+              </>
+            ) : autoSaveStatus === 'saved' ? (
               <>
                 <CheckCircle2 size={13} className="stroke-[2.5] text-emerald-600" />
                 <span>บันทึกประวัติอัตโนมัติแล้ว</span>
+              </>
+            ) : autoSaveStatus === 'error' ? (
+              <>
+                <AlertCircle size={13} className="stroke-[2.5] text-red-600" />
+                <span>การบันทึกขัดข้อง (คลิกเพื่อลองใหม่)</span>
+              </>
+            ) : (
+              <>
+                <Cloud size={13} className="stroke-[2.5] text-slate-500" />
+                <span>พร้อมบันทึกอัตโนมัติ</span>
               </>
             )}
           </div>
@@ -1017,6 +1111,7 @@ export default function ForemanWorkspaceView({
                           setSelectedTaskForRoadblock(task);
                           setSelectedReasonId(task.status_reason || 'material_issue');
                           setRoadblockNote(task.status_note || '');
+                          setRoadblockSubmissionId('sub_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7));
                         }}
                         className={`p-2 rounded-xl text-xs font-bold border transition-all active:scale-95 cursor-pointer ${
                           task.status_reason
@@ -1281,6 +1376,7 @@ export default function ForemanWorkspaceView({
       {mainTab === 'calendar' && (
         <ForemanInspectionCalendar
           plots={plots}
+          projectName={selectedProject}
           taskTemplates={taskTemplates}
           schedules={schedules}
           assignments={assignments}
@@ -1315,12 +1411,19 @@ export default function ForemanWorkspaceView({
                 </p>
               </div>
               <button
-                onClick={() => setSelectedTaskForRoadblock(null)}
+                onClick={() => { setSelectedTaskForRoadblock(null); setRoadblockSubmitError(null); }}
                 className="p-1.5 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition-all cursor-pointer"
               >
                 <X size={20} />
               </button>
             </div>
+
+            {roadblockSubmitError && (
+              <div className="p-3 bg-red-50 border border-red-200 text-red-800 rounded-xl text-xs flex items-center gap-2">
+                <AlertTriangle size={14} className="text-red-600 shrink-0" />
+                <span>{roadblockSubmitError}</span>
+              </div>
+            )}
 
             {/* Standard Reasons Options */}
             <div className="space-y-2">

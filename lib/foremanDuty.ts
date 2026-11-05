@@ -75,6 +75,13 @@ export function getRoadblockReason(reasonId?: string | null): RoadblockReasonMet
   };
 }
 
+export interface LoadSnapshotResult {
+  status: 'success' | 'empty' | 'cache_fallback' | 'error';
+  storage: 'remote' | 'local_cache' | 'none';
+  data: ForemanDailyTask[] | any[];
+  error?: any;
+}
+
 export interface ForemanDailyTask {
   id: string; // `${plot_id}-${task_template_id}`
   plot_id: string;
@@ -96,6 +103,8 @@ export interface ForemanDailyTask {
   status_reason?: string | null;
   status_note?: string | null;
   is_snapshot?: boolean;
+  is_completed_early?: boolean;
+  completion_date?: string | null;
 }
 
 export interface ForemanDailySummary {
@@ -105,6 +114,7 @@ export interface ForemanDailySummary {
   pendingTasks: number;
   complianceRate: number; // percentage (0-100)
   plotsCount: number;
+  completedEarlyTasks?: number;
 }
 
 export interface GetForemanTasksOptions {
@@ -116,31 +126,57 @@ export interface GetForemanTasksOptions {
   foremanName: string; // specific foreman username or 'all'
   targetDate: string;  // YYYY-MM-DD
   existingSnapshots?: any[];
+  preIndexedUpdates?: Map<string, any[]>;
 }
 
+const BKK_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Bangkok',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit'
+});
+
 /**
- * Normalizes date input to YYYY-MM-DD format.
+ * Normalizes date input to YYYY-MM-DD format in Asia/Bangkok (+07:00) business timezone.
+ * Date-only strings (YYYY-MM-DD) are preserved without timezone shifts.
+ * ISO timestamp strings representing an instant in time (with 'T' and timezone or 'Z')
+ * are converted to the business date in Asia/Bangkok (+07:00).
  */
 export function normalizeDateStr(dateInput: any): string | null {
   if (!dateInput) return null;
   if (typeof dateInput === 'string') {
-    // If already YYYY-MM-DD
-    if (/^\d{4}-\d{2}-\d{2}$/.test(dateInput)) return dateInput;
-    // If ISO string like 2026-11-04T...
-    if (dateInput.includes('T')) return dateInput.split('T')[0];
-    const d = new Date(dateInput);
+    const trimmed = dateInput.trim();
+    if (!trimmed) return null;
+    // 1. Date-only pattern YYYY-MM-DD: preserve as-is without timezone shifting
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      return trimmed;
+    }
+    // 2. Timestamp with timezone (e.g. ISO 8601 with Z, +, or T)
+    const d = new Date(trimmed);
     if (!isNaN(d.getTime())) {
-      const y = d.getFullYear();
-      const m = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
-      return `${y}-${m}-${day}`;
+      try {
+        return BKK_FORMATTER.format(d);
+      } catch {
+        const utcMs = d.getTime() + 7 * 3600 * 1000;
+        const bkk = new Date(utcMs);
+        const y = bkk.getUTCFullYear();
+        const m = String(bkk.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(bkk.getUTCDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      }
     }
   }
   if (dateInput instanceof Date && !isNaN(dateInput.getTime())) {
-    const y = dateInput.getFullYear();
-    const m = String(dateInput.getMonth() + 1).padStart(2, '0');
-    const day = String(dateInput.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
+    try {
+      return BKK_FORMATTER.format(dateInput);
+    } catch {
+      const utcMs = dateInput.getTime() + 7 * 3600 * 1000;
+      const bkk = new Date(utcMs);
+      const y = bkk.getUTCFullYear();
+      const m = String(bkk.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(bkk.getUTCDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
   }
   return null;
 }
@@ -167,7 +203,8 @@ export function getForemanScheduledTasksForDate(options: GetForemanTasksOptions)
     allUpdatesRecord = [],
     foremanName,
     targetDate,
-    existingSnapshots = []
+    existingSnapshots = [],
+    preIndexedUpdates
   } = options;
 
   if (!targetDate || !Array.isArray(plots)) return [];
@@ -197,9 +234,22 @@ export function getForemanScheduledTasksForDate(options: GetForemanTasksOptions)
     });
   }
 
-  // 3. Build fast map of updates on target date by plot_id-task_template_id
-  const targetDateUpdatesMap = new Map<string, any[]>();
+  // 3. Fast map of ALL updates grouped by plot_id-task_template_id
+  const updatesByTaskMap = new Map<string, any[]>();
   if (Array.isArray(allUpdatesRecord)) {
+    allUpdatesRecord.forEach(u => {
+      if (!u.plot_id || !u.task_template_id) return;
+      const k = `${u.plot_id}-${u.task_template_id}`;
+      if (!updatesByTaskMap.has(k)) {
+        updatesByTaskMap.set(k, []);
+      }
+      updatesByTaskMap.get(k)!.push(u);
+    });
+  }
+
+  // 3.1 Fast map of updates on target date by plot_id-task_template_id (or use pre-indexed map)
+  const targetDateUpdatesMap = preIndexedUpdates || new Map<string, any[]>();
+  if (!preIndexedUpdates && Array.isArray(allUpdatesRecord)) {
     allUpdatesRecord.forEach(u => {
       const uDate = normalizeDateStr(u.created_at) || normalizeDateStr(u.date);
       if (uDate === normTargetDate) {
@@ -212,11 +262,31 @@ export function getForemanScheduledTasksForDate(options: GetForemanTasksOptions)
     });
   }
 
+  const nowBangkokStr = normalizeDateStr(new Date()) || new Date().toISOString().split('T')[0];
+  const isViewingToday = normTargetDate === nowBangkokStr;
+
+  // Build index of plots with snapshots on target date for target foreman
+  const historicalPlotIdsForFm = new Set<string>();
+  if (Array.isArray(existingSnapshots)) {
+    existingSnapshots.forEach(s => {
+      const sDate = normalizeDateStr(s.snapshot_date);
+      if (sDate === normTargetDate) {
+        const sFm = (s.foreman_name || '').trim().toLowerCase();
+        if (isTargetAll || sFm === targetFmLower) {
+          historicalPlotIdsForFm.add(String(s.plot_id));
+        }
+      }
+    });
+  }
+
   // 4. Filter plots assigned to foreman
   const matchedPlots = plots.filter(plot => {
     const pFm = getPlotForemanName(plot);
     if (isTargetAll) return true;
-    return pFm.toLowerCase() === targetFmLower;
+    if (pFm.toLowerCase() === targetFmLower) return true;
+    // If this plot has a snapshot recorded on target date for this foreman, include it (Finding G)
+    if (historicalPlotIdsForFm.has(String(plot.id))) return true;
+    return false;
   });
 
   const dailyTasks: ForemanDailyTask[] = [];
@@ -254,18 +324,33 @@ export function getForemanScheduledTasksForDate(options: GetForemanTasksOptions)
         return;
       }
 
-      // Current progress check
-      const assign = assignmentMap.get(scheduleKey);
-      const curProgress = Number(snapshot?.current_progress ?? assign?.current_progress ?? 0);
+      // Historical foreman attribution: if snapshot has foreman_name, attribute strictly to it! (Finding G)
+      const taskForeman = snapshot?.foreman_name
+        ? snapshot.foreman_name
+        : plotFm;
 
-      // If already 100% completed, check if completed BEFORE targetDate
-      if (curProgress >= 100) {
-        const actualEnd = normalizeDateStr(assign?.actual_end_date);
-        if (actualEnd && actualEnd < normTargetDate) {
-          // Task completed in the past before this target date
-          return;
+      if (!isTargetAll && taskForeman.toLowerCase() !== targetFmLower) {
+        return;
+      }
+
+      // If viewing past date and no snapshot exists, verify if current foreman was already assigned on targetDate
+      if (!isViewingToday && !snapshot?.foreman_name) {
+        const assignedDate = normalizeDateStr(plot.foreman_assigned_at || plot.foremanAssignedAt);
+        if (assignedDate && normTargetDate < assignedDate) {
+          // Current foreman was assigned after this target date; un-snapshotted tasks should not be retroactively attributed
+          if (!isTargetAll && plotFm.toLowerCase() === targetFmLower) {
+            return;
+          }
         }
       }
+
+      // Current progress check:
+      // For today: live assignment progress takes precedence (Finding 12)
+      // For past dates: snapshot progress is frozen historical truth (Finding 12)
+      const assign = assignmentMap.get(scheduleKey);
+      const curProgress = isViewingToday
+        ? Number(assign?.current_progress ?? snapshot?.current_progress ?? 0)
+        : Number(snapshot?.current_progress ?? assign?.current_progress ?? 0);
 
       // Check updates on target date
       const updatesToday = targetDateUpdatesMap.get(scheduleKey) || [];
@@ -274,6 +359,58 @@ export function getForemanScheduledTasksForDate(options: GetForemanTasksOptions)
         snapshot?.is_updated_today ||
         updatesToday.length > 0
       );
+
+      // Check whether task is currently under active rejection / rework
+      const taskUpdates = updatesByTaskMap.get(scheduleKey) || [];
+      let isRejectedCurrently = false;
+      if (taskUpdates.length > 0) {
+        const sortedDesc = [...taskUpdates].sort((a, b) => {
+          const ta = new Date(b.created_at || b.date || 0).getTime();
+          const tb = new Date(a.created_at || a.date || 0).getTime();
+          return ta - tb;
+        });
+        const latestAct = String(sortedDesc[0]?.action || '');
+        if (latestAct.includes('แจ้งแก้ไข') || latestAct.includes('ไม่อนุมัติ') || latestAct.includes('ตีกลับ') || latestAct.includes('ไม่ผ่าน')) {
+          isRejectedCurrently = true;
+        }
+      }
+
+      // Check whether task was completed (100%) BEFORE targetDate
+      let isCompletedEarly = false;
+      let completionDate: string | null = normalizeDateStr(assign?.actual_end_date);
+
+      if (curProgress >= 100 && !isRejectedCurrently) {
+        // Find earliest 100% update in current 100% streak
+        if (!completionDate && taskUpdates.length > 0) {
+          const sortedAsc = [...taskUpdates].sort((a, b) => {
+            const ta = new Date(a.created_at || a.date || 0).getTime();
+            const tb = new Date(b.created_at || b.date || 0).getTime();
+            return ta - tb;
+          });
+          for (let i = sortedAsc.length - 1; i >= 0; i--) {
+            if (Number(sortedAsc[i].progress) >= 100) {
+              completionDate = normalizeDateStr(sortedAsc[i].created_at || sortedAsc[i].date);
+            } else {
+              break;
+            }
+          }
+        }
+
+        // Fallback for completion date
+        if (!completionDate) {
+          const assignUpdated = normalizeDateStr(assign?.updated_at);
+          if (assignUpdated) {
+            completionDate = assignUpdated;
+          } else if (isViewingToday && updatesToday.length === 0) {
+            // Viewing today, progress is 100%, and zero updates occurred today -> completed before today
+            completionDate = '2000-01-01';
+          }
+        }
+
+        if (completionDate && completionDate < normTargetDate) {
+          isCompletedEarly = true;
+        }
+      }
 
       const statusReason = snapshot?.status_reason || null;
       const statusNote = snapshot?.status_note || null;
@@ -285,7 +422,7 @@ export function getForemanScheduledTasksForDate(options: GetForemanTasksOptions)
         plot_name: plotName,
         project_name: projectName,
         house_type_id: plot.house_type_id ? String(plot.house_type_id) : undefined,
-        foreman_name: plotFm,
+        foreman_name: taskForeman,
         task_template_id: String(task.id),
         task_name: task.task_name || snapshot?.task_name || 'งานก่อสร้าง',
         task_order: Number(task.task_order || 0),
@@ -300,6 +437,8 @@ export function getForemanScheduledTasksForDate(options: GetForemanTasksOptions)
         status_reason: statusReason,
         status_note: statusNote,
         is_snapshot: Boolean(snapshot),
+        is_completed_early: isCompletedEarly,
+        completion_date: completionDate,
       });
     });
   });
@@ -317,14 +456,18 @@ export function getForemanScheduledTasksForDate(options: GetForemanTasksOptions)
  * Computes summary KPI metrics for a daily task list.
  */
 export function computeForemanDailySummary(tasks: ForemanDailyTask[]): ForemanDailySummary {
-  const totalTasks = tasks.length;
+  // Only tasks that are NOT completed early count towards today's active inspection workload
+  const activeTasks = tasks.filter(t => !t.is_completed_early);
+  const completedEarlyTasks = tasks.filter(t => t.is_completed_early);
+
+  const totalTasks = activeTasks.length;
   let updatedTasks = 0;
   let roadblockTasks = 0;
   let pendingTasks = 0;
 
   const plotSet = new Set<string>();
 
-  tasks.forEach(t => {
+  activeTasks.forEach(t => {
     plotSet.add(t.plot_id);
     if (t.is_updated_today) {
       updatedTasks++;
@@ -335,7 +478,7 @@ export function computeForemanDailySummary(tasks: ForemanDailyTask[]): ForemanDa
     }
   });
 
-  // Compliance counts both actual progress updates and valid roadblock reason reports
+  // Compliance counts both actual progress updates and valid roadblock reason reports on active tasks
   const compliantCount = updatedTasks + roadblockTasks;
   const complianceRate = totalTasks > 0 ? Math.round((compliantCount / totalTasks) * 100) : 100;
 
@@ -346,6 +489,7 @@ export function computeForemanDailySummary(tasks: ForemanDailyTask[]): ForemanDa
     pendingTasks,
     complianceRate,
     plotsCount: plotSet.size,
+    completedEarlyTasks: completedEarlyTasks.length,
   };
 }
 
@@ -365,19 +509,25 @@ export async function saveForemanDailySnapshot(
   tasks: ForemanDailyTask[],
   snapshotDate: string,
   foremanName: string,
-  updatedBy: string = 'Foreman'
-): Promise<{ success: boolean; count: number; error?: string }> {
+  updatedBy: string = 'Foreman',
+  customSupabase?: any
+): Promise<{ success: boolean; count: number; storage?: 'remote' | 'local_cache' | 'none'; isRemoteSynced?: boolean; error?: string }> {
   if (!Array.isArray(tasks) || tasks.length === 0) {
-    return { success: true, count: 0 };
+    return { success: true, count: 0, storage: 'none', isRemoteSynced: true };
   }
 
+  const client = customSupabase || supabase;
   const normDate = normalizeDateStr(snapshotDate) || snapshotDate;
 
   // 1. Save to localStorage immediately as fast resilient cache
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
       const localKey = getLocalSnapshotKey(normDate, foremanName);
-      localStorage.setItem(localKey, JSON.stringify(tasks));
+      const tasksWithDate = tasks.map(t => ({
+        ...t,
+        snapshot_date: normDate
+      }));
+      localStorage.setItem(localKey, JSON.stringify(tasksWithDate));
     }
   } catch (err) {
     console.warn('Could not cache foreman snapshot in localStorage', err);
@@ -405,20 +555,23 @@ export async function saveForemanDailySnapshot(
       updated_at: new Date().toISOString(),
     }));
 
-    const { data, error } = await supabase
+    const upsertBuilder = client
       .from('foreman_daily_duty_snapshots')
-      .upsert(rows, { onConflict: 'snapshot_date,plot_id,task_template_id' })
-      .select('id');
+      .upsert(rows, { onConflict: 'snapshot_date,plot_id,task_template_id' });
+
+    const { data, error } = typeof upsertBuilder.select === 'function'
+      ? await upsertBuilder.select('id')
+      : await upsertBuilder;
 
     if (error) {
       console.warn('Supabase snapshot upsert notice (fallback used):', error.message);
-      return { success: true, count: tasks.length };
+      return { success: true, count: tasks.length, storage: 'local_cache', isRemoteSynced: false, error: error.message };
     }
 
-    return { success: true, count: data?.length || tasks.length };
+    return { success: true, count: data?.length || tasks.length, storage: 'remote', isRemoteSynced: true };
   } catch (err: any) {
     console.warn('Supabase snapshot save error (fallback to local cache):', err?.message || err);
-    return { success: true, count: tasks.length };
+    return { success: true, count: tasks.length, storage: 'local_cache', isRemoteSynced: false, error: err?.message || String(err) };
   }
 }
 
@@ -428,27 +581,48 @@ export async function saveForemanDailySnapshot(
  */
 export async function loadForemanDailySnapshot(
   snapshotDate: string,
-  foremanName?: string
-): Promise<any[]> {
+  foremanName?: string,
+  customSupabase?: any,
+  options?: { plotIds?: (string | number)[] }
+): Promise<LoadSnapshotResult> {
   const normDate = normalizeDateStr(snapshotDate) || snapshotDate;
   const targetFmLower = foremanName ? foremanName.toLowerCase().trim() : '';
+  const client = customSupabase || supabase;
+  let remoteError: any = null;
 
   try {
-    let query = supabase
+    let query = client
       .from('foreman_daily_duty_snapshots')
       .select('*')
       .eq('snapshot_date', normDate);
 
     if (targetFmLower && targetFmLower !== 'all') {
-      query = query.ilike('foreman_name', targetFmLower);
+      const pids = (options?.plotIds || []).map(String).filter(Boolean);
+      if (pids.length > 0) {
+        const sanitizedPids = pids.map(id => id.replace(/[(),"]/g, '').trim()).filter(Boolean);
+        if (sanitizedPids.length > 0) {
+          query = query.or(`foreman_name.ilike.${targetFmLower},plot_id.in.(${sanitizedPids.join(',')})`);
+        } else {
+          query = query.ilike('foreman_name', targetFmLower);
+        }
+      } else {
+        query = query.ilike('foreman_name', targetFmLower);
+      }
     }
 
     const { data, error } = await query;
-    if (!error && Array.isArray(data) && data.length > 0) {
-      return data;
+    if (!error && Array.isArray(data)) {
+      const res: any = data;
+      res.status = data.length > 0 ? 'success' : 'empty';
+      res.storage = 'remote';
+      res.data = data;
+      return res;
+    }
+    if (error) {
+      remoteError = error;
     }
   } catch (err) {
-    // Fall back to local storage
+    remoteError = err;
   }
 
   // Fallback: check localStorage
@@ -457,14 +631,27 @@ export async function loadForemanDailySnapshot(
       const localKey = getLocalSnapshotKey(normDate, foremanName || 'all');
       const cached = localStorage.getItem(localKey);
       if (cached) {
-        return JSON.parse(cached);
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const res: any = parsed;
+          res.status = 'cache_fallback';
+          res.storage = 'local_cache';
+          res.error = remoteError;
+          res.data = parsed;
+          return res;
+        }
       }
     }
   } catch (err) {
     // ignore
   }
 
-  return [];
+  const emptyRes: any = [];
+  emptyRes.status = remoteError ? 'error' : 'empty';
+  emptyRes.storage = remoteError ? 'none' : 'remote';
+  emptyRes.error = remoteError;
+  emptyRes.data = [];
+  return emptyRes;
 }
 
 /**
@@ -474,22 +661,40 @@ export async function loadForemanDailySnapshot(
 export async function loadForemanMonthlySnapshots(
   year: number,
   month: number,
-  foremanName?: string
+  foremanName?: string,
+  projectName?: string,
+  customSupabase?: any,
+  options?: { plotIds?: (string | number)[] }
 ): Promise<any[]> {
   const startStr = `${year}-${String(month).padStart(2, '0')}-01`;
   const endDay = new Date(year, month, 0).getDate();
   const endStr = `${year}-${String(month).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`;
   const targetFmLower = foremanName ? foremanName.toLowerCase().trim() : '';
+  const targetProj = projectName && projectName !== 'all' ? projectName.trim() : null;
+  const client = customSupabase || supabase;
 
   try {
-    let query = supabase
+    let query = client
       .from('foreman_daily_duty_snapshots')
       .select('*')
       .gte('snapshot_date', startStr)
       .lte('snapshot_date', endStr);
 
     if (targetFmLower && targetFmLower !== 'all') {
-      query = query.ilike('foreman_name', targetFmLower);
+      const pids = (options?.plotIds || []).map(String).filter(Boolean);
+      if (pids.length > 0) {
+        const sanitizedPids = pids.map(id => id.replace(/[(),"]/g, '').trim()).filter(Boolean);
+        if (sanitizedPids.length > 0) {
+          query = query.or(`foreman_name.ilike.${targetFmLower},plot_id.in.(${sanitizedPids.join(',')})`);
+        } else {
+          query = query.ilike('foreman_name', targetFmLower);
+        }
+      } else {
+        query = query.ilike('foreman_name', targetFmLower);
+      }
+    }
+    if (targetProj) {
+      query = query.eq('project_name', targetProj);
     }
 
     const { data, error } = await query;
@@ -504,15 +709,31 @@ export async function loadForemanMonthlySnapshots(
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
       const results: any[] = [];
-      const prefix = `bt_foreman_snapshot_${year}-${String(month).padStart(2, '0')}`;
+      const prefixNew = `buildtrack_fm_snapshot_${year}-${String(month).padStart(2, '0')}`;
+      const prefixOld = `bt_foreman_snapshot_${year}-${String(month).padStart(2, '0')}`;
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
-        if (key && key.startsWith(prefix)) {
+        if (key && (key.startsWith(prefixNew) || key.startsWith(prefixOld))) {
           const raw = localStorage.getItem(key);
           if (raw) {
             try {
               const parsed = JSON.parse(raw);
-              if (Array.isArray(parsed)) results.push(...parsed);
+              if (Array.isArray(parsed)) {
+                const inferredDate = key.match(/\d{4}-\d{2}-\d{2}/)?.[0] || startStr;
+                parsed.forEach((item: any) => {
+                  if (!item.snapshot_date) item.snapshot_date = inferredDate;
+                  if (targetFmLower && targetFmLower !== 'all') {
+                    const iFm = (item.foreman_name || '').trim().toLowerCase();
+                    const pidSet = new Set((options?.plotIds || []).map(String));
+                    const matchPlot = item.plot_id && pidSet.has(String(item.plot_id));
+                    if (iFm !== targetFmLower && !matchPlot) return;
+                  }
+                  if (targetProj) {
+                    if (item.project_name && item.project_name !== targetProj) return;
+                  }
+                  results.push(item);
+                });
+              }
             } catch (_) {}
           }
         }
@@ -535,11 +756,17 @@ export async function recordForemanTaskRoadblockReason(
   targetDate: string,
   reasonId: string,
   note: string = '',
-  updatedBy: string = 'Foreman'
+  updatedBy: string = 'Foreman',
+  customSupabase?: any,
+  options?: { clientSubmissionId?: string }
 ): Promise<{ success: boolean; error?: string }> {
   const normDate = normalizeDateStr(targetDate) || targetDate;
   const reasonMeta = getRoadblockReason(reasonId);
   const reasonLabel = reasonMeta ? reasonMeta.label : reasonId;
+  const client = customSupabase || supabase;
+
+  let snapError: string | null = null;
+  let updateError: string | null = null;
 
   // 1. Update or upsert snapshot
   try {
@@ -563,31 +790,105 @@ export async function recordForemanTaskRoadblockReason(
       updated_at: new Date().toISOString(),
     };
 
-    await supabase
+    const snapRes = await client
       .from('foreman_daily_duty_snapshots')
       .upsert([row], { onConflict: 'snapshot_date,plot_id,task_template_id' });
-  } catch (err) {
-    console.warn('Snapshot reason upsert fallback notice:', err);
+    if (snapRes?.error) {
+      snapError = snapRes.error.message;
+      console.warn('Snapshot reason upsert notice:', snapError);
+    }
+  } catch (err: any) {
+    snapError = err?.message || String(err);
+    console.warn('Snapshot reason upsert fallback notice:', snapError);
   }
 
-  // 2. Also log in task_updates so it appears in plot feed and timeline
+  // 2. Also log in task_updates so it appears in plot feed and timeline (Idempotent per operation, Issue 5)
   try {
-    const updateText = note ? `เหตุผล: ${reasonLabel} (${note})` : `เหตุผล: ${reasonLabel}`;
-    await supabase.from('task_updates').insert([
-      {
-        plot_id: task.plot_id,
-        task_template_id: task.task_template_id,
-        role: 'Foreman',
-        action: `แจ้งติดปัญหา: ${reasonLabel}`,
-        text: updateText,
-        progress: task.current_progress,
-        is_worker_present: reasonId !== 'worker_issue',
-        user_name: updatedBy,
-        created_at: new Date().toISOString(),
-      },
-    ]);
-  } catch (err) {
-    console.warn('Notice: could not insert task_updates entry for roadblock', err);
+    const subId = options?.clientSubmissionId || '';
+    const updateText = note
+      ? `เหตุผล: ${reasonLabel} (${note})${subId ? ` [ref:${subId}]` : ''}`
+      : `เหตุผล: ${reasonLabel}${subId ? ` [ref:${subId}]` : ''}`;
+    const dateStart = `${normDate}T00:00:00`;
+    const dateEnd = `${normDate}T23:59:59.999Z`;
+
+    // Finding F4: Dedup by unique submission ID across all records without arbitrary limit(10)
+    let existingUpdateId: any = null;
+    if (subId) {
+      const marker = `[ref:${subId}]`;
+      const { data: existingRows, error: searchErr } = await client
+        .from('task_updates')
+        .select('id, text_content')
+        .eq('plot_id', task.plot_id)
+        .ilike('text_content', `%${marker}%`);
+
+      if (searchErr) {
+        console.error('Search existing roadblock error:', searchErr);
+        return {
+          success: false,
+          error: `เกิดข้อผิดพลาดในการตรวจสอบประวัติการส่งข้อมูล: ${searchErr.message}`
+        };
+      }
+
+      if (Array.isArray(existingRows) && existingRows.length > 0) {
+        existingUpdateId = existingRows[0].id;
+      }
+    }
+
+    let error: any = null;
+    if (existingUpdateId) {
+      const updateRes = await client
+        .from('task_updates')
+        .update({
+          action: `แจ้งติดปัญหา: ${reasonLabel}`,
+          text_content: updateText,
+          progress: task.current_progress,
+          is_worker_present: reasonId !== 'worker_issue',
+          user_name: updatedBy,
+        })
+        .eq('id', existingUpdateId);
+      error = updateRes?.error;
+    } else {
+      const insertRes = await client.from('task_updates').insert([
+        {
+          plot_id: task.plot_id,
+          task_template_id: task.task_template_id,
+          role: 'Foreman',
+          action: `แจ้งติดปัญหา: ${reasonLabel}`,
+          text_content: updateText,
+          progress: task.current_progress,
+          is_worker_present: reasonId !== 'worker_issue',
+          user_name: updatedBy,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+      error = insertRes?.error;
+    }
+
+    // Backward compatibility fallback in case legacy database schema uses column 'text'
+    if (error && (error.code === 'PGRST204' || error.message?.includes('text_content'))) {
+      const fallbackRes = await client.from('task_updates').insert([
+        {
+          plot_id: task.plot_id,
+          task_template_id: task.task_template_id,
+          role: 'Foreman',
+          action: `แจ้งติดปัญหา: ${reasonLabel}`,
+          text: updateText,
+          progress: task.current_progress,
+          is_worker_present: reasonId !== 'worker_issue',
+          user_name: updatedBy,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+      error = fallbackRes.error;
+    }
+
+    if (error) {
+      updateError = error.message;
+      console.warn('Notice: could not insert task_updates entry for roadblock', updateError);
+    }
+  } catch (err: any) {
+    updateError = err?.message || String(err);
+    console.warn('Notice: could not insert task_updates entry for roadblock', updateError);
   }
 
   // 3. Cache update locally
@@ -607,6 +908,10 @@ export async function recordForemanTaskRoadblockReason(
     }
   } catch (err) {
     // ignore
+  }
+
+  if (snapError || updateError) {
+    return { success: false, error: updateError || snapError || 'Roadblock save failed' };
   }
 
   return { success: true };
@@ -745,21 +1050,22 @@ export function getForemanReworkItems(options: GetForemanReworkOptions): Foreman
 
   // 4. Collect tasks where latest update is "แจ้งแก้ไข" or "ไม่อนุมัติ"
   if (Array.isArray(allUpdatesRecord)) {
-    // Group updates by `${plot_id}-${task_template_id}`
-    const updatesByTask = new Map<string, any[]>();
+    // Group updates by explicit plotId and taskTemplateId tuple to avoid hyphen corruption
+    const updatesByTask = new Map<string, { plotId: string; taskTemplateId: string; updates: any[] }>();
     allUpdatesRecord.forEach(u => {
       const plotIdStr = String(u.plot_id);
       if (!matchedPlotIds.has(plotIdStr)) return;
       if (!u.task_template_id) return;
 
-      const key = `${plotIdStr}-${u.task_template_id}`;
-      if (!updatesByTask.has(key)) {
-        updatesByTask.set(key, []);
+      const taskIdStr = String(u.task_template_id);
+      const groupKey = `${plotIdStr}:::${taskIdStr}`;
+      if (!updatesByTask.has(groupKey)) {
+        updatesByTask.set(groupKey, { plotId: plotIdStr, taskTemplateId: taskIdStr, updates: [] });
       }
-      updatesByTask.get(key)!.push(u);
+      updatesByTask.get(groupKey)!.updates.push(u);
     });
 
-    updatesByTask.forEach((updatesList, key) => {
+    updatesByTask.forEach(({ plotId, taskTemplateId, updates: updatesList }) => {
       // Sort newest first
       updatesList.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
       const latest = updatesList[0];
@@ -775,31 +1081,30 @@ export function getForemanReworkItems(options: GetForemanReworkOptions): Foreman
         return;
       }
 
-      const [plotIdStr, taskIdStr] = key.split('-');
-      const plot = plotMap.get(plotIdStr);
+      const plot = plotMap.get(plotId);
       if (!plot) return;
 
       const pFm = getPlotForemanName(plot) || 'ยังไม่ระบุโฟร์แมน';
-      const task = taskMap.get(taskIdStr);
+      const task = taskMap.get(taskTemplateId);
 
       reworkItems.push({
-        id: `task-rework-${key}`,
+        id: `task-rework-${plotId}-${taskTemplateId}`,
         type: 'task_rework',
-        plot_id: plotIdStr,
+        plot_id: plotId,
         plot_name: plot.name || plot.plot_number || `แปลง ${plot.id}`,
         project_name: plot.project_name || 'ไอลิน',
         foreman_name: pFm,
         title: `งวดงานไม่ผ่าน: ${task?.task_name || 'งานก่อสร้าง'}`,
-        description: latest.text || latest.action || 'QC สั่งแจ้งแก้ไขงวดงาน',
+        description: latest.text_content || latest.text || latest.action || 'QC สั่งแจ้งแก้ไขงวดงาน',
         task_name: task?.task_name || 'งานก่อสร้าง',
-        task_template_id: taskIdStr,
+        task_template_id: taskTemplateId,
         severity: 'high',
         status: 'rework_required',
         status_label: 'QC สั่งแก้ไข',
         created_at: latest.created_at,
         reporter: latest.user_name || latest.role || 'QC',
         contractor_name: latest.contractor_name || '',
-        taskObj: task || { id: taskIdStr, task_name: 'งานก่อสร้าง', task_order: 1 },
+        taskObj: task || { id: taskTemplateId, task_name: 'งานก่อสร้าง', task_order: 1 },
       });
     });
   }
@@ -852,6 +1157,7 @@ export interface GetMonthlyInspectionOptions {
   assignments?: any[];
   allUpdatesRecord?: any[];
   foremanName?: string;
+  projectName?: string;
   existingSnapshots?: any[];
   todayDateStr?: string;
 }
@@ -874,9 +1180,42 @@ export function getMonthlyForemanInspectionCompliance(options: GetMonthlyInspect
     assignments = [],
     allUpdatesRecord = [],
     foremanName = 'all',
+    projectName,
     existingSnapshots = [],
     todayDateStr
   } = options;
+
+  // Project filtering
+  const targetProject = projectName && projectName !== 'all' ? projectName.trim() : null;
+  const filteredPlots = targetProject ? plots.filter(p => p.project_name === targetProject) : plots;
+  const filteredPlotIds = targetProject ? new Set(filteredPlots.map(p => String(p.id))) : null;
+
+  const scopedSnapshots = (existingSnapshots || []).filter(s => {
+    if (!targetProject) return true;
+    if (s.project_name === targetProject) return true;
+    if (filteredPlotIds && filteredPlotIds.has(String(s.plot_id))) return true;
+    return false;
+  });
+
+  // Pre-index updates by date and plot_id-task_id ONCE before the 31-day loop (R10 performance optimization)
+  const updatesByDateAndKey = new Map<string, Map<string, any[]>>();
+  if (Array.isArray(allUpdatesRecord)) {
+    allUpdatesRecord.forEach(u => {
+      if (filteredPlotIds && !filteredPlotIds.has(String(u.plot_id))) return;
+      const uDate = normalizeDateStr(u.created_at) || normalizeDateStr(u.date);
+      if (uDate) {
+        if (!updatesByDateAndKey.has(uDate)) {
+          updatesByDateAndKey.set(uDate, new Map<string, any[]>());
+        }
+        const key = `${u.plot_id}-${u.task_template_id}`;
+        const keyMap = updatesByDateAndKey.get(uDate)!;
+        if (!keyMap.has(key)) {
+          keyMap.set(key, []);
+        }
+        keyMap.get(key)!.push(u);
+      }
+    });
+  }
 
   const now = new Date();
   const actualTodayStr = todayDateStr || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -891,16 +1230,18 @@ export function getMonthlyForemanInspectionCompliance(options: GetMonthlyInspect
     const isToday = dateStr === actualTodayStr;
     const isFuture = dateStr > actualTodayStr;
 
-    // Scheduled tasks on this date
+    // Scheduled tasks on this date using pre-indexed updates
+    const preIndexedUpdates = updatesByDateAndKey.get(dateStr);
     const tasks = getForemanScheduledTasksForDate({
-      plots,
+      plots: filteredPlots,
       taskTemplates,
       schedules,
       assignments,
-      allUpdatesRecord,
+      allUpdatesRecord: allUpdatesRecord,
       foremanName: foremanName || 'all',
       targetDate: dateStr,
-      existingSnapshots,
+      existingSnapshots: scopedSnapshots,
+      preIndexedUpdates,
     });
 
     const summary = computeForemanDailySummary(tasks);
@@ -918,9 +1259,10 @@ export function getMonthlyForemanInspectionCompliance(options: GetMonthlyInspect
       status = 'missed';
     }
 
-    // Breakdown per foreman
+    // Breakdown per foreman (count only active tasks for today's required inspection)
     const foremanStats: Record<string, { total: number; updated: number; roadblock: number; pending: number; rate: number }> = {};
-    tasks.forEach(t => {
+    const activeTasksForDay = tasks.filter(t => !t.is_completed_early);
+    activeTasksForDay.forEach(t => {
       const fm = t.foreman_name || 'ยังไม่ระบุ';
       if (!foremanStats[fm]) {
         foremanStats[fm] = { total: 0, updated: 0, roadblock: 0, pending: 0, rate: 0 };

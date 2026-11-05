@@ -184,6 +184,34 @@ describe('foremanDuty helper library', () => {
       // Plot 1 task 2 (LEAB), Plot 2 task 2 (VIEW), Plot 3 task 2 (LEAB) = 3 tasks
       expect(allTasks.length).toBe(3);
     });
+
+    it('flags is_completed_early = true when a task reached 100% before targetDate', () => {
+      const customAssignments = [
+        ...mockAssignments,
+        // Plot 3 task 2 reached 100% on 2026-11-02 (before targetDate 2026-11-04)
+        { plot_id: 'plot-3', task_template_id: 'task-2', current_progress: 100, actual_end_date: '2026-11-02' },
+      ];
+
+      const tasks = getForemanScheduledTasksForDate({
+        plots: mockPlots,
+        taskTemplates: mockTaskTemplates,
+        schedules: mockSchedules,
+        assignments: customAssignments,
+        allUpdatesRecord: mockUpdates,
+        foremanName: 'LEAB',
+        targetDate,
+      });
+
+      const plot3Task2 = tasks.find(t => t.plot_id === 'plot-3' && t.task_template_id === 'task-2');
+      expect(plot3Task2?.is_completed_early).toBe(true);
+
+      const summary = computeForemanDailySummary(tasks);
+      // Plot 1 task 2 is the only active task
+      expect(summary.totalTasks).toBe(1);
+      expect(summary.completedEarlyTasks).toBe(1);
+      expect(summary.updatedTasks).toBe(1);
+      expect(summary.complianceRate).toBe(100);
+    });
   });
 
   describe('computeForemanDailySummary', () => {
@@ -246,6 +274,49 @@ describe('foremanDuty helper library', () => {
     it('returns 100% compliance when no tasks are scheduled', () => {
       const summary = computeForemanDailySummary([]);
       expect(summary.totalTasks).toBe(0);
+      expect(summary.complianceRate).toBe(100);
+    });
+
+    it('excludes completed early tasks from totalTasks and pendingTasks without penalizing compliance', () => {
+      const tasks: any[] = [
+        // 1 active task updated today
+        {
+          id: 'p1-t1',
+          plot_id: 'p1',
+          foreman_name: 'LEAB',
+          task_name: 'งานฐานราก',
+          current_progress: 100,
+          is_updated_today: true,
+          is_completed_early: false,
+        },
+        // 2 tasks already completed 100% prior to today
+        {
+          id: 'p1-t2',
+          plot_id: 'p1',
+          foreman_name: 'LEAB',
+          task_name: 'งานมุงหลังคา',
+          current_progress: 100,
+          is_updated_today: false,
+          is_completed_early: true,
+        },
+        {
+          id: 'p1-t3',
+          plot_id: 'p1',
+          foreman_name: 'LEAB',
+          task_name: 'งานฉาบปูน',
+          current_progress: 100,
+          is_updated_today: false,
+          is_completed_early: true,
+        },
+      ];
+
+      const summary = computeForemanDailySummary(tasks);
+
+      // Only 1 active task
+      expect(summary.totalTasks).toBe(1);
+      expect(summary.updatedTasks).toBe(1);
+      expect(summary.pendingTasks).toBe(0);
+      expect(summary.completedEarlyTasks).toBe(2);
       expect(summary.complianceRate).toBe(100);
     });
   });
