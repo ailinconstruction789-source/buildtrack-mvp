@@ -8,6 +8,7 @@ import {
   computeForemanDailySummary,
   getForemanReworkItems,
   getMonthlyForemanInspectionCompliance,
+  getForemanDailyActivities,
 } from '../foremanDuty';
 
 describe('foremanDuty helper library', () => {
@@ -430,6 +431,155 @@ describe('foremanDuty helper library', () => {
       // Nov 15: In future -> future
       const nov15 = monthly.days.find(d => d.date === '2026-11-15');
       expect(nov15?.isFuture).toBe(true);
+    });
+  });
+
+  describe('getForemanDailyActivities', () => {
+    const mockPlots = [
+      { id: 'p1', name: 'A-01', foreman_name: 'LEAB', project_name: 'ไอลิน 6' },
+      { id: 'p2', name: 'A-02', foreman_name: 'LEAB', project_name: 'ไอลิน 6' },
+      { id: 'p3', name: 'B-01', foreman_name: 'SOMCHAI', project_name: 'ไอลิน 6' },
+    ];
+    const mockTemplates = [
+      { id: 't1', task_name: 'งานเสา' },
+      { id: 't2', task_name: 'งานคาน' },
+      { id: 't3', task_name: 'งานปูกระเบื้อง' },
+    ];
+    // p1-t1 is planned for Nov 4
+    // p2-t2 is planned for Nov 10 (not Nov 4)
+    const mockSchedules = {
+      'p1-t1': { planned_start: '2026-11-04', planned_end: '2026-11-05' },
+      'p2-t2': { planned_start: '2026-11-10', planned_end: '2026-11-12' },
+    };
+
+    const mockUpdates = [
+      // In-plan update for LEAB on Nov 4
+      {
+        id: 'u1',
+        plot_id: 'p1',
+        task_template_id: 't1',
+        created_at: '2026-11-04T09:30:00Z',
+        action: 'เทคอนกรีตเสา',
+        user_name: 'LEAB',
+        progress: 50,
+        image_url: 'https://example.com/photo1.jpg, https://example.com/photo2.jpg',
+      },
+      // Out-of-plan / advance update for LEAB on Nov 4 (p2-t2 is planned for Nov 10)
+      {
+        id: 'u2',
+        plot_id: 'p2',
+        task_template_id: 't2',
+        created_at: '2026-11-04T14:15:00Z',
+        action: 'ประกอบแบบคานล่วงหน้า',
+        user_name: 'LEAB',
+        progress: 30,
+      },
+      // Update from another foreman (SOMCHAI) on Nov 4
+      {
+        id: 'u3',
+        plot_id: 'p3',
+        task_template_id: 't3',
+        created_at: '2026-11-04T11:00:00Z',
+        action: 'ปูกระเบื้องห้องน้ำ',
+        user_name: 'SOMCHAI',
+        progress: 100,
+      },
+      // Update on a different date (Nov 3)
+      {
+        id: 'u4',
+        plot_id: 'p1',
+        task_template_id: 't1',
+        created_at: '2026-11-03T10:00:00Z',
+        action: 'ผูกเหล็กเสา',
+        user_name: 'LEAB',
+        progress: 20,
+      },
+    ];
+
+    const mockDefects = [
+      {
+        id: 'd1',
+        plot_id: 'p1',
+        task_id: 't1',
+        created_at: '2026-11-04T15:00:00Z',
+        description: 'รอยแตกร้าวที่เสา A1',
+        reporter: 'LEAB',
+        status: 'open',
+      },
+    ];
+
+    const mockSnapshots = [
+      {
+        id: 's1',
+        plot_id: 'p1',
+        task_template_id: 't1',
+        snapshot_date: '2026-11-04',
+        status_reason: 'weather_issue',
+        status_note: 'ฝนตกหนักช่วงบ่าย',
+        foreman_name: 'LEAB',
+        updated_at: '2026-11-04T16:00:00Z',
+      },
+    ];
+
+    it('collects and categorizes all activities for a specific foreman on targetDate', () => {
+      const summary = getForemanDailyActivities({
+        targetDate: '2026-11-04',
+        foremanName: 'LEAB',
+        plots: mockPlots,
+        taskTemplates: mockTemplates,
+        schedules: mockSchedules,
+        allUpdatesRecord: mockUpdates,
+        defects: mockDefects,
+        existingSnapshots: mockSnapshots,
+      });
+
+      expect(summary.totalActivities).toBe(4); // u1 (in_plan) + u2 (out_of_plan) + d1 (defect) + s1 (roadblock)
+      expect(summary.inPlanCount).toBe(1);
+      expect(summary.outOfPlanCount).toBe(1);
+      expect(summary.defectCount).toBe(1);
+      expect(summary.roadblockCount).toBe(1);
+      expect(summary.plotsVisitedCount).toBe(2); // p1, p2
+
+      // Check in-plan item details
+      const inPlanItem = summary.items.find(i => i.id === 'update-u1');
+      expect(inPlanItem).toBeDefined();
+      expect(inPlanItem?.category).toBe('in_plan');
+      expect(inPlanItem?.image_urls.length).toBe(2);
+      expect(inPlanItem?.plot_name).toBe('A-01');
+
+      // Check out-of-plan item details
+      const outPlanItem = summary.items.find(i => i.id === 'update-u2');
+      expect(outPlanItem).toBeDefined();
+      expect(outPlanItem?.category).toBe('out_of_plan');
+      expect(outPlanItem?.categoryLabel).toBe('เริ่มงานก่อนแผน');
+
+      // Check defect item
+      const defectItem = summary.items.find(i => i.id === 'defect-d1');
+      expect(defectItem).toBeDefined();
+      expect(defectItem?.category).toBe('defect');
+
+      // Check roadblock item
+      const roadblockItem = summary.items.find(i => i.id === 'roadblock-s1');
+      expect(roadblockItem).toBeDefined();
+      expect(roadblockItem?.category).toBe('roadblock');
+      expect(roadblockItem?.action).toContain('ฝนตก');
+    });
+
+    it('aggregates activities for all foremen when foremanName is all', () => {
+      const summary = getForemanDailyActivities({
+        targetDate: '2026-11-04',
+        foremanName: 'all',
+        plots: mockPlots,
+        taskTemplates: mockTemplates,
+        schedules: mockSchedules,
+        allUpdatesRecord: mockUpdates,
+        defects: mockDefects,
+        existingSnapshots: mockSnapshots,
+      });
+
+      // Total includes SOMCHAI's u3 as well
+      expect(summary.totalActivities).toBe(5);
+      expect(summary.plotsVisitedCount).toBe(3); // p1, p2, p3
     });
   });
 });

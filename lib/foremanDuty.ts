@@ -1321,3 +1321,321 @@ export function getMonthlyForemanInspectionCompliance(options: GetMonthlyInspect
     avgComplianceRate,
   };
 }
+
+
+export interface ForemanDailyActivityItem {
+  id: string;
+  timestamp: number;
+  timeStr: string;
+  dateStr: string;
+  category: 'in_plan' | 'out_of_plan' | 'defect' | 'roadblock';
+  categoryLabel: string;
+  categoryColor: 'blue' | 'purple' | 'rose' | 'amber';
+  plot_id: string;
+  plot_name: string;
+  project_name: string;
+  foreman_name: string;
+  actor_name: string;
+  actor_role?: string;
+  task_name: string;
+  task_template_id?: string | number;
+  action: string;
+  text_content?: string;
+  progress?: number;
+  image_urls: string[];
+  is_100_percent?: boolean;
+  defectObj?: any;
+  taskObj?: any;
+  plotObj?: any;
+}
+
+export interface ForemanDailyActivitySummary {
+  totalActivities: number;
+  inPlanCount: number;
+  outOfPlanCount: number;
+  defectCount: number;
+  roadblockCount: number;
+  plotsVisitedCount: number;
+  items: ForemanDailyActivityItem[];
+}
+
+export interface GetForemanActivitiesOptions {
+  plots: any[];
+  taskTemplates: any[];
+  schedules: Record<string, any>;
+  allUpdatesRecord?: any[];
+  defects?: any[];
+  existingSnapshots?: any[];
+  foremanName?: string;
+  projectName?: string;
+  targetDate: string;
+}
+
+/**
+ * Collects and categorizes all real activities performed by a foreman on a specific date.
+ * Categorizes into in-plan, out-of-plan, defect fixes, and roadblock reports.
+ */
+export function getForemanDailyActivities(options: GetForemanActivitiesOptions): ForemanDailyActivitySummary {
+  const {
+    plots = [],
+    taskTemplates = [],
+    schedules = {},
+    allUpdatesRecord = [],
+    defects = [],
+    existingSnapshots = [],
+    foremanName = 'all',
+    projectName,
+    targetDate,
+  } = options;
+
+  if (!targetDate || !Array.isArray(plots)) {
+    return {
+      totalActivities: 0,
+      inPlanCount: 0,
+      outOfPlanCount: 0,
+      defectCount: 0,
+      roadblockCount: 0,
+      plotsVisitedCount: 0,
+      items: [],
+    };
+  }
+
+  const normTargetDate = normalizeDateStr(targetDate) || targetDate;
+  const isTargetAll = !foremanName || foremanName.toLowerCase() === 'all';
+  const targetFmLower = foremanName ? foremanName.toLowerCase().trim() : '';
+  const targetProj = projectName && projectName !== 'all' ? projectName.trim() : null;
+
+  // 1. Build plot lookup
+  const plotMap = new Map<string, any>();
+  plots.forEach(plot => {
+    const plotIdStr = String(plot.id);
+    plotMap.set(plotIdStr, plot);
+  });
+
+  // 2. Build task template lookup
+  const taskMap = new Map<string, any>();
+  if (Array.isArray(taskTemplates)) {
+    taskTemplates.forEach(t => {
+      taskMap.set(String(t.id), t);
+    });
+  }
+
+  const items: ForemanDailyActivityItem[] = [];
+
+  const formatTimeStr = (isoString?: string | null): { timeStr: string; timestamp: number } => {
+    if (!isoString) return { timeStr: 'วันนี้', timestamp: 0 };
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return { timeStr: 'วันนี้', timestamp: 0 };
+    const bkkHours = d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false });
+    return { timeStr: `${bkkHours} น.`, timestamp: d.getTime() };
+  };
+
+  // 3. Scan allUpdatesRecord for targetDate
+  if (Array.isArray(allUpdatesRecord)) {
+    allUpdatesRecord.forEach(u => {
+      const uDate = normalizeDateStr(u.created_at || u.date);
+      if (uDate !== normTargetDate) return;
+
+      const plotIdStr = String(u.plot_id);
+      const plot = plotMap.get(plotIdStr);
+      if (!plot) return;
+
+      if (targetProj && plot.project_name !== targetProj) return;
+
+      const plotFm = getPlotForemanName(plot) || 'ยังไม่ระบุ';
+      const actorName = (u.user_name || u.userName || '').trim();
+
+      if (!isTargetAll) {
+        const matchesPlotFm = plotFm.toLowerCase() === targetFmLower;
+        const matchesActor = actorName.toLowerCase() === targetFmLower;
+        if (!matchesPlotFm && !matchesActor) return;
+      }
+
+      const task = taskMap.get(String(u.task_template_id));
+      const taskName = task?.task_name || u.task_name || 'งานก่อสร้าง';
+
+      const scheduleKey = `${plot.id}-${u.task_template_id}`;
+      const altScheduleKey = `${plot.id}_${u.task_template_id}`;
+      const plan = schedules[scheduleKey] || schedules[altScheduleKey];
+      const pStart = normalizeDateStr(plan?.planned_start);
+      const pEnd = normalizeDateStr(plan?.planned_end);
+
+      let category: 'in_plan' | 'out_of_plan' = 'out_of_plan';
+      let categoryLabel = 'งานนอกแผน / งานล่วงหน้า';
+      let categoryColor: 'blue' | 'purple' = 'purple';
+
+      if (pStart && pEnd) {
+        if (normTargetDate >= pStart && normTargetDate <= pEnd) {
+          category = 'in_plan';
+          categoryLabel = 'งานตามแผนวันนี้';
+          categoryColor = 'blue';
+        } else if (normTargetDate < pStart) {
+          category = 'out_of_plan';
+          categoryLabel = 'เริ่มงานก่อนแผน';
+          categoryColor = 'purple';
+        } else if (normTargetDate > pEnd) {
+          category = 'out_of_plan';
+          categoryLabel = 'งานเก็บตกหลังแผน';
+          categoryColor = 'purple';
+        }
+      }
+
+      let imageUrls: string[] = [];
+      if (typeof u.image_url === 'string') {
+        imageUrls = u.image_url.split(',').map((s: string) => s.trim()).filter(Boolean);
+      } else if (Array.isArray(u.image_url)) {
+        imageUrls = u.image_url.filter(Boolean);
+      }
+
+      const { timeStr, timestamp } = formatTimeStr(u.created_at || u.date);
+      const progressNum = typeof u.progress === 'number' ? u.progress : undefined;
+      const is100 = progressNum === 100 || u.is_completed === true;
+
+      items.push({
+        id: `update-${u.id || Math.random()}`,
+        timestamp: timestamp || Date.now(),
+        timeStr,
+        dateStr: normTargetDate,
+        category,
+        categoryLabel,
+        categoryColor,
+        plot_id: plotIdStr,
+        plot_name: plot.name || plot.plot_number || `แปลง ${plot.id}`,
+        project_name: plot.project_name || 'ไอลิน',
+        foreman_name: plotFm,
+        actor_name: actorName || plotFm,
+        actor_role: u.role || 'โฟร์แมน',
+        task_name: taskName,
+        task_template_id: u.task_template_id,
+        action: u.action || (is100 ? 'ส่งงาน 100%' : 'อัปเดตความคืบหน้า'),
+        text_content: u.text_content || u.text || '',
+        progress: progressNum,
+        image_urls: imageUrls,
+        is_100_percent: is100,
+        taskObj: task,
+        plotObj: plot,
+      });
+    });
+  }
+
+  // 4. Scan defects for targetDate
+  if (Array.isArray(defects)) {
+    defects.forEach(d => {
+      const dCreated = normalizeDateStr(d.created_at);
+      const dUpdated = normalizeDateStr(d.updated_at || d.resolved_at);
+      if (dCreated !== normTargetDate && dUpdated !== normTargetDate) return;
+
+      const plotIdStr = String(d.plot_id);
+      const plot = plotMap.get(plotIdStr);
+      if (!plot) return;
+
+      if (targetProj && plot.project_name !== targetProj) return;
+
+      const plotFm = getPlotForemanName(plot) || 'ยังไม่ระบุ';
+      if (!isTargetAll && plotFm.toLowerCase() !== targetFmLower) return;
+
+      const taskId = d.task_id || d.task_template_id;
+      const task = taskId ? taskMap.get(String(taskId)) : null;
+
+      let imageUrls: string[] = [];
+      if (typeof d.image_url === 'string') {
+        imageUrls = d.image_url.split(',').map((s: string) => s.trim()).filter(Boolean);
+      } else if (Array.isArray(d.image_url)) {
+        imageUrls = d.image_url.filter(Boolean);
+      }
+
+      const { timeStr, timestamp } = formatTimeStr(d.updated_at || d.created_at);
+      const isResolved = d.status === 'resolved' || d.status === 'closed' || d.progress === 100;
+
+      items.push({
+        id: `defect-${d.id}`,
+        timestamp: timestamp || Date.now(),
+        timeStr,
+        dateStr: normTargetDate,
+        category: 'defect',
+        categoryLabel: isResolved ? 'แก้ไข Defect สำเร็จ' : 'บันทึก/ส่งแก้งาน Defect',
+        categoryColor: 'rose',
+        plot_id: plotIdStr,
+        plot_name: plot.name || plot.plot_number || `แปลง ${plot.id}`,
+        project_name: plot.project_name || 'ไอลิน',
+        foreman_name: plotFm,
+        actor_name: d.reporter || d.reported_by || plotFm,
+        actor_role: 'QC / โฟร์แมน',
+        task_name: task?.task_name || d.task_name || 'งานแก้ไข Defect',
+        task_template_id: taskId,
+        action: d.description || d.title || 'รายการแก้ไข Defect',
+        text_content: d.note || d.description || '',
+        progress: d.progress,
+        image_urls: imageUrls,
+        is_100_percent: isResolved,
+        defectObj: d,
+        taskObj: task,
+        plotObj: plot,
+      });
+    });
+  }
+
+  // 5. Scan snapshots for roadblocks reported on targetDate
+  if (Array.isArray(existingSnapshots)) {
+    existingSnapshots.forEach(s => {
+      const sDate = normalizeDateStr(s.snapshot_date);
+      if (sDate !== normTargetDate) return;
+      if (!s.status_reason) return;
+
+      const plotIdStr = String(s.plot_id);
+      const plot = plotMap.get(plotIdStr);
+      if (!plot) return;
+
+      if (targetProj && plot.project_name !== targetProj) return;
+
+      const plotFm = s.foreman_name || getPlotForemanName(plot) || 'ยังไม่ระบุ';
+      if (!isTargetAll && plotFm.toLowerCase() !== targetFmLower) return;
+
+      const reasonMeta = getRoadblockReason(s.status_reason);
+      const task = taskMap.get(String(s.task_template_id));
+      const { timeStr, timestamp } = formatTimeStr(s.last_updated_at || s.updated_at);
+
+      items.push({
+        id: `roadblock-${s.id || Math.random()}`,
+        timestamp: timestamp || Date.now(),
+        timeStr,
+        dateStr: normTargetDate,
+        category: 'roadblock',
+        categoryLabel: 'แจ้งเหตุผลติดปัญหา',
+        categoryColor: 'amber',
+        plot_id: plotIdStr,
+        plot_name: plot.name || plot.plot_number || `แปลง ${plot.id}`,
+        project_name: plot.project_name || 'ไอลิน',
+        foreman_name: plotFm,
+        actor_name: s.updated_by || plotFm,
+        actor_role: 'โฟร์แมน',
+        task_name: task?.task_name || s.task_name || 'งานก่อสร้าง',
+        task_template_id: s.task_template_id,
+        action: `${reasonMeta?.icon || '⚠️'} ${reasonMeta?.label || s.status_reason}`,
+        text_content: s.status_note || '',
+        image_urls: [],
+        taskObj: task,
+        plotObj: plot,
+      });
+    });
+  }
+
+  // Sort newest first
+  items.sort((a, b) => b.timestamp - a.timestamp);
+
+  const plotsVisited = new Set(items.map(i => i.plot_id));
+  const inPlanCount = items.filter(i => i.category === 'in_plan').length;
+  const outOfPlanCount = items.filter(i => i.category === 'out_of_plan').length;
+  const defectCount = items.filter(i => i.category === 'defect').length;
+  const roadblockCount = items.filter(i => i.category === 'roadblock').length;
+
+  return {
+    totalActivities: items.length,
+    inPlanCount,
+    outOfPlanCount,
+    defectCount,
+    roadblockCount,
+    plotsVisitedCount: plotsVisited.size,
+    items,
+  };
+}

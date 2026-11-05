@@ -12,6 +12,7 @@ import {
   ExternalLink,
   Loader2,
   RotateCw,
+  Activity,
 } from 'lucide-react';
 import {
   getMonthlyForemanInspectionCompliance,
@@ -31,6 +32,7 @@ interface ForemanInspectionCalendarProps {
   selectedForeman?: string;
   onSelectForeman?: (foreman: string) => void;
   onSelectDate?: (dateStr: string) => void;
+  onViewDayActivity?: (dateStr: string) => void;
   snapshots?: any[];
   title?: string;
   compact?: boolean;
@@ -52,6 +54,7 @@ export default function ForemanInspectionCalendar({
   selectedForeman: propForeman,
   onSelectForeman,
   onSelectDate,
+  onViewDayActivity,
   snapshots = EMPTY_SNAPSHOTS,
   projectName,
   title = 'ปฏิทินตรวจสอบการเข้างานของโฟร์แมน (Owner Audit Calendar)',
@@ -696,13 +699,27 @@ export default function ForemanInspectionCalendar({
             </div>
 
             {/* Action Buttons */}
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 flex-wrap">
               <button
                 onClick={() => setSelectedDayDetail(null)}
                 className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-all cursor-pointer"
               >
                 ปิด
               </button>
+
+              {onViewDayActivity && (
+                <button
+                  onClick={() => {
+                    const d = selectedDayDetail.date;
+                    setSelectedDayDetail(null);
+                    onViewDayActivity(d);
+                  }}
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-black rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
+                >
+                  <Activity size={13} />
+                  <span>ดูบันทึกกิจกรรมจริงวันนี้</span>
+                </button>
+              )}
 
               {onSelectDate && (
                 <button

@@ -33,6 +33,7 @@ import {
   ClipboardList,
   Grid,
   SortAsc,
+  Activity,
 } from 'lucide-react';
 import {
   ROADBLOCK_REASONS,
@@ -45,12 +46,15 @@ import {
   loadForemanDailySnapshot,
   recordForemanTaskRoadblockReason,
   getForemanReworkItems,
+  getForemanDailyActivities,
   type ForemanDailyTask,
   type ForemanDailySummary,
   type ForemanReworkItem,
+  type ForemanDailyActivitySummary,
   type RoadblockReasonId,
 } from '@/lib/foremanDuty';
 import ForemanInspectionCalendar from './ForemanInspectionCalendar';
+import ForemanDailyActivityView from './ForemanDailyActivityView';
 import MeterStatusBadges from './MeterStatusBadges';
 
 interface ForemanWorkspaceViewProps {
@@ -107,7 +111,7 @@ export default function ForemanWorkspaceView({
 
   // Main view mode: 'schedule' (งานตามแผน) | 'rework' (งานที่ต้องแก้ไข & Defect) | 'calendar' (ปฏิทินตรวจงานรายเดือน)
   // 🌟 For Owner, default to 'calendar' as requested; for others, default to 'schedule'
-  const [mainTab, setMainTab] = useState<'schedule' | 'rework' | 'calendar'>(() => {
+  const [mainTab, setMainTab] = useState<'schedule' | 'activity' | 'rework' | 'calendar'>(() => {
     return isOwnerUser ? 'calendar' : 'schedule';
   });
 
@@ -320,6 +324,31 @@ export default function ForemanWorkspaceView({
   const summary: ForemanDailySummary = useMemo(() => {
     return computeForemanDailySummary(dailyTasks);
   }, [dailyTasks]);
+
+  // Daily actual activities log (Timeline feed & in-plan vs out-of-plan categorization)
+  const dailyActivities: ForemanDailyActivitySummary = useMemo(() => {
+    return getForemanDailyActivities({
+      targetDate: selectedDate,
+      foremanName: selectedForeman,
+      projectName: selectedProject,
+      plots,
+      taskTemplates,
+      schedules,
+      allUpdatesRecord,
+      defects,
+      existingSnapshots: snapshots,
+    });
+  }, [
+    selectedDate,
+    selectedForeman,
+    selectedProject,
+    plots,
+    taskTemplates,
+    schedules,
+    allUpdatesRecord,
+    defects,
+    snapshots,
+  ]);
 
   // Filtered daily tasks for display
   const filteredTasks = useMemo(() => {
@@ -643,6 +672,25 @@ export default function ForemanWorkspaceView({
         </button>
 
         <button
+          onClick={() => setMainTab('activity')}
+          className={`flex items-center gap-2.5 px-5 py-3 rounded-2xl text-xs sm:text-sm font-black transition-all cursor-pointer ${
+            mainTab === 'activity'
+              ? 'bg-purple-600 text-white shadow-md shadow-purple-500/20'
+              : 'bg-white text-slate-600 hover:bg-purple-50 hover:text-purple-700 border border-slate-200/80'
+          }`}
+        >
+          <Activity size={18} />
+          <span>บันทึกกิจกรรมจริง</span>
+          <span
+            className={`px-2 py-0.5 rounded-full text-[11px] font-black ${
+              mainTab === 'activity' ? 'bg-purple-700 text-purple-100' : 'bg-slate-100 text-slate-600'
+            }`}
+          >
+            {dailyActivities.totalActivities}
+          </span>
+        </button>
+
+        <button
           onClick={() => setMainTab('rework')}
           className={`flex items-center gap-2.5 px-5 py-3 rounded-2xl text-xs sm:text-sm font-black transition-all cursor-pointer ${
             mainTab === 'rework'
@@ -787,6 +835,7 @@ export default function ForemanWorkspaceView({
         </div>
 
         {/* Search & Auto-Save Status Badge */}
+        {mainTab !== 'activity' && (
         <div className="flex items-center gap-2">
           <div className="relative flex-1 sm:w-64">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -843,6 +892,7 @@ export default function ForemanWorkspaceView({
             )}
           </div>
         </div>
+        )}
       </div>
       )}
 
@@ -1177,6 +1227,21 @@ export default function ForemanWorkspaceView({
       )}
 
       {/* ============================================================== */}
+      {/* 📜 MODE 4: DAILY ACTUAL ACTIVITIES (บันทึกกิจกรรมจริงประจำวัน) */}
+      {/* ============================================================== */}
+      {mainTab === 'activity' && (
+        <ForemanDailyActivityView
+          activitySummary={dailyActivities}
+          selectedDate={selectedDate}
+          selectedForeman={selectedForeman}
+          onNavigateToTaskChat={handleOpenChat as any}
+          onNavigateToDefectChat={handleOpenDefectChat as any}
+          onSelectPlot={onSelectPlot}
+          onSwitchToSchedule={() => setMainTab('schedule')}
+        />
+      )}
+
+      {/* ============================================================== */}
       {/* 🛠️ MODE 2: REWORKS & DEFECTS (งานที่ต้องแก้ไข & Defect ค้าง) */}
       {/* ============================================================== */}
       {mainTab === 'rework' && (
@@ -1433,6 +1498,10 @@ export default function ForemanWorkspaceView({
           onSelectDate={(dateStr) => {
             setSelectedDate(dateStr);
             setMainTab('schedule');
+          }}
+          onViewDayActivity={(dateStr) => {
+            setSelectedDate(dateStr);
+            setMainTab('activity');
           }}
         />
       )}
