@@ -28,6 +28,9 @@ import {
   Wrench,
   ShieldAlert,
   Flame,
+  ClipboardList,
+  Grid,
+  SortAsc,
 } from 'lucide-react';
 import {
   ROADBLOCK_REASONS,
@@ -46,6 +49,7 @@ import {
   type RoadblockReasonId,
 } from '@/lib/foremanDuty';
 import ForemanInspectionCalendar from './ForemanInspectionCalendar';
+import MeterStatusBadges from './MeterStatusBadges';
 
 interface ForemanWorkspaceViewProps {
   plots: any[];
@@ -68,6 +72,8 @@ interface ForemanWorkspaceViewProps {
   onNavigateToDefectChat?: (plot: any, defect: any) => void;
   onSelectPlot?: (plot: any) => void;
   fetchAllData?: () => Promise<void>;
+  inspectionQueue?: any[];
+  setSelectedGlobalProject?: (p: any) => void;
 }
 
 export default function ForemanWorkspaceView({
@@ -91,6 +97,8 @@ export default function ForemanWorkspaceView({
   onNavigateToDefectChat,
   onSelectPlot,
   fetchAllData,
+  inspectionQueue = [],
+  setSelectedGlobalProject,
 }: ForemanWorkspaceViewProps) {
   // Check if current user has Owner role
   const isOwnerUser = isOwner || currentUserRole?.toLowerCase() === 'owner';
@@ -144,6 +152,8 @@ export default function ForemanWorkspaceView({
 
   // Rework filter: 'all' | 'defect' | 'task_rework'
   const [reworkFilter, setReworkFilter] = useState<'all' | 'defect' | 'task_rework'>('all');
+  const [reworkViewMode, setReworkViewMode] = useState<'card' | 'list'>('card');
+  const [reworkSort, setReworkSort] = useState<'time' | 'plot'>('time');
 
   // Search queries
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -228,6 +238,31 @@ export default function ForemanWorkspaceView({
     snapshots,
     selectedProject,
   ]);
+
+  // Compute active rejected/rework tasks directly from inspectionQueue (exact same source & format as Image 1)
+  const reworkQueue = useMemo(() => {
+    const queue = (inspectionQueue || []).filter((q: any) => {
+      if (!q.isRejected) return false;
+      if (selectedProject && selectedProject !== 'all' && q.project_name && q.project_name !== selectedProject) return false;
+      if (isForeman && loggedInUser?.username) {
+        return q.foreman === loggedInUser.username;
+      }
+      if (selectedForeman && selectedForeman !== 'all') {
+        return q.foreman === selectedForeman;
+      }
+      return true;
+    }).map((q: any) => ({
+      ...q,
+      time: q.time || (q.created_at ? new Date(q.created_at).getTime() : 0)
+    }));
+
+    queue.sort((a: any, b: any) => {
+      if (reworkSort === 'plot') return (String(a.plot_name || a.plot_id || '')).localeCompare(String(b.plot_name || b.plot_id || ''));
+      return (b.time || 0) - (a.time || 0);
+    });
+
+    return queue;
+  }, [inspectionQueue, selectedProject, isForeman, loggedInUser?.username, selectedForeman, reworkSort]);
 
   // Compute active rework items (Defects + Rejected tasks)
   const reworkItems: ForemanReworkItem[] = useMemo(() => {
@@ -537,14 +572,14 @@ export default function ForemanWorkspaceView({
           }`}
         >
           <Wrench size={18} />
-          <span>งานที่ต้องแก้ไข & Defect</span>
-          {reworkItems.length > 0 && (
+          <span>งานที่ต้องแก้ไขด่วน</span>
+          {reworkQueue.length > 0 && (
             <span
               className={`px-2 py-0.5 rounded-full text-[11px] font-black animate-pulse ${
                 mainTab === 'rework' ? 'bg-rose-800 text-rose-100' : 'bg-rose-100 text-rose-700'
               }`}
             >
-              {reworkItems.length}
+              {reworkQueue.length}
             </span>
           )}
         </button>
@@ -565,7 +600,7 @@ export default function ForemanWorkspaceView({
       </div>
 
       {/* ⚠️ Actionable Rework Banner (Shown in Schedule mode if rework items exist) */}
-      {mainTab === 'schedule' && reworkItems.length > 0 && (
+      {mainTab === 'schedule' && reworkQueue.length > 0 && (
         <div className="bg-gradient-to-r from-rose-50 via-amber-50 to-rose-50 border border-rose-200/90 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs animate-in slide-in-from-top-2">
           <div className="flex items-center gap-3">
             <div className="p-2.5 bg-rose-500 text-white rounded-xl shadow-xs shrink-0">
@@ -573,7 +608,7 @@ export default function ForemanWorkspaceView({
             </div>
             <div>
               <p className="text-sm font-black text-rose-950 flex items-center gap-2">
-                <span>มีงานที่ต้องแก้ไข & Defect ค้างอยู่ {reworkItems.length} รายการ</span>
+                <span>มีงานที่ต้องแก้ไขด่วนค้างอยู่ {reworkQueue.length} รายการ</span>
                 <span className="px-2 py-0.5 bg-rose-200/80 text-rose-800 text-[10px] font-black rounded-full">
                   ต้องเร่งดำเนินการ
                 </span>
@@ -587,7 +622,7 @@ export default function ForemanWorkspaceView({
             onClick={() => setMainTab('rework')}
             className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-black rounded-xl transition-all shadow-xs shrink-0 cursor-pointer flex items-center gap-1.5 active:scale-95 whitespace-nowrap"
           >
-            <span>ดูรายการงานแก้ไข ({reworkItems.length})</span>
+            <span>ดูรายการงานแก้ไข ({reworkQueue.length})</span>
             <ArrowRight size={14} />
           </button>
         </div>
@@ -1006,225 +1041,235 @@ export default function ForemanWorkspaceView({
       {/* ============================================================== */}
       {mainTab === 'rework' && (
         <div className="space-y-6 animate-in fade-in duration-200">
-          {/* Summary KPIs for Rework */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-            <div className="bg-white rounded-2xl p-4 border border-rose-200/80 shadow-xs flex flex-col justify-between">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-500">งานรอแก้ไขทั้งหมด</span>
-                <div className="p-2 bg-rose-50 text-rose-600 rounded-xl">
-                  <Wrench size={18} />
-                </div>
-              </div>
-              <div className="mt-2">
-                <div className="text-2xl font-black text-rose-600">{reworkItems.length}</div>
-                <p className="text-[11px] text-slate-400 font-medium mt-0.5">Defect + งวดงานไม่ผ่าน</p>
-              </div>
+          {/* ส่วนหัว: โซนแท็บเมนูและปุ่มเปลี่ยนมุมมองแบบเดียวกับรูปที่ 1 */}
+          <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-4 sm:mb-8">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6">
+              <h2 className="font-semibold text-xl tracking-tight sm:text-2xl text-[#1d1d1f] flex items-center gap-2">
+                <ClipboardList className="text-orange-500" size={24} />
+                <span>⚠️ งานที่ต้องแก้ไขด่วน</span>
+                <span className="bg-[#1d1d1f] text-white text-[11px] px-2.5 py-0.5 rounded-full font-medium">
+                  {reworkQueue.length}
+                </span>
+              </h2>
             </div>
 
-            <div className="bg-white rounded-2xl p-4 border border-purple-200/80 shadow-xs flex flex-col justify-between">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-500">Defect ค้างตรวจ</span>
-                <div className="p-2 bg-purple-50 text-purple-600 rounded-xl">
-                  <ShieldAlert size={18} />
-                </div>
+            <div className="flex items-center gap-2 w-full xl:w-auto">
+              {/* View Mode Toggle: Card / List */}
+              <div className="flex bg-black/5 p-1 rounded-xl shrink-0 backdrop-blur-md">
+                <button
+                  onClick={() => setReworkViewMode('card')}
+                  className={`p-2 rounded-lg transition-colors duration-150 active:scale-[0.98] ${
+                    reworkViewMode === 'card' ? 'bg-white shadow-sm text-blue-500' : 'text-[#86868b] hover:text-[#1d1d1f]'
+                  }`}
+                  title="มุมมองการ์ด"
+                >
+                  <Grid size={16} />
+                </button>
+                <button
+                  onClick={() => setReworkViewMode('list')}
+                  className={`p-2 rounded-lg transition-colors duration-150 active:scale-[0.98] ${
+                    reworkViewMode === 'list' ? 'bg-white shadow-sm text-blue-500' : 'text-[#86868b] hover:text-[#1d1d1f]'
+                  }`}
+                  title="มุมมองตาราง"
+                >
+                  <ClipboardList size={16} />
+                </button>
               </div>
-              <div className="mt-2">
-                <div className="text-2xl font-black text-purple-600">
-                  {reworkItems.filter(i => i.type === 'defect').length}
-                </div>
-                <p className="text-[11px] text-slate-400 font-medium mt-0.5">รายการตรวจ Defect</p>
-              </div>
-            </div>
 
-            <div className="bg-white rounded-2xl p-4 border border-amber-200/80 shadow-xs flex flex-col justify-between">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-500">งวดงานโดนแจ้งแก้ไข</span>
-                <div className="p-2 bg-amber-50 text-amber-600 rounded-xl">
-                  <AlertTriangle size={18} />
-                </div>
-              </div>
-              <div className="mt-2">
-                <div className="text-2xl font-black text-amber-600">
-                  {reworkItems.filter(i => i.type === 'task_rework').length}
-                </div>
-                <p className="text-[11px] text-slate-400 font-medium mt-0.5">QC สั่งแก้ในระบบ</p>
-              </div>
-            </div>
-
-            <div className="bg-gradient-to-br from-rose-600 to-red-700 rounded-2xl p-4 text-white shadow-md flex flex-col justify-between">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-rose-100">รายการเร่งด่วน (High)</span>
-                <Flame size={18} className="text-amber-300 animate-pulse" />
-              </div>
-              <div className="mt-2">
-                <div className="text-3xl font-black tracking-tight">
-                  {reworkItems.filter(i => i.severity === 'high').length}
-                </div>
-                <p className="text-[10px] text-rose-100 font-semibold mt-1">ต้องรีบประสานช่างด่วน</p>
+              {/* เรียงลำดับ: ล่าสุด / รหัสแปลง */}
+              <div className="flex bg-white/80 backdrop-blur-md rounded-xl shadow-[0_2px_10px_rgb(0,0,0,0.02)] border border-white overflow-hidden text-[11px] sm:text-xs font-medium flex-1 xl:flex-none">
+                <button
+                  onClick={() => setReworkSort('time')}
+                  className={`flex-1 xl:flex-none px-4 py-2.5 flex justify-center items-center gap-1.5 transition-colors duration-150 active:scale-[0.98] ${
+                    reworkSort === 'time' ? 'bg-black/5 text-[#1d1d1f]' : 'text-[#86868b] hover:bg-black/5'
+                  }`}
+                >
+                  <Clock size={14} /> ล่าสุด
+                </button>
+                <button
+                  onClick={() => setReworkSort('plot')}
+                  className={`flex-1 xl:flex-none px-4 py-2.5 flex justify-center items-center gap-1.5 border-l border-black/5 transition-colors duration-150 active:scale-[0.98] ${
+                    reworkSort === 'plot' ? 'bg-black/5 text-[#1d1d1f]' : 'text-[#86868b] hover:bg-black/5'
+                  }`}
+                >
+                  <SortAsc size={14} /> รหัสแปลง
+                </button>
               </div>
             </div>
           </div>
 
-          {/* 🏷️ Filter Chips for Rework */}
-          <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-3">
-            <button
-              onClick={() => setReworkFilter('all')}
-              className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
-                reworkFilter === 'all'
-                  ? 'bg-rose-600 text-white shadow-sm'
-                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-              }`}
-            >
-              ทั้งหมด ({reworkItems.length})
-            </button>
-            <button
-              onClick={() => setReworkFilter('defect')}
-              className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
-                reworkFilter === 'defect'
-                  ? 'bg-purple-600 text-white shadow-sm'
-                  : 'bg-white text-purple-700 hover:bg-purple-50 border border-purple-200'
-              }`}
-            >
-              🛠️ Defects รายการตรวจแก้ ({reworkItems.filter(i => i.type === 'defect').length})
-            </button>
-            <button
-              onClick={() => setReworkFilter('task_rework')}
-              className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
-                reworkFilter === 'task_rework'
-                  ? 'bg-amber-600 text-white shadow-sm'
-                  : 'bg-white text-amber-700 hover:bg-amber-50 border border-amber-200'
-              }`}
-            >
-              ⚠️ งวดงานที่โดนแจ้งแก้ไข ({reworkItems.filter(i => i.type === 'task_rework').length})
-            </button>
-          </div>
-
-          {/* Rework Items List */}
-          {filteredReworkItems.length === 0 ? (
-            <div className="bg-white rounded-3xl p-12 text-center border border-slate-200/80 shadow-xs space-y-3">
-              <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
-                <CheckCircle2 size={32} />
+          {/* พื้นที่แสดงผลคิวงาน */}
+          {reworkQueue.length === 0 ? (
+            <div className="bg-white/60 backdrop-blur-xl rounded-[2rem] border border-dashed border-black/10 p-10 sm:p-16 text-center flex flex-col items-center justify-center gap-4">
+              <div className="w-20 h-20 bg-emerald-50 rounded-full flex items-center justify-center mb-2">
+                <CheckCircle2 size={36} className="text-emerald-400" />
               </div>
-              <h3 className="text-lg font-black text-slate-800">ไม่มีงานที่ต้องแก้ไขในขณะนี้</h3>
-              <p className="text-sm text-slate-500 max-w-md mx-auto">
-                ยอดเยี่ยมมาก! ไม่มีรายการ Defect ค้าง หรือรายการงวดงานที่ถูกสั่งแก้ไขในแปลงที่คุณรับผิดชอบ
-              </p>
+              <p className="text-[#86868b] font-medium text-sm sm:text-lg">ไม่มีงานที่ต้องแก้ไขด่วนในขณะนี้</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {filteredReworkItems.map(item => (
-                <div
-                  key={item.id}
-                  className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs hover:shadow-md transition-all flex flex-col justify-between group"
-                >
-                  <div>
-                    {/* Header: Plot, Type & Severity */}
-                    <div className="flex items-start justify-between gap-3 mb-3">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="px-2.5 py-1 bg-blue-50 text-blue-700 font-black text-xs rounded-lg border border-blue-200">
-                            {item.plot_name}
+            <div className="max-h-[70vh] overflow-y-auto custom-scrollbar pr-1 sm:pr-3 pb-4">
+              {reworkViewMode === 'card' ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                  {reworkQueue.map((q) => {
+                    const isUrgent = (Date.now() - q.time) > 172800000;
+                    const relatedPlot = plots.find(p => String(p.id) === String(q.plot_id));
+                    const relatedTask = taskTemplates.find(t => String(t.id) === String(q.task_template_id));
+                    const relatedProject = projects.find(p => p.name === q.project_name);
+                    const clickAction = () => {
+                      if (setSelectedGlobalProject && relatedProject) {
+                        setSelectedGlobalProject(relatedProject);
+                      }
+                      if (relatedPlot && relatedTask && onNavigateToTaskChat) {
+                        onNavigateToTaskChat(relatedPlot, relatedTask);
+                      }
+                    };
+
+                    return (
+                      <button
+                        key={`${q.plot_id}-${q.task_template_id}`}
+                        onClick={clickAction}
+                        className={`bg-white/80 backdrop-blur-xl p-5 sm:p-6 rounded-[1.5rem] border ${
+                          isUrgent ? 'border-rose-400 bg-rose-50/50' : 'border-white'
+                        } shadow-[0_4px_20px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] hover:-translate-y-1 active:scale-[0.98] transition-all duration-300 text-left group relative overflow-hidden cursor-pointer`}
+                      >
+                        {isUrgent && <div className="absolute top-0 left-0 w-full h-1.5 bg-rose-500"></div>}
+                        <div className="flex justify-between items-start mb-4">
+                          <span
+                            className={`text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-lg text-white shadow-sm ${
+                              q.statusFor === 'Rework' ? 'bg-orange-500' : (q.statusFor === 'QC' ? 'bg-purple-500' : 'bg-blue-500')
+                            }`}
+                          >
+                            {q.statusFor === 'Rework' ? 'แก้ไข' : `รอ ${q.statusFor}`}
                           </span>
-                          <span className="text-[11px] text-slate-400 font-bold">
-                            {item.project_name}
+                          <span
+                            className={`text-[10px] font-medium flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${
+                              isUrgent ? 'bg-rose-100 text-rose-600' : 'bg-black/5 text-[#86868b]'
+                            }`}
+                          >
+                            <Clock size={12} /> {new Date(q.time).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })}{' '}
+                            {new Date(q.time).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}
                           </span>
                         </div>
-                        {selectedForeman === 'all' && (
-                          <p className="text-[11px] text-slate-500 font-semibold flex items-center gap-1">
-                            <User size={12} className="text-slate-400" />
-                            <span>โฟร์แมน: {item.foreman_name}</span>
-                          </p>
-                        )}
-                      </div>
-
-                      {/* Type Badge */}
-                      <span
-                        className={`px-2.5 py-1 text-[11px] font-black rounded-lg border flex items-center gap-1 shrink-0 ${
-                          item.type === 'defect'
-                            ? 'bg-purple-50 text-purple-700 border-purple-200'
-                            : 'bg-amber-50 text-amber-800 border-amber-200'
-                        }`}
-                      >
-                        {item.type === 'defect' ? <ShieldAlert size={12} /> : <AlertTriangle size={12} />}
-                        <span>{item.type === 'defect' ? 'Defect' : 'งวดงานไม่ผ่าน'}</span>
-                      </span>
-                    </div>
-
-                    {/* Title & Task */}
-                    <div className="mb-3 space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
-                            item.severity === 'high'
-                              ? 'bg-rose-100 text-rose-700'
-                              : item.severity === 'low'
-                              ? 'bg-blue-100 text-blue-700'
-                              : 'bg-amber-100 text-amber-800'
-                          }`}
-                        >
-                          {item.severity === 'high' ? 'ด่วนมาก' : item.severity === 'low' ? 'ปกติ' : 'ปานกลาง'}
-                        </span>
-                        <span className="text-xs font-bold text-slate-500">{item.task_name}</span>
-                      </div>
-
-                      <h4 className="text-base font-black text-slate-900 group-hover:text-rose-600 transition-colors">
-                        {item.title}
-                      </h4>
-
-                      {item.description && item.description !== item.title && (
-                        <p className="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-100 leading-relaxed font-medium">
-                          {item.description}
+                        <div className="flex items-center gap-2 mb-2 flex-wrap">
+                          <h4 className="font-semibold text-[#1d1d1f] text-2xl">{q.plot_name || q.plot_id}</h4>
+                          {relatedPlot && <MeterStatusBadges plot={relatedPlot} size="sm" interactive={false} />}
+                          {isUrgent && <AlertTriangle size={18} className="text-rose-500" />}
+                          {q.isRejected && (
+                            <span className="bg-orange-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1 shadow-sm whitespace-nowrap shrink-0">
+                              ⚠️ ถูกตีกลับ
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs sm:text-sm font-medium text-[#86868b] line-clamp-2 mb-4 min-h-[32px] sm:min-h-[40px] leading-relaxed">
+                          {q.task_name}
                         </p>
-                      )}
-                    </div>
-
-                    {/* Details: Reporter & Contractor */}
-                    <div className="space-y-1 mb-3 text-xs text-slate-500 font-medium">
-                      {item.reporter && (
-                        <p className="flex items-center gap-1.5">
-                          <User size={13} className="text-slate-400" />
-                          <span>ผู้สั่งตรวจ/แจ้ง: <strong className="text-slate-700">{item.reporter}</strong></span>
-                        </p>
-                      )}
-                      {item.contractor_name && (
-                        <p className="flex items-center gap-1.5">
-                          <HardHat size={13} className="text-slate-400" />
-                          <span>ช่างรับผิดชอบ: <strong className="text-slate-700">{item.contractor_name}</strong></span>
-                        </p>
-                      )}
-                      {item.created_at && (
-                        <p className="flex items-center gap-1.5 text-[11px] text-slate-400">
-                          <Clock size={12} />
-                          <span>บันทึกเมื่อ: {new Date(item.created_at).toLocaleDateString('th-TH')}</span>
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Action Button */}
-                  <div className="pt-3 border-t border-slate-100">
-                    {item.type === 'defect' ? (
-                      <button
-                        onClick={() => handleOpenDefectChat(item)}
-                        className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-black shadow-xs active:scale-95 transition-all cursor-pointer"
-                        title="เข้าห้องแชท Defect เพื่อตรวจสอบและส่งงานแก้ไข"
-                      >
-                        <MessageSquare size={14} className="stroke-[2.5]" />
-                        <span>เข้าห้องแชท Defect / ส่งงานแก้ไข</span>
+                        <div className="flex items-center gap-2 pt-4 border-t border-black/5">
+                          <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center shrink-0">
+                            <HardHat size={12} className="text-slate-400" />
+                          </div>
+                          <p className="text-[11px] sm:text-xs text-[#86868b] font-medium truncate">{q.foreman}</p>
+                        </div>
                       </button>
-                    ) : (
-                      <button
-                        onClick={() => handleOpenReworkTaskChat(item)}
-                        className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black shadow-xs active:scale-95 transition-all cursor-pointer"
-                        title="เข้าห้องแชทงวดงานเพื่อดูข้อความสั่งแก้และอัปเดตงานใหม่"
-                      >
-                        <MessageSquare size={14} className="stroke-[2.5]" />
-                        <span>เข้าห้องแชทงวดงาน / แก้ไขงาน</span>
-                      </button>
-                    )}
-                  </div>
+                    );
+                  })}
                 </div>
-              ))}
+              ) : (
+                /* List View matching Image 1's list view */
+                <div className="flex flex-col gap-6 w-full">
+                  {Object.entries(
+                    reworkQueue.reduce((acc: Record<string, any[]>, q: any) => {
+                      const key = q.plot_name || q.plot_id;
+                      if (!acc[key]) acc[key] = [];
+                      acc[key].push(q);
+                      return acc;
+                    }, {} as Record<string, any[]>)
+                  ).map(([plotId, rawItems]) => {
+                    const items = rawItems as any[];
+                    const relatedPlot = plots.find(p => String(p.id) === String(items[0]?.plot_id) || p.plot_name === plotId);
+                    return (
+                      <div
+                        key={plotId}
+                        className="bg-white/80 backdrop-blur-xl rounded-[1.5rem] border border-white shadow-[0_4px_20px_rgb(0,0,0,0.03)] overflow-hidden w-full"
+                      >
+                        <div className="bg-black/[0.02] border-b border-black/5 px-5 py-4 flex items-center justify-between">
+                          <h3 className="font-semibold text-[#1d1d1f] flex items-center gap-2 text-lg">
+                            <Home size={18} className="text-blue-500" /> แปลง {plotId}
+                            {relatedPlot && <MeterStatusBadges plot={relatedPlot} size="sm" interactive={false} />}
+                          </h3>
+                          <span className="text-[11px] font-medium bg-black/5 text-[#86868b] px-2.5 py-1 rounded-lg">
+                            {items.length} งาน
+                          </span>
+                        </div>
+                        <div className="flex flex-col">
+                          {items.map((q: any, idx: number) => {
+                            const isUrgent = (Date.now() - q.time) > 172800000;
+                            const rPlot = plots.find(p => String(p.id) === String(q.plot_id));
+                            const relatedTask = taskTemplates.find(t => String(t.id) === String(q.task_template_id));
+                            const relatedProject = projects.find(p => p.name === q.project_name);
+                            const clickAction = () => {
+                              if (setSelectedGlobalProject && relatedProject) {
+                                setSelectedGlobalProject(relatedProject);
+                              }
+                              if (rPlot && relatedTask && onNavigateToTaskChat) {
+                                onNavigateToTaskChat(rPlot, relatedTask);
+                              }
+                            };
+                            return (
+                              <button
+                                key={`${q.plot_id}-${q.task_template_id}`}
+                                onClick={clickAction}
+                                className={`p-4 sm:p-5 text-left flex flex-col sm:flex-row sm:items-center justify-between gap-4 group transition-all duration-300 ${
+                                  idx !== items.length - 1 ? 'border-b border-black/5' : ''
+                                } hover:bg-black/[0.02] ${isUrgent ? 'border-l-4 border-l-rose-500 bg-rose-50/30' : 'border-l-4 border-l-transparent'} cursor-pointer`}
+                              >
+                                <div className="flex items-center gap-4 flex-1 overflow-hidden">
+                                  <div
+                                    className={`w-12 h-12 rounded-2xl flex flex-col items-center justify-center shrink-0 shadow-sm ${
+                                      q.statusFor === 'Rework'
+                                        ? 'bg-orange-100 text-orange-600'
+                                        : (q.statusFor === 'QC' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600')
+                                    }`}
+                                  >
+                                    <span className="text-[10px] font-bold uppercase tracking-wider">
+                                      {q.statusFor === 'Rework' ? 'แก้ไข' : `รอ ${q.statusFor}`}
+                                    </span>
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                      <p className="text-sm sm:text-base font-semibold text-[#1d1d1f] truncate group-hover:text-blue-600 transition-colors">
+                                        {q.task_name}
+                                      </p>
+                                      {isUrgent && (
+                                        <span className="bg-rose-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1 shadow-sm whitespace-nowrap shrink-0">
+                                          <AlertTriangle size={12} /> ด่วนมาก
+                                        </span>
+                                      )}
+                                      {q.isRejected && (
+                                        <span className="bg-orange-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1 shadow-sm whitespace-nowrap shrink-0">
+                                          ⚠️ ถูกตีกลับ
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p className="text-[11px] sm:text-xs text-[#86868b] font-medium flex items-center gap-1.5">
+                                      <HardHat size={14} /> {q.foreman}
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-center gap-1 shrink-0 pt-2 sm:pt-0 sm:pl-4">
+                                  <span className={`text-[11px] sm:text-xs font-medium ${isUrgent ? 'text-rose-500' : 'text-[#86868b]'}`}>
+                                    <Clock size={12} className="inline mr-1" /> {new Date(q.time).toLocaleDateString('th-TH', { month: 'short', day: 'numeric' })}{' '}
+                                    {new Date(q.time).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
         </div>

@@ -4207,6 +4207,8 @@ export default function ConstructionApp() {
                     setDefectReturnView('foreman-workspace');
                     setView('defect-progress');
                   }}
+                  inspectionQueue={inspectionQueue}
+                  setSelectedGlobalProject={setSelectedProject}
                   onNavigateToTaskChat={(plot: any, task: any) => {
                     setSelectedPlot(plot);
                     setSelectedTask(task);
