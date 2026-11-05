@@ -396,19 +396,17 @@ export function getForemanScheduledTasksForDate(options: GetForemanTasksOptions)
           }
         }
 
-        // Fallback for completion date
-        if (!completionDate) {
-          const assignUpdated = normalizeDateStr(assign?.updated_at);
-          if (assignUpdated) {
-            completionDate = assignUpdated;
-          } else if (isViewingToday && updatesToday.length === 0) {
-            // Viewing today, progress is 100%, and zero updates occurred today -> completed before today
-            completionDate = '2000-01-01';
+        // If completion date is known, check if before target date
+        if (completionDate) {
+          if (completionDate < normTargetDate) {
+            isCompletedEarly = true;
           }
-        }
-
-        if (completionDate && completionDate < normTargetDate) {
-          isCompletedEarly = true;
+        } else {
+          // If no timestamp found, but current progress is 100% and zero updates occurred on targetDate:
+          // it was completed prior to targetDate!
+          if (updatesToday.length === 0) {
+            isCompletedEarly = true;
+          }
         }
       }
 

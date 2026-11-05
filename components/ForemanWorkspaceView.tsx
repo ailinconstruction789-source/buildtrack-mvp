@@ -324,6 +324,14 @@ export default function ForemanWorkspaceView({
   // Filtered daily tasks for display
   const filteredTasks = useMemo(() => {
     return dailyTasks.filter(t => {
+      // Completed early filter:
+      if (activeTab === 'completed_early') {
+        if (!t.is_completed_early) return false;
+      } else {
+        // By default, exclude completed early tasks from active inspection tabs (all, pending, updated, roadblock)
+        if (t.is_completed_early) return false;
+      }
+
       // Tab filter
       if (activeTab === 'pending' && (t.is_updated_today || t.status_reason)) return false;
       if (activeTab === 'updated' && !t.is_updated_today) return false;
@@ -630,7 +638,7 @@ export default function ForemanWorkspaceView({
               mainTab === 'schedule' ? 'bg-blue-700 text-blue-100' : 'bg-slate-100 text-slate-600'
             }`}
           >
-            {dailyTasks.length}
+            {summary.totalTasks}
           </span>
         </button>
 
@@ -938,7 +946,7 @@ export default function ForemanWorkspaceView({
                   : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
               }`}
             >
-              ทั้งหมด ({dailyTasks.length})
+              ทั้งหมด ({summary.totalTasks})
             </button>
             <button
               onClick={() => setActiveTab('pending')}
@@ -970,7 +978,39 @@ export default function ForemanWorkspaceView({
             >
               ⚠️ แจ้งติดปัญหา ({summary.roadblockTasks})
             </button>
+            {(summary.completedEarlyTasks || 0) > 0 && (
+              <button
+                onClick={() => setActiveTab('completed_early')}
+                className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                  activeTab === 'completed_early'
+                    ? 'bg-emerald-700 text-white shadow-sm'
+                    : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-300'
+                }`}
+              >
+                🎉 เสร็จล่วงหน้า ({summary.completedEarlyTasks})
+              </button>
+            )}
           </div>
+
+          {/* Banner notification for completed early tasks */}
+          {(summary.completedEarlyTasks || 0) > 0 && activeTab !== 'completed_early' && (
+            <div className="bg-emerald-50/80 border border-emerald-200/90 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-emerald-950 shadow-2xs">
+              <div className="flex items-center gap-2.5">
+                <div className="p-1.5 bg-emerald-600 text-white rounded-lg shrink-0">
+                  <CheckCircle2 size={16} />
+                </div>
+                <span>
+                  มีงานในแผนที่โฟร์แมนตรวจและส่งมอบความคืบหน้า <strong>100% เสร็จสิ้นล่วงหน้าแล้ว {summary.completedEarlyTasks} รายการ</strong> (ระบบไม่นำมานับเป็นงานค้างของวันนี้)
+                </span>
+              </div>
+              <button
+                onClick={() => setActiveTab('completed_early')}
+                className="px-3 py-1 bg-white hover:bg-emerald-100 text-emerald-800 rounded-xl font-bold border border-emerald-300 transition-all cursor-pointer whitespace-nowrap self-end sm:self-auto"
+              >
+                ดูรายการที่เสร็จแล้ว ({summary.completedEarlyTasks})
+              </button>
+            </div>
+          )}
 
           {/* 📋 Task Cards List */}
           {filteredTasks.length === 0 ? (
@@ -1016,7 +1056,12 @@ export default function ForemanWorkspaceView({
                         </div>
 
                         {/* Status Badge */}
-                        {task.is_updated_today ? (
+                        {task.is_completed_early ? (
+                          <span className="px-2.5 py-1 bg-emerald-100 text-emerald-800 border border-emerald-300 text-[11px] font-black rounded-lg flex items-center gap-1 shrink-0">
+                            <CheckCircle2 size={13} className="stroke-[2.5]" />
+                            <span>เสร็จ 100% ล่วงหน้าแล้ว</span>
+                          </span>
+                        ) : task.is_updated_today ? (
                           <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-black rounded-lg flex items-center gap-1 shrink-0">
                             <CheckCircle2 size={13} className="stroke-[2.5]" />
                             <span>อัปเดตแล้ววันนี้</span>
