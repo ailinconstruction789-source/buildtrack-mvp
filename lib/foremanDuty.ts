@@ -64,7 +64,7 @@ export interface RoadblockReasonMeta {
 
 export function getRoadblockReason(reasonId?: string | null): RoadblockReasonMeta | null {
   if (!reasonId) return null;
-  const match = ROADBLOCK_REASONS.find(r => r.id === reasonId);
+  const match = ROADBLOCK_REASONS.find(r => r.id === reasonId || r.label === reasonId || reasonId.includes(r.label));
   if (match) return match;
   return {
     id: reasonId,
@@ -356,11 +356,59 @@ export function getForemanScheduledTasksForDate(options: GetForemanTasksOptions)
 
       // Check updates on target date
       const updatesToday = targetDateUpdatesMap.get(scheduleKey) || [];
-      const latestUpdateToday = updatesToday[0] || null;
-      const isUpdatedToday = Boolean(
-        snapshot?.is_updated_today ||
-        updatesToday.length > 0
+      const sortedUpdatesToday = [...updatesToday].sort((a, b) => {
+        const ta = new Date(b.created_at || b.date || 0).getTime();
+        const tb = new Date(a.created_at || a.date || 0).getTime();
+        return ta - tb;
+      });
+      const latestUpdateToday = sortedUpdatesToday[0] || null;
+
+      // Check whether latest update or snapshot indicates a roadblock
+      const isLatestUpdateRoadblock = Boolean(
+        latestUpdateToday &&
+        (String(latestUpdateToday.action || '').includes('ติดปัญหา') ||
+         String(latestUpdateToday.action || '').startsWith('แจ้งติดปัญหา') ||
+         String(latestUpdateToday.text_content || '').startsWith('เหตุผล:'))
       );
+
+      // Determine roadblock reason and note
+      let statusReason = snapshot?.status_reason || null;
+      let statusNote = snapshot?.status_note || null;
+
+      if (!statusReason && isLatestUpdateRoadblock && latestUpdateToday) {
+        const actStr = String(latestUpdateToday.action || '');
+        const textStr = String(latestUpdateToday.text_content || '');
+        const matchedReason = ROADBLOCK_REASONS.find(r => actStr.includes(r.label) || textStr.includes(r.label));
+        if (matchedReason) {
+          statusReason = matchedReason.id;
+        } else if (actStr.startsWith('แจ้งติดปัญหา:')) {
+          statusReason = actStr.replace('แจ้งติดปัญหา:', '').trim();
+        } else {
+          statusReason = 'other';
+        }
+        if (!statusNote && textStr) {
+          const noteMatch = textStr.match(/\(([^)]+)\)/);
+          if (noteMatch) {
+            statusNote = noteMatch[1];
+          }
+        }
+      }
+
+      // Check whether task is updated today with actual progress (not just a roadblock report)
+      let isUpdatedToday = false;
+      if (statusReason) {
+        // Active roadblock today takes precedence -> counted as roadblock, not progress update
+        isUpdatedToday = false;
+      } else if (snapshot?.is_updated_today) {
+        isUpdatedToday = true;
+      } else if (sortedUpdatesToday.length > 0) {
+        const hasProgressUpdateToday = sortedUpdatesToday.some(u => {
+          const act = String(u.action || '');
+          const text = String(u.text_content || '');
+          return !act.includes('ติดปัญหา') && !text.startsWith('เหตุผล:');
+        });
+        isUpdatedToday = hasProgressUpdateToday;
+      }
 
       // Check whether task is currently under active rejection / rework
       const taskUpdates = updatesByTaskMap.get(scheduleKey) || [];
@@ -412,8 +460,6 @@ export function getForemanScheduledTasksForDate(options: GetForemanTasksOptions)
         }
       }
 
-      const statusReason = snapshot?.status_reason || null;
-      const statusNote = snapshot?.status_note || null;
       const contractorName = assign?.contractor_name || assign?.contractors?.name || plan?.contractor_name || '';
 
       dailyTasks.push({
@@ -469,10 +515,10 @@ export function computeForemanDailySummary(tasks: ForemanDailyTask[]): ForemanDa
 
   activeTasks.forEach(t => {
     plotSet.add(t.plot_id);
-    if (t.is_updated_today) {
-      updatedTasks++;
-    } else if (t.status_reason) {
+    if (t.status_reason) {
       roadblockTasks++;
+    } else if (t.is_updated_today) {
+      updatedTasks++;
     } else {
       pendingTasks++;
     }
@@ -1278,8 +1324,8 @@ export function getMonthlyForemanInspectionCompliance(options: GetMonthlyInspect
         foremanStats[fm] = { total: 0, updated: 0, roadblock: 0, pending: 0, rate: 0 };
       }
       foremanStats[fm].total++;
-      if (t.is_updated_today) foremanStats[fm].updated++;
-      else if (t.status_reason) foremanStats[fm].roadblock++;
+      if (t.status_reason) foremanStats[fm].roadblock++;
+      else if (t.is_updated_today) foremanStats[fm].updated++;
       else foremanStats[fm].pending++;
     });
 
@@ -1472,11 +1518,21 @@ export function getForemanDailyActivities(options: GetForemanActivitiesOptions):
       const pStart = normalizeDateStr(plan?.planned_start);
       const pEnd = normalizeDateStr(plan?.planned_end);
 
-      let category: 'in_plan' | 'out_of_plan' = 'out_of_plan';
-      let categoryLabel = 'งานนอกแผน / งานล่วงหน้า';
-      let categoryColor: 'blue' | 'purple' = 'purple';
+      const isRoadblockUpdate = Boolean(
+        String(u.action || '').includes('ติดปัญหา') ||
+        String(u.action || '').startsWith('แจ้งติดปัญหา') ||
+        String(u.text_content || '').startsWith('เหตุผล:')
+      );
 
-      if (pStart && pEnd) {
+      let category: 'in_plan' | 'out_of_plan' | 'roadblock' = 'out_of_plan';
+      let categoryLabel = 'งานนอกแผน / งานล่วงหน้า';
+      let categoryColor: 'blue' | 'purple' | 'amber' = 'purple';
+
+      if (isRoadblockUpdate) {
+        category = 'roadblock';
+        categoryLabel = 'แจ้งเหตุผลติดปัญหา';
+        categoryColor = 'amber';
+      } else if (pStart && pEnd) {
         if (normTargetDate >= pStart && normTargetDate <= pEnd) {
           category = 'in_plan';
           categoryLabel = 'งานตามแผนวันนี้';
@@ -1595,6 +1651,13 @@ export function getForemanDailyActivities(options: GetForemanActivitiesOptions):
       if (!s.status_reason) return;
 
       const plotIdStr = String(s.plot_id);
+      const taskIdStr = String(s.task_template_id);
+      // Avoid duplicate if already added from task_updates
+      const alreadyHasRoadblock = items.some(
+        it => it.category === 'roadblock' && String(it.plot_id) === plotIdStr && String(it.task_template_id) === taskIdStr
+      );
+      if (alreadyHasRoadblock) return;
+
       const plot = plotMap.get(plotIdStr);
       if (!plot) return;
 

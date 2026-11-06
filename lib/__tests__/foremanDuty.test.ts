@@ -634,5 +634,44 @@ describe('foremanDuty helper library', () => {
 
       expect(res.success).toBe(true);
     });
+
+    it('correctly categorizes roadblock as roadblockTasks (not updatedTasks) in summary and scheduled tasks', () => {
+      const mockPlot = { id: 'plot-56', name: 'แปลง 56', project_name: 'ไอลิน6', foreman: 'LEAB' };
+      const mockTask = { id: 'task-kitchen', task_name: 'งานเคาเตอร์ห้องครัวด้านใน' };
+      const mockSchedules = {
+        'plot-56-task-kitchen': { planned_start: '2026-11-05', planned_end: '2026-11-08' }
+      };
+      const mockUpdates = [
+        {
+          id: 'up-1',
+          plot_id: 'plot-56',
+          task_template_id: 'task-kitchen',
+          action: 'แจ้งติดปัญหา: งานก่อนหน้ายังไม่เสร็จ / เลื่อน',
+          text_content: 'เหตุผล: งานก่อนหน้ายังไม่เสร็จ / เลื่อน (ช่างยังไม่เข้า)',
+          created_at: '2026-11-06T09:00:00.000Z',
+          date: '2026-11-06T09:00:00.000Z',
+          progress: 0,
+        }
+      ];
+
+      const tasks = getForemanScheduledTasksForDate({
+        plots: [mockPlot],
+        taskTemplates: [mockTask],
+        schedules: mockSchedules,
+        allUpdatesRecord: mockUpdates,
+        targetDate: '2026-11-06',
+        foremanName: 'LEAB',
+      });
+
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0].status_reason).toBe('prior_task_delayed');
+      expect(tasks[0].is_updated_today).toBe(false);
+
+      const summary = computeForemanDailySummary(tasks);
+      expect(summary.roadblockTasks).toBe(1);
+      expect(summary.updatedTasks).toBe(0);
+      expect(summary.pendingTasks).toBe(0);
+      expect(summary.complianceRate).toBe(100);
+    });
   });
 });

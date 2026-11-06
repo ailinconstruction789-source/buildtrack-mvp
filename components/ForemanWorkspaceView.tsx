@@ -367,8 +367,8 @@ export default function ForemanWorkspaceView({
 
       // Tab filter
       if (activeTab === 'pending' && (t.is_updated_today || t.status_reason)) return false;
-      if (activeTab === 'updated' && !t.is_updated_today) return false;
-      if (activeTab === 'roadblock' && (!t.status_reason || t.is_updated_today)) return false;
+      if (activeTab === 'updated' && (!t.is_updated_today || Boolean(t.status_reason))) return false;
+      if (activeTab === 'roadblock' && !t.status_reason) return false;
 
       // Search query
       if (searchQuery.trim()) {
@@ -1124,7 +1124,7 @@ export default function ForemanWorkspaceView({
             {/* Updated Today */}
             <div className="bg-white rounded-2xl p-4 border border-emerald-200/80 shadow-xs flex flex-col justify-between">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-emerald-700">อัปเดตแล้ววันนี้</span>
+                <span className="text-xs font-bold text-emerald-700">รายงานความคืบหน้า</span>
                 <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl">
                   <CheckCircle2 size={18} />
                 </div>
@@ -1271,7 +1271,7 @@ export default function ForemanWorkspaceView({
                   : 'bg-white text-emerald-700 hover:bg-emerald-50 border border-emerald-200'
               }`}
             >
-              ✅ อัปเดตแล้ว ({summary.updatedTasks})
+              ✅ รายงานความคืบหน้า ({summary.updatedTasks})
             </button>
             <button
               onClick={() => setActiveTab('roadblock')}
@@ -1384,15 +1384,15 @@ export default function ForemanWorkspaceView({
                             <CheckCircle2 size={13} className="stroke-[2.5]" />
                             <span>เสร็จ 100% ล่วงหน้าแล้ว</span>
                           </span>
-                        ) : task.is_updated_today ? (
-                          <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-black rounded-lg flex items-center gap-1 shrink-0">
-                            <CheckCircle2 size={13} className="stroke-[2.5]" />
-                            <span>อัปเดตแล้ววันนี้</span>
-                          </span>
                         ) : task.status_reason ? (
                           <span className="px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-black rounded-lg flex items-center gap-1 shrink-0">
                             <span>{reasonMeta?.icon || '⚠️'}</span>
-                            <span className="truncate max-w-[120px]">{reasonMeta?.label || 'ติดปัญหา'}</span>
+                            <span className="truncate max-w-[140px]">{reasonMeta?.label || 'แจ้งติดปัญหา'}</span>
+                          </span>
+                        ) : task.is_updated_today ? (
+                          <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-black rounded-lg flex items-center gap-1 shrink-0">
+                            <CheckCircle2 size={13} className="stroke-[2.5]" />
+                            <span>รายงานความคืบหน้า</span>
                           </span>
                         ) : (
                           <span className="px-2.5 py-1 bg-rose-50 text-rose-700 border border-rose-200 text-[11px] font-black rounded-lg flex items-center gap-1 shrink-0">
@@ -1441,11 +1441,11 @@ export default function ForemanWorkspaceView({
                       </div>
 
                       {/* Reason Callout if reported */}
-                      {task.status_reason && !task.is_updated_today && (
+                      {task.status_reason ? (
                         <div className="mb-3 p-3 bg-amber-50/80 rounded-xl border border-amber-200/80 text-amber-900 space-y-1">
                           <div className="text-xs font-black flex items-center gap-1.5 text-amber-800">
-                            <span>{reasonMeta?.icon}</span>
-                            <span>{reasonMeta?.label}</span>
+                            <span>{reasonMeta?.icon || '⚠️'}</span>
+                            <span>{reasonMeta?.label || 'แจ้งติดปัญหา'}</span>
                           </div>
                           {task.status_note && (
                             <p className="text-[11px] text-amber-700 font-medium leading-relaxed">
@@ -1453,14 +1453,11 @@ export default function ForemanWorkspaceView({
                             </p>
                           )}
                         </div>
-                      )}
-
-                      {/* Update note if updated today */}
-                      {task.is_updated_today && task.last_action && (
+                      ) : task.is_updated_today && task.last_action ? (
                         <div className="mb-3 p-2.5 bg-emerald-50/70 rounded-xl border border-emerald-100 text-[11px] text-emerald-800 font-medium">
                           บันทึกวันนี้: <span className="font-bold">{task.last_action}</span>
                         </div>
-                      )}
+                      ) : null}
                     </div>
 
                     {/* Card Action Buttons */}
@@ -1813,7 +1810,7 @@ export default function ForemanWorkspaceView({
       {previewImage && (
         <div
           onClick={() => setPreviewImage(null)}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200 cursor-pointer"
+          className="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200 cursor-pointer"
         >
           <div
             onClick={e => e.stopPropagation()}
@@ -1836,8 +1833,8 @@ export default function ForemanWorkspaceView({
 
       {/* ⚠️ Roadblock Reason Modal */}
       {selectedTaskForRoadblock && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200 overflow-y-auto">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-5 sm:p-7 shadow-2xl border border-slate-200 my-auto flex flex-col max-h-[92vh] sm:max-h-[88vh] animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-3 sm:p-4 pb-6 sm:pb-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-5 sm:p-7 shadow-2xl border border-slate-200 my-auto flex flex-col max-h-[85dvh] sm:max-h-[88vh] animate-in zoom-in-95 duration-200">
             {/* Modal Header (Fixed at top) */}
             <div className="flex items-start justify-between gap-4 pb-3 border-b border-slate-100 shrink-0">
               <div className="space-y-1">
