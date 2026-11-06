@@ -154,7 +154,8 @@ export default function ForemanWorkspaceView({
   const [selectedProject, setSelectedProject] = useState<string>('all');
 
   // Schedule status tab filter: 'all' | 'pending' | 'updated' | 'roadblock'
-  const [activeTab, setActiveTab] = useState<'all' | 'pending' | 'updated' | 'roadblock' | 'completed_early'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'pending' | 'updated' | 'roadblock' | 'completed_early' | 'out_of_plan'>('all');
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   // Rework filter: 'all' | 'defect' | 'task_rework'
   const [reworkFilter, setReworkFilter] = useState<'all' | 'defect' | 'task_rework'>('all');
@@ -361,6 +362,9 @@ export default function ForemanWorkspaceView({
         if (t.is_completed_early) return false;
       }
 
+      // Out of plan tab filter:
+      if (activeTab === 'out_of_plan') return false;
+
       // Tab filter
       if (activeTab === 'pending' && (t.is_updated_today || t.status_reason)) return false;
       if (activeTab === 'updated' && !t.is_updated_today) return false;
@@ -379,6 +383,192 @@ export default function ForemanWorkspaceView({
       return true;
     });
   }, [dailyTasks, activeTab, searchQuery]);
+
+  // Distinct Out-of-Plan Tasks updated today
+  const outOfPlanTasks = useMemo(() => {
+    const map = new Map<string, any>();
+    (dailyActivities.items || [])
+      .filter(item => item.category === 'out_of_plan')
+      .forEach(item => {
+        const key = `${item.plot_id}-${item.task_template_id || item.task_name}`;
+        if (!map.has(key)) {
+          const schedKey1 = `${item.plot_id}-${item.task_template_id}`;
+          const schedKey2 = `${item.plot_id}_${item.task_template_id}`;
+          const sched = schedules[schedKey1] || schedules[schedKey2];
+          const assign = (assignments || []).find(
+            (a: any) => String(a.plot_id) === String(item.plot_id) &&
+                        String(a.task_template_id) === String(item.task_template_id)
+          );
+
+          map.set(key, {
+            id: `out-of-plan-${key}`,
+            plot_id: item.plot_id,
+            plot_name: item.plot_name,
+            project_name: item.project_name,
+            foreman_name: item.foreman_name,
+            task_template_id: item.task_template_id,
+            task_name: item.task_name,
+            planned_start: sched?.planned_start || null,
+            planned_end: sched?.planned_end || null,
+            current_progress: typeof item.progress === 'number' ? item.progress : (item.is_100_percent ? 100 : 0),
+            contractor_name: assign?.contractor_name || assign?.contractor || null,
+            is_updated_today: true,
+            last_action: item.action,
+            last_text: item.text_content,
+            last_time: item.timeStr,
+            categoryLabel: item.categoryLabel || 'งานนอกแผน / ล่วงหน้า',
+            image_urls: item.image_urls || [],
+            is_100_percent: item.is_100_percent,
+            plotObj: item.plotObj,
+            taskObj: item.taskObj,
+          });
+        }
+      });
+    return Array.from(map.values());
+  }, [dailyActivities.items, schedules, assignments]);
+
+  // Filtered out-of-plan tasks by search query
+  const filteredOutOfPlanTasks = useMemo(() => {
+    if (!searchQuery.trim()) return outOfPlanTasks;
+    const q = searchQuery.toLowerCase().trim();
+    return outOfPlanTasks.filter(t => {
+      const matchPlot = t.plot_name.toLowerCase().includes(q);
+      const matchTask = t.task_name.toLowerCase().includes(q);
+      const matchContractor = (t.contractor_name || '').toLowerCase().includes(q);
+      const matchFm = t.foreman_name.toLowerCase().includes(q);
+      const matchAction = (t.last_action || '').toLowerCase().includes(q);
+      const matchText = (t.last_text || '').toLowerCase().includes(q);
+      return matchPlot || matchTask || matchContractor || matchFm || matchAction || matchText;
+    });
+  }, [outOfPlanTasks, searchQuery]);
+
+  // Helper to render an Out-of-Plan task card
+  const renderOutOfPlanCard = (task: any) => (
+    <div
+      key={task.id}
+      className="bg-white rounded-2xl p-5 border border-purple-200/90 shadow-xs hover:shadow-md transition-all flex flex-col justify-between group relative overflow-hidden"
+    >
+      <div className="absolute top-0 right-0 w-24 h-24 bg-purple-500/5 rounded-bl-full pointer-events-none" />
+      <div>
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <div className="space-y-1">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="px-2.5 py-1 bg-purple-50 text-purple-700 font-black text-xs rounded-lg border border-purple-200">
+                {task.plot_name}
+              </span>
+              <span className="text-[11px] text-slate-400 font-bold">
+                {task.project_name}
+              </span>
+            </div>
+            {selectedForeman === 'all' && (
+              <p className="text-[11px] text-slate-500 font-semibold flex items-center gap-1">
+                <User size={12} className="text-slate-400" />
+                <span>โฟร์แมน: {task.foreman_name}</span>
+              </p>
+            )}
+          </div>
+
+          <span className="px-2.5 py-1 bg-purple-100 text-purple-800 border border-purple-300 text-[11px] font-black rounded-lg flex items-center gap-1 shrink-0">
+            <Sparkles size={13} className="text-purple-600" />
+            <span>{task.categoryLabel}</span>
+          </span>
+        </div>
+
+        <div className="mb-3">
+          <h4 className="text-base font-black text-slate-900 group-hover:text-purple-700 transition-colors">
+            {task.task_name}
+          </h4>
+          <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1.5 font-medium">
+            <Calendar size={13} className="text-slate-400" />
+            <span>
+              {task.planned_start && task.planned_end
+                ? `ตามแผน: ${task.planned_start} ถึง ${task.planned_end}`
+                : 'งานนอกตารางแผนหลัก'}
+            </span>
+          </p>
+        </div>
+
+        <div className="space-y-1.5 mb-3 bg-purple-50/50 p-3 rounded-xl border border-purple-100">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-slate-500 font-bold">ความคืบหน้าปัจจุบัน</span>
+            <span className="font-black text-purple-800">{task.current_progress}%</span>
+          </div>
+          <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+            <div
+              className={`h-2 rounded-full transition-all duration-300 ${
+                task.current_progress >= 100
+                  ? 'bg-emerald-500'
+                  : task.current_progress > 0
+                  ? 'bg-purple-600'
+                  : 'bg-slate-300'
+              }`}
+              style={{ width: `${Math.min(100, Math.max(0, task.current_progress))}%` }}
+            />
+          </div>
+          {task.contractor_name && (
+            <p className="text-[11px] text-slate-500 font-medium truncate pt-1">
+              👷 ผู้รับเหมา: <span className="font-bold text-slate-700">{task.contractor_name}</span>
+            </p>
+          )}
+        </div>
+
+        {task.last_action && (
+          <div className="mb-3 p-2.5 bg-purple-50/70 rounded-xl border border-purple-100 text-[11px] text-purple-900 font-medium flex items-center justify-between">
+            <span>อัปเดต: <strong className="font-bold">{task.last_action}</strong></span>
+            {task.last_time && <span className="text-purple-600 font-bold">{task.last_time}</span>}
+          </div>
+        )}
+
+        {task.last_text && (
+          <div className="mb-3 p-2.5 bg-slate-50 rounded-xl border border-slate-100 text-xs text-slate-600 font-medium line-clamp-2">
+            {task.last_text}
+          </div>
+        )}
+
+        {task.image_urls && task.image_urls.length > 0 && (
+          <div className="mb-3 flex items-center gap-1.5 flex-wrap">
+            {task.image_urls.slice(0, 3).map((img: string, idx: number) => (
+              <div
+                key={idx}
+                onClick={() => setPreviewImage(img)}
+                className="w-10 h-10 rounded-lg overflow-hidden border border-slate-200 cursor-pointer hover:opacity-80 transition-opacity"
+              >
+                <img src={img} alt="ภาพงาน" className="w-full h-full object-cover" />
+              </div>
+            ))}
+            {task.image_urls.length > 3 && (
+              <span className="text-[10px] text-slate-400 font-bold">
+                +{task.image_urls.length - 3} รูป
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+        <div className="text-[11px] text-purple-700 font-bold">
+          ⚡ อัปเดตนอกตารางวันนี้
+        </div>
+        <button
+          onClick={() => {
+            const plot = task.plotObj || plots.find((p: any) => String(p.id) === String(task.plot_id));
+            const tObj = task.taskObj || taskTemplates.find((t: any) => String(t.id) === String(task.task_template_id)) || {
+              id: task.task_template_id,
+              task_name: task.task_name,
+              task_order: 1,
+            };
+            if (plot && onNavigateToTaskChat) {
+              onNavigateToTaskChat(plot, tObj);
+            }
+          }}
+          className="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-black shadow-xs transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
+        >
+          <MessageSquare size={13} />
+          <span>เข้าห้องแชท / อัปเดต</span>
+        </button>
+      </div>
+    </div>
+  );
 
   // Filtered rework items for display
   const filteredReworkItems = useMemo(() => {
@@ -646,6 +836,18 @@ export default function ForemanWorkspaceView({
                 กลับมาวันนี้
               </button>
             )}
+            {outOfPlanTasks.length > 0 && (
+              <button
+                onClick={() => setActiveTab('out_of_plan')}
+                className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                  activeTab === 'out_of_plan'
+                    ? 'bg-purple-600 text-white shadow-sm'
+                    : 'bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200'
+                }`}
+              >
+                🟣 นอกแผน / ล่วงหน้า ({outOfPlanTasks.length})
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -902,7 +1104,7 @@ export default function ForemanWorkspaceView({
       {mainTab === 'schedule' && (
         <div className="space-y-6">
           {/* 📊 KPI Summary Cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4">
             {/* Total Tasks */}
             <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-xs flex flex-col justify-between">
               <div className="flex items-center justify-between">
@@ -965,8 +1167,34 @@ export default function ForemanWorkspaceView({
               </div>
             </div>
 
+            {/* Out-of-Plan / Early Work Today */}
+            <div
+              onClick={() => setActiveTab(activeTab === 'out_of_plan' ? 'all' : 'out_of_plan')}
+              className={`rounded-2xl p-4 border shadow-xs flex flex-col justify-between cursor-pointer transition-all ${
+                activeTab === 'out_of_plan'
+                  ? 'bg-purple-50/90 border-purple-400 ring-2 ring-purple-500/20 shadow-md'
+                  : 'bg-white border-purple-200/80 hover:border-purple-300 hover:bg-purple-50/30'
+              }`}
+              title="คลิกเพื่อกรองดูเฉพาะงานนอกแผน/ล่วงหน้า"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black text-purple-900">นอกแผน / ล่วงหน้า</span>
+                <div className="p-2 bg-purple-100 text-purple-700 rounded-xl">
+                  <Sparkles size={18} />
+                </div>
+              </div>
+              <div className="mt-2">
+                <div className="text-2xl font-black text-purple-700">
+                  {outOfPlanTasks.length}
+                </div>
+                <p className="text-[11px] text-purple-600 font-medium mt-0.5">
+                  อัปเดตนอกตารางแผน
+                </p>
+              </div>
+            </div>
+
             {/* Daily Compliance Gauge */}
-            <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl p-4 text-white shadow-md flex flex-col justify-between col-span-2 lg:col-span-1">
+            <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl p-4 text-white shadow-md flex flex-col justify-between col-span-2 md:col-span-1">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-blue-100">อัตราการตรวจงาน</span>
                 <Sparkles size={18} className="text-amber-300" />
@@ -985,6 +1213,33 @@ export default function ForemanWorkspaceView({
               </div>
             </div>
           </div>
+
+          {/* ⚡ Daily Total Effort Banner */}
+          {outOfPlanTasks.length > 0 && (
+            <div className="bg-purple-50/80 border border-purple-200/90 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-purple-950 shadow-2xs">
+              <div className="flex items-center gap-2.5">
+                <div className="p-1.5 bg-purple-600 text-white rounded-lg shrink-0">
+                  <Sparkles size={16} />
+                </div>
+                <div>
+                  <span className="font-black">สรุปการลงพื้นที่จริงวันนี้: </span>
+                  <span>
+                    โฟร์แมนตรวจและอัปเดตงานจริงรวม{' '}
+                    <strong className="text-purple-700 font-black text-sm">
+                      {summary.updatedTasks + summary.roadblockTasks + outOfPlanTasks.length}
+                    </strong>{' '}
+                    งาน (ในแผน {summary.updatedTasks + summary.roadblockTasks} งาน + นอกแผน/ล่วงหน้า {outOfPlanTasks.length} งาน)
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={() => setActiveTab(activeTab === 'out_of_plan' ? 'all' : 'out_of_plan')}
+                className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold transition-all shrink-0 cursor-pointer text-xs active:scale-95"
+              >
+                {activeTab === 'out_of_plan' ? 'ดูงานทั้งหมด' : `ดูงานนอกแผน (${outOfPlanTasks.length})`}
+              </button>
+            </div>
+          )}
 
           {/* 🏷️ Filter Tabs for Schedule */}
           <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-3">
@@ -1063,7 +1318,23 @@ export default function ForemanWorkspaceView({
           )}
 
           {/* 📋 Task Cards List */}
-          {filteredTasks.length === 0 ? (
+          {activeTab === 'out_of_plan' ? (
+            filteredOutOfPlanTasks.length === 0 ? (
+              <div className="bg-white rounded-3xl p-12 text-center border border-slate-200/80 shadow-xs space-y-3">
+                <div className="w-16 h-16 bg-purple-50 text-purple-600 rounded-full flex items-center justify-center mx-auto">
+                  <Sparkles size={32} />
+                </div>
+                <h3 className="text-lg font-black text-slate-800">ไม่มีงานนอกแผน/ล่วงหน้า</h3>
+                <p className="text-sm text-slate-500 max-w-md mx-auto">
+                  {searchQuery ? 'ไม่พบรายการงานนอกแผนที่ตรงกับคำค้นหา' : 'ไม่มีการอัปเดตงานนอกแผนหรือล่วงหน้าในวันนี้'}
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {filteredOutOfPlanTasks.map(task => renderOutOfPlanCard(task))}
+              </div>
+            )
+          ) : filteredTasks.length === 0 && !(activeTab === 'all' && filteredOutOfPlanTasks.length > 0) ? (
             <div className="bg-white rounded-3xl p-12 text-center border border-slate-200/80 shadow-xs space-y-3">
               <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto">
                 <CheckSquare size={32} />
@@ -1076,6 +1347,8 @@ export default function ForemanWorkspaceView({
               </p>
             </div>
           ) : (
+            <>
+            {filteredTasks.length > 0 && (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {filteredTasks.map(task => {
                 const reasonMeta = getRoadblockReason(task.status_reason);
@@ -1222,6 +1495,36 @@ export default function ForemanWorkspaceView({
                 );
               })}
             </div>
+            )}
+
+            {/* 🟣 Out-of-Plan Section in All Tab */}
+            {activeTab === 'all' && filteredOutOfPlanTasks.length > 0 && (
+              <div className="mt-8 pt-6 border-t-2 border-dashed border-purple-200 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 bg-purple-100 text-purple-700 rounded-xl">
+                      <Sparkles size={18} />
+                    </div>
+                    <div>
+                      <h3 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
+                        <span>งานนอกแผน / ทำล่วงหน้าที่อัปเดตวันนี้</span>
+                        <span className="px-2.5 py-0.5 bg-purple-100 text-purple-800 rounded-full text-xs font-black">
+                          {filteredOutOfPlanTasks.length} รายการ
+                        </span>
+                      </h3>
+                      <p className="text-xs text-slate-500 font-medium">
+                        งานที่โฟร์แมนเข้าตรวจสอบหรือส่งงานในวันนี้ โดยอยู่นอกตารางแผนประจำวัน
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {filteredOutOfPlanTasks.map(task => renderOutOfPlanCard(task))}
+                </div>
+              </div>
+            )}
+            </>
           )}
         </div>
       )}
@@ -1504,6 +1807,31 @@ export default function ForemanWorkspaceView({
             setMainTab('activity');
           }}
         />
+      )}
+
+      {/* 🖼️ Fullscreen Image Preview Lightbox */}
+      {previewImage && (
+        <div
+          onClick={() => setPreviewImage(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200 cursor-pointer"
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="relative max-w-4xl max-h-[90vh] bg-white rounded-2xl overflow-hidden shadow-2xl p-2"
+          >
+            <button
+              onClick={() => setPreviewImage(null)}
+              className="absolute top-4 right-4 p-2 bg-black/60 hover:bg-black/80 text-white rounded-full transition-all cursor-pointer z-10"
+            >
+              <X size={18} />
+            </button>
+            <img
+              src={previewImage}
+              alt="ภาพขยายขนาดใหญ่"
+              className="max-h-[85vh] w-auto max-w-full rounded-xl object-contain mx-auto"
+            />
+          </div>
+        </div>
       )}
 
       {/* ⚠️ Roadblock Reason Modal */}

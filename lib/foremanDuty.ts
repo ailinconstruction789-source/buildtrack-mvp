@@ -105,6 +105,8 @@ export interface ForemanDailyTask {
   is_snapshot?: boolean;
   is_completed_early?: boolean;
   completion_date?: string | null;
+  is_out_of_plan?: boolean;
+  out_of_plan_badge?: string;
 }
 
 export interface ForemanDailySummary {
