@@ -910,8 +910,18 @@ export async function recordForemanTaskRoadblockReason(
     // ignore
   }
 
-  if (snapError || updateError) {
-    return { success: false, error: updateError || snapError || 'Roadblock save failed' };
+  // 4. Determine result
+  // If task_updates succeeded, the primary operational record is written and live.
+  // A secondary snapshot RLS issue should NOT block the foreman from saving work.
+  if (updateError && snapError) {
+    const cleanError = snapError.includes('app_current_actor')
+      ? 'เกิดข้อผิดพลาดด้านสิทธิ์การเข้าถึงฐานข้อมูล กรุณาลองใหม่อีกครั้ง'
+      : updateError || snapError;
+    return { success: false, error: cleanError };
+  }
+
+  if (updateError) {
+    return { success: false, error: updateError };
   }
 
   return { success: true };

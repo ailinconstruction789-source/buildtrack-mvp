@@ -9,6 +9,7 @@ import {
   getForemanReworkItems,
   getMonthlyForemanInspectionCompliance,
   getForemanDailyActivities,
+  recordForemanTaskRoadblockReason,
 } from '../foremanDuty';
 
 describe('foremanDuty helper library', () => {
@@ -580,6 +581,58 @@ describe('foremanDuty helper library', () => {
       // Total includes SOMCHAI's u3 as well
       expect(summary.totalActivities).toBe(5);
       expect(summary.plotsVisitedCount).toBe(3); // p1, p2, p3
+    });
+  });
+
+  describe('recordForemanTaskRoadblockReason resilience', () => {
+    it('succeeds when task_updates succeeds even if snapshot table has permission denied error', async () => {
+      const mockTask: any = {
+        id: 'p1-t1',
+        plot_id: 'p1',
+        plot_name: 'แปลง 01',
+        project_name: 'ไอลิน 6',
+        foreman_name: 'LEAB',
+        task_template_id: 't1',
+        task_name: 'งานเสา',
+        planned_start: '2026-11-04',
+        planned_end: '2026-11-05',
+        current_progress: 0,
+      };
+
+      const mockClient = {
+        from: (table: string) => {
+          if (table === 'foreman_daily_duty_snapshots') {
+            return {
+              upsert: () => Promise.resolve({
+                error: { message: 'permission denied for function app_current_actor', code: '42501' }
+              })
+            };
+          }
+          if (table === 'task_updates') {
+            return {
+              select: () => ({
+                eq: () => ({
+                  ilike: () => Promise.resolve({ data: [], error: null })
+                })
+              }),
+              insert: () => Promise.resolve({ error: null })
+            };
+          }
+          return {};
+        }
+      };
+
+      const res = await recordForemanTaskRoadblockReason(
+        mockTask,
+        '2026-11-04',
+        'material_issue',
+        'รอปูนเข้า',
+        'LEAB',
+        mockClient as any,
+        { clientSubmissionId: 'sub-test-resilience' }
+      );
+
+      expect(res.success).toBe(true);
     });
   });
 });

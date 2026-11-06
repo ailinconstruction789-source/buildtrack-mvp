@@ -1836,10 +1836,10 @@ export default function ForemanWorkspaceView({
 
       {/* ⚠️ Roadblock Reason Modal */}
       {selectedTaskForRoadblock && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-7 shadow-2xl border border-slate-200 space-y-5 animate-in zoom-in-95 duration-200">
-            {/* Modal Header */}
-            <div className="flex items-start justify-between gap-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-5 sm:p-7 shadow-2xl border border-slate-200 my-auto flex flex-col max-h-[92vh] sm:max-h-[88vh] animate-in zoom-in-95 duration-200">
+            {/* Modal Header (Fixed at top) */}
+            <div className="flex items-start justify-between gap-4 pb-3 border-b border-slate-100 shrink-0">
               <div className="space-y-1">
                 <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-amber-50 text-amber-700 rounded-lg text-xs font-black border border-amber-200">
                   <AlertTriangle size={13} />
@@ -1854,11 +1854,14 @@ export default function ForemanWorkspaceView({
               </div>
               <button
                 onClick={() => { setSelectedTaskForRoadblock(null); setRoadblockSubmitError(null); }}
-                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition-all cursor-pointer"
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition-all cursor-pointer shrink-0"
               >
                 <X size={20} />
               </button>
             </div>
+
+            {/* Scrollable Modal Body (Scrolls smoothly on mobile) */}
+            <div className="overflow-y-auto custom-scrollbar pr-1 py-3 space-y-4 flex-1">
 
             {roadblockSubmitError && (
               <div className="p-3 bg-red-50 border border-red-200 text-red-800 rounded-xl text-xs flex items-center gap-2">
@@ -1913,8 +1916,10 @@ export default function ForemanWorkspaceView({
               />
             </div>
 
-            {/* Actions */}
-            <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-100">
+            </div>
+
+            {/* Actions (Pinned at bottom, always visible on mobile) */}
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100 shrink-0 bg-white">
               <button
                 type="button"
                 onClick={() => setSelectedTaskForRoadblock(null)}
@@ -1926,7 +1931,7 @@ export default function ForemanWorkspaceView({
                 type="button"
                 onClick={handleSubmitRoadblock}
                 disabled={isSubmittingReason}
-                className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-black rounded-xl shadow-md transition-all active:scale-95 cursor-pointer flex items-center gap-1.5"
+                className="flex-1 sm:flex-none justify-center px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-black rounded-xl shadow-md transition-all active:scale-95 cursor-pointer flex items-center gap-1.5"
               >
                 {isSubmittingReason ? (
                   <RefreshCw size={14} className="animate-spin" />
