@@ -62,6 +62,54 @@ export const LivingSiteSimulation: React.FC<LivingSiteSimulationProps> = ({
   setView
 }) => {
   const cameraRef = useRef<CanvasCameraControls | null>(null);
+  const simWrapperRef = useRef<HTMLDivElement | null>(null);
+
+  // Fullscreen mode state
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+
+  const toggleFullscreen = useCallback(() => {
+    setIsFullscreen(prev => !prev);
+  }, []);
+
+  // Listen for Escape key to exit fullscreen
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isFullscreen) {
+        setIsFullscreen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isFullscreen]);
+
+  // Non-passive wheel listener on simulation container to strictly prevent outer page scrolling during 3D zoom
+  useEffect(() => {
+    const el = simWrapperRef.current;
+    if (!el) return;
+
+    const handleWheelNative = (e: WheelEvent) => {
+      // If the cursor is inside an inner scrollable panel (like plot details or timeline drawer)
+      const target = e.target as HTMLElement | null;
+      const scrollable = target?.closest('.overflow-y-auto, .overflow-auto');
+      if (scrollable && scrollable.scrollHeight > scrollable.clientHeight) {
+        // Allow inner list to scroll normally, but stop event from propagating to outer window
+        e.stopPropagation();
+        return;
+      }
+
+      // Over 3D scene or UI control bar: zoom the 3D camera and strictly prevent outer window from scrolling!
+      e.preventDefault();
+      e.stopPropagation();
+
+      const factor = e.deltaY > 0 ? 1.12 : 0.88;
+      cameraRef.current?.zoomByFactor(factor);
+    };
+
+    el.addEventListener('wheel', handleWheelNative, { passive: false });
+    return () => {
+      el.removeEventListener('wheel', handleWheelNative);
+    };
+  }, []);
 
   // 1. WebGL Support Detection
   const [isWebGLSupported, setIsWebGLSupported] = useState<boolean>(true);
@@ -435,10 +483,21 @@ export const LivingSiteSimulation: React.FC<LivingSiteSimulationProps> = ({
   }, [isDemoMode, activeWorld.houses, plots, plotsActiveToday]);
 
   return (
-    <div className="relative w-full rounded-3xl overflow-hidden shadow-2xl border border-slate-800 bg-slate-950 font-sans">
+    <div
+      className={`font-sans overscroll-contain transition-all duration-300 ${
+        isFullscreen
+          ? 'fixed inset-0 z-50 w-screen h-screen rounded-none bg-slate-950 overflow-hidden'
+          : 'relative w-full rounded-3xl overflow-hidden shadow-2xl border border-slate-800 bg-slate-950'
+      }`}
+    >
       {/* 3D WebGL Canvas or Fallback List */}
       {viewMode === '3d' && isWebGLSupported ? (
-        <div className="relative w-full h-[620px]">
+        <div
+          ref={simWrapperRef}
+          className={`relative w-full overscroll-contain ${
+            isFullscreen ? 'h-full' : 'h-[760px] lg:h-[840px] min-h-[680px]'
+          }`}
+        >
           <LivingSiteCanvas
             ref={cameraRef}
             world={activeWorld}
@@ -543,10 +602,12 @@ export const LivingSiteSimulation: React.FC<LivingSiteSimulationProps> = ({
             onZoomIn={() => cameraRef.current?.zoomIn()}
             onZoomOut={() => cameraRef.current?.zoomOut()}
             onOpenFullPlotDetail={handleOpenFullPlotDetail}
+            isFullscreen={isFullscreen}
+            onToggleFullscreen={toggleFullscreen}
           />
         </div>
       ) : (
-        <div className="p-4 bg-slate-900 text-white min-h-[620px] space-y-4">
+        <div className="p-4 bg-slate-900 text-white min-h-[760px] space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-slate-800/80 rounded-2xl border border-slate-700">
             <div>
               <h2 className="text-base font-black">{activeWorld.projectName}</h2>

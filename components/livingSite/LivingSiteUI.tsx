@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Compass,
   RotateCw,
@@ -8,6 +8,7 @@ import {
   ZoomIn,
   ZoomOut,
   Maximize2,
+  Minimize2,
   X,
   HardHat,
   Sparkles,
@@ -30,6 +31,8 @@ import {
   History,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
+  ChevronDown,
   Image as ImageIcon
 } from 'lucide-react';
 import {
@@ -98,6 +101,8 @@ export interface LivingSiteUIProps {
   onZoomIn: () => void;
   onZoomOut: () => void;
   onOpenFullPlotDetail?: (plotId: string) => void;
+  isFullscreen?: boolean;
+  onToggleFullscreen?: () => void;
 }
 
 export const LivingSiteUI: React.FC<LivingSiteUIProps> = ({
@@ -154,12 +159,16 @@ export const LivingSiteUI: React.FC<LivingSiteUIProps> = ({
   onRotateCCW,
   onZoomIn,
   onZoomOut,
-  onOpenFullPlotDetail
+  onOpenFullPlotDetail,
+  isFullscreen = false,
+  onToggleFullscreen
 }) => {
   // Local state for Timeline slide-over drawer and photo modal
   const [isTimelineOpen, setIsTimelineOpen] = useState<boolean>(false);
+  const [timelineScope, setTimelineScope] = useState<'today' | 'all'>('today');
   const [timelineFilterRole, setTimelineFilterRole] = useState<string>('all');
   const [modalPhotoUrl, setModalPhotoUrl] = useState<string | null>(null);
+  const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
 
   // Stage name in Thai
   const getStageLabel = (stage: BuildingStageName): string => {
@@ -176,237 +185,311 @@ export const LivingSiteUI: React.FC<LivingSiteUIProps> = ({
 
   const activeAttention = attentionPoints[currentAttentionIndex] || attentionPoints[0];
 
+  // Filter events that actually occurred on the selected date (not historical)
+  const todayEvents = useMemo(() => {
+    return events.filter(e => e.freshness !== 'historical' || e.dateLabel === dateStr);
+  }, [events, dateStr]);
+
+  const baseEvents = timelineScope === 'today' ? todayEvents : events;
+
   // Filtered timeline events
   const filteredEvents = useMemo(() => {
-    if (timelineFilterRole === 'all') return events;
-    return events.filter(e => {
+    if (timelineFilterRole === 'all') return baseEvents;
+    return baseEvents.filter(e => {
       if (timelineFilterRole === 'defect') return e.sourceType === 'defect';
       if (timelineFilterRole === 'qc') return e.actorRole === 'qc';
       if (timelineFilterRole === 'engineer') return e.actorRole === 'engineer';
       if (timelineFilterRole === 'foreman') return e.actorRole === 'foreman';
       return e.actorRole === 'mason' || e.actorRole === 'carpenter' || e.actorRole === 'steel' || e.actorRole === 'mep';
     });
-  }, [events, timelineFilterRole]);
+  }, [baseEvents, timelineFilterRole]);
+
+  // Local state for Left Flank collapsible panel
+  const [isLeftPanelOpen, setIsLeftPanelOpen] = useState<boolean>(true);
+
+  // Keyboard Shortcuts (Space: Replay Play/Pause, I: Mode, R: Reset Camera, F: Fit All)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        if (isReplayActive) {
+          onToggleReplayPlay?.();
+        } else {
+          onToggleReplay?.();
+        }
+      } else if (e.key === 'i' || e.key === 'I') {
+        onChangeDisplayMode?.(displayMode === 'inspection' ? 'presentation' : 'inspection');
+      } else if (e.key === 'r' || e.key === 'R') {
+        onResetCamera();
+      } else if (e.key === 'f' || e.key === 'F') {
+        onFitAll();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isReplayActive, onToggleReplayPlay, onToggleReplay, displayMode, onChangeDisplayMode, onResetCamera, onFitAll]);
 
   return (
     <div className="pointer-events-none absolute inset-0 flex flex-col justify-between p-3 sm:p-4 z-10 overflow-hidden">
-      {/* 🌟 Top Floating Control Bar 🌟 */}
+      {/* 🌟 Slim Top Floating Control Bar 🌟 */}
       <div
-        className="pointer-events-auto flex flex-col gap-2.5 max-w-full bg-slate-900/85 backdrop-blur-md p-3 sm:p-4 rounded-2xl sm:rounded-3xl border border-slate-700/60 shadow-2xl text-white"
+        className="pointer-events-auto flex items-center justify-between gap-2.5 max-w-full bg-slate-900/90 backdrop-blur-md px-3.5 py-2 sm:py-2.5 rounded-2xl border border-slate-700/60 shadow-xl text-white"
         onClick={e => e.stopPropagation()}
       >
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          {/* Title & Badge */}
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-2xl bg-gradient-to-tr from-amber-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-              <span className="text-lg">🏗️</span>
+        {/* Title & Colony Sim Badge */}
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-amber-500 to-indigo-600 flex items-center justify-center shadow-md shadow-indigo-500/20 shrink-0">
+            <span className="text-base">🏗️</span>
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-black tracking-tight truncate">{projectName}</h2>
+              <span className="px-2 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-black uppercase tracking-wider shrink-0">
+                Colony Sim
+              </span>
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-sm sm:text-base font-black tracking-tight">{projectName}</h2>
-                <span className="px-2 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-black uppercase tracking-wider">
-                  Colony Sim
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[10px] text-slate-400 font-medium">
+                Living Construction Site • ประจำวันที่ {dateStr}
+              </span>
+              {scaleLabel && (
+                <span className="px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 border border-slate-700 text-[9px] font-bold">
+                  {scaleLabel}
                 </span>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[11px] text-slate-400 font-medium">
-                  Living Construction Site • ประจำวันที่ {dateStr}
-                </span>
-                {scaleLabel && (
-                  <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700 text-[10px] font-bold">
-                    {scaleLabel}
-                  </span>
-                )}
-              </div>
+              )}
             </div>
           </div>
+        </div>
 
-          {/* Action Modes & Tools */}
-          <div className="flex items-center gap-2 flex-wrap">
-            {/* Mode Switch: Presentation vs Inspection */}
+        {/* Center: Mode Switch (Inspection vs Presentation) */}
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => onChangeDisplayMode?.(displayMode === 'inspection' ? 'presentation' : 'inspection')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all shadow-sm ${
+              displayMode === 'inspection'
+                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'
+                : 'bg-slate-800 text-slate-300 border border-slate-700 hover:text-white'
+            }`}
+            title="สลับโหมดตรวจงาน (แสดงป้ายรอตรวจ ดีเฟกต์ หมุดกิจกรรม) และโหมดนำเสนอ (สวยงาม คลีนตา)"
+          >
+            <Target size={14} className={displayMode === 'inspection' ? 'text-amber-400' : 'text-slate-400'} />
+            <span className="hidden sm:inline">
+              {displayMode === 'inspection' ? 'โหมดตรวจงาน (Inspection)' : 'โหมดนำเสนอ (Presentation)'}
+            </span>
+            <span className="sm:hidden">
+              {displayMode === 'inspection' ? 'ตรวจงาน' : 'นำเสนอ'}
+            </span>
+          </button>
+        </div>
+
+        {/* Right Tools: Data Mode, Quality Tier, View Switch & Fullscreen */}
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {/* Mode Switch: Demo vs Live Data */}
+          <button
+            onClick={onToggleDemoMode}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-black transition-all shadow-sm ${
+              isDemoMode
+                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'
+                : 'bg-blue-500/20 text-blue-300 border border-blue-500/40 hover:bg-blue-500/30'
+            }`}
+            title="สลับระหว่างข้อมูลจำลอง (Demo) และข้อมูลจริงจากฐานข้อมูล"
+          >
+            <Radio size={13} className={isDemoMode ? 'text-amber-400' : 'text-blue-400'} />
+            <span className="hidden md:inline">{isDemoMode ? 'โหมดจำลอง (Demo Mode)' : 'ข้อมูลจริง (Live Data)'}</span>
+            <span className="md:hidden">{isDemoMode ? 'Demo' : 'Live'}</span>
+          </button>
+
+          {/* Quality Tier Selector */}
+          <div className="flex items-center bg-slate-800/80 p-0.5 sm:p-1 rounded-xl border border-slate-700/60 text-[10px] sm:text-[11px]">
+            <span className="px-1.5 text-slate-400 font-bold hidden lg:inline">กราฟิก:</span>
+            {(['low', 'medium', 'high'] as GraphicQuality[]).map(q => (
+              <button
+                key={q}
+                onClick={() => onChangeQuality(q)}
+                className={`px-1.5 sm:px-2 py-0.5 rounded-lg font-bold transition ${
+                  quality === q ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                {q === 'low' ? 'ต่ำ' : q === 'medium' ? 'กลาง' : 'สูง'}
+              </button>
+            ))}
+          </div>
+
+          {/* View Mode Toggle: 3D vs List */}
+          <button
+            onClick={() => onChangeViewMode(viewMode === '3d' ? 'list' : '3d')}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 transition"
+            title="สลับมุมมองระหว่าง 3D และตารางรายการข้อความ"
+          >
+            <List size={14} />
+            <span className="hidden sm:inline">{viewMode === '3d' ? 'ดูแบบตาราง' : 'ดูแบบ 3D'}</span>
+          </button>
+
+          {/* Fullscreen Toggle Button */}
+          {onToggleFullscreen && (
             <button
-              onClick={() => onChangeDisplayMode?.(displayMode === 'inspection' ? 'presentation' : 'inspection')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all shadow-sm ${
-                displayMode === 'inspection'
-                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'
-                  : 'bg-slate-800 text-slate-300 border border-slate-700 hover:text-white'
+              onClick={onToggleFullscreen}
+              className={`p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl text-xs font-bold transition border ${
+                isFullscreen
+                  ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-md font-black'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
               }`}
-              title="สลับโหมดตรวจงาน (แสดงป้ายรอตรวจ ดีเฟกต์ หมุดกิจกรรม) และโหมดนำเสนอ (สวยงาม คลีนตา)"
+              title={isFullscreen ? 'ย่อกลับขนาดปกติ (หรือกดปุ่ม Esc)' : 'ขยายเต็มหน้าจอ (Fullscreen)'}
             >
-              <Target size={14} className={displayMode === 'inspection' ? 'text-amber-400' : 'text-slate-400'} />
-              <span>{displayMode === 'inspection' ? 'โหมดตรวจงาน (Inspection)' : 'โหมดนำเสนอ (Presentation)'}</span>
+              {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+              <span className="hidden md:inline ml-1">{isFullscreen ? 'ย่อจอ (Esc)' : 'เต็มจอ'}</span>
             </button>
+          )}
+        </div>
+      </div>
 
-            {/* Timeline Ticker Toggle */}
-            <button
-              onClick={() => setIsTimelineOpen(!isTimelineOpen)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all shadow-sm ${
-                isTimelineOpen
-                  ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30'
-                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
-              }`}
-              title="เปิดแถบเหตุการณ์รายงานล่าสุดของวันนี้"
-            >
-              <Clock size={14} className="text-indigo-400" />
-              <span>เหตุการณ์วันนี้ ({events.length})</span>
-            </button>
+      {/* 🧭 Collapsible Left Flank (Search, Role Filters & Attention Points) 🧭 */}
+      <div className="pointer-events-auto absolute left-3 sm:left-4 top-16 sm:top-18 z-20 flex flex-col gap-2 max-w-sm w-76 sm:w-84">
+        {isLeftPanelOpen ? (
+          <div
+            className="bg-slate-900/90 backdrop-blur-md p-3 rounded-2xl border border-slate-700/70 shadow-2xl flex flex-col gap-2.5 text-white animate-in fade-in duration-150"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header: Title & Collapse Button */}
+            <div className="flex items-center justify-between pb-1.5 border-b border-slate-800">
+              <div className="flex items-center gap-1.5">
+                <Search size={14} className="text-indigo-400" />
+                <span className="text-xs font-black text-slate-200">ค้นหา & ตัวกรองแปลง</span>
+              </div>
+              <button
+                onClick={() => setIsLeftPanelOpen(false)}
+                className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg transition"
+                title="ซ่อนแถบค้นหาและตัวกรอง"
+              >
+                <ChevronUp size={14} />
+              </button>
+            </div>
 
-            {/* Day Replay Scrubber Toggle */}
-            <button
-              onClick={onToggleReplay}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all shadow-sm ${
-                isReplayActive
-                  ? 'bg-violet-600 text-white shadow-lg shadow-violet-500/30'
-                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
-              }`}
-              title="เล่นย้อนหลังการเข้าทำงานและรายงานระหว่างวัน"
-            >
-              <History size={14} className="text-violet-400" />
-              <span>{isReplayActive ? 'กำลังย้อนเวลา' : 'เล่นย้อนหลัง (Replay)'}</span>
-            </button>
-
-            {/* Mode Switch: Demo vs Live Data */}
-            <button
-              onClick={onToggleDemoMode}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all shadow-sm ${
-                isDemoMode
-                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'
-                  : 'bg-blue-500/20 text-blue-300 border border-blue-500/40 hover:bg-blue-500/30'
-              }`}
-              title="สลับระหว่างข้อมูลจำลอง (Demo) และข้อมูลจริงจากฐานข้อมูล"
-            >
-              <Radio size={14} className={isDemoMode ? 'text-amber-400' : 'text-blue-400'} />
-              <span>{isDemoMode ? 'โหมดจำลอง (Demo Mode)' : 'ข้อมูลจริง (Live Data)'}</span>
-            </button>
-
-            {/* Quality Tier Selector */}
-            <div className="flex items-center bg-slate-800/80 p-1 rounded-xl border border-slate-700/60 text-[11px]">
-              <span className="px-2 text-slate-400 font-bold hidden sm:inline">กราฟิก:</span>
-              {(['low', 'medium', 'high'] as GraphicQuality[]).map(q => (
+            {/* Search Box */}
+            <div className="relative w-full">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" size={13} />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={e => onChangeSearchQuery(e.target.value)}
+                placeholder="ค้นหาเลขแปลง, ชื่อช่าง หรือบทบาท..."
+                className="w-full bg-slate-800/90 text-white text-xs pl-8 pr-7 py-1.5 rounded-xl border border-slate-700 outline-none focus:border-indigo-500 placeholder-slate-400"
+              />
+              {searchQuery && (
                 <button
-                  key={q}
-                  onClick={() => onChangeQuality(q)}
-                  className={`px-2 py-0.5 rounded-lg font-bold transition ${
-                    quality === q ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                  onClick={() => onChangeSearchQuery('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-0.5"
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+
+            {/* Quick Role Filters */}
+            <div className="flex flex-wrap items-center gap-1 text-[11px]">
+              {[
+                { id: 'all', label: `ทั้งหมด (${totalPlotsCount})` },
+                { id: 'active', label: `มีงานทำ (${activePlotsCount})` },
+                { id: 'mason', label: 'ช่างปูน/โครงสร้าง' },
+                { id: 'mep', label: 'ช่างระบบ MEP' },
+                { id: 'foreman', label: 'โฟร์แมน' },
+                { id: 'engineer', label: 'วิศวกร' },
+                { id: 'qc', label: 'QC' }
+              ].map(r => (
+                <button
+                  key={r.id}
+                  onClick={() => onChangeRoleFilter(r.id)}
+                  className={`px-2 py-0.5 rounded-lg font-bold transition-all ${
+                    roleFilter === r.id
+                      ? 'bg-indigo-600 text-white shadow'
+                      : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700 hover:text-white'
                   }`}
                 >
-                  {q === 'low' ? 'ต่ำ' : q === 'medium' ? 'กลาง' : 'สูง'}
+                  {r.label}
                 </button>
               ))}
             </div>
 
-            {/* View Mode Toggle: 3D vs List */}
-            <button
-              onClick={() => onChangeViewMode(viewMode === '3d' ? 'list' : '3d')}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 transition"
-              title="สลับมุมมองระหว่าง 3D และตารางรายการข้อความ"
-            >
-              <List size={14} />
-              <span className="hidden sm:inline">{viewMode === '3d' ? 'ดูแบบตาราง' : 'ดูแบบ 3D'}</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Search Bar & Role Filters */}
-        <div className="flex flex-wrap items-center justify-between gap-2.5 pt-2 border-t border-slate-800">
-          {/* Search Box */}
-          <div className="relative min-w-[200px] flex-1 max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={e => onChangeSearchQuery(e.target.value)}
-              placeholder="ค้นหาเลขแปลง, ชื่อช่าง หรือบทบาท..."
-              className="w-full bg-slate-800/90 text-white text-xs pl-8 pr-3 py-1.5 rounded-xl border border-slate-700 outline-none focus:border-indigo-500 placeholder-slate-400"
-            />
-          </div>
-
-          {/* Quick Role Filters */}
-          <div className="flex flex-wrap items-center gap-1.5 text-xs">
-            {[
-              { id: 'all', label: `ทั้งหมด (${totalPlotsCount})` },
-              { id: 'active', label: `มีงานทำ (${activePlotsCount})` },
-              { id: 'mason', label: 'ช่างปูน/โครงสร้าง' },
-              { id: 'mep', label: 'ช่างระบบ MEP' },
-              { id: 'foreman', label: 'โฟร์แมน' },
-              { id: 'engineer', label: 'วิศวกร' },
-              { id: 'qc', label: 'QC' }
-            ].map(r => (
-              <button
-                key={r.id}
-                onClick={() => onChangeRoleFilter(r.id)}
-                className={`px-2.5 py-1 rounded-xl font-bold transition-all ${
-                  roleFilter === r.id
-                    ? 'bg-indigo-600 text-white shadow'
-                    : 'bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white'
-                }`}
-              >
-                {r.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* 🚀 Attention Queue Widget ("พาไปจุดที่ต้องดู") */}
-      {attentionPoints.length > 0 && activeAttention && (
-        <div
-          className="pointer-events-auto self-center mt-2.5 bg-slate-900/95 backdrop-blur-xl px-4 py-2.5 rounded-2xl border border-slate-700/80 shadow-2xl flex items-center gap-3 text-white max-w-xl transition animate-in fade-in zoom-in-95"
-          onClick={e => e.stopPropagation()}
-        >
-          <div className="flex items-center gap-2.5">
-            <div className="relative flex items-center justify-center">
-              <span className={`w-3 h-3 rounded-full ${
-                activeAttention.severity === 'critical'
-                  ? 'bg-rose-500'
-                  : activeAttention.severity === 'warning'
-                  ? 'bg-amber-500'
-                  : 'bg-blue-500'
-              }`} />
-              {activeAttention.severity === 'critical' && (
-                <span className="absolute w-3 h-3 rounded-full bg-rose-500 animate-ping opacity-75" />
-              )}
-            </div>
-            <div className="text-left">
-              <div className="flex items-center gap-1.5">
-                <span className="text-[10px] font-black uppercase tracking-wider text-amber-400">
-                  จุดที่ต้องดู ({currentAttentionIndex + 1}/{attentionPoints.length})
-                </span>
-                <span className="text-[10px] text-slate-400 font-mono">
-                  • {activeAttention.waitDurationText}
-                </span>
+            {/* Embedded Attention Queue Widget */}
+            {attentionPoints.length > 0 && activeAttention && (
+              <div className="mt-1 pt-2 border-t border-slate-800 flex flex-col gap-1.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <span className={`w-2.5 h-2.5 rounded-full ${
+                      activeAttention.severity === 'critical'
+                        ? 'bg-rose-500 animate-ping'
+                        : activeAttention.severity === 'warning'
+                        ? 'bg-amber-500'
+                        : 'bg-blue-500'
+                    }`} />
+                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-400">
+                      จุดที่ต้องดู ({currentAttentionIndex + 1}/{attentionPoints.length})
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-mono">
+                      • {activeAttention.waitDurationText}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-0.5">
+                    <button
+                      onClick={onPrevAttention}
+                      className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded transition"
+                      title="ก่อนหน้า"
+                    >
+                      <ChevronLeft size={14} />
+                    </button>
+                    <button
+                      onClick={onNextAttention}
+                      className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded transition"
+                      title="ถัดไป"
+                    >
+                      <ChevronRight size={14} />
+                    </button>
+                  </div>
+                </div>
+                <p className="text-xs font-bold text-slate-100 truncate">
+                  {activeAttention.title}
+                </p>
+                <button
+                  onClick={() => onSelectAttentionPoint?.(activeAttention)}
+                  className="w-full py-1 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs rounded-xl shadow transition"
+                  title="บินกล้องไปดูจุดนี้ทันที"
+                >
+                  บินไปดูจุดนี้
+                </button>
               </div>
-              <p className="text-xs font-bold text-slate-100 truncate max-w-[280px] sm:max-w-[340px]">
-                {activeAttention.title}
-              </p>
-            </div>
+            )}
           </div>
-
-          <div className="flex items-center gap-1 border-l border-slate-800 pl-2 ml-auto">
-            <button
-              onClick={onPrevAttention}
-              className="p-1.5 hover:bg-slate-800 text-slate-300 hover:text-white rounded-lg transition"
-              title="ก่อนหน้า"
-            >
-              <ChevronLeft size={16} />
-            </button>
-            <button
-              onClick={() => onSelectAttentionPoint?.(activeAttention)}
-              className="px-2.5 py-1 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs rounded-xl shadow transition whitespace-nowrap"
-              title="บินกล้องไปดูจุดนี้ทันที"
-            >
-              บินไปดูจุดนี้
-            </button>
-            <button
-              onClick={onNextAttention}
-              className="p-1.5 hover:bg-slate-800 text-slate-300 hover:text-white rounded-lg transition"
-              title="ถัดไป"
-            >
-              <ChevronRight size={16} />
-            </button>
-          </div>
-        </div>
-      )}
+        ) : (
+          <button
+            onClick={() => setIsLeftPanelOpen(true)}
+            className="flex items-center gap-2 px-3 py-1.5 bg-slate-900/90 backdrop-blur-md text-slate-200 border border-slate-700/70 rounded-2xl shadow-xl text-xs font-bold hover:bg-slate-800 hover:text-white transition w-fit"
+            title="เปิดแถบค้นหาและตัวกรองแปลง"
+          >
+            <Search size={14} className="text-indigo-400" />
+            <span>ค้นหา & ตัวกรอง</span>
+            {roleFilter !== 'all' && (
+              <span className="w-2 h-2 rounded-full bg-indigo-500" />
+            )}
+            {attentionPoints.length > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black">
+                {attentionPoints.length}
+              </span>
+            )}
+            <ChevronDown size={14} className="text-slate-400" />
+          </button>
+        )}
+      </div>
 
       {/* 🎯 Follow Character Active Pill */}
       {followedCharacterId && (
@@ -438,7 +521,7 @@ export const LivingSiteUI: React.FC<LivingSiteUIProps> = ({
             <div className="flex items-center gap-2">
               <Clock size={16} className="text-indigo-400" />
               <h3 className="text-xs font-black uppercase tracking-wider text-slate-300">
-                แถบเหตุการณ์ล่าสุด ({filteredEvents.length})
+                แถบเหตุการณ์ ({filteredEvents.length})
               </h3>
             </div>
             <button
@@ -446,6 +529,30 @@ export const LivingSiteUI: React.FC<LivingSiteUIProps> = ({
               className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg transition"
             >
               <X size={16} />
+            </button>
+          </div>
+
+          {/* Scope Selector: เฉพาะวันนี้ vs ประวัติทั้งหมด */}
+          <div className="grid grid-cols-2 gap-1 p-1 bg-slate-950/70 rounded-xl border border-slate-800 text-[11px]">
+            <button
+              onClick={() => setTimelineScope('today')}
+              className={`py-1 rounded-lg font-black transition text-center ${
+                timelineScope === 'today'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              เฉพาะวันนี้ ({todayEvents.length})
+            </button>
+            <button
+              onClick={() => setTimelineScope('all')}
+              className={`py-1 rounded-lg font-black transition text-center ${
+                timelineScope === 'all'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              ประวัติทั้งหมด ({events.length})
             </button>
           </div>
 
@@ -474,7 +581,7 @@ export const LivingSiteUI: React.FC<LivingSiteUIProps> = ({
           </div>
 
           {/* Events Scroll Area */}
-          <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
+          <div className="flex-1 overflow-y-auto overscroll-contain space-y-2.5 pr-1">
             {filteredEvents.length === 0 ? (
               <p className="text-xs text-slate-400 text-center py-8">ไม่มีรายงานกิจกรรมในตัวกรองนี้</p>
             ) : (
@@ -524,6 +631,9 @@ export const LivingSiteUI: React.FC<LivingSiteUIProps> = ({
                           key={i}
                           src={img}
                           alt="Evidence"
+                          onError={(e) => {
+                            (e.target as HTMLElement).style.display = 'none';
+                          }}
                           onClick={(e) => {
                             e.stopPropagation();
                             setModalPhotoUrl(img);
@@ -545,148 +655,183 @@ export const LivingSiteUI: React.FC<LivingSiteUIProps> = ({
         </div>
       )}
 
-      {/* ⏪ Day Replay Scrubber Controller ⏪ */}
-      {isReplayActive && (
-        <div
-          className="pointer-events-auto self-center mb-3 bg-slate-900/95 backdrop-blur-xl p-3 sm:px-5 sm:py-3 rounded-3xl border border-violet-500/60 shadow-2xl flex flex-wrap items-center gap-3 text-white max-w-2xl w-full z-20 animate-in slide-in-from-bottom duration-200"
-          onClick={e => e.stopPropagation()}
-        >
-          {/* Play/Pause */}
-          <button
-            onClick={onToggleReplayPlay}
-            className="w-9 h-9 rounded-2xl bg-violet-600 hover:bg-violet-500 text-white flex items-center justify-center shadow-lg transition"
-            title={isReplayPlaying ? 'หยุดชั่วคราว' : 'เล่นต่อ'}
+      {/* 🧭 Bottom Section: Floating Camera & Exploration Dock 🧭 */}
+      <div className="pointer-events-none absolute bottom-3 sm:bottom-4 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-2 max-w-[calc(100vw-24px)]">
+        {/* ⏪ Day Replay Scrubber Controller (floats directly above bottom dock) ⏪ */}
+        {isReplayActive && (
+          <div
+            className="pointer-events-auto bg-slate-900/95 backdrop-blur-xl p-2.5 sm:px-4 sm:py-2.5 rounded-2xl sm:rounded-3xl border border-violet-500/60 shadow-2xl flex flex-wrap items-center gap-2.5 text-white max-w-xl w-full animate-in slide-in-from-bottom duration-200"
+            onClick={e => e.stopPropagation()}
           >
-            {isReplayPlaying ? <Pause size={16} /> : <Play size={16} className="ml-0.5" />}
-          </button>
+            {/* Play/Pause */}
+            <button
+              onClick={onToggleReplayPlay}
+              className="w-8 h-8 rounded-xl bg-violet-600 hover:bg-violet-500 text-white flex items-center justify-center shadow-lg transition shrink-0"
+              title={isReplayPlaying ? 'หยุดชั่วคราว' : 'เล่นต่อ'}
+            >
+              {isReplayPlaying ? <Pause size={15} /> : <Play size={15} className="ml-0.5" />}
+            </button>
 
-          {/* Current Replay Time Badge */}
-          <div className="flex flex-col min-w-[90px]">
-            <span className="text-[10px] text-violet-300 uppercase font-black">จำลองเหตุการณ์</span>
-            <span className="text-xs font-mono font-black text-amber-300">{replayTime} น.</span>
-          </div>
-
-          {/* Time Scrubber Slider */}
-          <div className="flex-1 min-w-[150px]">
-            <input
-              type="range"
-              min="480" // 08:00
-              max="1080" // 18:00
-              step="10"
-              value={(() => {
-                const [h, m] = (replayTime || '12:00').split(':').map(Number);
-                return h * 60 + m;
-              })()}
-              onChange={e => {
-                const val = Number(e.target.value);
-                const h = Math.floor(val / 60);
-                const m = val % 60;
-                onReplayTimeChange?.(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
-              }}
-              className="w-full accent-violet-500 cursor-pointer"
-            />
-            <div className="flex justify-between text-[10px] font-mono text-slate-400">
-              <span>08:00</span>
-              <span>12:00</span>
-              <span>18:00</span>
+            {/* Current Replay Time Badge */}
+            <div className="flex flex-col min-w-[75px] shrink-0">
+              <span className="text-[9px] text-violet-300 uppercase font-black">จำลองเหตุการณ์</span>
+              <span className="text-xs font-mono font-black text-amber-300">{replayTime} น.</span>
             </div>
+
+            {/* Time Scrubber Slider */}
+            <div className="flex-1 min-w-[120px]">
+              <input
+                type="range"
+                min="480" // 08:00
+                max="1080" // 18:00
+                step="10"
+                value={(() => {
+                  const [h, m] = (replayTime || '12:00').split(':').map(Number);
+                  return h * 60 + m;
+                })()}
+                onChange={e => {
+                  const val = Number(e.target.value);
+                  const h = Math.floor(val / 60);
+                  const m = val % 60;
+                  onReplayTimeChange?.(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+                }}
+                className="w-full accent-violet-500 cursor-pointer"
+              />
+              <div className="flex justify-between text-[9px] font-mono text-slate-400">
+                <span>08:00</span>
+                <span>12:00</span>
+                <span>18:00</span>
+              </div>
+            </div>
+
+            {/* Speed Selector */}
+            <div className="flex items-center gap-0.5 bg-slate-800 p-0.5 rounded-lg border border-slate-700 text-[10px] font-bold shrink-0">
+              {[1, 2, 5].map(s => (
+                <button
+                  key={s}
+                  onClick={() => onChangeReplaySpeed?.(s)}
+                  className={`px-1.5 py-0.5 rounded transition ${
+                    replaySpeed === s ? 'bg-violet-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {s}x
+                </button>
+              ))}
+            </div>
+
+            {/* Exit Replay Mode */}
+            <button
+              onClick={onToggleReplay}
+              className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg transition shrink-0"
+              title="ออกจากโหมด Replay"
+            >
+              <X size={15} />
+            </button>
           </div>
+        )}
 
-          {/* Speed Selector */}
-          <div className="flex items-center gap-1 bg-slate-800 p-1 rounded-xl border border-slate-700 text-[11px] font-bold">
-            {[1, 2, 5].map(s => (
-              <button
-                key={s}
-                onClick={() => onChangeReplaySpeed?.(s)}
-                className={`px-2 py-0.5 rounded-lg transition ${
-                  replaySpeed === s ? 'bg-violet-600 text-white shadow' : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                {s}x
-              </button>
-            ))}
-          </div>
-
-          {/* Exit Replay Mode */}
-          <button
-            onClick={onToggleReplay}
-            className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded-xl transition"
-            title="ออกจากโหมด Replay"
-          >
-            <X size={16} />
-          </button>
-        </div>
-      )}
-
-      {/* 🧭 Bottom Section: Floating Camera Controls & Side Inspector 🧭 */}
-      <div className="flex items-end justify-between gap-4 pointer-events-none mt-auto">
-        {/* Camera Toolbar */}
+        {/* Camera & Exploration Dock */}
         <div
-          className="pointer-events-auto flex items-center gap-1.5 bg-slate-900/85 backdrop-blur-md p-1.5 sm:p-2 rounded-2xl border border-slate-700/60 shadow-xl"
+          className="pointer-events-auto flex items-center gap-1 sm:gap-1.5 bg-slate-900/90 backdrop-blur-md p-1.5 sm:p-2 rounded-2xl border border-slate-700/60 shadow-2xl text-white max-w-full overflow-x-auto"
           onClick={e => e.stopPropagation()}
         >
           <button
             onClick={onResetCamera}
-            className="p-2 sm:px-3 sm:py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition"
+            className="p-1.5 sm:px-2.5 sm:py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition shrink-0"
             title="Snap กลับมามุมมองผังมาตรฐาน Isometric"
           >
-            <Compass size={16} className="text-amber-400" />
-            <span className="hidden sm:inline">มุมมองมาตรฐาน</span>
+            <Compass size={15} className="text-amber-400" />
+            <span className="hidden md:inline">มุมมองมาตรฐาน</span>
           </button>
 
           <button
             onClick={onFitAll}
-            className="p-2 hover:bg-slate-800 text-slate-300 hover:text-white rounded-xl transition"
+            className="p-1.5 sm:p-2 hover:bg-slate-800 text-slate-300 hover:text-white rounded-xl transition shrink-0"
             title="แสดงทั้งโครงการ (Fit Overview)"
           >
-            <Maximize2 size={16} />
+            <Maximize2 size={15} />
           </button>
 
-          <div className="w-px h-5 bg-slate-700 mx-0.5" />
+          <div className="w-px h-4 sm:h-5 bg-slate-700 mx-0.5 shrink-0" />
 
           <button
             onClick={onRotateCCW}
-            className="p-2 hover:bg-slate-800 text-slate-300 hover:text-white rounded-xl transition"
+            className="p-1.5 sm:p-2 hover:bg-slate-800 text-slate-300 hover:text-white rounded-xl transition shrink-0"
             title="หมุนทวนเข็ม 45°"
           >
-            <RotateCcw size={16} />
+            <RotateCcw size={15} />
           </button>
 
           <button
             onClick={onRotateCW}
-            className="p-2 hover:bg-slate-800 text-slate-300 hover:text-white rounded-xl transition"
+            className="p-1.5 sm:p-2 hover:bg-slate-800 text-slate-300 hover:text-white rounded-xl transition shrink-0"
             title="หมุนตามเข็ม 45°"
           >
-            <RotateCw size={16} />
+            <RotateCw size={15} />
           </button>
 
-          <div className="w-px h-5 bg-slate-700 mx-0.5" />
+          <div className="w-px h-4 sm:h-5 bg-slate-700 mx-0.5 shrink-0" />
 
           <button
             onClick={onZoomIn}
-            className="p-2 hover:bg-slate-800 text-slate-300 hover:text-white rounded-xl transition"
+            className="p-1.5 sm:p-2 hover:bg-slate-800 text-slate-300 hover:text-white rounded-xl transition shrink-0"
             title="ซูมเข้า (Zoom In)"
           >
-            <ZoomIn size={16} />
+            <ZoomIn size={15} />
           </button>
 
           <button
             onClick={onZoomOut}
-            className="p-2 hover:bg-slate-800 text-slate-300 hover:text-white rounded-xl transition"
+            className="p-1.5 sm:p-2 hover:bg-slate-800 text-slate-300 hover:text-white rounded-xl transition shrink-0"
             title="ซูมออก (Zoom Out)"
           >
-            <ZoomOut size={16} />
+            <ZoomOut size={15} />
+          </button>
+
+          <div className="w-px h-4 sm:h-5 bg-slate-700 mx-0.5 shrink-0" />
+
+          {/* Timeline Events Button */}
+          <button
+            onClick={() => setIsTimelineOpen(!isTimelineOpen)}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold transition shrink-0 ${
+              isTimelineOpen
+                ? 'bg-indigo-600 text-white shadow'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+            }`}
+            title="เปิดแถบเหตุการณ์รายงานล่าสุดของวันนี้"
+          >
+            <Clock size={15} className="text-indigo-400" />
+            <span className="hidden sm:inline">เหตุการณ์วันนี้</span>
+            <span className="text-[10px] font-mono px-1 rounded bg-slate-800 text-indigo-300">
+              {todayEvents.length}
+            </span>
+          </button>
+
+          {/* Day Replay Toggle Button */}
+          <button
+            onClick={onToggleReplay}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold transition shrink-0 ${
+              isReplayActive
+                ? 'bg-violet-600 text-white shadow'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+            }`}
+            title="เล่นย้อนหลังการเข้าทำงานและรายงานระหว่างวัน"
+          >
+            <History size={15} className="text-violet-400" />
+            <span className="hidden sm:inline">เล่นย้อนหลัง</span>
           </button>
         </div>
+      </div>
 
-        {/* 📋 Side Inspector Drawer (House, Character, or Facility) */}
-        {(selectedHouse || selectedCharacter || selectedFacility) && (
+      {/* 📋 Side Inspector Drawer (House, Character, or Facility) */}
+      {(selectedHouse || selectedCharacter || selectedFacility) && (
+        <div className="pointer-events-none fixed sm:absolute inset-x-3 sm:inset-x-auto sm:right-4 bottom-3 sm:bottom-4 top-auto sm:top-16 z-30 flex flex-col justify-end">
           <div
-            className="pointer-events-auto w-80 sm:w-96 max-h-[480px] overflow-y-auto bg-slate-900/90 backdrop-blur-xl p-4 rounded-3xl border border-slate-700/80 shadow-2xl text-white space-y-3.5 animate-in slide-in-from-right duration-200"
+            className="pointer-events-auto w-full sm:w-96 max-h-[82vh] sm:max-h-[calc(100vh-80px)] flex flex-col bg-slate-900/95 backdrop-blur-2xl rounded-3xl border border-slate-700/80 shadow-2xl text-white overflow-hidden animate-in slide-in-from-bottom sm:slide-in-from-right duration-200"
             onClick={e => e.stopPropagation()}
           >
-            {/* Header with Close */}
-            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+            {/* Header with Close - PINNED AT TOP */}
+            <div className="flex items-center justify-between p-4 pb-3 border-b border-slate-800 bg-slate-900/95 shrink-0">
               <div className="flex items-center gap-2">
                 <span className="text-base">{selectedHouse ? '🏡' : selectedCharacter ? '👷' : '🏢'}</span>
                 <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
@@ -704,10 +849,14 @@ export const LivingSiteUI: React.FC<LivingSiteUIProps> = ({
                   onSelectFacility?.(null);
                 }}
                 className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg transition"
+                title="ปิด"
               >
                 <X size={16} />
               </button>
             </div>
+
+            {/* Scrollable Content Body */}
+            <div className="p-4 overflow-y-auto overscroll-contain space-y-3.5 flex-1">
 
             {/* Selected House Details */}
             {selectedHouse && (
@@ -975,8 +1124,18 @@ export const LivingSiteUI: React.FC<LivingSiteUIProps> = ({
                   </p>
                 </div>
 
-                {/* Assigned Team & Latest Update */}
-                <div className="text-xs bg-slate-800/50 p-2.5 rounded-xl border border-slate-700/40 space-y-1">
+                {/* Daily Activity (Today) & Assigned Team */}
+                <div className="text-xs bg-slate-800/50 p-2.5 rounded-xl border border-slate-700/40 space-y-1.5">
+                  <div className="flex items-center justify-between pb-1 border-b border-slate-700/40">
+                    <span className="text-slate-400 text-[10px]">กิจกรรมวันนี้ ({dateStr}):</span>
+                    <span className={`font-bold text-[11px] ${
+                      selectedHouse.todayHasActivity ? 'text-emerald-300' : 'text-slate-400'
+                    }`}>
+                      {selectedHouse.todayHasActivity
+                        ? `${selectedHouse.todayIcon || '🟢'} ${selectedHouse.todayActionText}${selectedHouse.todayActorName ? ` (${selectedHouse.todayActorName})` : ''}`
+                        : '⚪ ไม่มีรายงานใหม่'}
+                    </span>
+                  </div>
                   {selectedHouse.assignedTeamName && (
                     <div>
                       <span className="text-slate-400 block text-[10px]">ทีมช่างผู้รับผิดชอบ:</span>
@@ -1010,17 +1169,36 @@ export const LivingSiteUI: React.FC<LivingSiteUIProps> = ({
                 )}
 
                 {/* Recent Photo Preview */}
-                {selectedHouse.latestPhotoUrl && (
-                  <div className="space-y-1">
-                    <span className="text-[10px] text-slate-400 font-bold block">ภาพถ่ายล่าสุดจากไซต์:</span>
-                    <img
-                      src={selectedHouse.latestPhotoUrl}
-                      alt={selectedHouse.plotName}
+                <div className="space-y-1">
+                  <span className="text-[10px] text-slate-400 font-bold block">ภาพถ่ายล่าสุดจากไซต์:</span>
+                  {selectedHouse.latestPhotoUrl && !failedImages[selectedHouse.latestPhotoUrl] ? (
+                    <div
                       onClick={() => setModalPhotoUrl(selectedHouse.latestPhotoUrl || null)}
-                      className="w-full h-24 object-cover rounded-xl border border-slate-700 shadow hover:opacity-90 cursor-pointer"
-                    />
-                  </div>
-                )}
+                      className="group relative w-full h-28 rounded-xl overflow-hidden border border-slate-700/80 shadow cursor-pointer bg-slate-900"
+                      title="คลิกเพื่อดูรูปขยาย"
+                    >
+                      <img
+                        src={selectedHouse.latestPhotoUrl}
+                        alt={`ภาพถ่ายแปลง ${selectedHouse.plotName}`}
+                        onError={() => {
+                          if (selectedHouse.latestPhotoUrl) {
+                            setFailedImages(prev => ({ ...prev, [selectedHouse.latestPhotoUrl!]: true }));
+                          }
+                        }}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      />
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 text-white text-xs font-semibold backdrop-blur-[2px]">
+                        <ZoomIn size={14} className="text-amber-400" />
+                        <span>คลิกเพื่อดูรูปขยาย</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-3 rounded-xl border border-dashed border-slate-700/80 bg-slate-800/40 text-center text-slate-400 text-xs flex items-center justify-center gap-2">
+                      <ImageIcon size={15} className="text-slate-500 shrink-0" />
+                      <span className="text-[11px] text-slate-400">ยังไม่มีภาพถ่ายหน้างานล่าสุด</span>
+                    </div>
+                  )}
+                </div>
 
                 {/* Open Plot View Button */}
                 {onOpenFullPlotDetail && (
@@ -1159,9 +1337,10 @@ export const LivingSiteUI: React.FC<LivingSiteUIProps> = ({
                 )}
               </div>
             )}
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* 🖼️ Fullscreen Photo Modal */}
       {modalPhotoUrl && (
@@ -1176,7 +1355,15 @@ export const LivingSiteUI: React.FC<LivingSiteUIProps> = ({
             >
               <X size={18} />
             </button>
-            <img src={modalPhotoUrl} alt="Inspection Photo" className="w-full h-auto max-h-[80vh] object-contain" />
+            <img
+              src={modalPhotoUrl}
+              alt="Inspection Photo"
+              onError={() => {
+                setFailedImages(prev => ({ ...prev, [modalPhotoUrl]: true }));
+                setModalPhotoUrl(null);
+              }}
+              className="w-full h-auto max-h-[80vh] object-contain"
+            />
           </div>
         </div>
       )}

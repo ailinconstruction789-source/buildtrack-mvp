@@ -248,6 +248,11 @@ export interface HousePlot {
   assignedTeamId?: string;
   assignedTeamName?: string;
   activeWorkerIds: string[];
+  // Daily activity snapshot (for current selected date)
+  todayHasActivity?: boolean;
+  todayActionText?: string;
+  todayActorName?: string;
+  todayIcon?: string;
   defectCount: number;
   defects: {
     id: string;

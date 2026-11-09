@@ -21,8 +21,15 @@ import {
   normalizeConstructionEvents,
   deriveInspectionQueueItems,
   deriveAttentionPoints,
-  deriveSiteStateAtTime
+  deriveSiteStateAtTime,
+  parseImageUrls,
+  parseToBangkokDate
 } from './eventModel';
+
+function extractValidPhotoUrl(raw: any): string | undefined {
+  const urls = parseImageUrls(raw);
+  return urls.length > 0 ? urls[0] : undefined;
+}
 
 export interface AdaptProjectDataParams {
   projectName: string;
@@ -259,8 +266,10 @@ export function adaptBuildTrackProjectToLivingSite(params: AdaptProjectDataParam
       if (st && typeof st.actual === 'number') actualProgress = st.actual;
     }
 
-    // Find latest update for this plot
-    const plotUpdates = allUpdatesRecord.filter(u => String(u.plot_id) === plotId || u.plot_name === plotName);
+    // Find latest update for this plot (sorted chronologically oldest -> newest)
+    const plotUpdates = allUpdatesRecord
+      .filter(u => String(u.plot_id) === plotId || u.plot_name === plotName)
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
     const latestUpdate = plotUpdates.length > 0 ? plotUpdates[plotUpdates.length - 1] : null;
 
     let taskName = '';
@@ -271,6 +280,51 @@ export function adaptBuildTrackProjectToLivingSite(params: AdaptProjectDataParam
 
     const currentStage = determineStage(actualProgress, taskName);
     const plotDefects = defects.filter(d => String(d.plot_id) === plotId);
+
+    // Today's specific activity snapshot (based on params.selectedDate)
+    const isToday = (isoStr?: string) => {
+      if (!isoStr) return false;
+      try {
+        const bkk = parseToBangkokDate(isoStr);
+        return bkk.dateStr === params.selectedDate;
+      } catch {
+        return false;
+      }
+    };
+
+    const todayUpdates = plotUpdates.filter(u => isToday(u.created_at));
+    const todayDefects = plotDefects.filter(d => isToday(d.created_at));
+
+    let todayHasActivity = false;
+    let todayActionText = 'ไม่มีรายงานใหม่';
+    let todayActorName = '';
+    let todayIcon = '⚪';
+
+    if (todayUpdates.length > 0) {
+      const u = todayUpdates[todayUpdates.length - 1];
+      todayHasActivity = true;
+      todayActorName = u.user_name || u.role || 'ช่าง';
+      const action = String(u.action || '');
+      if (action.includes('อนุมัติ') || action.includes('ผ่าน')) {
+        todayActionText = 'ตรวจผ่าน';
+        todayIcon = '🟢';
+      } else if (action === 'ไม่มีช่างเข้างาน') {
+        todayActionText = 'ช่างไม่เข้า';
+        todayIcon = '⚠️';
+      } else if (action.includes('ส่งงาน')) {
+        todayActionText = 'ส่งงาน';
+        todayIcon = '📦';
+      } else {
+        todayActionText = 'อัปเดตงาน';
+        todayIcon = '🔨';
+      }
+    } else if (todayDefects.length > 0) {
+      const d = todayDefects[todayDefects.length - 1];
+      todayHasActivity = true;
+      todayActorName = d.reported_by || 'QC';
+      todayActionText = 'งานไม่ผ่าน';
+      todayIcon = '🔴';
+    }
 
     // Resolve House Type
     const hType = houseTypes.find(ht => String(ht.id) === String(p.house_type_id));
@@ -388,6 +442,10 @@ export function adaptBuildTrackProjectToLivingSite(params: AdaptProjectDataParam
       overallProgress: actualProgress,
       assignedTeamName: latestUpdate ? `ทีม ${latestUpdate.user_name || 'ช่างประจำแปลง'}` : undefined,
       activeWorkerIds: [],
+      todayHasActivity,
+      todayActionText,
+      todayActorName,
+      todayIcon,
       defectCount: plotDefects.length,
       defects: plotDefects.map(d => ({
         id: String(d.id),
@@ -399,7 +457,28 @@ export function adaptBuildTrackProjectToLivingSite(params: AdaptProjectDataParam
       lastUpdateTime: latestUpdate?.created_at
         ? new Date(latestUpdate.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
         : '-',
-      latestPhotoUrl: latestUpdate?.image_url,
+      latestPhotoUrl: (() => {
+        // Search newest to oldest for the latest valid photo URL from updates
+        for (let i = plotUpdates.length - 1; i >= 0; i--) {
+          const u = plotUpdates[i];
+          const url = extractValidPhotoUrl(u?.image_url || u?.images || (u as any)?.image_urls);
+          if (url) return url;
+        }
+        // Fallback to defect photos if any (newest to oldest)
+        if (plotDefects.length > 0) {
+          const sortedDefects = [...plotDefects].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+          for (let i = sortedDefects.length - 1; i >= 0; i--) {
+            const d = sortedDefects[i];
+            const url = extractValidPhotoUrl(d?.image_url || d?.images || (d as any)?.image_urls);
+            if (url) return url;
+          }
+        }
+        // Fallback to plot overview image
+        if (p.overview_image_url) {
+          return extractValidPhotoUrl(p.overview_image_url);
+        }
+        return undefined;
+      })(),
       entrancePos: { x: entX, z: entZ },
       workSpots: [
         { x: entX, z: entZ },

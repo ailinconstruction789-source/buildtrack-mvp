@@ -9,28 +9,31 @@ import { DEFAULT_CELL_SIZE } from './coordinates';
  */
 
 // Shared color palette & materials for high rendering efficiency
+// Optimized architectural diorama palette: calm, natural, and readable
 export const PALETTE = {
   // Ground & Roads
-  groundGrass: 0x8cb071,
-  plotLawn: 0xa4c686,
-  curbStone: 0xd6d3cc,
-  asphaltRoad: 0x3d444e,
-  roadMarking: 0xf3f4f6,
-  dirtPath: 0xd9c29e,
+  groundGrass: 0x8ea87d,      // Muted architectural meadow grass
+  plotLawn: 0x9fbf8d,         // Soft plot lawn
+  curbStone: 0xd8dcd7,        // Clean light concrete curb
+  asphaltRoad: 0x363d47,      // Deep matte charcoal asphalt
+  roadMarking: 0xf1f3f5,      // Clean white road markings
+  dirtPath: 0xd4c2a3,         // Warm sandy construction dirt
+  rebarSteel: 0x52525b,       // Structural steel rebar rod (#52525b)
+  earthMound: 0xcaa97e,       // Excavated earth mound around footings
 
   // Building Materials
-  concreteFoundation: 0xc4c7cc,
-  concreteColumns: 0xb5b9be,
-  redBrick: 0xb95e47,
-  mortar: 0xe5e7eb,
-  timberTruss: 0x8b5a2b,
-  roofTiles: 0x64748b, // Modern Architectural Slate Gray (#64748b)
+  concreteFoundation: 0xc2c7cd, // Precast / poured foundation slab
+  concreteColumns: 0xb5bbc2,    // Reinforced structural columns
+  redBrick: 0xb75d46,          // Natural fired clay brick
+  mortar: 0xe5e7eb,            // Mortar joint line
+  timberTruss: 0x8a5932,       // Timber truss members
+  roofTiles: 0x64748b,         // Architectural Slate Gray (#64748b)
   roofTilesSlate: 0x64748b,
-  paintedWall: 0xf8f9fa,
-  glassWindow: 0x6ba4b8,
-  woodDoor: 0x6e4720,
-  scaffoldingSteel: 0x94a3b8,
-  scaffoldingPlank: 0xca8a04,
+  paintedWall: 0xf8fafc,       // Soft clean alabaster wall paint
+  glassWindow: 0x6ca4b8,       // Reflective architectural glass tint
+  woodDoor: 0x714b28,          // Natural warm teak/timber door
+  scaffoldingSteel: 0x94a3b8,   // Galvanized steel scaffolding pipes
+  scaffoldingPlank: 0xc68a27,   // Treated timber scaffold deck planks
 
   // Hardhats & Roles
   whiteHardhat: 0xf8fafc,
@@ -481,6 +484,16 @@ export function createHouseMesh(house: HousePlot, quality: GraphicQuality = 'med
   slabMesh.receiveShadow = true;
   buildingGroup.add(slabMesh);
 
+  // If Foundation Stage: add excavated earth mound and column starter rebars (เหล็กต่อตอม่อ)
+  if (stage === 'foundation') {
+    const moundGeo = new THREE.BoxGeometry(baseW + 0.6, 0.12, baseD + 0.6);
+    const moundMat = getMat('earthMound', () => new THREE.MeshLambertMaterial({ color: PALETTE.earthMound }));
+    const moundMesh = new THREE.Mesh(moundGeo, moundMat);
+    moundMesh.position.y = 0.06;
+    moundMesh.receiveShadow = true;
+    buildingGroup.add(moundMesh);
+  }
+
   // 3. Structure Stage - 1st Floor (เสาและคาน ชั้น 1)
   const floor1H = 2.4;
   const colSize = 0.28;
@@ -495,7 +508,19 @@ export function createHouseMesh(house: HousePlot, quality: GraphicQuality = 'med
     [0, -halfZ], [0, halfZ]
   ];
 
-  if (stage !== 'foundation') {
+  if (stage === 'foundation') {
+    // Column Starter Rebars (เหล็กหนวดกุ้งต่อตอม่อ)
+    const rebarMat = getMat('rebarSteel', () => new THREE.MeshLambertMaterial({ color: PALETTE.rebarSteel }));
+    const rebarGeo = new THREE.CylinderGeometry(0.018, 0.018, 0.65, 4);
+    for (const [cx, cz] of colPositions) {
+      for (const [rx, rz] of [[-0.06, -0.06], [0.06, -0.06], [-0.06, 0.06], [0.06, 0.06]]) {
+        const rod = new THREE.Mesh(rebarGeo, rebarMat);
+        rod.position.set(cx + rx, 0.15 + slabH + 0.65 / 2, cz + rz);
+        rod.castShadow = true;
+        buildingGroup.add(rod);
+      }
+    }
+  } else {
     // 1st Floor Columns
     for (const [cx, cz] of colPositions) {
       const col = new THREE.Mesh(colGeo, colMat);
@@ -731,6 +756,15 @@ export function createHouseMesh(house: HousePlot, quality: GraphicQuality = 'med
       win2F2.position.set(baseW / 3.2, slab2Y + 1.2, baseD / 2 - 0.1);
       buildingGroup.add(win2F2);
     }
+
+    // Concrete Entrance Step / Threshold (บันไดทางเข้าหน้าบ้าน)
+    const stepGeo = new THREE.BoxGeometry(1.4, 0.14, 0.65);
+    const stepMat = getMat('entranceStep', () => new THREE.MeshLambertMaterial({ color: PALETTE.concreteFoundation }));
+    const stepMesh = new THREE.Mesh(stepGeo, stepMat);
+    stepMesh.position.set(0, 0.15 + 0.07, baseD / 2 + 0.25);
+    stepMesh.castShadow = true;
+    stepMesh.receiveShadow = true;
+    buildingGroup.add(stepMesh);
   }
 
   // 7. Plot Number Sign Post
@@ -1414,56 +1448,86 @@ export function createActivityPinMesh(colorHex: string = '#38bdf8'): THREE.Group
 
 /**
  * Creates a 2D Billboard Canvas Sprite for Plot Summary Badges (Far Zoom LOD).
+ * Implements clean 3-line layout separating House Overall Completion from Today's Action.
  */
 export function createPlotSummaryBadgeSprite(
   plotName: string,
-  badgeText: string,
+  houseStatusText: string,
+  todayActionText?: string,
   badgeType: 'defect' | 'inspection' | 'normal' = 'normal'
 ): THREE.Sprite {
   try {
     const canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 128;
+    canvas.width = 320;
+    canvas.height = 160;
     const ctx = canvas.getContext('2d');
 
     if (ctx) {
-      // Rounded Card Background
+      // Rounded Card Background: modern deep dark slate card
       ctx.fillStyle = badgeType === 'defect'
-        ? '#ef4444'
+        ? '#450a0a'
         : badgeType === 'inspection'
-        ? '#f59e0b'
-        : '#1e293b';
+        ? '#451a03'
+        : '#0f172a';
       ctx.beginPath();
       if (typeof (ctx as any).roundRect === 'function') {
-        (ctx as any).roundRect(8, 8, 240, 112, 20);
+        (ctx as any).roundRect(8, 8, 304, 144, 22);
       } else {
-        ctx.rect(8, 8, 240, 112);
+        ctx.rect(8, 8, 304, 144);
       }
       ctx.fill();
 
-      // Border
-      ctx.strokeStyle = '#ffffff';
+      // Card Border
+      ctx.strokeStyle = badgeType === 'defect'
+        ? '#ef4444'
+        : badgeType === 'inspection'
+        ? '#f59e0b'
+        : '#38bdf8';
       ctx.lineWidth = 4;
       ctx.stroke();
 
-      // Plot Name Text
+      // Line 1: Plot Name Text (เลขแปลง)
       ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 36px sans-serif';
+      ctx.font = 'bold 34px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(plotName, 128, 44);
+      ctx.fillText(`แปลง ${plotName}`, 160, 42);
 
-      // Subtitle / Badge text
-      ctx.font = '24px sans-serif';
-      ctx.fillStyle = badgeType === 'normal' ? '#94a3b8' : '#ffffff';
-      ctx.fillText(badgeText, 128, 86);
+      // Line 2: House Completion % (ความคืบหน้าบ้าน จาก ProjectMap)
+      ctx.font = 'bold 22px sans-serif';
+      ctx.fillStyle = houseStatusText.includes('100%') || houseStatusText.includes('เสร็จ')
+        ? '#4ade80'
+        : '#38bdf8';
+      ctx.fillText(houseStatusText, 160, 80);
+
+      // Subtle Divider Line
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(32, 102);
+      ctx.lineTo(288, 102);
+      ctx.stroke();
+
+      // Line 3: Today's Action & Reporter (เหตุการณ์วันนี้)
+      ctx.font = 'bold 19px sans-serif';
+      const effectiveToday = todayActionText || '⚪ วันนี้: ไม่มีรายงานใหม่';
+      ctx.fillStyle = effectiveToday.includes('🟢')
+        ? '#86efac'
+        : effectiveToday.includes('🔴')
+        ? '#fca5a5'
+        : effectiveToday.includes('🔨') || effectiveToday.includes('📦')
+        ? '#fde047'
+        : effectiveToday.includes('⚠️')
+        ? '#fdba74'
+        : '#94a3b8';
+      ctx.fillText(effectiveToday, 160, 126);
 
       const texture = new THREE.CanvasTexture(canvas);
       texture.minFilter = THREE.LinearFilter;
       const mat = new THREE.SpriteMaterial({ map: texture, depthTest: false });
       const sprite = new THREE.Sprite(mat);
-      sprite.scale.set(4.0, 2.0, 1);
-      sprite.position.y = 3.6;
+      sprite.scale.set(4.4, 2.2, 1);
+      sprite.position.y = 3.9;
       sprite.name = 'lod_badge_' + plotName;
       return sprite;
     }
@@ -1473,8 +1537,8 @@ export function createPlotSummaryBadgeSprite(
 
   // Fallback Sprite
   const fallbackMat = new THREE.SpriteMaterial({ color: 0x38bdf8 });
-  const fallbackSprite = new THREE.Sprite(fallbackMat);
-  fallbackSprite.scale.set(3, 1.5, 1);
-  fallbackSprite.position.y = 3.6;
-  return fallbackSprite;
+  const sprite = new THREE.Sprite(fallbackMat);
+  sprite.scale.set(4.4, 2.2, 1);
+  sprite.position.y = 3.9;
+  return sprite;
 }

@@ -51,6 +51,7 @@ export interface CanvasCameraControls {
   rotateCCW: () => void;
   zoomIn: () => void;
   zoomOut: () => void;
+  zoomByFactor: (factor: number) => void;
   focusPlot: (plotId: string) => void;
 }
 
@@ -146,8 +147,8 @@ export const LivingSiteCanvas = React.forwardRef<CanvasCameraControls, LivingSit
 
       // Create Scene
       const scene = new THREE.Scene();
-      scene.background = new THREE.Color(0xf1f5f9); // Crisp neutral background (Slate 100)
-      scene.fog = null; // 🌟 Crisp view across entire project without milky white haze
+      scene.background = new THREE.Color(0xf6f7f5); // Warm neutral architectural diorama base (Stone / Alabaster)
+      scene.fog = null; // Crisp view across entire project without milky white haze
       sceneRef.current = scene;
 
       // Group hierarchy for modular rendering and updates
@@ -218,9 +219,12 @@ export const LivingSiteCanvas = React.forwardRef<CanvasCameraControls, LivingSit
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
         renderer.toneMappingExposure = 1.0;
 
-        if (quality !== 'low') {
+        if (quality === 'high') {
           renderer.shadowMap.enabled = true;
           renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        } else if (quality === 'medium') {
+          renderer.shadowMap.enabled = true;
+          renderer.shadowMap.type = THREE.PCFShadowMap;
         } else {
           renderer.shadowMap.enabled = false;
         }
@@ -238,15 +242,15 @@ export const LivingSiteCanvas = React.forwardRef<CanvasCameraControls, LivingSit
       rendererRef.current = renderer;
 
       // Lighting: Balanced warm sunlight + soft sky hemisphere
-      const hemiLight = new THREE.HemisphereLight(0xf8fafc, 0x94a3b8, 0.65);
+      const hemiLight = new THREE.HemisphereLight(0xfcfdfb, 0x94a3b8, 0.70);
       scene.add(hemiLight);
 
-      const dirLight = new THREE.DirectionalLight(0xfffbeb, 1.15);
+      const dirLight = new THREE.DirectionalLight(0xfffbf2, 1.15);
       dirLight.position.set(45, 65, 35);
       if (quality !== 'low') {
         dirLight.castShadow = true;
-        dirLight.shadow.mapSize.width = quality === 'high' ? 2048 : 1024;
-        dirLight.shadow.mapSize.height = quality === 'high' ? 2048 : 1024;
+        dirLight.shadow.mapSize.width = quality === 'high' ? 1024 : 512;
+        dirLight.shadow.mapSize.height = quality === 'high' ? 1024 : 512;
         dirLight.shadow.camera.near = 10;
         dirLight.shadow.camera.far = 180;
         const d = 55;
@@ -254,7 +258,8 @@ export const LivingSiteCanvas = React.forwardRef<CanvasCameraControls, LivingSit
         dirLight.shadow.camera.right = d;
         dirLight.shadow.camera.top = d;
         dirLight.shadow.camera.bottom = -d;
-        dirLight.shadow.bias = -0.0004;
+        dirLight.shadow.bias = -0.0003;
+        dirLight.shadow.normalBias = 0.04; // Reduces shadow acne on low-poly slopes and eaves
       }
       scene.add(dirLight);
 
@@ -331,16 +336,21 @@ export const LivingSiteCanvas = React.forwardRef<CanvasCameraControls, LivingSit
           }
         }
 
-        if (prefersReducedMotion) {
+        // Fast direct response while dragging; snappy smooth glide when navigating/focusing
+        if (prefersReducedMotion || cs.isDragging) {
           cs.currentX = cs.targetX;
           cs.currentZ = cs.targetZ;
-          cs.zoom = cs.targetZoom;
-          cs.rotation = cs.targetRotation;
+          cs.zoom += (cs.targetZoom - cs.zoom) * 0.25;
+          if (!cs.isRotating) {
+            cs.rotation = cs.targetRotation;
+          } else {
+            cs.rotation += (cs.targetRotation - cs.rotation) * 0.35;
+          }
         } else {
-          cs.currentX += (cs.targetX - cs.currentX) * 0.12;
-          cs.currentZ += (cs.targetZ - cs.currentZ) * 0.12;
-          cs.zoom += (cs.targetZoom - cs.zoom) * 0.15;
-          cs.rotation += (cs.targetRotation - cs.rotation) * 0.15;
+          cs.currentX += (cs.targetX - cs.currentX) * 0.24;
+          cs.currentZ += (cs.targetZ - cs.currentZ) * 0.24;
+          cs.zoom += (cs.targetZoom - cs.zoom) * 0.25;
+          cs.rotation += (cs.targetRotation - cs.rotation) * 0.24;
         }
 
         if (cameraRef.current && containerRef.current) {
@@ -363,6 +373,18 @@ export const LivingSiteCanvas = React.forwardRef<CanvasCameraControls, LivingSit
           cameraRef.current.lookAt(cs.currentX, 0, cs.currentZ);
         }
 
+        // Zoom Level of Detail (LOD) & Display Mode
+        const isFarZoom = cs.zoom > 48;
+        const currentDisplayMode = displayModeRef.current;
+        const showCharacters = !isFarZoom || currentDisplayMode === 'presentation';
+
+        if (lodBadgesGroupRef.current) {
+          lodBadgesGroupRef.current.visible = currentDisplayMode === 'inspection' || isFarZoom;
+        }
+        if (charactersGroupRef.current) {
+          charactersGroupRef.current.visible = showCharacters;
+        }
+
         // Update characters simulation & animation
         const sm = stateMachineRef.current;
         if (sm) {
@@ -379,7 +401,11 @@ export const LivingSiteCanvas = React.forwardRef<CanvasCameraControls, LivingSit
             if (mesh) {
               mesh.position.set(updated.x, updated.y, updated.z);
               mesh.rotation.y = updated.rotationY;
-              animateCharacter(mesh, updated, now / 1000);
+
+              // Only animate limbs if characters are within visible range
+              if (showCharacters) {
+                animateCharacter(mesh, updated, now / 1000);
+              }
 
               if (currentFilter !== 'all') {
                 const isMatch =
@@ -395,16 +421,6 @@ export const LivingSiteCanvas = React.forwardRef<CanvasCameraControls, LivingSit
             }
           }
           charactersDataRef.current = updatedChars;
-        }
-
-        // Zoom Level of Detail (LOD) & Display Mode
-        const isFarZoom = cs.zoom > 48;
-        const currentDisplayMode = displayModeRef.current;
-        if (lodBadgesGroupRef.current) {
-          lodBadgesGroupRef.current.visible = currentDisplayMode === 'inspection' || isFarZoom;
-        }
-        if (charactersGroupRef.current) {
-          charactersGroupRef.current.visible = !isFarZoom || currentDisplayMode === 'presentation';
         }
 
         if (renderer && scene && camera) {
@@ -641,29 +657,43 @@ export const LivingSiteCanvas = React.forwardRef<CanvasCameraControls, LivingSit
 
         // C. Activity Pins for earlier reports at this plot today
         if (house.activityMarkers && house.activityMarkers.length > 0) {
-          house.activityMarkers.forEach((m, idx) => {
+          // Keep pins strictly clustered within 0.35m of entrance doorstep, max 3 pins, never leaking onto road
+          const maxPins = Math.min(house.activityMarkers.length, 3);
+          for (let idx = 0; idx < maxPins; idx++) {
             const pin = createActivityPinMesh();
-            pin.position.set(entX + 0.3 * (idx + 1), 0, entZ - 0.3);
+            const angle = (idx / Math.max(1, maxPins)) * (Math.PI * 0.7) - (Math.PI * 0.35);
+            const pinDist = 0.32;
+            const offsetX = Math.sin(angle) * pinDist;
+            const offsetZ = -Math.cos(angle) * pinDist;
+            pin.position.set(entX + offsetX, 0, entZ + offsetZ);
             markersGroup.add(pin);
-          });
+          }
         }
 
-        // D. LOD Plot Summary Badge
+        // D. LOD Plot Summary Badge (Approach 1: Clear Separation of House Progress vs Today's Action)
         let badgeType: 'defect' | 'inspection' | 'normal' = 'normal';
-        let badgeText = `${house.currentStage === 'completed' ? 'สร้างเสร็จสมบูรณ์' : `${house.overallProgress}% ${house.lastUpdateText}`}`;
+        const houseStatusText = (house.currentStage === 'completed' || house.overallProgress >= 100)
+          ? 'สร้างเสร็จสมบูรณ์ 🔑'
+          : `ความคืบหน้าบ้าน ${house.overallProgress}%`;
 
         if (house.hasRework) {
           badgeType = 'defect';
-          badgeText = 'งานต้องแก้ไข (Rework)';
         } else if (house.hasPendingInspection) {
           badgeType = 'inspection';
-          badgeText = `รอตรวจโดย ${pending[0]?.statusFor || 'วิศวกร'}`;
         } else if (house.defectCount > 0) {
           badgeType = 'defect';
-          badgeText = `${house.defectCount} รายการดีเฟกต์`;
         }
 
-        const badgeSprite = createPlotSummaryBadgeSprite(house.plotName, badgeText, badgeType);
+        const todayText = house.todayHasActivity
+          ? `${house.todayIcon || '🟢'} วันนี้: ${house.todayActionText}${house.todayActorName ? ` (${house.todayActorName})` : ''}`
+          : '⚪ วันนี้: ไม่มีรายงานใหม่';
+
+        const badgeSprite = createPlotSummaryBadgeSprite(
+          house.plotName,
+          houseStatusText,
+          todayText,
+          badgeType
+        );
         badgeSprite.position.set(bWorldX, 3.8, bWorldZ);
         lodGroup.add(badgeSprite);
       }
@@ -677,9 +707,13 @@ export const LivingSiteCanvas = React.forwardRef<CanvasCameraControls, LivingSit
       // Clear existing highlight meshes
       while (group.children.length > 0) {
         const child = group.children.pop()!;
-        if (child instanceof THREE.Mesh) {
+        if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments) {
           child.geometry.dispose();
-          if (child.material instanceof THREE.Material) child.material.dispose();
+          if (Array.isArray(child.material)) {
+            child.material.forEach(m => m.dispose());
+          } else if (child.material instanceof THREE.Material) {
+            child.material.dispose();
+          }
         }
       }
 
@@ -698,11 +732,17 @@ export const LivingSiteCanvas = React.forwardRef<CanvasCameraControls, LivingSit
       group.position.set(house.worldX, 0, house.worldZ);
 
       const cellSize = DEFAULT_CELL_SIZE;
-      const highlightMat = new THREE.MeshBasicMaterial({
-        color: PALETTE.selectionGlow,
+      const fillMat = new THREE.MeshBasicMaterial({
+        color: 0x38bdf8,
         transparent: true,
-        opacity: 0.38,
+        opacity: 0.16,
         depthWrite: false
+      });
+      const edgeMat = new THREE.LineBasicMaterial({
+        color: 0x38bdf8,
+        linewidth: 2,
+        transparent: true,
+        opacity: 0.85
       });
 
       if (house.cells && house.cells.length > 0) {
@@ -718,18 +758,30 @@ export const LivingSiteCanvas = React.forwardRef<CanvasCameraControls, LivingSit
         for (const cell of house.cells) {
           const relX = (cell.x - avgGx) * cellSize;
           const relZ = (cell.y - avgGy) * cellSize;
-          const tileGeo = new THREE.PlaneGeometry(cellSize - 0.08, cellSize - 0.08);
-          const tileMesh = new THREE.Mesh(tileGeo, highlightMat);
+          const tileGeo = new THREE.PlaneGeometry(cellSize - 0.06, cellSize - 0.06);
+          const tileMesh = new THREE.Mesh(tileGeo, fillMat);
           tileMesh.rotation.x = -Math.PI / 2;
           tileMesh.position.set(relX, 0.16, relZ);
           group.add(tileMesh);
+
+          const edgesGeo = new THREE.EdgesGeometry(tileGeo);
+          const wireMesh = new THREE.LineSegments(edgesGeo, edgeMat);
+          wireMesh.rotation.x = -Math.PI / 2;
+          wireMesh.position.set(relX, 0.17, relZ);
+          group.add(wireMesh);
         }
       } else {
         const tileGeo = new THREE.PlaneGeometry(house.width, house.depth);
-        const tileMesh = new THREE.Mesh(tileGeo, highlightMat);
+        const tileMesh = new THREE.Mesh(tileGeo, fillMat);
         tileMesh.rotation.x = -Math.PI / 2;
         tileMesh.position.set(0, 0.16, 0);
         group.add(tileMesh);
+
+        const edgesGeo = new THREE.EdgesGeometry(tileGeo);
+        const wireMesh = new THREE.LineSegments(edgesGeo, edgeMat);
+        wireMesh.rotation.x = -Math.PI / 2;
+        wireMesh.position.set(0, 0.17, 0);
+        group.add(wireMesh);
       }
     }, [selectedHouseId, world.houses]);
 
@@ -776,18 +828,32 @@ export const LivingSiteCanvas = React.forwardRef<CanvasCameraControls, LivingSit
 
       if (cs.isRotating) {
         cs.targetRotation += dx * 0.008;
+        cs.rotation += (cs.targetRotation - cs.rotation) * 0.35;
       } else {
         if (followedCharacterIdRef.current) {
           onFollowCharacterRef.current(null);
         }
-        const panFactor = cs.zoom * 0.0014;
+        const h = containerRef.current?.clientHeight || 600;
+        const sinPitch = Math.sin(cs.pitch) || 0.577; // sin(0.615) ~ 0.577
+
+        // Exact 1:1 ground-to-screen pixel mapping in orthographic projection:
+        const worldPerPixel = cs.zoom / h;
+        const worldGroundY = worldPerPixel / sinPitch;
+
         const forwardX = -Math.sin(cs.rotation);
         const forwardZ = -Math.cos(cs.rotation);
         const rightX = Math.cos(cs.rotation);
         const rightZ = -Math.sin(cs.rotation);
 
-        cs.targetX -= (rightX * dx - forwardX * dy) * panFactor;
-        cs.targetZ -= (rightZ * dx - forwardZ * dy) * panFactor;
+        const deltaX = rightX * (dx * worldPerPixel) - forwardX * (dy * worldGroundY);
+        const deltaZ = rightZ * (dx * worldPerPixel) - forwardZ * (dy * worldGroundY);
+
+        cs.targetX -= deltaX;
+        cs.targetZ -= deltaZ;
+
+        // Instant direct tracking while dragging - zero input lag!
+        cs.currentX = cs.targetX;
+        cs.currentZ = cs.targetZ;
       }
     };
 
@@ -795,6 +861,9 @@ export const LivingSiteCanvas = React.forwardRef<CanvasCameraControls, LivingSit
       const cs = camState.current;
       cs.isDragging = false;
       cs.isRotating = false;
+      try {
+        (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+      } catch (_) {}
 
       // Discriminate between Click and Drag (< 6px = click)
       if (cs.dragDistance < 6) {
@@ -802,12 +871,33 @@ export const LivingSiteCanvas = React.forwardRef<CanvasCameraControls, LivingSit
       }
     };
 
-    const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
-      e.preventDefault();
+    const handlePointerCancel = (e: React.PointerEvent<HTMLCanvasElement>) => {
       const cs = camState.current;
-      const zoomFactor = e.deltaY > 0 ? 1.15 : 0.85;
-      cs.targetZoom = Math.max(16, Math.min(85, cs.targetZoom * zoomFactor));
+      cs.isDragging = false;
+      cs.isRotating = false;
     };
+
+    // Non-passive native wheel listener to strictly prevent browser window / page scrolling during 3D zoom
+    useEffect(() => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      const handleWheelNative = (e: WheelEvent) => {
+        // Stop the browser from scrolling the outer web page
+        e.preventDefault();
+        e.stopPropagation();
+
+        const cs = camState.current;
+        const zoomFactor = e.deltaY > 0 ? 1.12 : 0.88;
+        cs.targetZoom = Math.max(16, Math.min(85, cs.targetZoom * zoomFactor));
+      };
+
+      canvas.addEventListener('wheel', handleWheelNative, { passive: false });
+
+      return () => {
+        canvas.removeEventListener('wheel', handleWheelNative);
+      };
+    }, []);
 
     // Raycast click detection for houses, characters, and facilities
     const performRaycastClick = (clientX: number, clientY: number) => {
@@ -898,9 +988,11 @@ export const LivingSiteCanvas = React.forwardRef<CanvasCameraControls, LivingSit
           const house = world.houses.find(h => h.id === rootGroup.userData.id);
           if (house) {
             onSelectHouse(house);
-            camState.current.targetX = house.worldX;
-            camState.current.targetZ = house.worldZ;
-            camState.current.targetZoom = 24;
+            const rightX = Math.sin(camState.current.targetRotation);
+            const rightZ = -Math.cos(camState.current.targetRotation);
+            camState.current.targetX = house.worldX + rightX * 3.6;
+            camState.current.targetZ = house.worldZ + rightZ * 3.6;
+            camState.current.targetZoom = 28;
           }
         }
       }
@@ -933,13 +1025,18 @@ export const LivingSiteCanvas = React.forwardRef<CanvasCameraControls, LivingSit
       zoomOut: () => {
         camState.current.targetZoom = Math.min(85, camState.current.targetZoom * 1.25);
       },
+      zoomByFactor: (factor: number) => {
+        camState.current.targetZoom = Math.max(16, Math.min(85, camState.current.targetZoom * factor));
+      },
       focusPlot: (plotId: string) => {
         const house = world.houses.find(h => h.id === plotId || h.plotName === plotId);
         if (house) {
           onSelectHouse(house);
-          camState.current.targetX = house.worldX;
-          camState.current.targetZ = house.worldZ;
-          camState.current.targetZoom = 26;
+          const rightX = Math.sin(camState.current.targetRotation);
+          const rightZ = -Math.cos(camState.current.targetRotation);
+          camState.current.targetX = house.worldX + rightX * 3.6;
+          camState.current.targetZ = house.worldZ + rightZ * 3.6;
+          camState.current.targetZoom = 28;
         }
       }
     }));
@@ -947,17 +1044,17 @@ export const LivingSiteCanvas = React.forwardRef<CanvasCameraControls, LivingSit
     return (
       <div
         ref={containerRef}
-        className="relative w-full h-[620px] select-none overflow-hidden rounded-3xl bg-slate-950"
+        className="relative w-full h-full select-none overflow-hidden rounded-3xl bg-slate-950 overscroll-contain"
       >
         <canvas
           ref={canvasRef}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
-          onWheel={handleWheel}
+          onPointerCancel={handlePointerCancel}
           onDoubleClick={handleDoubleClick}
           onContextMenu={e => e.preventDefault()}
-          className="w-full h-full cursor-grab active:cursor-grabbing block outline-none select-none"
+          className="w-full h-full cursor-grab active:cursor-grabbing block outline-none select-none touch-none"
         />
       </div>
     );

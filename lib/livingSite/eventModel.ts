@@ -77,6 +77,35 @@ export function parseToBangkokDate(input: string | Date | number): {
 }
 
 /**
+ * Safely parses image URLs from arrays, comma-separated strings, or single paths,
+ * returning only valid, trimmed web URLs or local paths.
+ */
+export function parseImageUrls(raw: any): string[] {
+  if (!raw) return [];
+  if (Array.isArray(raw)) {
+    const list: string[] = [];
+    for (const item of raw) {
+      if (typeof item === 'string') {
+        const trimmed = item.trim();
+        if (trimmed && (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('/'))) {
+          list.push(trimmed);
+        }
+      }
+    }
+    return list;
+  }
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed === 'null' || trimmed === 'undefined') return [];
+    return trimmed
+      .split(',')
+      .map(s => s.trim())
+      .filter(s => s.startsWith('http://') || s.startsWith('https://') || s.startsWith('/'));
+  }
+  return [];
+}
+
+/**
  * Calculates human-readable elapsed duration text (e.g. "รอตรวจ 3 ชม.", "รอ 2 วัน")
  */
 export function formatWaitDuration(fromIso: string, toDate: Date = new Date()): string {
@@ -277,15 +306,11 @@ export function normalizeConstructionEvents({
     }
 
     // Extract photo URLs
-    const photoUrls: string[] = [];
-    if (Array.isArray(u.images)) {
-      u.images.forEach((img: any) => {
-        if (typeof img === 'string' && img.trim()) photoUrls.push(img.trim());
-      });
-    }
-    if (u.image_url && typeof u.image_url === 'string' && !photoUrls.includes(u.image_url)) {
-      photoUrls.push(u.image_url);
-    }
+    const photoUrls = [
+      ...parseImageUrls(u.images),
+      ...parseImageUrls(u.image_url),
+      ...parseImageUrls((u as any).image_urls)
+    ].filter((val, idx, arr) => arr.indexOf(val) === idx);
 
     const freshness = calculateFreshness(u.created_at, selectedDate, now);
 
@@ -339,15 +364,11 @@ export function normalizeConstructionEvents({
       activityType = 'defect_fix';
     }
 
-    const photoUrls: string[] = [];
-    if (Array.isArray(d.images)) {
-      d.images.forEach((img: any) => {
-        if (typeof img === 'string' && img.trim()) photoUrls.push(img.trim());
-      });
-    }
-    if (d.image_url && typeof d.image_url === 'string' && !photoUrls.includes(d.image_url)) {
-      photoUrls.push(d.image_url);
-    }
+    const photoUrls = [
+      ...parseImageUrls(d.images),
+      ...parseImageUrls(d.image_url),
+      ...parseImageUrls((d as any).image_urls)
+    ].filter((val, idx, arr) => arr.indexOf(val) === idx);
 
     const freshness = calculateFreshness(d.created_at, selectedDate, now);
 
@@ -588,10 +609,11 @@ export function deriveSiteStateAtTime({
     const latestEvent = evList[evList.length - 1];
     const charId = `char_real_${charIndex}`;
 
-    // Previous events on DIFFERENT plots become activity markers
+    // Previous events on DIFFERENT plots become activity markers ONLY if they occurred TODAY (not historical)
     for (let i = 0; i < evList.length - 1; i++) {
       const prev = evList[i];
-      if (prev.plotId !== latestEvent.plotId) {
+      const isTodayActivity = prev.freshness !== 'historical';
+      if (isTodayActivity && prev.plotId !== latestEvent.plotId) {
         const markers = plotMarkersMap.get(prev.plotId) || [];
         markers.push({
           id: `marker_${prev.id}`,
