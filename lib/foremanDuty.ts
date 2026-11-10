@@ -129,6 +129,7 @@ export interface GetForemanTasksOptions {
   targetDate: string;  // YYYY-MM-DD
   existingSnapshots?: any[];
   preIndexedUpdates?: Map<string, any[]>;
+  todayDateStr?: string;
 }
 
 const BKK_FORMATTER = new Intl.DateTimeFormat('en-CA', {
@@ -264,7 +265,9 @@ export function getForemanScheduledTasksForDate(options: GetForemanTasksOptions)
     });
   }
 
-  const nowBangkokStr = normalizeDateStr(new Date()) || new Date().toISOString().split('T')[0];
+  const nowBangkokStr = options.todayDateStr
+    ? (normalizeDateStr(options.todayDateStr) || options.todayDateStr)
+    : (normalizeDateStr(new Date()) || new Date().toISOString().split('T')[0]);
   const isViewingToday = normTargetDate === nowBangkokStr;
 
   // Build index of plots with snapshots on target date for target foreman
@@ -1175,6 +1178,19 @@ export function getForemanReworkItems(options: GetForemanReworkOptions): Foreman
   return reworkItems;
 }
 
+export interface MonthForemanWorkloadStat {
+  foremanName: string;
+  totalTasks: number;
+  updatedTasks: number;
+  roadblockTasks: number;
+  pendingTasks: number;
+  complianceRate: number;
+  sharePercentage: number;
+  plotsCount: number;
+  projectsCount: number;
+  projectNames: string[];
+}
+
 export interface DayInspectionCompliance {
   date: string; // YYYY-MM-DD
   dayNumber: number; // 1-31
@@ -1190,6 +1206,7 @@ export interface DayInspectionCompliance {
   tasksCount: number;
   plotsCount: number;
   foremanStats: Record<string, { total: number; updated: number; roadblock: number; pending: number; rate: number }>;
+  tasks?: ForemanDailyTask[];
 }
 
 export interface MonthInspectionSummary {
@@ -1202,6 +1219,11 @@ export interface MonthInspectionSummary {
   partialDays: number;
   missedDays: number;
   avgComplianceRate: number;
+  totalMonthTasks: number;
+  totalMonthUpdated: number;
+  totalMonthRoadblocks: number;
+  totalMonthPending: number;
+  foremanWorkloadStats: MonthForemanWorkloadStat[];
 }
 
 export interface GetMonthlyInspectionOptions {
@@ -1349,6 +1371,7 @@ export function getMonthlyForemanInspectionCompliance(options: GetMonthlyInspect
       tasksCount: summary.totalTasks,
       plotsCount: summary.plotsCount,
       foremanStats,
+      tasks,
     });
   }
 
@@ -1362,6 +1385,76 @@ export function getMonthlyForemanInspectionCompliance(options: GetMonthlyInspect
   const avgComplianceRate = totalWorkDays > 0
     ? Math.round(activePastDays.reduce((acc, d) => acc + d.complianceRate, 0) / totalWorkDays)
     : 100;
+
+  // Monthly workload aggregation per foreman
+  const foremanMap: Record<string, {
+    total: number;
+    updated: number;
+    roadblock: number;
+    pending: number;
+    plots: Set<string>;
+    projects: Set<string>;
+  }> = {};
+
+  let totalMonthTasks = 0;
+  let totalMonthUpdated = 0;
+  let totalMonthRoadblocks = 0;
+  let totalMonthPending = 0;
+
+  days.forEach(d => {
+    totalMonthTasks += d.totalScheduled;
+    totalMonthUpdated += d.updated;
+    totalMonthRoadblocks += d.roadblock;
+    totalMonthPending += d.pending;
+
+    const activeDayTasks = (d.tasks || []).filter(t => !t.is_completed_early);
+    activeDayTasks.forEach(t => {
+      const fm = t.foreman_name || 'ยังไม่ระบุ';
+      if (!foremanMap[fm]) {
+        foremanMap[fm] = {
+          total: 0,
+          updated: 0,
+          roadblock: 0,
+          pending: 0,
+          plots: new Set<string>(),
+          projects: new Set<string>(),
+        };
+      }
+      foremanMap[fm].total++;
+      if (t.status_reason) {
+        foremanMap[fm].roadblock++;
+      } else if (t.is_updated_today) {
+        foremanMap[fm].updated++;
+      } else {
+        foremanMap[fm].pending++;
+      }
+      if (t.plot_id) foremanMap[fm].plots.add(String(t.plot_id));
+      if (t.project_name) foremanMap[fm].projects.add(String(t.project_name));
+    });
+  });
+
+  const foremanWorkloadStats: MonthForemanWorkloadStat[] = Object.entries(foremanMap)
+    .map(([fmName, st]) => {
+      const complianceRate = st.total > 0
+        ? Math.round(((st.updated + st.roadblock) / st.total) * 100)
+        : 100;
+      const sharePercentage = totalMonthTasks > 0
+        ? Math.round((st.total / totalMonthTasks) * 100)
+        : 0;
+      return {
+        foremanName: fmName,
+        totalTasks: st.total,
+        updatedTasks: st.updated,
+        roadblockTasks: st.roadblock,
+        pendingTasks: st.pending,
+        complianceRate,
+        sharePercentage,
+        plotsCount: st.plots.size,
+        projectsCount: st.projects.size,
+        projectNames: Array.from(st.projects),
+      };
+    })
+    .sort((a, b) => b.totalTasks - a.totalTasks);
 
   const thaiMonth = THAI_MONTH_NAMES[month - 1] || `เดือน ${month}`;
   const thaiYear = year > 2400 ? year : year + 543;
@@ -1377,6 +1470,11 @@ export function getMonthlyForemanInspectionCompliance(options: GetMonthlyInspect
     partialDays,
     missedDays,
     avgComplianceRate,
+    totalMonthTasks,
+    totalMonthUpdated,
+    totalMonthRoadblocks,
+    totalMonthPending,
+    foremanWorkloadStats,
   };
 }
 

@@ -673,5 +673,89 @@ describe('foremanDuty helper library', () => {
       expect(summary.pendingTasks).toBe(0);
       expect(summary.complianceRate).toBe(100);
     });
+
+    it('getMonthlyForemanInspectionCompliance aggregates monthly workload stats and attaches day tasks', () => {
+      const mockPlot1 = {
+        id: 'plot-1',
+        name: 'แปลง 01',
+        project_name: 'ไอลิน 6',
+        foreman_name: 'LEAB',
+      };
+      const mockPlot2 = {
+        id: 'plot-2',
+        name: 'แปลง 02',
+        project_name: 'ไอลิน 7',
+        foreman_name: 'VIEW',
+      };
+      const mockTask1 = { id: 't1', task_name: 'งานฐานราก' };
+      const mockTask2 = { id: 't2', task_name: 'งานเทเสา' };
+
+      const mockSchedules = {
+        'plot-1-t1': { planned_start: '2026-11-02', planned_end: '2026-11-04' },
+        'plot-2-t2': { planned_start: '2026-11-02', planned_end: '2026-11-03' },
+      };
+
+      const mockUpdates = [
+        {
+          id: 'up-1',
+          plot_id: 'plot-1',
+          task_template_id: 't1',
+          action: 'เทคอนกรีตฐานรากเรียบร้อย',
+          created_at: '2026-11-02T10:00:00.000Z',
+          progress: 50,
+          user_name: 'LEAB',
+        },
+        {
+          id: 'up-2',
+          plot_id: 'plot-2',
+          task_template_id: 't2',
+          action: 'แจ้งติดปัญหา: งานก่อนหน้ายังไม่เสร็จ / เลื่อน',
+          created_at: '2026-11-02T11:00:00.000Z',
+          progress: 0,
+          user_name: 'VIEW',
+        },
+      ];
+
+      const monthly = getMonthlyForemanInspectionCompliance({
+        year: 2026,
+        month: 11,
+        plots: [mockPlot1, mockPlot2],
+        taskTemplates: [mockTask1, mockTask2],
+        schedules: mockSchedules,
+        allUpdatesRecord: mockUpdates,
+        existingSnapshots: [],
+      });
+
+      // Total month scheduled task occurrences across active days:
+      // plot-1-t1 is scheduled on Nov 2, 3, 4 (3 days)
+      // plot-2-t2 is scheduled on Nov 2, 3 (2 days)
+      // Total = 5
+      expect(monthly.totalMonthTasks).toBe(5);
+      expect(monthly.foremanWorkloadStats).toHaveLength(2);
+
+      const leabStat = monthly.foremanWorkloadStats.find(s => s.foremanName === 'LEAB');
+      expect(leabStat).toBeDefined();
+      expect(leabStat?.totalTasks).toBe(3);
+      expect(leabStat?.plotsCount).toBe(1);
+      expect(leabStat?.projectNames).toContain('ไอลิน 6');
+      expect(leabStat?.sharePercentage).toBe(60); // 3 / 5 = 60%
+      expect(leabStat?.updatedTasks).toBe(1); // Nov 2 updated
+
+      const viewStat = monthly.foremanWorkloadStats.find(s => s.foremanName === 'VIEW');
+      expect(viewStat).toBeDefined();
+      expect(viewStat?.totalTasks).toBe(2);
+      expect(viewStat?.plotsCount).toBe(1);
+      expect(viewStat?.projectNames).toContain('ไอลิน 7');
+      expect(viewStat?.sharePercentage).toBe(40); // 2 / 5 = 40%
+      expect(viewStat?.roadblockTasks).toBe(1); // Nov 2 roadblock
+
+      // Check day tasks drilldown for Nov 2
+      const day2 = monthly.days.find(d => d.date === '2026-11-02');
+      expect(day2).toBeDefined();
+      expect(day2?.tasks).toBeDefined();
+      expect(day2?.tasks).toHaveLength(2);
+      expect(day2?.tasks?.map(t => t.project_name)).toEqual(expect.arrayContaining(['ไอลิน 6', 'ไอลิน 7']));
+      expect(day2?.tasks?.map(t => t.foreman_name)).toEqual(expect.arrayContaining(['LEAB', 'VIEW']));
+    });
   });
 });

@@ -133,7 +133,7 @@ describe('Finding 1 & 15: ForemanInspectionCalendar Loop & Project Filtering', (
     });
 
     // The calendar must show Dec 2026 and NOT be overwritten by Nov 2026 response
-    expect(screen.getByText(/ธันวาคม 2569/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/ธันวาคม 2569/i).length).toBeGreaterThanOrEqual(1);
   });
 
   it('Finding 15: filters plots and snapshots by projectName', async () => {

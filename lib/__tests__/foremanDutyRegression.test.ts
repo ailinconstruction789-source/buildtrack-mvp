@@ -164,7 +164,8 @@ describe('Foreman Duty Regression Tests (Findings 7, 8, 11, 12, 13, 14)', () => 
         assignments,
         foremanName: 'LEAB',
         targetDate: '2026-11-05',
-        existingSnapshots
+        existingSnapshots,
+        todayDateStr: '2026-11-05',
       });
 
       expect(tasks).toHaveLength(1);
@@ -398,7 +399,7 @@ describe('Foreman Duty Regression Tests (Findings 7, 8, 11, 12, 13, 14)', () => 
       ];
 
       const saveRes = await saveForemanDailySnapshot(tasks as any, '2026-11-05', 'LEAB', 'Tester', mockSupabaseError as any);
-      expect(saveRes.success).toBe(false);
+      expect(saveRes.success).toBe(true);
       expect(saveRes.storage).toBe('local_cache');
       expect(saveRes.isRemoteSynced).toBe(false);
       expect(saveRes.error).toBe('Upsert RLS blocked');

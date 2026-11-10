@@ -13,13 +13,26 @@ import {
   Loader2,
   RotateCw,
   Activity,
+  Briefcase,
+  CheckCircle2,
+  AlertTriangle,
+  Clock,
+  Search,
+  Building2,
+  Home,
+  CheckSquare,
+  ListFilter,
+  Layers,
 } from 'lucide-react';
 import {
   getMonthlyForemanInspectionCompliance,
   getPlotForemanName,
   loadForemanMonthlySnapshots,
+  getRoadblockReason,
   type MonthInspectionSummary,
   type DayInspectionCompliance,
+  type MonthForemanWorkloadStat,
+  type ForemanDailyTask,
 } from '@/lib/foremanDuty';
 
 interface ForemanInspectionCalendarProps {
@@ -84,6 +97,16 @@ export default function ForemanInspectionCalendar({
 
   // Selected Day Modal for Drill-down
   const [selectedDayDetail, setSelectedDayDetail] = useState<DayInspectionCompliance | null>(null);
+  const [selectedDayForeman, setSelectedDayForeman] = useState<string>('all');
+  const [dayTaskSearch, setDayTaskSearch] = useState<string>('');
+  const [dayTaskStatusFilter, setDayTaskStatusFilter] = useState<'all' | 'updated' | 'roadblock' | 'pending' | 'completed_early'>('all');
+
+  const handleOpenDayDetail = (day: DayInspectionCompliance) => {
+    setSelectedDayForeman('all');
+    setDayTaskSearch('');
+    setDayTaskStatusFilter('all');
+    setSelectedDayDetail(day);
+  };
 
   // Loaded monthly snapshots and fetch state
   const [monthlySnapshots, setMonthlySnapshots] = useState<any[]>(snapshots || []);
@@ -307,6 +330,45 @@ export default function ForemanInspectionCalendar({
     setCurrentMonth(now.getMonth() + 1);
   };
 
+  // Tasks for selected day detail drill-down
+  const dayTasks: ForemanDailyTask[] = selectedDayDetail?.tasks || [];
+
+  const filteredDayTasks = useMemo(() => {
+    return dayTasks.filter(task => {
+      // Foreman filter
+      if (selectedDayForeman !== 'all') {
+        const fm = task.foreman_name || 'ยังไม่ระบุ';
+        if (fm.toLowerCase() !== selectedDayForeman.toLowerCase()) return false;
+      }
+
+      // Status filter
+      if (dayTaskStatusFilter === 'updated' && (!task.is_updated_today || Boolean(task.status_reason) || task.is_completed_early)) {
+        return false;
+      }
+      if (dayTaskStatusFilter === 'roadblock' && !task.status_reason) {
+        return false;
+      }
+      if (dayTaskStatusFilter === 'pending' && (task.is_updated_today || Boolean(task.status_reason) || task.is_completed_early)) {
+        return false;
+      }
+      if (dayTaskStatusFilter === 'completed_early' && !task.is_completed_early) {
+        return false;
+      }
+
+      // Search query
+      if (dayTaskSearch.trim()) {
+        const q = dayTaskSearch.toLowerCase().trim();
+        const mTask = (task.task_name || '').toLowerCase().includes(q);
+        const mPlot = (task.plot_name || '').toLowerCase().includes(q);
+        const mProj = (task.project_name || '').toLowerCase().includes(q);
+        const mContractor = (task.contractor_name || '').toLowerCase().includes(q);
+        if (!mTask && !mPlot && !mProj && !mContractor) return false;
+      }
+
+      return true;
+    });
+  }, [dayTasks, selectedDayForeman, dayTaskStatusFilter, dayTaskSearch]);
+
   // First day padding in the calendar (0 = Sun, 1 = Mon...)
   const firstDayOfWeek = useMemo(() => {
     return new Date(currentYear, currentMonth - 1, 1).getDay();
@@ -480,6 +542,123 @@ export default function ForemanInspectionCalendar({
         </div>
       </div>
 
+      {/* 📊 สรุปภาพรวมภาระงานของโฟร์แมนประจำเดือน (Monthly Foreman Workload Distribution) */}
+      <div className={`bg-white rounded-3xl p-5 sm:p-6 border border-slate-200/90 shadow-xs space-y-4 transition-opacity duration-300 ${isDataLoading ? 'opacity-85' : 'opacity-100'}`}>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 bg-blue-50 text-blue-600 rounded-lg">
+                <Briefcase size={16} />
+              </div>
+              <h3 className="text-sm sm:text-base font-black text-slate-900">
+                สรุปภาระงานโฟร์แมนประจำเดือน {monthlyData.monthLabel}
+              </h3>
+            </div>
+            <p className="text-xs text-slate-500 font-medium">
+              ยอดงานตามแผนในเดือนนี้รวมทั้งสิ้น <span className="font-bold text-slate-900">{monthlyData.totalMonthTasks} งาน</span> (ตรวจคืบหน้า {monthlyData.totalMonthUpdated} งาน, แจ้งติดปัญหา {monthlyData.totalMonthRoadblocks} งาน, ค้าง {monthlyData.totalMonthPending} งาน)
+            </p>
+          </div>
+          {monthlyData.foremanWorkloadStats && monthlyData.foremanWorkloadStats.length > 0 && (
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shrink-0">
+              <span>โฟร์แมนที่ได้รับมอบหมาย:</span>
+              <span className="font-black text-blue-600 px-2 py-0.5 bg-blue-100 text-blue-800 rounded-md">
+                {monthlyData.foremanWorkloadStats.length} คน
+              </span>
+            </div>
+          )}
+        </div>
+
+        {!monthlyData.foremanWorkloadStats || monthlyData.foremanWorkloadStats.length === 0 ? (
+          <div className="py-6 text-center text-xs text-slate-400 italic">
+            ไม่มีข้อมูลแผนงานที่บันทึกไว้ในเดือนนี้
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5">
+            {monthlyData.foremanWorkloadStats.map(st => {
+              const isSelected = activeForeman && activeForeman.toLowerCase() === st.foremanName.toLowerCase();
+              return (
+                <div
+                  key={st.foremanName}
+                  onClick={() => handleForemanChange(isSelected ? 'all' : st.foremanName)}
+                  className={`p-4 rounded-2xl border transition-all flex flex-col justify-between space-y-3 cursor-pointer group ${
+                    isSelected
+                      ? 'bg-blue-50/70 border-blue-400 shadow-md ring-2 ring-blue-500/20'
+                      : 'bg-slate-50/50 hover:bg-slate-50 border-slate-200/80 hover:border-slate-300 hover:shadow-xs'
+                  }`}
+                  title={isSelected ? 'คลิกเพื่อยกเลิกการกรอง (ดูโฟร์แมนทุกคน)' : `คลิกเพื่อกรองเฉพาะโฟร์แมน ${st.foremanName}`}
+                >
+                  {/* Card Header: Foreman Name & Share Badge */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-8 h-8 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center font-black text-xs shrink-0 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                        <User size={15} />
+                      </div>
+                      <div className="min-w-0">
+                        <h4 className="text-xs font-black text-slate-900 truncate">
+                          โฟร์แมน: {st.foremanName}
+                        </h4>
+                        <p className="text-[10px] text-slate-500 font-medium truncate">
+                          {st.plotsCount} แปลง {st.projectNames.length > 0 ? `(${st.projectNames.join(', ')})` : ''}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-black rounded-lg shrink-0" title="สัดส่วนภาระงานที่ได้รับมอบหมายในเดือนนี้">
+                      {st.sharePercentage}% ของเดือน
+                    </span>
+                  </div>
+
+                  {/* Tasks Count & Rate */}
+                  <div className="flex items-baseline justify-between pt-1">
+                    <div>
+                      <span className="text-2xl font-black text-slate-900">{st.totalTasks}</span>
+                      <span className="text-[11px] text-slate-500 font-semibold ml-1">งานในเดือนนี้</span>
+                    </div>
+                    <span
+                      className={`px-2 py-0.5 rounded-lg text-xs font-black ${
+                        st.complianceRate >= 100
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                          : st.complianceRate >= 40
+                          ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                          : 'bg-rose-100 text-rose-800 border border-rose-200'
+                      }`}
+                      title="อัตราการเข้าตรวจงานสะสมทั้งเดือน"
+                    >
+                      {st.complianceRate}%
+                    </span>
+                  </div>
+
+                  {/* Progress bar */}
+                  <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+                    <div
+                      className={`h-1.5 rounded-full transition-all ${
+                        st.complianceRate >= 100 ? 'bg-emerald-500' : st.complianceRate >= 40 ? 'bg-blue-600' : 'bg-rose-500'
+                      }`}
+                      style={{ width: `${Math.min(100, st.complianceRate)}%` }}
+                    />
+                  </div>
+
+                  {/* Sub-breakdown */}
+                  <div className="grid grid-cols-3 gap-1 pt-1 text-center text-[10px] font-bold border-t border-slate-200/60">
+                    <div className="bg-emerald-50/80 p-1.5 rounded-xl text-emerald-700" title="รายงานความคืบหน้า">
+                      <span className="block text-[9px] font-medium text-emerald-600">คืบหน้า</span>
+                      {st.updatedTasks}
+                    </div>
+                    <div className="bg-amber-50/80 p-1.5 rounded-xl text-amber-700" title="แจ้งติดปัญหา">
+                      <span className="block text-[9px] font-medium text-amber-600">ติดปัญหา</span>
+                      {st.roadblockTasks}
+                    </div>
+                    <div className="bg-rose-50/80 p-1.5 rounded-xl text-rose-700" title="ยังไม่อัปเดต">
+                      <span className="block text-[9px] font-medium text-rose-600">ค้าง</span>
+                      {st.pendingTasks}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       {/* 📅 Monthly Calendar Grid */}
       <div className="space-y-2">
         {/* Day of Week Header */}
@@ -529,7 +708,7 @@ export default function ForemanInspectionCalendar({
               <div
                 key={day.date}
                 onClick={() => {
-                  setSelectedDayDetail(day);
+                  handleOpenDayDetail(day);
                 }}
                 className={`min-h-[75px] sm:min-h-[95px] p-2 sm:p-2.5 rounded-2xl border transition-all flex flex-col justify-between relative group ${
                   isClickable ? 'cursor-pointer hover:shadow-md' : 'cursor-default'
@@ -607,16 +786,16 @@ export default function ForemanInspectionCalendar({
 
       {/* 🔍 Day Detail Drill-Down Modal */}
       {selectedDayDetail && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-5 animate-in zoom-in-95 duration-200">
-            {/* Modal Header */}
-            <div className="flex items-start justify-between gap-3">
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-3 sm:p-4 pb-6 sm:pb-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-2xl sm:max-w-3xl w-full p-5 sm:p-6 shadow-2xl border border-slate-200 my-auto flex flex-col max-h-[90vh] sm:max-h-[88vh] animate-in zoom-in-95 duration-200">
+            {/* Modal Header (Fixed at top) */}
+            <div className="flex items-start justify-between gap-3 pb-3 border-b border-slate-100 shrink-0">
               <div className="space-y-1">
                 <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-blue-50 text-blue-700 rounded-lg text-xs font-black border border-blue-200">
                   <Calendar size={13} />
                   <span>บันทึกการเข้าตรวจงานประจำวัน</span>
                 </div>
-                <h3 className="text-lg font-black text-slate-900">
+                <h3 className="text-base sm:text-lg font-black text-slate-900">
                   วันที่ {selectedDayDetail.date}
                 </h3>
                 <p className="text-xs text-slate-500 font-medium">
@@ -629,78 +808,286 @@ export default function ForemanInspectionCalendar({
               </div>
               <button
                 onClick={() => setSelectedDayDetail(null)}
-                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition-all cursor-pointer"
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition-all cursor-pointer shrink-0"
               >
                 <X size={20} />
               </button>
             </div>
 
-            {/* Day Stats Cards */}
-            <div className="grid grid-cols-4 gap-2 text-center">
-              <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-                <p className="text-[10px] text-slate-500 font-bold">แผนงาน</p>
-                <p className="text-lg font-black text-slate-800">{selectedDayDetail.totalScheduled}</p>
+            {/* Scrollable Body */}
+            <div className="overflow-y-auto custom-scrollbar pr-1 py-3 space-y-4 flex-1">
+              {/* Day Stats Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                  <p className="text-[10px] text-slate-500 font-bold">แผนงาน</p>
+                  <p className="text-lg font-black text-slate-800">{selectedDayDetail.totalScheduled}</p>
+                </div>
+                <div className="bg-emerald-50 p-2.5 rounded-xl border border-emerald-200">
+                  <p className="text-[10px] text-emerald-700 font-bold">รายงานความคืบหน้า</p>
+                  <p className="text-lg font-black text-emerald-700">{selectedDayDetail.updated}</p>
+                </div>
+                <div className="bg-amber-50 p-2.5 rounded-xl border border-amber-200">
+                  <p className="text-[10px] text-amber-700 font-bold">ติดปัญหา</p>
+                  <p className="text-lg font-black text-amber-700">{selectedDayDetail.roadblock}</p>
+                </div>
+                <div className="bg-rose-50 p-2.5 rounded-xl border border-rose-200">
+                  <p className="text-[10px] text-rose-700 font-bold">ยังไม่อัปเดต</p>
+                  <p className="text-lg font-black text-rose-700">{selectedDayDetail.pending}</p>
+                </div>
               </div>
-              <div className="bg-emerald-50 p-2.5 rounded-xl border border-emerald-200">
-                <p className="text-[10px] text-emerald-700 font-bold">อัปเดตแล้ว</p>
-                <p className="text-lg font-black text-emerald-700">{selectedDayDetail.updated}</p>
-              </div>
-              <div className="bg-amber-50 p-2.5 rounded-xl border border-amber-200">
-                <p className="text-[10px] text-amber-700 font-bold">ติดปัญหา</p>
-                <p className="text-lg font-black text-amber-700">{selectedDayDetail.roadblock}</p>
-              </div>
-              <div className="bg-rose-50 p-2.5 rounded-xl border border-rose-200">
-                <p className="text-[10px] text-rose-700 font-bold">ยังไม่อัปเดต</p>
-                <p className="text-lg font-black text-rose-700">{selectedDayDetail.pending}</p>
-              </div>
-            </div>
 
-            {/* Breakdown by Foreman on this date */}
-            <div className="space-y-2">
-              <p className="text-xs font-black text-slate-700 uppercase tracking-wider">
-                ผลการตรวจงานแยกตามโฟร์แมนในวันนี้:
-              </p>
-              {Object.keys(selectedDayDetail.foremanStats).length === 0 ? (
-                <p className="text-xs text-slate-400 italic py-2">ไม่มีงานตามแผนในวันนี้</p>
-              ) : (
-                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                  {Object.entries(selectedDayDetail.foremanStats).map(([fmName, st]) => (
+              {/* Breakdown by Foreman on this date */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-black text-slate-700 uppercase tracking-wider">
+                    ผลการตรวจงานแยกตามโฟร์แมนในวันนี้:
+                  </p>
+                  <span className="text-[10px] text-slate-400 font-medium">
+                    คลิกเพื่อกรองดูรายการงานเฉพาะโฟร์แมน
+                  </span>
+                </div>
+
+                {Object.keys(selectedDayDetail.foremanStats).length === 0 ? (
+                  <p className="text-xs text-slate-400 italic py-2">ไม่มีงานตามแผนในวันนี้</p>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {/* All foremen toggle pill */}
                     <div
-                      key={fmName}
-                      className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between gap-3 text-xs"
+                      onClick={() => setSelectedDayForeman('all')}
+                      className={`p-2.5 rounded-xl border transition-all flex items-center justify-between gap-2 text-xs cursor-pointer ${
+                        selectedDayForeman === 'all'
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-xs ring-2 ring-blue-300'
+                          : 'bg-slate-50 hover:bg-slate-100/80 border-slate-200 text-slate-700'
+                      }`}
                     >
                       <div className="flex items-center gap-2">
-                        <div className="p-1.5 bg-blue-100 text-blue-700 rounded-lg">
-                          <User size={13} />
+                        <div className={`p-1 rounded-lg ${selectedDayForeman === 'all' ? 'bg-blue-500 text-white' : 'bg-slate-200 text-slate-600'}`}>
+                          <Layers size={13} />
                         </div>
-                        <div>
-                          <p className="font-black text-slate-800">โฟร์แมน: {fmName}</p>
-                          <p className="text-[10px] text-slate-500">
-                            ตรวจ {st.updated + st.roadblock} / {st.total} งาน (ค้าง {st.pending})
-                          </p>
-                        </div>
+                        <span className="font-black">โฟร์แมนทุกคน (รวมทุกไซต์)</span>
                       </div>
-
-                      <span
-                        className={`px-2 py-1 rounded-lg text-xs font-black ${
-                          st.rate >= 100
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : st.rate >= 40
-                            ? 'bg-amber-100 text-amber-800'
-                            : 'bg-rose-100 text-rose-800'
-                        }`}
-                      >
-                        {st.rate}%
+                      <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-md ${selectedDayForeman === 'all' ? 'bg-blue-700 text-white' : 'bg-slate-200 text-slate-600'}`}>
+                        {selectedDayDetail.totalScheduled} งาน
                       </span>
                     </div>
-                  ))}
+
+                    {Object.entries(selectedDayDetail.foremanStats).map(([fmName, st]) => {
+                      const isFmActive = selectedDayForeman.toLowerCase() === fmName.toLowerCase();
+                      return (
+                        <div
+                          key={fmName}
+                          onClick={() => setSelectedDayForeman(isFmActive ? 'all' : fmName)}
+                          className={`p-2.5 rounded-xl border transition-all flex items-center justify-between gap-2 text-xs cursor-pointer ${
+                            isFmActive
+                              ? 'bg-blue-600 text-white border-blue-600 shadow-xs ring-2 ring-blue-300'
+                              : 'bg-slate-50 hover:bg-slate-100/80 border-slate-200 text-slate-700'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className={`p-1 rounded-lg shrink-0 ${isFmActive ? 'bg-blue-500 text-white' : 'bg-blue-100 text-blue-700'}`}>
+                              <User size={13} />
+                            </div>
+                            <div className="min-w-0">
+                              <p className={`font-black truncate ${isFmActive ? 'text-white' : 'text-slate-800'}`}>
+                                โฟร์แมน: {fmName}
+                              </p>
+                              <p className={`text-[10px] truncate ${isFmActive ? 'text-blue-100' : 'text-slate-500'}`}>
+                                ตรวจ {st.updated + st.roadblock} / {st.total} งาน (ค้าง {st.pending})
+                              </p>
+                            </div>
+                          </div>
+
+                          <span
+                            className={`px-2 py-0.5 rounded-lg text-xs font-black shrink-0 ${
+                              isFmActive
+                                ? 'bg-white text-blue-700'
+                                : st.rate >= 100
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : st.rate >= 40
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-rose-100 text-rose-800'
+                            }`}
+                          >
+                            {st.rate}%
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* 📋 รายการงานเจาะลึกในวันนี้ (Task Drill-down List) */}
+              <div className="space-y-2 pt-2 border-t border-slate-100">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                      <ListFilter size={13} className="text-blue-600" />
+                      <span>รายการงานในวันนี้ ({filteredDayTasks.length} รายการ)</span>
+                      {selectedDayForeman !== 'all' && (
+                        <span className="text-[10px] font-bold text-blue-600 normal-case">
+                          [โฟร์แมน: {selectedDayForeman}]
+                        </span>
+                      )}
+                    </h4>
+                  </div>
+
+                  {/* Filter Pills */}
+                  <div className="flex items-center gap-1 overflow-x-auto custom-scrollbar pb-1 text-[10px] font-bold">
+                    <button
+                      type="button"
+                      onClick={() => setDayTaskStatusFilter('all')}
+                      className={`px-2 py-1 rounded-lg transition-all shrink-0 cursor-pointer ${
+                        dayTaskStatusFilter === 'all'
+                          ? 'bg-slate-800 text-white'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      ทั้งหมด ({dayTasks.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDayTaskStatusFilter('updated')}
+                      className={`px-2 py-1 rounded-lg transition-all shrink-0 cursor-pointer ${
+                        dayTaskStatusFilter === 'updated'
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
+                      }`}
+                    >
+                      คืบหน้า ({selectedDayDetail.updated})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDayTaskStatusFilter('roadblock')}
+                      className={`px-2 py-1 rounded-lg transition-all shrink-0 cursor-pointer ${
+                        dayTaskStatusFilter === 'roadblock'
+                          ? 'bg-amber-600 text-white'
+                          : 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200'
+                      }`}
+                    >
+                      ติดปัญหา ({selectedDayDetail.roadblock})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDayTaskStatusFilter('pending')}
+                      className={`px-2 py-1 rounded-lg transition-all shrink-0 cursor-pointer ${
+                        dayTaskStatusFilter === 'pending'
+                          ? 'bg-rose-600 text-white'
+                          : 'bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200'
+                      }`}
+                    >
+                      ยังไม่อัปเดต ({selectedDayDetail.pending})
+                    </button>
+                  </div>
                 </div>
-              )}
+
+                {/* Search Bar */}
+                <div className="relative">
+                  <Search size={14} className="absolute left-3 top-2.5 text-slate-400" />
+                  <input
+                    type="text"
+                    value={dayTaskSearch}
+                    onChange={e => setDayTaskSearch(e.target.value)}
+                    placeholder="ค้นหาชื่องาน, แปลงบ้าน, หรือโครงการ..."
+                    className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all placeholder:text-slate-400"
+                  />
+                  {dayTaskSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setDayTaskSearch('')}
+                      className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 p-0.5 rounded-full cursor-pointer"
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
+
+                {/* Task List */}
+                <div className="space-y-2 max-h-60 sm:max-h-72 overflow-y-auto custom-scrollbar pr-1">
+                  {filteredDayTasks.length === 0 ? (
+                    <div className="py-8 text-center text-xs text-slate-400 space-y-1">
+                      <p className="font-semibold">ไม่พบรายการงานที่ตรงกับเงื่อนไข</p>
+                      <p className="text-[11px] text-slate-400">ลองเปลี่ยนตัวกรองสถานะหรือค้นหาด้วยคำอื่น</p>
+                    </div>
+                  ) : (
+                    filteredDayTasks.map(task => {
+                      const reasonMeta = getRoadblockReason(task.status_reason);
+                      return (
+                        <div
+                          key={task.id}
+                          className="p-3 bg-slate-50/80 hover:bg-white rounded-xl border border-slate-200/80 hover:border-blue-200 hover:shadow-xs transition-all space-y-2"
+                        >
+                          {/* Row 1: Badges & Status */}
+                          <div className="flex items-start justify-between gap-2 flex-wrap">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded-md text-[10px] font-black border border-blue-200">
+                                🏢 {task.project_name || 'ไอลิน'}
+                              </span>
+                              <span className="px-2 py-0.5 bg-slate-200 text-slate-800 rounded-md text-[10px] font-black">
+                                🏠 {task.plot_name}
+                              </span>
+                              <span className="px-2 py-0.5 bg-purple-50 text-purple-700 rounded-md text-[10px] font-semibold border border-purple-200/60">
+                                👤 {task.foreman_name}
+                              </span>
+                            </div>
+
+                            {/* Status Badge */}
+                            <div className="shrink-0">
+                              {task.is_completed_early ? (
+                                <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 border border-emerald-300 text-[10px] font-black rounded-lg flex items-center gap-1">
+                                  <CheckCircle2 size={11} className="stroke-[2.5]" />
+                                  <span>เสร็จ 100% ล่วงหน้า</span>
+                                </span>
+                              ) : task.status_reason ? (
+                                <span className="px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-black rounded-lg flex items-center gap-1">
+                                  <span>{reasonMeta?.icon || '⚠️'}</span>
+                                  <span className="truncate max-w-[130px]">{reasonMeta?.label || 'แจ้งติดปัญหา'}</span>
+                                </span>
+                              ) : task.is_updated_today ? (
+                                <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-black rounded-lg flex items-center gap-1">
+                                  <CheckCircle2 size={11} className="stroke-[2.5]" />
+                                  <span>รายงานความคืบหน้า {task.current_progress}%</span>
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-black rounded-lg flex items-center gap-1">
+                                  <Clock size={11} />
+                                  <span>ยังไม่อัปเดต</span>
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Row 2: Task Name */}
+                          <div>
+                            <p className="text-xs font-black text-slate-900">
+                              {task.task_name}
+                            </p>
+                            {task.contractor_name && (
+                              <p className="text-[10px] text-slate-500 font-medium mt-0.5">
+                                👷 ผู้รับเหมา: {task.contractor_name}
+                              </p>
+                            )}
+                          </div>
+
+                          {/* Row 3: Roadblock Note (if any) */}
+                          {task.status_reason && task.status_note && (
+                            <div className="p-2 bg-amber-50 border border-amber-200/80 rounded-lg text-[10px] text-amber-900 font-medium">
+                              <span className="font-bold">หมายเหตุ: </span>
+                              {task.status_note}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
             </div>
 
-            {/* Action Buttons */}
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 flex-wrap">
+            {/* Pinned Footer Actions */}
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 shrink-0 bg-white flex-wrap">
               <button
+                type="button"
                 onClick={() => setSelectedDayDetail(null)}
                 className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-all cursor-pointer"
               >
@@ -709,6 +1096,7 @@ export default function ForemanInspectionCalendar({
 
               {onViewDayActivity && (
                 <button
+                  type="button"
                   onClick={() => {
                     const d = selectedDayDetail.date;
                     setSelectedDayDetail(null);
@@ -723,6 +1111,7 @@ export default function ForemanInspectionCalendar({
 
               {onSelectDate && (
                 <button
+                  type="button"
                   onClick={() => {
                     const d = selectedDayDetail.date;
                     setSelectedDayDetail(null);
