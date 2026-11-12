@@ -8,7 +8,7 @@ import BillingCycleHeatmap from './Analytics/BillingCycleHeatmap';
 import ForemanInspectionCalendar from './ForemanInspectionCalendar';
 
 export default function OwnerAnalyticsDashboard({
-  projects, plots, taskTemplates, schedules: rawSchedules, defects, allUpdatesRecord: rawAllUpdatesRecord, foremenList, latestUpdatesMap: rawLatestUpdatesMap, contractors, assignments, weatherInfo, qcSePerformance
+  projects, plots, taskTemplates, schedules: rawSchedules, defects, defectUpdates, allUpdatesRecord: rawAllUpdatesRecord, foremenList, latestUpdatesMap: rawLatestUpdatesMap, contractors, assignments, weatherInfo, qcSePerformance
 }: any) {
 
   const [selectedProjectId, setSelectedProjectId] = useState<string>('all');
@@ -1504,6 +1504,9 @@ export default function OwnerAnalyticsDashboard({
             assignments={assignments}
             allUpdatesRecord={rawAllUpdatesRecord}
             foremenList={foremenList}
+            defects={defects}
+            defectUpdates={defectUpdates}
+            contractors={contractors}
             title="ปฏิทินตรวจสอบการเข้างานของโฟร์แมนประจำเดือน (Foreman Inspection Audit)"
           />
         </div>

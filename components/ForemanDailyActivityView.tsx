@@ -390,6 +390,13 @@ export default function ForemanDailyActivityView({
                       <span>{item.categoryLabel}</span>
                     </span>
 
+                    {/* Handover Type Badge */}
+                    {item.is_handover && (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-purple-100 text-purple-800 border border-purple-300 rounded-xl font-black text-[11px]">
+                        🏠 ตรวจรับบ้าน
+                      </span>
+                    )}
+
                     {/* Plot Badge */}
                     <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-50 text-slate-700 rounded-xl font-bold border border-slate-200">
                       <Building2 size={12} className="text-slate-500" />
@@ -472,13 +479,13 @@ export default function ForemanDailyActivityView({
 
                 {/* Right Section: Quick Navigation Buttons */}
                 <div className="flex md:flex-col items-center md:items-end justify-between md:justify-center gap-2 shrink-0 border-t md:border-t-0 pt-3 md:pt-0 border-slate-100">
-                  {item.category === 'defect' && item.defectObj && onNavigateToDefectChat ? (
+                  {item.defectObj && onNavigateToDefectChat ? (
                     <button
                       onClick={() => onNavigateToDefectChat(item.plotObj, item.defectObj)}
-                      className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black shadow-xs transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
+                      className={`px-4 py-2 ${item.is_handover ? 'bg-purple-600 hover:bg-purple-700' : 'bg-rose-600 hover:bg-rose-700'} text-white rounded-xl text-xs font-black shadow-xs transition-all flex items-center gap-1.5 cursor-pointer active:scale-95`}
                     >
                       <Wrench size={13} />
-                      <span>ดูรายละเอียด Defect</span>
+                      <span>{item.is_handover ? 'ห้องแชท / อัปเดต Defect' : 'ดูรายละเอียด Defect'}</span>
                     </button>
                   ) : item.taskObj && onNavigateToTaskChat ? (
                     <button

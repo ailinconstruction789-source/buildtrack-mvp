@@ -1,24 +1,43 @@
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import HouseHandoverView from '../HouseHandoverView';
+import { supabase } from '@/lib/supabase';
+
+const supabaseSpies = vi.hoisted(() => ({
+  updateIn: vi.fn().mockResolvedValue({ error: null }),
+  updateEq: vi.fn().mockResolvedValue({ error: null }),
+  update: vi.fn(),
+  insertSelect: vi.fn().mockResolvedValue({ data: [], error: null }),
+  insert: vi.fn(),
+  deleteEq: vi.fn().mockResolvedValue({ error: null }),
+}));
 
 // Mock Supabase
-vi.mock('@/lib/supabase', () => ({
-  supabase: {
-    from: vi.fn(() => ({
-      update: vi.fn(() => ({
-        eq: vi.fn().mockResolvedValue({ error: null })
+vi.mock('@/lib/supabase', () => {
+  supabaseSpies.update.mockImplementation(() => ({
+    eq: supabaseSpies.updateEq,
+    in: supabaseSpies.updateIn,
+  }));
+  supabaseSpies.insert.mockImplementation((rows: any[]) => {
+    supabaseSpies.insertSelect.mockResolvedValueOnce({
+      data: (rows || []).map((r, i) => ({ id: `new-def-${i + 1}`, progress: 0, ...r })),
+      error: null,
+    });
+    return { select: supabaseSpies.insertSelect };
+  });
+  return {
+    supabase: {
+      from: vi.fn(() => ({
+        update: supabaseSpies.update,
+        insert: supabaseSpies.insert,
+        delete: vi.fn(() => ({
+          eq: supabaseSpies.deleteEq,
+        })),
       })),
-      insert: vi.fn(() => ({
-        select: vi.fn().mockResolvedValue({ data: [], error: null })
-      })),
-      delete: vi.fn(() => ({
-        eq: vi.fn().mockResolvedValue({ error: null })
-      }))
-    }))
-  }
-}));
+    },
+  };
+});
 
 describe('HouseHandoverView - Mobile Schedule Editing', () => {
   const mockPlot = {
@@ -322,6 +341,297 @@ describe('HouseHandoverView - Mobile Schedule Editing', () => {
       expect(screen.getByText(/เพิ่มงานตรวจรับเพิ่มเติม \(เฉพาะ Admin\)/i)).toBeInTheDocument();
       expect(screen.getByText(/🛋️ งานเฟอร์นิเจอร์/i)).toBeInTheDocument();
       expect(screen.getByText(/🪟 งานผ้าม่าน\/มุ้งลวด/i)).toBeInTheDocument();
+    });
+  });
+
+  describe('Handover Foreman Assignment & Handoff Flow', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      supabaseSpies.updateEq.mockResolvedValue({ error: null });
+      supabaseSpies.updateIn.mockResolvedValue({ error: null });
+      supabaseSpies.update.mockImplementation(() => ({
+        eq: supabaseSpies.updateEq,
+        in: supabaseSpies.updateIn,
+      }));
+      supabaseSpies.insert.mockImplementation((rows: any[]) => {
+        supabaseSpies.insertSelect.mockResolvedValueOnce({
+          data: (rows || []).map((r, i) => ({ id: `new-def-${i + 1}`, progress: 0, ...r })),
+          error: null,
+        });
+        return { select: supabaseSpies.insertSelect };
+      });
+    });
+
+    it('immediately assigns incoming foreman when plot has no handover foreman yet', async () => {
+      const plotWithConstructionFm = {
+        ...mockPlot,
+        foreman_name: 'LEAB',
+      };
+
+      render(
+        <HouseHandoverView
+          {...defaultProps}
+          selectedPlot={plotWithConstructionFm}
+          defects={[]}
+          currentUserRole="Foreman"
+          currentUserName="VIEW"
+        />
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /เพิ่มรายการแจ้งซ่อม \(ลูกค้า\)/i }));
+      fireEvent.click(screen.getByText('เก็บงานสีผนัง'));
+      fireEvent.click(screen.getByRole('button', { name: /เพิ่มรายการเข้าสู่รอบตรวจ/i }));
+
+      await vi.waitFor(() => {
+        expect(supabaseSpies.insert).toHaveBeenCalledTimes(1);
+      });
+      const insertedRows = supabaseSpies.insert.mock.calls[0][0];
+      expect(insertedRows[0].foreman_name).toBe('VIEW');
+      expect(supabaseSpies.update).toHaveBeenCalledWith(
+        expect.objectContaining({ handover_foreman_name: 'VIEW' })
+      );
+    });
+
+    it('prompts when a second foreman adds work, and supports takeover preserving completed items to original foreman', async () => {
+      const plotHandledByView = {
+        ...mockPlot,
+        foreman_name: 'LEAB',
+        handover_foreman_name: 'VIEW',
+      };
+      const existingDefects = [
+        {
+          id: 'def-done-1',
+          plot_id: 'A01',
+          description: 'แก้: งานเก่าที่เสร็จแล้ว',
+          defect_stage: 'handover',
+          handover_cycle: 1,
+          inspection_round: 1,
+          status: 'resolved',
+          progress: 100,
+          foreman_name: null,
+        },
+        {
+          id: 'def-wip-1',
+          plot_id: 'A01',
+          description: 'แก้: งานเก่าที่ยังค้าง',
+          defect_stage: 'handover',
+          handover_cycle: 1,
+          inspection_round: 1,
+          status: 'in_progress',
+          progress: 40,
+          foreman_name: 'VIEW',
+        },
+      ];
+
+      render(
+        <HouseHandoverView
+          {...defaultProps}
+          selectedPlot={plotHandledByView}
+          defects={existingDefects}
+          currentUserRole="Foreman"
+          currentUserName="SOMCHAI"
+        />
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /เพิ่มรายการแจ้งซ่อม \(ลูกค้า\)/i }));
+      fireEvent.click(screen.getByText('เก็บงานสีผนัง'));
+      fireEvent.click(screen.getByRole('button', { name: /เพิ่มรายการเข้าสู่รอบตรวจ/i }));
+
+      // Handoff modal prompts clearly
+      expect(await screen.findByText(/พบโฟร์แมนเดิมกำลังดูแลงานตรวจรับ/i)).toBeInTheDocument();
+      expect(screen.getByText(/หลังนี้มีโฟร์แมน “VIEW” ทำงานอยู่นะ/i)).toBeInTheDocument();
+
+      // Choose takeover
+      fireEvent.click(screen.getByRole('button', { name: /🔄 มาต่องาน/i }));
+
+      await vi.waitFor(() => {
+        expect(supabaseSpies.insert).toHaveBeenCalledTimes(1);
+      });
+
+      // Completed legacy row frozen under VIEW, incomplete row moved to SOMCHAI, new row created under SOMCHAI
+      expect(supabaseSpies.update).toHaveBeenCalledWith({ foreman_name: 'VIEW' });
+      expect(supabaseSpies.updateIn).toHaveBeenCalledWith('id', ['def-done-1']);
+      expect(supabaseSpies.update).toHaveBeenCalledWith({ foreman_name: 'SOMCHAI' });
+      expect(supabaseSpies.updateIn).toHaveBeenCalledWith('id', ['def-wip-1']);
+      expect(supabaseSpies.insert.mock.calls[0][0][0].foreman_name).toBe('SOMCHAI');
+      expect(supabaseSpies.update).toHaveBeenCalledWith(
+        expect.objectContaining({ handover_foreman_name: 'SOMCHAI' })
+      );
+    });
+
+    it('keeps original foreman when QC or Admin adds handover defects (Rule 1.1)', async () => {
+      const plotHandledByView = {
+        ...mockPlot,
+        foreman_name: 'LEAB',
+        handover_foreman_name: 'VIEW',
+      };
+
+      render(
+        <HouseHandoverView
+          {...defaultProps}
+          selectedPlot={plotHandledByView}
+          defects={[]}
+          currentUserRole="QC"
+          currentUserName="QC-Som"
+        />
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /เพิ่มรายการแจ้งซ่อม \(ลูกค้า\)/i }));
+      fireEvent.click(screen.getByText('เก็บงานสีผนัง'));
+      fireEvent.click(screen.getByRole('button', { name: /เพิ่มรายการเข้าสู่รอบตรวจ/i }));
+
+      // No handoff prompt; defect attributed to current handover foreman VIEW
+      expect(screen.queryByText(/พบโฟร์แมนเดิมกำลังดูแลงานตรวจรับ/i)).not.toBeInTheDocument();
+      await vi.waitFor(() => {
+        expect(supabaseSpies.insert).toHaveBeenCalledTimes(1);
+      });
+      expect(supabaseSpies.insert.mock.calls[0][0][0].foreman_name).toBe('VIEW');
+    });
+  });
+
+  describe('Admin/Owner handover foreman reassignment modal (transfer vs fix_cycle)', () => {
+    it('supports fix_cycle mode to reattribute all cycle handover defects and sync handover snapshots without modifying construction foreman', async () => {
+      const setDefectsMock = vi.fn();
+      const plotAilin4 = {
+        id: 'plot-ailin4-1',
+        name: 'แปลง 04',
+        project_name: 'ไอลิน 4',
+        foreman_name: 'Auen',
+        handover_cycle: 1,
+        inspection_round: 1,
+        handover_status: 'pending',
+      };
+      const cycleDefects = [
+        {
+          id: 'def-active',
+          plot_id: 'plot-ailin4-1',
+          description: 'เก็บสีผนัง',
+          defect_stage: 'handover',
+          handover_cycle: 1,
+          inspection_round: 1,
+          status: 'pending',
+          progress: 20,
+          foreman_name: null,
+        },
+        {
+          id: 'def-done',
+          plot_id: 'plot-ailin4-1',
+          description: 'ซ่อมฝ้า',
+          defect_stage: 'handover',
+          handover_cycle: 1,
+          inspection_round: 1,
+          status: 'resolved',
+          progress: 100,
+          foreman_name: null,
+        },
+      ];
+
+      render(
+        <HouseHandoverView
+          {...defaultProps}
+          selectedPlot={plotAilin4}
+          defects={cycleDefects}
+          setDefects={setDefectsMock}
+          currentUserRole="Admin"
+          currentUserName="AdminUser"
+          foremenList={[
+            { username: 'DEN', name: 'Den', role: 'Foreman' },
+            { username: 'Auen', name: 'Auen', role: 'Foreman' },
+          ]}
+        />
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /เปลี่ยน \/ ระบุโฟร์แมน/i }));
+      fireEvent.change(screen.getByDisplayValue('Auen'), { target: { value: 'DEN' } });
+      fireEvent.click(screen.getByText(/แก้ไขชื่อผู้รับผิดชอบที่ระบุผิด \(ทั้งรอบตรวจรับนี้\)/i));
+      fireEvent.click(screen.getByRole('button', { name: /บันทึกผู้รับผิดชอบ/i }));
+
+      await waitFor(() => {
+        expect(supabaseSpies.updateIn).toHaveBeenCalledWith('id', ['def-active', 'def-done']);
+      });
+
+      const calledTables = (supabase.from as any).mock.calls.map((c: any[]) => c[0]);
+      expect(calledTables).toContain('defects');
+      expect(calledTables).toContain('plots');
+      expect(calledTables).toContain('foreman_daily_duty_snapshots');
+
+      const updatePayloads = supabaseSpies.update.mock.calls.map((c: any[]) => c[0]);
+      expect(updatePayloads).toContainEqual({ foreman_name: 'DEN' });
+      expect(updatePayloads).toContainEqual(
+        expect.objectContaining({ handover_foreman_name: 'DEN' })
+      );
+      expect(supabaseSpies.updateEq).toHaveBeenCalledWith('id', 'plot-ailin4-1');
+      expect(setDefectsMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('supports transfer mode to freeze completed handover items on Auen and move incomplete items to DEN without rewriting snapshots', async () => {
+      const plotAilin4 = {
+        id: 'plot-ailin4-2',
+        name: 'แปลง 05',
+        project_name: 'ไอลิน 4',
+        foreman_name: 'Auen',
+        handover_foreman_name: 'Auen',
+        handover_cycle: 1,
+        inspection_round: 1,
+        handover_status: 'pending',
+      };
+      const cycleDefects = [
+        {
+          id: 'def-incomplete',
+          plot_id: 'plot-ailin4-2',
+          description: 'ปรับระดับกระเบื้อง',
+          defect_stage: 'handover',
+          handover_cycle: 1,
+          inspection_round: 1,
+          status: 'in_progress',
+          progress: 30,
+          foreman_name: null,
+        },
+        {
+          id: 'def-complete',
+          plot_id: 'plot-ailin4-2',
+          description: 'ติดบัวพื้น',
+          defect_stage: 'handover',
+          handover_cycle: 1,
+          inspection_round: 1,
+          status: 'resolved',
+          progress: 100,
+          foreman_name: null,
+        },
+      ];
+
+      render(
+        <HouseHandoverView
+          {...defaultProps}
+          selectedPlot={plotAilin4}
+          defects={cycleDefects}
+          currentUserRole="Owner"
+          currentUserName="OwnerUser"
+          foremenList={[
+            { username: 'DEN', name: 'Den', role: 'Foreman' },
+            { username: 'Auen', name: 'Auen', role: 'Foreman' },
+          ]}
+        />
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /เปลี่ยน \/ ระบุโฟร์แมน/i }));
+      fireEvent.change(screen.getByDisplayValue('Auen'), { target: { value: 'DEN' } });
+      fireEvent.click(screen.getByRole('button', { name: /บันทึกผู้รับผิดชอบ/i }));
+
+      await waitFor(() => {
+        expect(supabaseSpies.updateIn).toHaveBeenCalledWith('id', ['def-complete']);
+        expect(supabaseSpies.updateIn).toHaveBeenCalledWith('id', ['def-incomplete']);
+      });
+
+      const updatePayloads = supabaseSpies.update.mock.calls.map((c: any[]) => c[0]);
+      expect(updatePayloads).toContainEqual({ foreman_name: 'Auen' });
+      expect(updatePayloads).toContainEqual({ foreman_name: 'DEN' });
+      expect(updatePayloads).toContainEqual(
+        expect.objectContaining({ handover_foreman_name: 'DEN' })
+      );
+
+      const calledTables = (supabase.from as any).mock.calls.map((c: any[]) => c[0]);
+      expect(calledTables).not.toContain('foreman_daily_duty_snapshots');
     });
   });
 });

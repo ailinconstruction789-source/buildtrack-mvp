@@ -5,6 +5,8 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { appendConstructionPreviewFiles } from '@/lib/constructionPreviewFiles';
+import RoadblockReasonCallout from './RoadblockReasonCallout';
+import { parseRoadblockDisplay, stripInternalRefMarkers } from '@/lib/foremanDuty';
 
 interface DefectProgressViewProps {
   view: string;
@@ -206,19 +208,30 @@ const DefectProgressView = function DefectProgressView(props: DefectProgressView
                                             </button>
                                          )}
 
-                                         <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-2 sm:mb-4 gap-1 sm:gap-2">
-                                           <p className={`text-[9px] sm:text-xs font-bold uppercase italic tracking-widest leading-tight ${isQCPass ? 'text-emerald-600' : isQCFail ? 'text-rose-600' : isQC ? 'text-purple-400' : (authorName === 'Site Engineer' || update.role === 'Site Engineer') ? 'text-blue-400' : 'text-slate-400'}`}>
-                                             {update.action || 'อัปเดตงานแก้ไข'} • {authorName} • {update.progress ?? 0}%
-                                           </p>
-                                          <span className={`text-[8px] sm:text-xs text-[#86868b] font-bold bg-[#f5f5f7] border border-slate-100 ${isMobileLayout ? 'px-2 py-0.5' : 'px-3 py-1.5'} rounded-lg shrink-0 w-fit`}>{new Date(update.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })} • {new Date(update.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.</span>
-                                          {/* 🌟 ป้ายสภาพอากาศ ณ เวลาที่รายงาน */}
-                                           {update.weather_info && (
-                                             <span className={`text-[8px] sm:text-xs text-sky-700 font-bold bg-sky-50 border border-sky-100 ${isMobileLayout ? 'px-2 py-0.5' : 'px-3 py-1.5'} rounded-lg shrink-0 w-fit flex items-center gap-1`} title="สภาพอากาศขณะรายงาน">
-                                                 {update.weather_info}
-                                             </span>
-                                           )}
-                                        </div>
-                                        <p className={`text-[#1d1d1f] ${isMobileLayout ? 'text-xs mb-2' : 'text-sm sm:text-base mb-4'} font-medium leading-relaxed`}>{update.note}</p>
+                                         {(() => {
+                                           const roadblockDisplay = parseRoadblockDisplay(update.note, update.action);
+                                           return (
+                                             <>
+                                               <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-2 sm:mb-4 gap-1 sm:gap-2">
+                                                 <p className={`text-[9px] sm:text-xs font-bold uppercase italic tracking-widest leading-tight ${roadblockDisplay ? 'text-amber-600' : isQCPass ? 'text-emerald-600' : isQCFail ? 'text-rose-600' : isQC ? 'text-purple-400' : (authorName === 'Site Engineer' || update.role === 'Site Engineer') ? 'text-blue-400' : 'text-slate-400'}`}>
+                                                   {roadblockDisplay ? `${roadblockDisplay.icon} แจ้งติดปัญหา: ${roadblockDisplay.reasonLabel}` : (update.action || 'อัปเดตงานแก้ไข')} • {authorName} • {update.progress ?? 0}%
+                                                 </p>
+                                                 <span className={`text-[8px] sm:text-xs text-[#86868b] font-bold bg-[#f5f5f7] border border-slate-100 ${isMobileLayout ? 'px-2 py-0.5' : 'px-3 py-1.5'} rounded-lg shrink-0 w-fit`}>{new Date(update.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })} • {new Date(update.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.</span>
+                                                 {/* 🌟 ป้ายสภาพอากาศ ณ เวลาที่รายงาน */}
+                                                 {update.weather_info && (
+                                                   <span className={`text-[8px] sm:text-xs text-sky-700 font-bold bg-sky-50 border border-sky-100 ${isMobileLayout ? 'px-2 py-0.5' : 'px-3 py-1.5'} rounded-lg shrink-0 w-fit flex items-center gap-1`} title="สภาพอากาศขณะรายงาน">
+                                                       {update.weather_info}
+                                                   </span>
+                                                 )}
+                                               </div>
+                                               {roadblockDisplay ? (
+                                                 <RoadblockReasonCallout roadblock={roadblockDisplay} compact className={isMobileLayout ? 'mb-2' : 'mb-4'} />
+                                               ) : (
+                                                 <p className={`text-[#1d1d1f] ${isMobileLayout ? 'text-xs mb-2' : 'text-sm sm:text-base mb-4'} font-medium leading-relaxed`}>{stripInternalRefMarkers(update.note)}</p>
+                                               )}
+                                             </>
+                                           );
+                                         })()}
                                         {update.image_urls && (() => {
                                           const imgList = update.image_urls.split(',').filter((u: string) => u.trim() !== '');
                                           if (imgList.length === 0) return null;

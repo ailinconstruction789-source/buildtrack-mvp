@@ -3,9 +3,10 @@ import React from 'react';
 import { supabase } from '@/lib/supabase';
 import { 
   Activity, Calendar, Camera, HardHat, Loader2, Monitor, Pickaxe, PlusCircle, UserCog, Users, ImageIcon, Truck, XCircle, Send, Clock, CheckCircle, ShieldAlert, Search, Package,
-  Droplets, Zap, Eye, X, CheckCircle2, AlertCircle
+  Droplets, Zap, Eye, X, CheckCircle2, AlertCircle, ShieldCheck
 } from 'lucide-react';
 import HouseHandoverView from './HouseHandoverView';
+import QCPlotTaskTab from './qc/QCPlotTaskTab';
 import ReceiptUploadModal from './ReceiptUploadModal';
 import MeterPhotoConfirmationModal from './MeterPhotoConfirmationModal';
 import MeterStatusBadges from './MeterStatusBadges';
@@ -96,6 +97,7 @@ interface HouseDetailViewProps {
   activeHouseTab?: string;
   setActiveHouseTab?: (t: string) => void;
   isOwner?: boolean;
+  foremenList?: any[];
   currentUserName?: string;
 }
 
@@ -236,7 +238,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
     showAlert, showToast,
     materialReceipts, setMaterialReceipts, handleForceCompleteAllTasks,
     isUploadingLayer, contractors, simulatedStatus, editingHouseType,
-    isOwner: propsIsOwner, currentUserName: propsCurrentUserName
+    isOwner: propsIsOwner, foremenList = [], currentUserName: propsCurrentUserName
   } = props;
 
   const isOwner = propsIsOwner || currentUserRole?.toLowerCase() === 'owner';
@@ -1165,6 +1167,12 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                        >
                          <ShieldAlert size={18} /> ตรวจรับบ้าน (Handover)
                        </button>
+                        <button 
+                          onClick={() => setActiveHouseTab('qc-config')} 
+                          className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 transition-all ${activeHouseTab === 'qc-config' ? 'text-indigo-600 border-b-4 border-indigo-600 bg-indigo-50' : 'text-slate-500 hover:bg-slate-50 border-b-4 border-transparent'}`}
+                        >
+                          <ShieldCheck size={18} /> ฟอร์มและแบบ QC
+                        </button>
                      </div>
 
                      {activeHouseTab === 'construction' && (() => {
@@ -2051,6 +2059,8 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                          defects={defects || []} 
                          setDefects={setDefects || (() => {})} 
                          currentUserRole={currentUserRole}
+                         currentUserName={currentUserName}
+                         foremenList={foremenList}
                          resetHandoverCycle={resetHandoverCycle}
                          updateInspectionRound={updateInspectionRound}
                          fetchAllData={fetchAllData}
@@ -2060,6 +2070,20 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                          schedules={schedules}
                        />
                      )}
+
+                      {activeHouseTab === 'qc-config' && (
+                        <QCPlotTaskTab
+                          plot={selectedPlot}
+                          taskTemplates={taskTemplates.filter((t: any) => t.house_type_id === selectedPlot?.house_type_id)}
+                          currentUserRole={currentUserRole}
+                          loggedInUsername={currentUserName}
+                          onPreviewTaskQC={(task: any) => {
+                            setSelectedTask(task);
+                            setTaskReturnView('house-detail');
+                            setView('task-progress');
+                          }}
+                        />
+                      )}
                    </div>
                  
                )}

@@ -6,6 +6,10 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { appendConstructionPreviewFiles } from '@/lib/constructionPreviewFiles';
+import { resolveTaskInspectionConfig } from '@/lib/qc/qcConfigService';
+import QCInspectionRunner from '@/components/qc/QCInspectionRunner';
+import QCInspectionReportModal from '@/components/qc/QCInspectionReportModal';
+import { FileText, RefreshCw } from 'lucide-react';
 import {
   formatRoadblockActionLabel,
   parseRoadblockDisplay,
@@ -79,6 +83,45 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
   const historyReady = historyState.key === selectionKey && historyState.status === 'ready';
   const hasCurrentHistory = historyState.key === selectionKey && historyState.hasData;
 
+  // 📋 สถานะ QC ฟอร์มใหม่
+  const [qcResolution, setQcResolution] = useState<any>(null);
+  const [qcLoading, setQcLoading] = useState(false);
+  const [showQCRunner, setShowQCRunner] = useState(false);
+  const [showQCReport, setShowQCReport] = useState(false);
+
+  const loadQCResolution = React.useCallback(async () => {
+    if (!selectedTask?.id || !selectedPlot?.id || !selectedPlot?.project_name) {
+      setQcResolution(null);
+      return;
+    }
+    setQcLoading(true);
+    try {
+      const res = await resolveTaskInspectionConfig({
+        projectName: selectedPlot.project_name,
+        plotId: selectedPlot.id,
+        houseTypeId: selectedPlot.house_type_id || selectedTask.house_type_id,
+        taskTemplateId: selectedTask.id,
+        taskName: selectedTask.task_name
+      });
+      setQcResolution(res);
+    } catch (err: any) {
+      setQcResolution({
+        state: 'load_error',
+        inspectionMethod: 'form_v2',
+        isLocked: false,
+        errorMessage: err?.message || 'เกิดข้อผิดพลาดในการโหลดการตั้งค่า QC'
+      });
+    } finally {
+      setQcLoading(false);
+    }
+  }, [selectedPlot?.project_name, selectedPlot?.id, selectedPlot?.house_type_id, selectedTask?.id, selectedTask?.house_type_id]);
+
+  useEffect(() => {
+    if (view === 'task-progress' && selectedTask?.id && selectedPlot?.id && selectedPlot?.project_name) {
+      void loadQCResolution();
+    }
+  }, [view, selectedTask?.id, selectedPlot?.id, selectedPlot?.project_name, loadQCResolution]);
+
   useEffect(() => {
     if (view !== 'task-progress' || !selectedTask || !selectedPlot || !loggedInUser) {
       successfulSelection.current = null;
@@ -134,11 +177,30 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                     <div className="min-w-0">
                                         <h1 className={`${isMobileLayout ? 'text-lg' : 'text-2xl sm:text-4xl'} font-bold text-white leading-tight mb-1 sm:mb-2 italic uppercase tracking-tight truncate`}>{selectedTask.task_name}</h1>
                                         <p className="text-[10px] sm:text-sm text-slate-400 font-bold uppercase tracking-widest">Plot {selectedPlot.id} / Task {selectedTask.task_order}</p>
+                                        {qcResolution?.inspectionMethod === 'form_v2' && (
+                                          <div className="flex items-center gap-2 mt-1">
+                                            {qcResolution.state === 'form_v2_ready' ? (
+                                              <span className="bg-purple-500/20 text-purple-300 border border-purple-400/30 text-[9px] sm:text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
+                                                <span>📋 QC ฟอร์มใหม่ {qcResolution.formTemplate ? `(${qcResolution.formTemplate.title})` : ''}</span>
+                                                {qcResolution.isLocked && <span title="ล็อกเวอร์ชันตรวจแล้ว">🔒</span>}
+                                              </span>
+                                            ) : qcResolution.state === 'incomplete_config' ? (
+                                              <span className="bg-amber-500/20 text-amber-300 border border-amber-400/30 text-[9px] sm:text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
+                                                ⚠️ ยังตั้งค่าไม่ครบ
+                                              </span>
+                                            ) : null}
+                                          </div>
+                                        )}
                                     </div>
                                 </div>
                                
                                <div className="flex items-center gap-4">
-                                 {historyReady && isTaskCompleted && !isMobileLayout && (
+                                 {qcResolution?.latestInspection && !isMobileLayout && (
+                                     <button onClick={() => setShowQCReport(true)} className="bg-purple-600/30 hover:bg-purple-600/50 text-white font-bold py-2 px-3 rounded-xl flex items-center gap-1.5 transition-colors text-xs border border-purple-400/30">
+                                       <FileText size={15}/> รายงาน QC (รอบ {qcResolution.latestInspection.round_number})
+                                     </button>
+                                  )}
+                                  {historyReady && isTaskCompleted && !isMobileLayout && (
                                     <button onClick={handleOpenExportModal} className="bg-white/20 hover:bg-white/30 text-white font-bold py-2 px-4 rounded-xl flex items-center gap-2 transition-colors text-sm border border-white/20">
                                       <Printer size={16}/> ส่งออกรูปตั้งเบิก
                                     </button>
@@ -325,7 +387,72 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                    </div>
                                  ) : ( <div className={`bg-[#f5f5f7] text-slate-400 py-3 sm:py-4 rounded-xl sm:rounded-[1.5rem] font-bold text-center uppercase tracking-widest border border-black/5 ${isMobileLayout ? 'text-[9px]' : 'text-xs sm:text-sm'}`}>รอโฟร์แมน 100% หรือ รอ QC ตรวจ</div> )
                                ) : isQC ? (
-                                 isPendingQC ? (
+                                  qcResolution?.inspectionMethod === 'form_v2' ? (
+                                    qcResolution.state === 'incomplete_config' ? (
+                                      <div className={`bg-amber-50 text-amber-800 py-3 sm:py-4 px-4 sm:px-6 rounded-xl sm:rounded-[1.5rem] font-bold text-center border-2 border-amber-300 flex flex-col items-center justify-center gap-1`}>
+                                        <span className={`flex items-center gap-1.5 uppercase tracking-widest text-amber-700 ${isMobileLayout ? 'text-[10px]' : 'text-xs sm:text-sm'}`}>
+                                          <AlertTriangle size={isMobileLayout ? 16 : 20} className="text-amber-600"/> ยังตั้งค่าไม่ครบ
+                                        </span>
+                                        <span className={`font-medium text-amber-700/90 ${isMobileLayout ? 'text-[9px]' : 'text-xs'}`}>
+                                          {qcResolution.errorMessage || 'งานนี้ถูกกำหนดให้ใช้ QC ฟอร์มใหม่ แต่ยังไม่ได้ระบุแม่แบบฟอร์มหรือแบบแปลน'}
+                                        </span>
+                                        <span className="text-[9px] text-amber-600/80 font-bold mt-0.5">
+                                          (ระบบล็อกไม่ให้เริ่มตรวจ กรุณาแจ้ง Admin และไม่อนุญาตให้ใช้ระบบเดิมข้ามขั้นตอน)
+                                        </span>
+                                      </div>
+                                    ) : qcResolution.state === 'load_error' ? (
+                                      <div className={`bg-rose-50 text-rose-700 py-3 sm:py-4 px-4 sm:px-6 rounded-xl sm:rounded-[1.5rem] font-bold text-center border border-rose-200 flex flex-col items-center justify-center gap-2`}>
+                                        <span className={`flex items-center gap-1.5 uppercase tracking-widest text-rose-600 ${isMobileLayout ? 'text-[10px]' : 'text-xs sm:text-sm'}`}>
+                                          <AlertCircle size={isMobileLayout ? 16 : 20}/> โหลดการตั้งค่า QC ไม่สำเร็จ
+                                        </span>
+                                        <span className={`font-medium ${isMobileLayout ? 'text-[9px]' : 'text-xs'}`}>{qcResolution.errorMessage}</span>
+                                        <button onClick={loadQCResolution} className="px-3 py-1 bg-rose-600 text-white rounded-lg text-xs font-bold hover:bg-rose-700">ลองใหม่</button>
+                                      </div>
+                                    ) : qcResolution.state === 'form_v2_ready' ? (
+                                      isPendingQC ? (
+                                        <div className="bg-purple-50/80 border border-purple-200 p-3 sm:p-4 rounded-xl sm:rounded-2xl space-y-2.5">
+                                          <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                              <span className="bg-purple-600 text-white text-[10px] px-2 py-0.5 rounded-md font-bold">
+                                                QC แบบฟอร์มใหม่
+                                              </span>
+                                              <span className="text-xs font-bold text-purple-900 truncate">
+                                                {qcResolution.formTemplate?.title} (v{qcResolution.formTemplate?.version})
+                                              </span>
+                                            </div>
+                                            {qcResolution.referenceDrawing && (
+                                              <span className="text-[10px] text-purple-700 font-bold bg-white px-2 py-0.5 rounded border border-purple-200">
+                                                📐 มีแบบแปลน
+                                              </span>
+                                            )}
+                                          </div>
+                                          <div className="flex gap-2">
+                                            <button
+                                              onClick={() => setShowQCRunner(true)}
+                                              className="flex-1 bg-purple-600 hover:bg-purple-700 active:scale-95 text-white font-bold py-2.5 sm:py-3 px-4 rounded-xl text-xs sm:text-sm shadow-md flex items-center justify-center gap-2 transition-all"
+                                            >
+                                              <FileText size={16} />
+                                              <span>{qcResolution.latestInspection ? `เปิดฟอร์มตรวจ QC (รอบที่ ${qcResolution.latestInspection.round_number})` : 'เริ่มตรวจ QC แบบฟอร์มใหม่'}</span>
+                                            </button>
+                                            {qcResolution.latestInspection && (
+                                              <button
+                                                onClick={() => setShowQCReport(true)}
+                                                className="bg-white hover:bg-purple-100 text-purple-700 border border-purple-300 font-bold py-2.5 sm:py-3 px-3 rounded-xl text-xs sm:text-sm shadow-sm flex items-center gap-1"
+                                                title="ดูรายงานผลตรวจ"
+                                              >
+                                                <Printer size={16} />
+                                                <span className="hidden sm:inline">ดูรายงาน</span>
+                                              </button>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <div className={`bg-[#f5f5f7] text-slate-400 py-3 sm:py-4 rounded-xl sm:rounded-[1.5rem] font-bold text-center uppercase tracking-widest border border-black/5 ${isMobileLayout ? 'text-[9px]' : 'text-xs sm:text-sm'}`}>รองานผ่าน Site Engineer ก่อน</div>
+                                      )
+                                    ) : (
+                                      <div className="bg-slate-100 text-slate-500 py-3 rounded-xl font-bold text-center text-xs">ระบบ QC ฟอร์มใหม่</div>
+                                    )
+                                  ) : (isPendingQC ? (
                                    <div className={`flex flex-col ${isMobileLayout ? 'gap-2' : 'gap-3 sm:gap-4'}`}>
                                      <div className={`flex ${isMobileLayout ? 'gap-1.5' : 'gap-2 sm:gap-3'} items-center`}>
                                          <label className={`text-slate-400 hover:text-purple-600 ${isMobileLayout ? 'p-2 rounded-lg' : 'p-2 sm:p-4 rounded-xl sm:rounded-[1.5rem]'} bg-[#f5f5f7] cursor-pointer shadow-sm active:scale-90 transition-transform flex flex-col items-center justify-center`} title="รูปผลงาน"><Camera size={isMobileLayout ? 18 : 24} /><span className="text-[8px] font-bold mt-0.5">ผลงาน</span><input type="file" multiple accept="image/*" className="hidden" onChange={(e) => { setSelectedFiles(appendConstructionPreviewFiles(selectedFiles, Array.from(e.target.files || []), maxImages)); }} /></label>
@@ -337,7 +464,8 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                      </div>
                                    </div>
                                  ) : ( <div className={`bg-[#f5f5f7] text-slate-400 py-3 sm:py-4 rounded-xl sm:rounded-[1.5rem] font-bold text-center uppercase tracking-widest border border-black/5 ${isMobileLayout ? 'text-[9px]' : 'text-xs sm:text-sm'}`}>รองานผ่าน Site Engineer ก่อน</div> )
-                               ) : isProcurement || isProjectPlanner || isOwner ? (
+                                  )
+                                ) : isProcurement || isProjectPlanner || isOwner ? (
                                    <div className={`bg-[#f5f5f7] text-[#86868b] py-3 sm:py-4 px-4 sm:px-6 rounded-xl sm:rounded-[1.5rem] font-bold text-center uppercase tracking-widest border border-black/5 flex items-center justify-center gap-2 ${isMobileLayout ? 'text-[10px]' : 'text-xs sm:text-sm'}`}><AlertCircle size={18}/> ใช้สิทธิ์อัปเดตงานไม่ได้</div>
                                ) : (
                                  isPendingSE || isPendingQC ? (
@@ -428,6 +556,44 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                            </footer>
                        </div>
                    </div>
+               )}
+
+               {/* 🌟 QC INSPECTION RUNNER MODAL 🌟 */}
+               {showQCRunner && qcResolution && qcResolution.formTemplate && (
+                 <div className="fixed inset-0 z-[1000] bg-black/70 backdrop-blur-sm flex items-center justify-center p-2 sm:p-6 animate-in fade-in duration-200">
+                   <div className="w-full max-w-6xl h-[92vh] flex flex-col">
+                     <QCInspectionRunner
+                       resolution={qcResolution}
+                       plotId={selectedPlot.id}
+                       projectName={selectedPlot.project_name || ''}
+                       taskTemplateId={selectedTask.id}
+                       taskName={selectedTask.task_name || ''}
+                       houseTypeId={selectedPlot.house_type_id || selectedTask.house_type_id || ''}
+                       loggedInUser={{
+                         username: loggedInUser?.username || loggedInUser?.name || 'User',
+                         id: loggedInUser?.id,
+                         role: currentUserRole
+                       }}
+                       currentUserRole={currentUserRole}
+                       onBack={() => setShowQCRunner(false)}
+                       onInspectionUpdated={async () => {
+                         setHistoryRetry(r => r + 1);
+                         await loadQCResolution();
+                       }}
+                       isMobileLayout={isMobileLayout}
+                     />
+                   </div>
+                 </div>
+               )}
+
+               {/* 🌟 QC INSPECTION REPORT MODAL 🌟 */}
+               {showQCReport && qcResolution?.latestInspection && (
+                 <QCInspectionReportModal
+                   isOpen={showQCReport}
+                   onClose={() => setShowQCReport(false)}
+                   inspection={qcResolution.latestInspection}
+                   houseTypeName={selectedPlot?.house_type_name || ''}
+                 />
                )}
 
                {/* 🌟 1. ADMIN / PROCUREMENT FORMS 🌟 */}

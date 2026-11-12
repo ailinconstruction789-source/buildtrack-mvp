@@ -404,6 +404,9 @@ const Sidebar = React.memo(({
                         {(isAdmin || isQC || isSiteEngineer || isOwner || isForeman) && (
                           <button onClick={() => setView('defects')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'defects' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><ShieldAlert size={18} /> Defect Tracking</button>
                         )}
+                        {(isAdmin || isOwner || isQC) && (
+                          <button onClick={() => setView('qc-standard-config')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'qc-standard-config' ? 'bg-indigo-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`} title="ตั้งค่า QC ฟอร์มใหม่"><ShieldCheck size={18} /> ตั้งค่า QC ฟอร์มใหม่</button>
+                        )}
                       </nav>
                     </div>
                   )}

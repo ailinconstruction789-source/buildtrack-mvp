@@ -884,19 +884,32 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
   };
 
   const resetHandoverCycle = async (plotId: string, currentCycle: number) => {
+    const basePayload = {
+      handover_cycle: (currentCycle || 1) + 1,
+      inspection_round: 0,
+      handover_status: 'pending',
+      handover_completed_at: null,
+      handover_completed_by: null,
+      inspection_round1_date: null,
+      inspection_round1_status: 'pending',
+      inspection_round2_date: null,
+      inspection_round2_status: 'pending',
+      handover_notes: null
+    };
     try {
-      const { error } = await supabase.from('plots').update({
-        handover_cycle: (currentCycle || 1) + 1,
-        inspection_round: 0,
-        handover_status: 'pending',
-        handover_completed_at: null,
-        handover_completed_by: null,
-        inspection_round1_date: null,
-        inspection_round1_status: 'pending',
-        inspection_round2_date: null,
-        inspection_round2_status: 'pending',
-        handover_notes: null
+      let { error } = await supabase.from('plots').update({
+        ...basePayload,
+        handover_foreman_name: null,
+        handover_foreman_assigned_at: null,
       }).eq('id', plotId);
+      if (
+        error &&
+        (String(error.message || '').includes('handover_foreman') || error.code === '42703' || error.code === 'PGRST204')
+      ) {
+        console.warn('Notice: handover_foreman_name column not yet migrated, falling back to base reset:', error.message);
+        const fallbackRes = await supabase.from('plots').update(basePayload).eq('id', plotId);
+        error = fallbackRes.error;
+      }
       if (error) throw error;
       await fetchPlotDetails(plotId);
       await fetchAllData();

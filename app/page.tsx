@@ -22,6 +22,10 @@ import {
   parseRoadblockDisplay,
   stripInternalRefMarkers,
 } from '@/lib/foremanDuty';
+import {
+  isUnassignedForemanName,
+  backfillUnassignedSnapshotsForPlot,
+} from '@/lib/handoverForeman';
 import RoadblockReasonCallout from '@/components/RoadblockReasonCallout';
 
 // Enable only with the reviewed actor grants, presence RPC and role mappings.
@@ -41,6 +45,7 @@ const DailyActivityHub = dynamic(() => import('@/components/DailyActivityHub'));
 const DailySiteActivitiesView = dynamic(() => import('@/components/DailySiteActivitiesView'));
 const HousePromotionsView = dynamic(() => import('@/components/HousePromotionsView'));
 const QCPerformanceDashboard = dynamic(() => import('@/components/QCPerformanceDashboard'));
+const QCStandardConfigView = dynamic(() => import('@/components/qc/QCStandardConfigView'));
 const ExecutiveAnalytics = dynamic(() => import('@/components/ExecutiveAnalytics'));
 const MasterGanttChart = dynamic(() => import('@/components/MasterGanttChart'));
 const PlannerScoringDashboard = dynamic(() => import('@/components/PlannerScoringDashboard'));
@@ -1021,11 +1026,13 @@ export default function ConstructionApp() {
     memo: string;
     floor_count: number | null;
     is_infrastructure?: boolean;
-  }>({ id: '', type_name: '', memo: '', floor_count: null });
+  }>({ id: '', type_name: '', memo: '', floor_count: null, is_infrastructure: false });
   const [isEditingType, setIsEditingType] = useState(false);
   // 🌟 ฟังก์ชันบันทึกข้อมูลแบบบ้าน (เพิ่มใหม่ / แก้ไข)
   const handleSaveHouseType = async () => {
-    if (!houseTypeForm.type_name.trim()) return showAlert('แจ้งเตือน', 'กรุณาระบุชื่อแบบบ้านครับ');
+    if (!houseTypeForm.type_name.trim()) {
+      return showAlert('แจ้งเตือน', houseTypeForm.is_infrastructure ? 'กรุณาระบุชื่องานสาธารณูปโภคครับ' : 'กรุณาระบุชื่อแบบบ้านครับ');
+    }
 
     // สำหรับแบบบ้านใหม่ที่ไม่ใช่งานโครงสร้างพื้นฐาน ต้องบังคับให้เลือก 1 หรือ 2 ชั้น
     if (!isEditingType && !houseTypeForm.is_infrastructure) {
@@ -1036,7 +1043,9 @@ export default function ConstructionApp() {
 
     // ตรวจสอบค่า floor_count ให้เป็น 1, 2 หรือ null เท่านั้น
     let floorCountValue: number | null = null;
-    if (houseTypeForm.floor_count === 1 || houseTypeForm.floor_count === 2) {
+    if (houseTypeForm.is_infrastructure) {
+      floorCountValue = null;
+    } else if (houseTypeForm.floor_count === 1 || houseTypeForm.floor_count === 2) {
       floorCountValue = houseTypeForm.floor_count;
     } else if (houseTypeForm.floor_count !== null && houseTypeForm.floor_count !== undefined) {
       return showAlert('แจ้งเตือน', 'ค่าจำนวนชั้นไม่ถูกต้อง ต้องเป็น 1 หรือ 2 ชั้น เท่านั้นครับ');
@@ -1050,25 +1059,27 @@ export default function ConstructionApp() {
           .update({
             type_name: houseTypeForm.type_name.trim(),
             memo: houseTypeForm.memo || '',
-            floor_count: floorCountValue
+            floor_count: floorCountValue,
+            is_infrastructure: !!houseTypeForm.is_infrastructure
           })
           .eq('id', houseTypeForm.id);
         if (error) throw error;
-        showToast('แก้ไขข้อมูลแบบบ้านเรียบร้อยแล้ว', "success");
+        showToast(houseTypeForm.is_infrastructure ? 'แก้ไขข้อมูลงวดงานสาธารณูปโภคเรียบร้อยแล้ว' : 'แก้ไขข้อมูลแบบบ้านเรียบร้อยแล้ว', "success");
       } else {
         // เพิ่มแบบบ้านใหม่
         const { error } = await supabase.from('house_types')
           .insert([{
             type_name: houseTypeForm.type_name.trim(),
             memo: houseTypeForm.memo || '',
-            floor_count: floorCountValue
+            floor_count: floorCountValue,
+            is_infrastructure: !!houseTypeForm.is_infrastructure
           }]);
         if (error) throw error;
-        showToast('เพิ่มแบบบ้านใหม่เข้าสู่ระบบเรียบร้อยแล้ว', "success");
+        showToast(houseTypeForm.is_infrastructure ? 'เพิ่มงานสาธารณูปโภคเข้าสู่ระบบเรียบร้อยแล้ว' : 'เพิ่มแบบบ้านใหม่เข้าสู่ระบบเรียบร้อยแล้ว', "success");
       }
 
       // ล้างค่าฟอร์มและโหลดข้อมูลใหม่
-      setHouseTypeForm({ id: '', type_name: '', memo: '', floor_count: null });
+      setHouseTypeForm({ id: '', type_name: '', memo: '', floor_count: null, is_infrastructure: false });
       setIsEditingType(false);
       await fetchAllData();
     } catch (e: any) {
@@ -2009,6 +2020,11 @@ export default function ConstructionApp() {
     const newId = editPlotModal.id.trim(); // ชื่อใหม่ (เช่น A-02)
 
     try {
+      const prevForeman = String(editPlotModal.plot?.foreman_name || '').trim();
+      const nextForeman = String(editPlotModal.foreman_name || '').trim();
+      const prevWasUnassigned = isUnassignedForemanName(prevForeman);
+      const foremanChanged = nextForeman.toLowerCase() !== prevForeman.toLowerCase();
+
       // 1. อัปเดตตารางแปลงหลัก (plots)
       const { error: plotError } = await supabase
         .from('plots')
@@ -2016,11 +2032,19 @@ export default function ConstructionApp() {
           id: newId,
           house_type_id: editPlotModal.house_type_id,
           foreman_name: editPlotModal.foreman_name,
-          ...(editPlotModal.foreman_name !== editPlotModal.plot?.foreman_name ? { foreman_assigned_at: new Date().toISOString() } : {}),
+          ...(foremanChanged && !prevWasUnassigned
+            ? { foreman_assigned_at: new Date().toISOString() }
+            : prevWasUnassigned && nextForeman && editPlotModal.plot?.foreman_assigned_at
+            ? { foreman_assigned_at: null }
+            : {}),
           selling_price: parseFloat(editPlotModal.selling_price) || 0
         })
         .eq('id', oldId);
       if (plotError) throw plotError;
+
+      if (nextForeman && !isUnassignedForemanName(nextForeman)) {
+        await backfillUnassignedSnapshotsForPlot(supabase, newId, nextForeman);
+      }
 
       // 2. 🌟 สำคัญ: อัปเดตชื่อใน "ข้อมูลผังโครงการ" (layout_data) เพื่อไม่ให้ชื่อในแผนที่หาย
       if (selectedProject && selectedProject.layout_data) {
@@ -2776,7 +2800,7 @@ export default function ConstructionApp() {
     
     // 1. จาก defect_updates ที่เกิดขึ้นวันนี้ (และช่างเข้างาน)
     (defectUpdates || []).forEach((du: any) => {
-      if (new Date(du.created_at).toLocaleDateString('en-CA') === todayDateString && du.is_worker_present !== false && du.action !== 'ไม่มีช่างเข้างาน') {
+      if (new Date(du.created_at).toLocaleDateString('en-CA') === todayDateString && du.is_worker_present !== false && du.action !== 'ไม่มีช่างเข้างาน' && !parseRoadblockDisplay(du.note, du.action)) {
         const defect = (defects || []).find((d: any) => String(d.id) === String(du.defect_id));
         if (defect?.plot_id) set.add(String(defect.plot_id));
       }
@@ -3832,7 +3856,7 @@ export default function ConstructionApp() {
                             (typeof update.action === 'string' && (update.action.includes('ไม่อนุมัติ') || update.action.includes('ไม่ผ่าน') || update.action.includes('แจ้งแก้ไข'))) ||
                             update.progress === 95
                           );
-                          const roadblockDisplay = !isHandover && !isQCPassed && !isQCRejected
+                          const roadblockDisplay = !isQCPassed && !isQCRejected
                             ? parseRoadblockDisplay(update.text_content, update.action)
                             : null;
                           const displayText = stripInternalRefMarkers(update.text_content);
@@ -3889,7 +3913,11 @@ export default function ConstructionApp() {
                                 {/* ป้ายแสดงสถานะด้านขวาบนหัวการ์ด */}
                                 <div className="flex items-center gap-1.5 ml-auto">
                                   {isHandover ? (
-                                    update.is_handover_completed || update.progress === 100 ? (
+                                    !update.is_handover_completed && roadblockDisplay ? (
+                                      <span className="bg-amber-500/95 text-white font-black text-[10px] sm:text-xs px-2.5 py-1 rounded-xl shadow-sm flex items-center gap-1">
+                                        <span>{roadblockDisplay.icon}</span> แจ้งติดปัญหา
+                                      </span>
+                                    ) : update.is_handover_completed || update.progress === 100 ? (
                                       <span className="bg-gradient-to-r from-purple-500 to-emerald-500 text-white font-black text-[10px] sm:text-xs px-3 py-1 rounded-xl shadow-sm flex items-center gap-1.5 uppercase tracking-wider animate-in zoom-in-95">
                                         <Award size={13} className="stroke-[2.5]" /> ตรวจรับผ่าน 100%
                                       </span>
@@ -4233,12 +4261,16 @@ export default function ConstructionApp() {
                   }}
                   defects={defects}
                   onNavigateToDefectChat={(plot: any, defect: any) => {
+                    setUpdates([]);
+                    setProgressValue(Number(defect?.progress || 0));
                     setSelectedPlot(plot);
                     setSelectedDefect(defect);
                     setDefectReturnView('foreman-workspace');
                     setView('defect-progress');
                   }}
                   inspectionQueue={inspectionQueue}
+                  defectUpdates={defectUpdates}
+                  contractors={contractors}
                   setSelectedGlobalProject={setSelectedProject}
                   onNavigateToTaskChat={(plot: any, task: any) => {
                     setSelectedPlot(plot);
@@ -4857,6 +4889,7 @@ export default function ConstructionApp() {
                         contractors={contractors}
                         assignments={assignments}
                         weatherInfo={weatherInfo}
+                        defectUpdates={defectUpdates}
                         qcSePerformance={qcSePerformance}
                       />
                       {(isAdmin || isOwner || isProjectPlanner || isSiteEngineer) && (
@@ -4888,6 +4921,22 @@ export default function ConstructionApp() {
                     isAdmin={isAdmin}
                     isOwner={isOwner}
                     inspectionQueue={inspectionQueue}
+                  />
+                </div>
+              )}
+
+              {/* 📋 View: QC Standard Config (QC แบบฟอร์มใหม่) */}
+              {view === 'qc-standard-config' && (isAdmin || isOwner || isQC) && (
+                <div className="animate-in slide-in-from-bottom-4 duration-500 w-full mx-auto p-4 sm:p-8">
+                  <QCStandardConfigView
+                    selectedProject={selectedProject?.name || ''}
+                    currentUserRole={currentUserRole}
+                    loggedInUsername={loggedInUser?.username || loggedInUser?.name || 'Admin'}
+                    houseTypes={houseTypes}
+                    taskTemplates={taskTemplates}
+                    plots={plots}
+                    projects={projects}
+                    onSelectProject={setSelectedProject}
                   />
                 </div>
               )}
@@ -5365,6 +5414,7 @@ export default function ConstructionApp() {
                   fetchAllData={fetchAllData} resetHandoverCycle={resetHandoverCycle} updateInspectionRound={updateInspectionRound}
                   showAlert={showAlert} showToast={showToast}
                   isOwner={isOwner}
+                  foremenList={foremenList}
                   currentUserName={loggedInUser?.username || loggedInUser?.name || currentUserRole}
                 />
               )}
@@ -5610,6 +5660,8 @@ export default function ConstructionApp() {
                   setView={setView}
                   setSelectedProject={setSelectedProject}
                   selectedProject={selectedProject}
+                  projects={projects}
+                  plots={plots}
                   batchPlots={batchPlots}
                   setBatchPlots={setBatchPlots}
                   houseTypes={houseTypes}
@@ -5618,6 +5670,7 @@ export default function ConstructionApp() {
                   handleDownloadTemplate={handleDownloadTemplate}
                   handleImportExcel={handleImportExcel}
                   handleAddPlot={handleAddPlot}
+                  fetchAllData={fetchAllData}
                 />
               )}
               </>

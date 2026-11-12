@@ -1,3 +1,5 @@
+import { parseRoadblockDisplay } from './foremanDuty';
+
 type FeedTimestamp = string | number | Date | null | undefined;
 
 export interface ConstructionFeedTask {
@@ -37,6 +39,7 @@ export interface ConstructionFeedDefectUpdate {
   created_by?: string | null;
   progress?: unknown;
   note?: string | null;
+  action?: unknown;
   image_urls?: unknown;
   created_at?: FeedTimestamp;
 }
@@ -112,6 +115,10 @@ export function buildConstructionLiveFeed({
     const task = tasksById.get(taskId);
     const contractor = contractorsById.get(String(defect.contractor_id));
     const isCompleted = update.progress === 100;
+    const roadblockInfo = parseRoadblockDisplay(
+      typeof update.note === 'string' ? update.note : '',
+      typeof update.action === 'string' ? update.action : ''
+    );
     items.push({
       id: `defect-upd-${update.id}`,
       defect,
@@ -120,8 +127,10 @@ export function buildConstructionLiveFeed({
       task_name: defect.description || task?.task_name || 'งานแก้ไขตรวจรับมอบบ้าน',
       user_name: update.created_by || 'ช่างผู้รับเหมา',
       role: update.created_by && update.created_by.includes('QC') ? 'QC'
-        : (update.created_by && update.created_by.includes('Foreman') ? 'Foreman' : 'ช่างซ่อม/ผู้รับเหมา'),
-      action: isCompleted ? 'แก้ไข Defect เสร็จสิ้น 100%' : `อัปเดตงานแก้ไข Defect (${update.progress}%)`,
+        : (roadblockInfo || (update.created_by && update.created_by.includes('Foreman')) ? 'Foreman' : 'ช่างซ่อม/ผู้รับเหมา'),
+      action: roadblockInfo
+        ? `แจ้งติดปัญหา: ${roadblockInfo.reasonLabel}`
+        : (isCompleted ? 'แก้ไข Defect เสร็จสิ้น 100%' : `อัปเดตงานแก้ไข Defect (${update.progress}%)`),
       text_content: update.note || `อัปเดตความคืบหน้า ${update.progress}%`,
       progress: update.progress || 0,
       is_completed: isCompleted,

@@ -1,15 +1,26 @@
 import React, { useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { ShieldAlert, CheckCircle, PlusCircle, Loader2, Calendar, HardHat, Pickaxe, History, Trash2, Search, Award, FileCheck, Lock, Unlock, CheckCircle2, UserCog, X, AlertTriangle, CalendarClock, Wrench, Plus } from 'lucide-react';
+import { ShieldAlert, CheckCircle, PlusCircle, Loader2, Calendar, HardHat, Pickaxe, History, Trash2, Search, Award, FileCheck, Lock, Unlock, CheckCircle2, UserCog, UserCheck, ArrowRightLeft, Handshake, X, AlertTriangle, CalendarClock, Wrench, Plus } from 'lucide-react';
 import DefectTaskSelectModal from './DefectTaskSelectModal';
 import HandoverCertificateModal from './HandoverCertificateModal';
 import AppCustomModal, { AppModalConfig } from './AppCustomModal';
+import {
+  evaluateHandoverAddAction,
+  buildHandoverHandoffPlan,
+  resolveHandoverDefectForeman,
+  getPlotActiveHandoverForemanInfo,
+  isUnassignedForemanName,
+  canonicalizeForemanName,
+  type HandoverPlotForemanInfo,
+} from '@/lib/handoverForeman';
 
 export default function HouseHandoverView({ 
   selectedPlot, 
   defects, 
   setDefects, 
   currentUserRole,
+  currentUserName,
+  foremenList = [],
   resetHandoverCycle,
   updateInspectionRound,
   fetchAllData,
@@ -25,7 +36,13 @@ export default function HouseHandoverView({
   const [isSelectModalOpen, setIsSelectModalOpen] = useState(false);
   const [isCustomTaskModalOpen, setIsCustomTaskModalOpen] = useState(false);
   const isAdminRole = currentUserRole === 'Admin' || (currentUserRole || '').toLowerCase() === 'admin';
+  const isOwnerRole = currentUserRole === 'Owner' || (currentUserRole || '').toLowerCase() === 'owner';
+  const isAdminOrOwner = isAdminRole || isOwnerRole;
   const [isCertificateModalOpen, setIsCertificateModalOpen] = useState(false);
+  const [isReassignForemanOpen, setIsReassignForemanOpen] = useState(false);
+  const [reassignTargetForeman, setReassignTargetForeman] = useState('');
+  const [reassignMode, setReassignMode] = useState<'transfer' | 'fix_cycle'>('transfer');
+  const [reassignSyncSnapshots, setReassignSyncSnapshots] = useState(true);
   const [assigningDefect, setAssigningDefect] = useState<any>(null);
   const [contractorSearchQuery, setContractorSearchQuery] = useState('');
   const [defectSearchQuery, setDefectSearchQuery] = useState('');
@@ -35,6 +52,20 @@ export default function HouseHandoverView({
   const [viewingRound, setViewingRound] = useState<number>(selectedPlot?.inspection_round || 1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [defectScheduleInputs, setDefectScheduleInputs] = useState<any>({});
+  const [pendingHandoverHandoff, setPendingHandoverHandoff] = useState<{
+    kind: 'select' | 'custom';
+    newTasksToInsert?: any[];
+    customPayload?: {
+      cleanDesc: string;
+      trimmedName: string;
+      contractorId: string | null;
+      plannedStart: string | null;
+      plannedEnd: string | null;
+    };
+    existingForeman: string;
+    incomingForeman: string;
+    existingInfo: HandoverPlotForemanInfo;
+  } | null>(null);
   
   // Custom App Modal State
   const [modalConfig, setModalConfig] = useState<AppModalConfig | null>(null);
@@ -71,6 +102,167 @@ export default function HouseHandoverView({
   const currentRound = selectedPlot?.inspection_round || 0;
   const isHandoverCompleted = selectedPlot?.handover_status === 'completed';
   const isProcurement = currentUserRole === 'Procurement';
+  const handoverForemanInfo = getPlotActiveHandoverForemanInfo({
+    plot: selectedPlot,
+    defects,
+    cycle,
+  });
+
+  const availableHandoverForemen = React.useMemo(() => {
+    const map = new Map<string, string>();
+    const addCandidate = (rawName?: string | null) => {
+      const trimmed = String(rawName || '').trim();
+      if (!trimmed || isUnassignedForemanName(trimmed)) return;
+      const key = trimmed.toLowerCase();
+      if (!map.has(key)) map.set(key, trimmed);
+    };
+    if (Array.isArray(foremenList)) {
+      foremenList.forEach((u: any) => addCandidate(u?.username || u?.name));
+    }
+    addCandidate(selectedPlot?.handover_foreman_name);
+    addCandidate(selectedPlot?.foreman_name || selectedPlot?.foreman);
+    (defects || []).forEach((d: any) => {
+      if (d?.defect_stage === 'handover') addCandidate(d?.foreman_name);
+    });
+    return Array.from(map.values()).sort((a, b) => a.localeCompare(b, 'th'));
+  }, [foremenList, selectedPlot, defects]);
+
+  const handleOpenReassignForeman = () => {
+    const canonicalCurrent = canonicalizeForemanName(handoverForemanInfo.currentForeman, foremenList);
+    setReassignTargetForeman(canonicalCurrent || availableHandoverForemen[0] || '');
+    setReassignMode(handoverForemanInfo.currentForeman ? 'transfer' : 'fix_cycle');
+    setReassignSyncSnapshots(true);
+    setIsReassignForemanOpen(true);
+  };
+
+  const handleConfirmReassignForeman = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!isAdminOrOwner || !selectedPlot) return;
+    const rawTarget = reassignTargetForeman.trim();
+    if (!rawTarget || isUnassignedForemanName(rawTarget)) {
+      showAlert('กรุณาเลือกโฟร์แมน', 'กรุณาระบุหรือเลือกชื่อโฟร์แมนตรวจรับบ้านที่ต้องการมอบหมายครับ', 'warning');
+      return;
+    }
+
+    const targetFm = canonicalizeForemanName(rawTarget, foremenList) || rawTarget;
+    setIsSubmitting(true);
+    try {
+      const cycleDefects = (defects || []).filter(
+        (d: any) =>
+          String(d?.plot_id) === String(selectedPlot.id) &&
+          d?.defect_stage === 'handover' &&
+          Number(d?.handover_cycle || 1) === cycle
+      );
+
+      let frozenIds: string[] = [];
+      let frozenFm = handoverForemanInfo.currentForeman;
+      let reassignedIds: string[] = [];
+
+      if (reassignMode === 'transfer' && handoverForemanInfo.currentForeman) {
+        const plan = buildHandoverHandoffPlan({
+          mode: 'takeover',
+          existingForeman: handoverForemanInfo.currentForeman,
+          incomingForeman: targetFm,
+          existingInfo: handoverForemanInfo,
+        });
+        frozenIds = plan.freezeCompletedIds;
+        frozenFm = plan.freezeCompletedForeman;
+        reassignedIds = plan.transferIncompleteIds;
+
+        if (frozenIds.length > 0 && frozenFm) {
+          const { error: freezeErr } = await supabase
+            .from('defects')
+            .update({ foreman_name: frozenFm })
+            .in('id', frozenIds);
+          if (freezeErr) throw freezeErr;
+        }
+        if (reassignedIds.length > 0) {
+          const { error: transferErr } = await supabase
+            .from('defects')
+            .update({ foreman_name: targetFm })
+            .in('id', reassignedIds);
+          if (transferErr) throw transferErr;
+        }
+      } else {
+        reassignedIds = cycleDefects.map((d: any) => String(d.id));
+        if (reassignedIds.length > 0) {
+          const { error: fixErr } = await supabase
+            .from('defects')
+            .update({ foreman_name: targetFm })
+            .in('id', reassignedIds);
+          if (fixErr) throw fixErr;
+        }
+      }
+
+      const { error: plotErr } = await supabase
+        .from('plots')
+        .update({
+          handover_foreman_name: targetFm,
+          handover_foreman_assigned_at: new Date().toISOString(),
+        })
+        .eq('id', selectedPlot.id);
+      if (plotErr) throw plotErr;
+
+      // In 'fix_cycle' mode, optionally realign handover snapshots in the monthly calendar without touching construction tasks
+      if (reassignMode === 'fix_cycle' && reassignSyncSnapshots && reassignedIds.length > 0) {
+        const templateKeys = reassignedIds.map(id => `handover:${id}`);
+        try {
+          const snapQuery = supabase
+            .from('foreman_daily_duty_snapshots')
+            .update({ foreman_name: targetFm })
+            .eq('plot_id', String(selectedPlot.id));
+          if (snapQuery && typeof (snapQuery as any).in === 'function') {
+            await (snapQuery as any).in('task_template_id', templateKeys);
+          } else {
+            await snapQuery;
+          }
+        } catch (snapErr) {
+          console.warn('Notice syncing handover snapshots after foreman change:', snapErr);
+        }
+      }
+
+      if (selectedPlot) {
+        selectedPlot.handover_foreman_name = targetFm;
+      }
+
+      if (setDefects) {
+        const freezeSet = new Set(frozenIds.map(String));
+        const reassignSet = new Set(reassignedIds.map(String));
+        setDefects((prev: any[]) =>
+          (prev || []).map((item: any) => {
+            const idStr = String(item.id);
+            if (freezeSet.has(idStr) && frozenFm) {
+              return { ...item, foreman_name: frozenFm };
+            }
+            if (reassignSet.has(idStr)) {
+              return { ...item, foreman_name: targetFm };
+            }
+            return item;
+          })
+        );
+      }
+
+      setIsReassignForemanOpen(false);
+      showAlert(
+        'บันทึกผู้รับผิดชอบสำเร็จ',
+        `กำหนดโฟร์แมนตรวจรับบ้านเป็น "${targetFm}" เรียบร้อยแล้วครับ (ไม่กระทบข้อมูลงานก่อสร้างของแปลง)`,
+        'success'
+      );
+      if (fetchAllData) await fetchAllData();
+    } catch (err: any) {
+      if (isMissingHandoverForemanSchemaError(err)) {
+        showAlert(
+          'ฐานข้อมูลยังไม่มีคอลัมน์แยกโฟร์แมนตรวจรับ',
+          'กรุณานำไฟล์ sql/20261112_handover_foreman_assignment.sql ไปรันใน Supabase SQL Editor ก่อนจึงจะบันทึกแยกโฟร์แมนตรวจรับจากงานก่อสร้างได้ครับ',
+          'warning'
+        );
+      } else {
+        showAlert('เกิดข้อผิดพลาด', err?.message || 'ไม่สามารถอัปเดตโฟร์แมนตรวจรับได้ครับ', 'danger');
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   React.useEffect(() => {
     if (selectedPlot?.inspection_round !== undefined) {
@@ -269,6 +461,207 @@ export default function HouseHandoverView({
     );
   };
 
+  const isMissingHandoverForemanSchemaError = (err: any) => {
+    const msg = String(err?.message || '');
+    return (
+      err?.code === '42703' ||
+      err?.code === 'PGRST204' ||
+      msg.includes('foreman_name') ||
+      msg.includes('handover_foreman')
+    );
+  };
+
+  const executeHandoverDefectInsert = async (params: {
+    kind: 'select' | 'custom';
+    newTasksToInsert?: any[];
+    customPayload?: {
+      cleanDesc: string;
+      trimmedName: string;
+      contractorId: string | null;
+      plannedStart: string | null;
+      plannedEnd: string | null;
+    };
+    foremanForNewDefects: string;
+    shouldSetPlotHandoverForeman: boolean;
+    plotHandoverForemanName: string | null;
+    handoffPlan?: ReturnType<typeof buildHandoverHandoffPlan> | null;
+  }) => {
+    const {
+      kind,
+      newTasksToInsert = [],
+      customPayload,
+      foremanForNewDefects,
+      shouldSetPlotHandoverForeman,
+      plotHandoverForemanName,
+      handoffPlan,
+    } = params;
+
+    setIsSubmitting(true);
+    try {
+      // 1. Apply handoff transitions first if taking over from another foreman
+      if (handoffPlan) {
+        if (handoffPlan.freezeCompletedIds.length > 0 && handoffPlan.freezeCompletedForeman) {
+          const { error: freezeErr } = await supabase
+            .from('defects')
+            .update({ foreman_name: handoffPlan.freezeCompletedForeman })
+            .in('id', handoffPlan.freezeCompletedIds);
+          if (freezeErr && !isMissingHandoverForemanSchemaError(freezeErr)) {
+            throw freezeErr;
+          }
+        }
+        if (handoffPlan.transferIncompleteIds.length > 0 && handoffPlan.nextPlotHandoverForeman) {
+          const { error: transferErr } = await supabase
+            .from('defects')
+            .update({ foreman_name: handoffPlan.nextPlotHandoverForeman })
+            .in('id', handoffPlan.transferIncompleteIds);
+          if (transferErr && !isMissingHandoverForemanSchemaError(transferErr)) {
+            throw transferErr;
+          }
+        }
+      }
+
+      // 2. Insert new defect row(s) with resolved foreman_name (graceful schema fallback)
+      const rowsToInsert =
+        kind === 'select'
+          ? newTasksToInsert.map(t => {
+              const isVirtual = t.id === 'virtual-furniture' || t.id === 'custom-furniture';
+              const originalAssignment = !isVirtual
+                ? assignments?.find((a: any) => a.task_template_id === t.id && a.plot_id === selectedPlot.id)
+                : null;
+              const contractorId = originalAssignment?.contractor_id || null;
+
+              return {
+                plot_id: selectedPlot.id,
+                description: `แก้: ${t.task_name}`,
+                reported_by: currentUserRole,
+                status: 'pending',
+                defect_stage: 'handover',
+                handover_cycle: cycle,
+                inspection_round: currentRound,
+                task_id: isVirtual ? null : t.id,
+                contractor_id: contractorId,
+                ...(foremanForNewDefects ? { foreman_name: foremanForNewDefects } : {}),
+              };
+            })
+          : [
+              {
+                plot_id: selectedPlot.id,
+                description: customPayload!.cleanDesc,
+                reported_by: currentUserRole,
+                status: 'pending',
+                defect_stage: 'handover',
+                handover_cycle: cycle,
+                inspection_round: currentRound,
+                task_id: null,
+                contractor_id: customPayload!.contractorId || null,
+                planned_start: customPayload!.plannedStart || null,
+                planned_end: customPayload!.plannedEnd || null,
+                progress: 0,
+                ...(foremanForNewDefects ? { foreman_name: foremanForNewDefects } : {}),
+              },
+            ];
+
+      let { data: insertedDefects, error } = await supabase
+        .from('defects')
+        .insert(rowsToInsert)
+        .select();
+
+      if (error && isMissingHandoverForemanSchemaError(error)) {
+        console.warn('Notice: defects.foreman_name not yet migrated, retrying insert without foreman_name:', error.message);
+        const strippedRows = rowsToInsert.map(({ foreman_name, ...rest }: any) => rest);
+        const retryRes = await supabase.from('defects').insert(strippedRows).select();
+        insertedDefects = retryRes.data;
+        error = retryRes.error;
+      }
+
+      if (error) throw error;
+
+      // 3. Persist plot-level handover foreman when assigned for the first time or transferred
+      if (shouldSetPlotHandoverForeman && plotHandoverForemanName) {
+        const { error: plotErr } = await supabase
+          .from('plots')
+          .update({
+            handover_foreman_name: plotHandoverForemanName,
+            handover_foreman_assigned_at: new Date().toISOString(),
+          })
+          .eq('id', selectedPlot.id);
+        if (plotErr && isMissingHandoverForemanSchemaError(plotErr)) {
+          console.warn('Notice: plots.handover_foreman_name not yet migrated:', plotErr.message);
+        } else if (plotErr) {
+          console.warn('Notice updating plot handover_foreman_name:', plotErr.message);
+        }
+        if (selectedPlot) {
+          selectedPlot.handover_foreman_name = plotHandoverForemanName;
+        }
+      }
+
+      // 4. Sync local defects list immediately
+      if (setDefects) {
+        const freezeSet = new Set((handoffPlan?.freezeCompletedIds || []).map(String));
+        const transferSet = new Set((handoffPlan?.transferIncompleteIds || []).map(String));
+        setDefects((prev: any[]) => {
+          const updatedPrev = (prev || []).map((item: any) => {
+            const idStr = String(item.id);
+            if (freezeSet.has(idStr) && handoffPlan?.freezeCompletedForeman) {
+              return { ...item, foreman_name: handoffPlan.freezeCompletedForeman };
+            }
+            if (transferSet.has(idStr) && handoffPlan?.nextPlotHandoverForeman) {
+              return { ...item, foreman_name: handoffPlan.nextPlotHandoverForeman };
+            }
+            return item;
+          });
+          const enrichedInserted = (insertedDefects || []).map((d: any) =>
+            !d.foreman_name && foremanForNewDefects ? { ...d, foreman_name: foremanForNewDefects } : d
+          );
+          return [...updatedPrev, ...enrichedInserted];
+        });
+      }
+
+      setViewingRound(currentRound);
+      if (kind === 'select') {
+        setIsSelectModalOpen(false);
+      } else {
+        setIsCustomTaskModalOpen(false);
+      }
+      if (fetchAllData) await fetchAllData();
+
+      if (kind === 'custom' && customPayload) {
+        showAlert('เพิ่มงานสำเร็จ', `เพิ่มรายการ "${customPayload.trimmedName}" เข้าสู่รอบตรวจเรียบร้อยแล้วครับ`, 'success');
+      }
+    } catch (e: any) {
+      showAlert(
+        'เกิดข้อผิดพลาด',
+        kind === 'select' ? `Error adding defects: ${e.message}` : `Error adding custom defect: ${e.message}`,
+        'danger'
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleResolveHandoverHandoff = async (mode: 'help' | 'takeover') => {
+    if (!pendingHandoverHandoff) return;
+    const pending = pendingHandoverHandoff;
+    setPendingHandoverHandoff(null);
+
+    const plan = buildHandoverHandoffPlan({
+      mode,
+      existingForeman: pending.existingForeman,
+      incomingForeman: pending.incomingForeman,
+      existingInfo: pending.existingInfo,
+    });
+
+    await executeHandoverDefectInsert({
+      kind: pending.kind,
+      newTasksToInsert: pending.newTasksToInsert,
+      customPayload: pending.customPayload,
+      foremanForNewDefects: plan.newDefectsForeman,
+      shouldSetPlotHandoverForeman: mode === 'takeover' || !String(selectedPlot?.handover_foreman_name || '').trim(),
+      plotHandoverForemanName: plan.nextPlotHandoverForeman,
+      handoffPlan: plan,
+    });
+  };
+
   const handleSelectTasks = async (selectedTasks: any[]) => {
     if (currentRound === 0) {
       showAlert('ยังไม่ได้เริ่มตรวจ', "กรุณากด 'เริ่มตรวจรอบที่ 1' ก่อนเพิ่มรายการครับ", 'warning');
@@ -287,41 +680,33 @@ export default function HouseHandoverView({
       return;
     }
 
-    setIsSubmitting(true);
-    try {
-      const newDefects = newTasksToInsert.map(t => {
-        const isVirtual = t.id === 'virtual-furniture' || t.id === 'custom-furniture';
-        const originalAssignment = !isVirtual ? assignments?.find((a: any) => a.task_template_id === t.id && a.plot_id === selectedPlot.id) : null;
-        const contractorId = originalAssignment?.contractor_id || null;
+    const decision = evaluateHandoverAddAction({
+      plot: selectedPlot,
+      defects,
+      cycle,
+      actorRole: currentUserRole,
+      actorName: currentUserName,
+    });
 
-        return {
-          plot_id: selectedPlot.id,
-          description: `แก้: ${t.task_name}`,
-          reported_by: currentUserRole,
-          status: 'pending',
-          defect_stage: 'handover',
-          handover_cycle: cycle,
-          inspection_round: currentRound,
-          task_id: isVirtual ? null : t.id,
-          contractor_id: contractorId
-        };
-      });
-
-      const { data: insertedDefects, error } = await supabase.from('defects').insert(newDefects).select();
-      if (error) throw error;
-      
-      if (setDefects && insertedDefects && insertedDefects.length > 0) {
-        setDefects((prev: any[]) => [...(prev || []), ...insertedDefects]);
-      }
-
-      setViewingRound(currentRound);
+    if (decision.needsPrompt) {
       setIsSelectModalOpen(false);
-      if (fetchAllData) await fetchAllData();
-    } catch (e: any) {
-      showAlert('เกิดข้อผิดพลาด', 'Error adding defects: ' + e.message, 'danger');
-    } finally {
-      setIsSubmitting(false);
+      setPendingHandoverHandoff({
+        kind: 'select',
+        newTasksToInsert,
+        existingForeman: decision.existingForeman,
+        incomingForeman: decision.incomingForeman,
+        existingInfo: decision.existingInfo,
+      });
+      return;
     }
+
+    await executeHandoverDefectInsert({
+      kind: 'select',
+      newTasksToInsert,
+      foremanForNewDefects: decision.foremanForNewDefects,
+      shouldSetPlotHandoverForeman: decision.shouldSetPlotHandoverForeman,
+      plotHandoverForemanName: decision.plotHandoverForemanName,
+    });
   };
 
   const handleAddCustomTask = async ({
@@ -357,39 +742,41 @@ export default function HouseHandoverView({
       return;
     }
 
-    setIsSubmitting(true);
-    try {
-      const newDefect = {
-        plot_id: selectedPlot.id,
-        description: cleanDesc,
-        reported_by: currentUserRole,
-        status: 'pending',
-        defect_stage: 'handover',
-        handover_cycle: cycle,
-        inspection_round: currentRound,
-        task_id: null,
-        contractor_id: contractorId || null,
-        planned_start: plannedStart || null,
-        planned_end: plannedEnd || null,
-        progress: 0
-      };
+    const customPayload = {
+      cleanDesc,
+      trimmedName,
+      contractorId,
+      plannedStart,
+      plannedEnd,
+    };
 
-      const { data: insertedDefect, error } = await supabase.from('defects').insert([newDefect]).select();
-      if (error) throw error;
+    const decision = evaluateHandoverAddAction({
+      plot: selectedPlot,
+      defects,
+      cycle,
+      actorRole: currentUserRole,
+      actorName: currentUserName,
+    });
 
-      if (setDefects && insertedDefect && insertedDefect.length > 0) {
-        setDefects((prev: any[]) => [...(prev || []), ...insertedDefect]);
-      }
-
-      setViewingRound(currentRound);
+    if (decision.needsPrompt) {
       setIsCustomTaskModalOpen(false);
-      if (fetchAllData) await fetchAllData();
-      showAlert('เพิ่มงานสำเร็จ', `เพิ่มรายการ "${trimmedName}" เข้าสู่รอบตรวจเรียบร้อยแล้วครับ`, 'success');
-    } catch (e: any) {
-      showAlert('เกิดข้อผิดพลาด', 'Error adding custom defect: ' + e.message, 'danger');
-    } finally {
-      setIsSubmitting(false);
+      setPendingHandoverHandoff({
+        kind: 'custom',
+        customPayload,
+        existingForeman: decision.existingForeman,
+        incomingForeman: decision.incomingForeman,
+        existingInfo: decision.existingInfo,
+      });
+      return;
     }
+
+    await executeHandoverDefectInsert({
+      kind: 'custom',
+      customPayload,
+      foremanForNewDefects: decision.foremanForNewDefects,
+      shouldSetPlotHandoverForeman: decision.shouldSetPlotHandoverForeman,
+      plotHandoverForemanName: decision.plotHandoverForemanName,
+    });
   };
 
   const handleDeleteDefect = async (defect: any) => {
@@ -765,6 +1152,30 @@ export default function HouseHandoverView({
           <div className="flex flex-wrap items-center gap-2 mt-1.5">
             <span className="text-[11px] font-bold text-purple-600 bg-purple-50 px-2.5 py-0.5 rounded-full border border-purple-100">รอบการขาย: Cycle {cycle}</span>
             <span className="text-[11px] font-bold text-slate-600 bg-slate-100 px-2.5 py-0.5 rounded-full border border-slate-200">รอบการตรวจ: {currentRound === 0 ? 'ยังไม่เริ่ม' : `Round ${currentRound}`}</span>
+            {(handoverForemanInfo.currentForeman || isAdminOrOwner) && (
+              <span className="text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-full border border-indigo-200 inline-flex items-center gap-1.5 flex-wrap">
+                <UserCheck size={12} />
+                <span>โฟร์แมนตรวจรับ: {handoverForemanInfo.currentForeman || 'ยังไม่ระบุ'}</span>
+                {selectedPlot?.foreman_name &&
+                  handoverForemanInfo.currentForeman &&
+                  selectedPlot.foreman_name.trim().toLowerCase() !== handoverForemanInfo.currentForeman.toLowerCase() && (
+                    <span className="text-[10px] font-semibold text-indigo-500 ml-0.5">
+                      (ต่องานจาก {selectedPlot.foreman_name})
+                    </span>
+                  )}
+                {isAdminOrOwner && (
+                  <button
+                    type="button"
+                    onClick={handleOpenReassignForeman}
+                    className="ml-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white hover:bg-indigo-600 hover:text-white text-indigo-700 border border-indigo-300 text-[10px] font-black transition-colors cursor-pointer"
+                    title="กำหนดหรือเปลี่ยนโฟร์แมนผู้รับผิดชอบงานตรวจรับบ้าน (ไม่กระทบงานก่อสร้าง)"
+                  >
+                    <UserCog size={11} />
+                    <span>เปลี่ยน / ระบุโฟร์แมน</span>
+                  </button>
+                )}
+              </span>
+            )}
             
             {isHandoverCompleted && (
               <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1">
@@ -954,6 +1365,7 @@ export default function HouseHandoverView({
                                          <span className="text-[10px] font-bold text-slate-400 bg-[#f5f5f7] px-2 py-0.5 rounded border mt-0.5 shrink-0">#{idx + 1}</span>
                                          <div>
                                            <h4 className={`font-bold text-sm leading-tight mb-1 ${defect.progress === 100 ? 'text-slate-400 line-through' : 'text-[#1d1d1f]'}`}>{taskTemp?.task_name || defect.description}</h4>
+                                           <div className="flex flex-wrap items-center gap-1.5">
                                            {contractor?.name ? (
                                                 <div className="flex items-center gap-1">
                                                   <span className="inline-flex items-center gap-1 text-[10px] font-bold text-purple-600 bg-purple-50 px-2 py-0.5 rounded-md border border-purple-100"><HardHat size={12} /> {contractor.name.split(' ')[0]}</span>
@@ -970,6 +1382,15 @@ export default function HouseHandoverView({
                                             ) : (
                                                 <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-400 bg-[#f5f5f7] px-2 py-0.5 rounded-md"><HardHat size={12} /> ยังไม่ระบุช่าง</span>
                                             )}
+                                            {(() => {
+                                              const dfFm = resolveHandoverDefectForeman(defect, selectedPlot);
+                                              return dfFm ? (
+                                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100" title={`โฟร์แมนผู้รับผิดชอบ: ${dfFm}`}>
+                                                  <UserCheck size={11} /> {dfFm}
+                                                </span>
+                                              ) : null;
+                                            })()}
+                                           </div>
                                          </div>
                                      </div>
                                      <div className="flex items-center gap-2 shrink-0">
@@ -1205,6 +1626,14 @@ export default function HouseHandoverView({
                                         ) : (
                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-400 bg-[#f5f5f7] px-2 py-0.5 rounded-md"><HardHat size={12} /> ยังไม่ระบุช่าง</span>
                                         )}
+                                        {(() => {
+                                          const dfFm = resolveHandoverDefectForeman(defect, selectedPlot);
+                                          return dfFm ? (
+                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100 shrink-0 max-w-[110px] truncate" title={`โฟร์แมนผู้รับผิดชอบ: ${dfFm}`}>
+                                              <UserCheck size={11} className="shrink-0" /> <span className="truncate">{dfFm}</span>
+                                            </span>
+                                          ) : null;
+                                        })()}
                                      </div>
                                   </div>
                                </div>
@@ -1466,6 +1895,256 @@ export default function HouseHandoverView({
                 ยกเลิก
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🤝 Handoff Confirmation Modal when another Foreman adds handover items */}
+      {pendingHandoverHandoff && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[90] flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-indigo-100">
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+                  <ArrowRightLeft size={22} />
+                </div>
+                <div>
+                  <h3 className="font-black text-slate-800 text-base leading-tight">
+                    พบโฟร์แมนเดิมกำลังดูแลงานตรวจรับ
+                  </h3>
+                  <p className="text-[11px] font-bold text-indigo-600 mt-0.5">
+                    หลังนี้มีโฟร์แมน &ldquo;{pendingHandoverHandoff.existingForeman}&rdquo; ทำงานอยู่นะ
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPendingHandoverHandoff(null)}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer"
+                aria-label="ปิด"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 mb-4 text-xs text-slate-600 space-y-1.5">
+              <p className="font-bold text-slate-700">
+                คุณ ({pendingHandoverHandoff.incomingForeman}) ต้องการมาเพิ่มรายการช่วย หรือมาต่องานครับ?
+              </p>
+              <div className="flex flex-wrap gap-2 pt-1 text-[11px] font-bold">
+                <span className="px-2 py-0.5 rounded-lg bg-amber-50 text-amber-800 border border-amber-200">
+                  งานค้าง/ยังไม่เสร็จ: {pendingHandoverHandoff.existingInfo.activeDefectsCount} รายการ
+                </span>
+                <span className="px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  เสร็จ 100% แล้ว: {pendingHandoverHandoff.existingInfo.completedDefectsCount} รายการ
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-2.5">
+              <button
+                type="button"
+                disabled={isSubmitting}
+                onClick={() => handleResolveHandoverHandoff('help')}
+                className="w-full text-left p-3.5 rounded-xl border-2 border-sky-200 bg-sky-50/70 hover:bg-sky-100/80 transition-all cursor-pointer disabled:opacity-50"
+              >
+                <div className="flex items-center gap-2 font-black text-sky-900 text-sm">
+                  <Handshake size={17} className="text-sky-600 shrink-0" />
+                  <span>🤝 มาช่วยเพิ่มรายการ (คนเดิมรับผิดชอบ)</span>
+                </div>
+                <p className="text-[11px] text-sky-700 font-semibold mt-1 leading-relaxed">
+                  รายการใหม่จะมอบให้ <strong>{pendingHandoverHandoff.existingForeman}</strong> รับผิดชอบต่อ และงานเดิมทั้งหมดไม่เปลี่ยนแปลง
+                </p>
+              </button>
+
+              <button
+                type="button"
+                disabled={isSubmitting}
+                onClick={() => handleResolveHandoverHandoff('takeover')}
+                className="w-full text-left p-3.5 rounded-xl border-2 border-indigo-200 bg-indigo-50/70 hover:bg-indigo-100/80 transition-all cursor-pointer disabled:opacity-50"
+              >
+                <div className="flex items-center gap-2 font-black text-indigo-900 text-sm">
+                  <ArrowRightLeft size={17} className="text-indigo-600 shrink-0" />
+                  <span>🔄 มาต่องาน (เปลี่ยนเป็น {pendingHandoverHandoff.incomingForeman})</span>
+                </div>
+                <p className="text-[11px] text-indigo-700 font-semibold mt-1 leading-relaxed">
+                  {pendingHandoverHandoff.existingInfo.activeDefectsCount > 0
+                    ? `งานที่เสร็จแล้วจะขึ้นชื่อ ${pendingHandoverHandoff.existingForeman} ส่วนงานที่ยังไม่เสร็จ (${pendingHandoverHandoff.existingInfo.activeDefectsCount} รายการ) และงานใหม่ที่เพิ่มจะเปลี่ยนเป็นของคุณ (${pendingHandoverHandoff.incomingForeman})`
+                    : `งานเดิมที่เสร็จแล้วจะยังคงขึ้นชื่อ ${pendingHandoverHandoff.existingForeman} และคุณ (${pendingHandoverHandoff.incomingForeman}) จะรับผิดชอบเฉพาะงานใหม่ที่เพิ่มมา`}
+                </p>
+              </button>
+            </div>
+
+            <div className="flex justify-end mt-4 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={isSubmitting}
+                onClick={() => setPendingHandoverHandoff(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🧑‍🔧 Modal สำหรับ Admin/Owner ระบุหรือเปลี่ยนโฟร์แมนผู้รับผิดชอบงานตรวจรับบ้าน */}
+      {isReassignForemanOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[90] flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-indigo-100">
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+                  <UserCog size={22} />
+                </div>
+                <div>
+                  <h3 className="font-black text-slate-800 text-base leading-tight">
+                    ระบุ / เปลี่ยนโฟร์แมนตรวจรับบ้าน
+                  </h3>
+                  <p className="text-[11px] font-bold text-slate-500 mt-0.5">
+                    แปลง {selectedPlot?.plot_name || selectedPlot?.id} (รอบ Cycle {cycle})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsReassignForemanOpen(false)}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer"
+                aria-label="ปิด"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmReassignForeman} className="space-y-4">
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs space-y-1">
+                <div className="flex justify-between gap-2">
+                  <span className="text-slate-500 font-semibold">โฟร์แมนก่อสร้างของแปลง:</span>
+                  <span className="font-black text-slate-800">{selectedPlot?.foreman_name || 'ยังไม่ระบุ'}</span>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <span className="text-slate-500 font-semibold">โฟร์แมนตรวจรับปัจจุบัน:</span>
+                  <span className="font-black text-indigo-700">{handoverForemanInfo.currentForeman || 'ยังไม่ระบุ'}</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-black text-slate-700 mb-1.5">
+                  เลือกโฟร์แมนตรวจรับคนใหม่ <span className="text-rose-500">*</span>
+                </label>
+                {availableHandoverForemen.length > 0 ? (
+                  <select
+                    value={reassignTargetForeman}
+                    onChange={e => setReassignTargetForeman(e.target.value)}
+                    required
+                    className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm font-bold text-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none cursor-pointer"
+                  >
+                    <option value="">-- เลือกโฟร์แมน --</option>
+                    {availableHandoverForemen.map(fm => (
+                      <option key={fm} value={fm}>
+                        {fm}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={reassignTargetForeman}
+                    onChange={e => setReassignTargetForeman(e.target.value)}
+                    placeholder="กรอก username โฟร์แมน เช่น DEN"
+                    required
+                    className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm font-bold text-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none"
+                  />
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-xs font-black text-slate-700">รูปแบบการปรับเปลี่ยน</label>
+
+                {handoverForemanInfo.currentForeman && (
+                  <label
+                    className={`block p-3 rounded-xl border-2 cursor-pointer transition-all ${
+                      reassignMode === 'transfer'
+                        ? 'border-indigo-500 bg-indigo-50/70'
+                        : 'border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="reassignMode"
+                        value="transfer"
+                        checked={reassignMode === 'transfer'}
+                        onChange={() => setReassignMode('transfer')}
+                        className="text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span className="text-xs font-black text-slate-800">
+                        🔄 โอนรับช่วงต่อ (วันนี้เป็นต้นไป)
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-600 mt-1 pl-5">
+                      รายการที่เสร็จ 100% แล้วจะคงชื่อโฟร์แมนเดิมไว้ โอนเฉพาะงานค้างและงานใหม่ให้โฟร์แมนใหม่ (ไม่แก้ประวัติย้อนหลัง)
+                    </p>
+                  </label>
+                )}
+
+                <label
+                  className={`block p-3 rounded-xl border-2 cursor-pointer transition-all ${
+                    reassignMode === 'fix_cycle'
+                      ? 'border-purple-500 bg-purple-50/70'
+                      : 'border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="reassignMode"
+                      value="fix_cycle"
+                      checked={reassignMode === 'fix_cycle'}
+                      onChange={() => setReassignMode('fix_cycle')}
+                      className="text-purple-600 focus:ring-purple-500"
+                    />
+                    <span className="text-xs font-black text-slate-800">
+                      🛠️ แก้ไขชื่อผู้รับผิดชอบที่ระบุผิด (ทั้งรอบตรวจรับนี้)
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-600 mt-1 pl-5">
+                    ปรับรายการตรวจรับ (Handover) ทุกรายการใน Cycle นี้เป็นของโฟร์แมนที่เลือก โดยไม่แก้ชื่อโฟร์แมนก่อสร้างของแปลง
+                  </p>
+                  {reassignMode === 'fix_cycle' && (
+                    <label className="mt-2 ml-5 flex items-center gap-2 text-[11px] font-bold text-purple-800 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={reassignSyncSnapshots}
+                        onChange={e => setReassignSyncSnapshots(e.target.checked)}
+                        className="rounded border-purple-300 text-purple-600 focus:ring-purple-500"
+                      />
+                      <span>ปรับประวัติปฏิทินรายเดือน (เฉพาะงานตรวจรับในรอบนี้) ให้ตรงด้วย</span>
+                    </label>
+                  )}
+                </label>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() => setIsReassignForemanOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting || !reassignTargetForeman.trim()}
+                  className="px-5 py-2 rounded-xl text-xs font-black text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 shadow-sm cursor-pointer flex items-center gap-1.5"
+                >
+                  {isSubmitting ? <Loader2 size={14} className="animate-spin" /> : <UserCheck size={14} />}
+                  <span>บันทึกผู้รับผิดชอบ</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
