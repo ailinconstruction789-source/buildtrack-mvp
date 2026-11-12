@@ -1376,15 +1376,13 @@ export default function SalesKanban({
         }
       }
 
-      // 2. Update sales record if saleId exists
+      // 2. Update sales record via RPC if saleId exists (works for native, CRM v2, and external cutover sales)
       if (saleId) {
-        const result = await checkedResult(supabase
-          .from('sales')
-          .update({ expected_transfer_date: day || null })
-          .eq('id', saleId)
-          .select('id,expected_transfer_date')
-          .single());
-        const saved = result.data;
+        const result = await checkedResult(supabase.rpc('update_sale_expected_transfer_date', {
+          p_sale_id: saleId,
+          p_expected_transfer_date: day || null,
+        }));
+        const saved = result.data as { id?: string; expected_transfer_date?: string | null } | null;
         if (!saved || saved.id !== saleId || customerExpectedTransferDay(saved) !== (day || null)) {
           throw new Error('ไม่พบวันคาดโอนที่บันทึกได้ในรายการจองนี้');
         }
@@ -1425,7 +1423,15 @@ export default function SalesKanban({
     } catch (err) {
       console.error("Failed to update transfer date", err);
       if (forecastScope.current === scope) {
-        alert(`บันทึกวันคาดโอนไม่สำเร็จ: ${err instanceof Error ? err.message : 'กรุณาลองใหม่'}`);
+        const rawMsg = err instanceof Error ? err.message : 'กรุณาลองใหม่';
+        const displayMsg = rawMsg.includes('CRM_FORECAST_FORBIDDEN')
+          ? 'ไม่มีสิทธิ์แก้ไขวันคาดโอน (อนุญาตเฉพาะ Sales และ Admin)'
+          : rawMsg.includes('CRM_BOOKING_CONFLICT')
+            ? 'ไม่สามารถแก้ไขวันคาดโอนของรายการที่ยกเลิกแล้วได้'
+            : rawMsg.includes('CRM_SOURCE_RETIRED') || rawMsg.includes('CRM_SALE_NOT_FOUND')
+              ? 'ไม่พบรายการจองที่ใช้งานอยู่สำหรับอัปเดตวันคาดโอน'
+              : rawMsg;
+        alert(`บันทึกวันคาดโอนไม่สำเร็จ: ${displayMsg}`);
       }
     } finally {
       pendingForecasts.current.delete(leadId);

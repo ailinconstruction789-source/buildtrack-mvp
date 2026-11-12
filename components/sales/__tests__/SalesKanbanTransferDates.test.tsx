@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import SalesKanban from '../SalesKanban';
 
-const mocks = vi.hoisted(() => ({ read: vi.fn(), update: vi.fn(), filter: vi.fn(), result: vi.fn() }));
+const mocks = vi.hoisted(() => ({ read: vi.fn(), update: vi.fn(), filter: vi.fn(), rpc: vi.fn(), result: vi.fn() }));
 vi.mock('@/lib/sales/fetchWithoutLimit', () => ({ fetchSalesWithoutLimit: mocks.read }));
 vi.mock('@/hooks/useSalesStaffOptions', () => ({ useSalesStaffOptions: () => [] }));
 vi.mock('../DailyVisitsScheduleView', () => ({ default: () => null }));
@@ -19,7 +19,10 @@ vi.mock('@/lib/supabase', () => ({ supabase: {
       update: (payload: unknown) => { mocks.update(table, payload); return query; } };
     return query;
   },
-  rpc: async () => ({ data: { rows: [] }, error: null }),
+  rpc: (...args: unknown[]) => {
+    mocks.rpc(...args);
+    return mocks.result();
+  },
   auth: { getSession: async () => ({ data: { session: null } }) },
 } }));
 
@@ -43,28 +46,28 @@ describe('per-booking forecast and actual transfer dates', () => {
   it('leaves an unknown booking forecast blank despite a date on its plot', async () => {
     expect((await openBooked()).value).toBe('');
   });
-  it('updates only the exact sale and shows the confirmed returned value', async () => {
+  it('updates only the exact sale via RPC and shows the confirmed returned value', async () => {
     const input = await openBooked();
     fireEvent.change(input, { target: { value: '2026-10-30' } });
     await waitFor(() => expect(input.value).toBe('2026-10-30'));
-    expect(mocks.update.mock.calls).toEqual([['sales', { expected_transfer_date: '2026-10-30' }]]);
-    expect(mocks.filter).toHaveBeenCalledWith('sales', 'id', sale.id);
+    expect(mocks.rpc.mock.calls).toEqual([['update_sale_expected_transfer_date', { p_sale_id: sale.id, p_expected_transfer_date: '2026-10-30' }]]);
+    expect(mocks.update).not.toHaveBeenCalledWith('sales', expect.anything());
     expect(mocks.filter).not.toHaveBeenCalledWith('sales', 'lead_id', expect.anything());
   });
-  it('clears a forecast without reviving a plot date', async () => {
+  it('clears a forecast via RPC without reviving a plot date', async () => {
     mocks.read.mockImplementation(async (table: string) => table === 'plots' ? [plot] : table === 'sales'
       ? [{ ...sale, expected_transfer_date: '2026-10-30' }] : []);
     mocks.result.mockResolvedValue({ data: { id: sale.id, expected_transfer_date: null }, error: null });
     const input = await openBooked();
     fireEvent.change(input, { target: { value: '' } });
     await waitFor(() => expect(input.value).toBe(''));
-    expect(mocks.update).toHaveBeenCalledWith('sales', { expected_transfer_date: null });
+    expect(mocks.rpc).toHaveBeenCalledWith('update_sale_expected_transfer_date', { p_sale_id: sale.id, p_expected_transfer_date: null });
   });
-  it('retains the old date on denied or zero-row writes', async () => {
-    mocks.result.mockResolvedValue({ data: null, error: { message: 'zero rows / denied' } });
+  it('retains the old date on denied or zero-row writes and translates forbidden error', async () => {
+    mocks.result.mockResolvedValue({ data: null, error: { message: 'CRM_FORECAST_FORBIDDEN' } });
     const input = await openBooked();
     fireEvent.change(input, { target: { value: '2026-10-30' } });
-    await waitFor(() => expect(window.alert).toHaveBeenCalled());
+    await waitFor(() => expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('อนุญาตเฉพาะ Sales และ Admin')));
     expect(input.value).toBe('');
     expect(input).not.toBeDisabled();
   });
@@ -99,7 +102,7 @@ describe('per-booking forecast and actual transfer dates', () => {
     fireEvent.change(input, { target: { value: '2026-10-30' } });
     expect(input).toBeDisabled();
     fireEvent.change(input, { target: { value: '2026-10-29' } });
-    expect(mocks.update).toHaveBeenCalledTimes(1);
+    expect(mocks.rpc).toHaveBeenCalledTimes(1);
     finish({ data: { id: sale.id, expected_transfer_date: '2026-10-30' }, error: null });
     await waitFor(() => expect(input).not.toBeDisabled());
     expect(input.value).toBe('2026-10-30');
