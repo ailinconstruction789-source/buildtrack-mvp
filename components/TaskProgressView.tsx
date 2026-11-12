@@ -6,6 +6,12 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { appendConstructionPreviewFiles } from '@/lib/constructionPreviewFiles';
+import {
+  formatRoadblockActionLabel,
+  parseRoadblockDisplay,
+  stripInternalRefMarkers,
+} from '@/lib/foremanDuty';
+import RoadblockReasonCallout from '@/components/RoadblockReasonCallout';
 
 interface TaskProgressViewProps {
   view: string;
@@ -191,6 +197,11 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                    const isQCPass = isQC && ((typeof update.action === 'string' && (update.action.includes('อนุมัติ') || update.action.includes('ผ่าน'))) || update.progress === 100);
                                    const isQCFail = isQC && ((typeof update.action === 'string' && (update.action.includes('ไม่อนุมัติ') || update.action.includes('ไม่ผ่าน') || update.action.includes('แจ้งแก้ไข'))) || update.progress === 95);
                                    const isWorkerAbsent = update.is_worker_present === false || update.action === 'ไม่มีช่างเข้างาน';
+                                   const roadblockDisplay = !isQCPass && !isQCFail
+                                     ? parseRoadblockDisplay(update.text_content, update.action)
+                                     : null;
+                                   const actionLabel = formatRoadblockActionLabel(update.action, update.text_content);
+                                   const cleanText = stripInternalRefMarkers(update.text_content);
 
                                    return (
                                 <div key={update.id} className={`flex ${isMobileLayout ? 'gap-2' : 'gap-3 sm:gap-5'} animate-in slide-in-from-bottom-4`}>
@@ -213,7 +224,7 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
 
                                        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-2 sm:mb-4 gap-1 sm:gap-2">
                                          <div className="flex items-center gap-1.5 flex-wrap">
-                                           <p className={`text-[9px] sm:text-xs font-bold uppercase italic tracking-widest leading-tight ${isQCPass ? 'text-emerald-600' : isQCFail ? 'text-rose-600' : isWorkerAbsent ? 'text-rose-600' : update.role === 'QC' ? 'text-purple-400' : update.role === 'Site Engineer' ? 'text-blue-400' : 'text-slate-400'}`}>{update.action} • {update.user_name} • {update.progress}%</p>
+                                           <p className={`text-[9px] sm:text-xs font-bold uppercase italic tracking-widest leading-tight ${isQCPass ? 'text-emerald-600' : isQCFail ? 'text-rose-600' : isWorkerAbsent ? 'text-rose-600' : roadblockDisplay ? 'text-amber-700' : update.role === 'QC' ? 'text-purple-400' : update.role === 'Site Engineer' ? 'text-blue-400' : 'text-slate-400'}`}>{actionLabel} • {update.user_name} • {update.progress}%</p>
                                            {/* 🌟 ป้ายแสดงสถานะช่างเข้างาน / ไม่เข้างาน */}
                                            {isWorkerAbsent ? (
                                              <span className="text-[8px] sm:text-[9px] font-bold bg-rose-100 text-rose-700 border border-rose-200 px-1.5 py-0.5 rounded-md flex items-center gap-1 shadow-xs">
@@ -235,7 +246,15 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                            )}
                                          </div>
                                        </div>
-                                       <p className={`text-[#1d1d1f] ${isMobileLayout ? 'text-xs mb-2' : 'text-sm sm:text-base mb-4'} font-medium leading-relaxed`}>{update.text_content}</p>
+                                       {roadblockDisplay ? (
+                                         <RoadblockReasonCallout
+                                           roadblock={roadblockDisplay}
+                                           compact={isMobileLayout}
+                                           className={isMobileLayout ? 'mb-2' : 'mb-4'}
+                                         />
+                                       ) : (
+                                         <p className={`text-[#1d1d1f] ${isMobileLayout ? 'text-xs mb-2' : 'text-sm sm:text-base mb-4'} font-medium leading-relaxed`}>{cleanText}</p>
+                                       )}
                                        {update.image_url && (() => {
                                           const imgList = update.image_url.split(',').filter((u: string) => u.trim() !== '');
                                           if (imgList.length === 0) return null;

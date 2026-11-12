@@ -11,6 +11,7 @@ import {
   BusinessState,
   SimulationActivity
 } from './types';
+import { formatRoadblockActionLabel, formatTaskUpdateDisplayText } from '../foremanDuty';
 
 // Bangkok Timezone offset in minutes (+07:00 => +420 min)
 const BANGKOK_OFFSET_MINUTES = 7 * 60;
@@ -338,8 +339,8 @@ export function normalizeConstructionEvents({
       timeLabel: bkk.timeStr,
       dateLabel: bkk.dateStr,
       activityType,
-      actionTitle: actionText || taskName,
-      description: u.text_content || `${actorName}: ${actionText || taskName}`,
+      actionTitle: formatRoadblockActionLabel(actionText, u.text_content) || taskName,
+      description: formatTaskUpdateDisplayText(u.text_content, actionText) || `${actorName}: ${actionText || taskName}`,
       progress,
       isWorkerPresent: u.is_worker_present ?? true,
       photoUrls,

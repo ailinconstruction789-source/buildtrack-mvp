@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import DailyAccountabilityModal from './DailyAccountabilityModal';
 import MeterPhotoConfirmationModal from './MeterPhotoConfirmationModal';
+import { formatRoadblockActionLabel, formatTaskUpdateDisplayText } from '@/lib/foremanDuty';
 
 const EMPTY_ACTIVITY_ROWS: any[] = [];
 
@@ -228,8 +229,8 @@ export default function DailyActivityHub({
           plot: String(u.plot_id),
           projectName: plotObj ? plotObj.project_name : null,
           taskName: task ? task.task_name : (u.action || 'อัปเดตงาน'),
-          action: u.action || 'บันทึกงาน',
-          detail: u.text_content || '-',
+          action: formatRoadblockActionLabel(u.action, u.text_content) || 'บันทึกงาน',
+          detail: formatTaskUpdateDisplayText(u.text_content, u.action) || '-',
           progress: u.progress,
           image: validImage,
           type: 'update',

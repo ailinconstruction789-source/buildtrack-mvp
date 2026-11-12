@@ -25,10 +25,14 @@ import {
   ChevronRight,
   ShieldCheck,
 } from 'lucide-react';
-import type {
-  ForemanDailyActivityItem,
-  ForemanDailyActivitySummary,
+import {
+  formatRoadblockActionLabel,
+  parseRoadblockDisplay,
+  stripInternalRefMarkers,
+  type ForemanDailyActivityItem,
+  type ForemanDailyActivitySummary,
 } from '@/lib/foremanDuty';
+import RoadblockReasonCallout from '@/components/RoadblockReasonCallout';
 
 interface ForemanDailyActivityViewProps {
   activitySummary: ForemanDailyActivitySummary;
@@ -89,7 +93,7 @@ export default function ForemanDailyActivityView({
         const matchForeman = item.foreman_name?.toLowerCase().includes(q);
         const matchActor = item.actor_name?.toLowerCase().includes(q);
         const matchAction = item.action?.toLowerCase().includes(q);
-        const matchText = item.text_content?.toLowerCase().includes(q);
+        const matchText = stripInternalRefMarkers(item.text_content).toLowerCase().includes(q);
         if (
           !matchPlot &&
           !matchProject &&
@@ -354,6 +358,11 @@ export default function ForemanDailyActivityView({
             } else if (item.category === 'roadblock') {
               categoryPillBg = 'bg-amber-50 text-amber-700 border-amber-200';
             }
+            const cleanText = stripInternalRefMarkers(item.text_content);
+            const roadblockDisplay = cleanText.startsWith('เหตุผล:')
+              ? parseRoadblockDisplay(item.text_content, item.action)
+              : null;
+            const actionLabel = formatRoadblockActionLabel(item.action, item.text_content);
 
             return (
               <div
@@ -404,7 +413,7 @@ export default function ForemanDailyActivityView({
                       {item.task_name}
                     </h3>
                     <div className="text-xs sm:text-sm font-semibold text-slate-600 mt-0.5 flex items-center gap-2">
-                      <span>{item.action}</span>
+                      <span>{actionLabel}</span>
                       {typeof item.progress === 'number' && (
                         <span className="text-xs font-black text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100">
                           คืบหน้า {item.progress}%
@@ -414,11 +423,13 @@ export default function ForemanDailyActivityView({
                   </div>
 
                   {/* Additional text note */}
-                  {item.text_content && (
+                  {roadblockDisplay ? (
+                    <RoadblockReasonCallout roadblock={roadblockDisplay} compact />
+                  ) : cleanText ? (
                     <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 text-xs sm:text-sm text-slate-700 font-medium leading-relaxed">
-                      {item.text_content}
+                      {cleanText}
                     </div>
-                  )}
+                  ) : null}
 
                   {/* Photo Thumbnails Gallery */}
                   {item.image_urls && item.image_urls.length > 0 && (

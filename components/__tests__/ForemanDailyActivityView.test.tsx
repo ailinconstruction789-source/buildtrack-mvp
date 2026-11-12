@@ -161,4 +161,58 @@ describe('ForemanDailyActivityView Component', () => {
 
     expect(handleTaskChat).toHaveBeenCalled();
   });
+
+  it('strips [ref:...] markers and displays roadblock icon for roadblock task_updates items', () => {
+    const roadblockSummary: ForemanDailyActivitySummary = {
+      ...mockSummary,
+      totalActivities: 1,
+      inPlanCount: 0,
+      outOfPlanCount: 0,
+      defectCount: 0,
+      roadblockCount: 1,
+      plotsVisitedCount: 1,
+      items: [
+        {
+          id: 'update-rb-1',
+          timestamp: 1730725200000,
+          timeStr: '13:14 น.',
+          dateStr: '2026-11-11',
+          category: 'roadblock',
+          categoryLabel: 'แจ้งเหตุผลติดปัญหา',
+          categoryColor: 'amber',
+          plot_id: '72',
+          plot_name: 'แปลง 72',
+          project_name: 'ไอลิน6',
+          foreman_name: 'VIEW',
+          actor_name: 'VIEW',
+          actor_role: 'Foreman',
+          task_name: 'งานฝ้าห้องน้ำ',
+          action: 'แจ้งติดปัญหา: อื่นๆ (ระบุในหมายเหตุ)',
+          text_content: 'เหตุผล: อื่นๆ (ระบุในหมายเหตุ) (ช่างเข้าวันจันทร์ที่ 16/11/2569) [ref:sub_1794377594294_ozg2f]',
+          progress: 0,
+          image_urls: [],
+          is_100_percent: false,
+        },
+      ],
+    };
+
+    render(
+      <ForemanDailyActivityView
+        activitySummary={roadblockSummary}
+        selectedDate="2026-11-11"
+        selectedForeman="VIEW"
+        onNavigateToTaskChat={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText(/📝 แจ้งติดปัญหา: อื่นๆ \(ระบุในหมายเหตุ\)/)).toBeDefined();
+    expect(screen.getByText('เหตุผล: อื่นๆ (ระบุในหมายเหตุ)')).toBeDefined();
+    expect(screen.getByText('หมายเหตุ: ช่างเข้าวันจันทร์ที่ 16/11/2569')).toBeDefined();
+    expect(screen.queryByText(/sub_1794377594294_ozg2f/)).toBeNull();
+    expect(screen.queryByText(/\[ref:/)).toBeNull();
+
+    const searchInput = screen.getByPlaceholderText(/ค้นหาแปลง, ชื่องาน, หรือข้อความ.../i);
+    fireEvent.change(searchInput, { target: { value: 'ozg2f' } });
+    expect(screen.queryByText('งานฝ้าห้องน้ำ')).toBeNull();
+  });
 });

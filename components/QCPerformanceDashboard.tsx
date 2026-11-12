@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { TrendingUp, AlertTriangle, Target, CheckCircle, Clock, PieChart as PieChartIcon, Calendar, List, X, ShieldAlert, Printer, ChevronLeft, ChevronRight, Filter } from 'lucide-react';
 import { XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, BarChart, Bar, Legend } from 'recharts';
 import { constructionQueueDate, constructionQueueFirstIndex, constructionQueueHistoryIndex, constructionQueueKey } from '@/lib/constructionQueue';
+import { formatRoadblockActionLabel, formatTaskUpdateDisplayText } from '@/lib/foremanDuty';
 
 export default function QCPerformanceDashboard({
   plots, taskTemplates, defects, allUpdatesRecord, assignments, isAdmin, isOwner, inspectionQueue
@@ -206,8 +207,8 @@ export default function QCPerformanceDashboard({
                 time: new Date(upd.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }),
                 qcTimeFullStr: qcTimeFullStr,
                 seSubmitFullStr: seSubmitFullStr,
-                action: upd.action,
-                textContent: upd.text_content || '',
+                action: formatRoadblockActionLabel(upd.action, upd.text_content),
+                textContent: formatTaskUpdateDisplayText(upd.text_content, upd.action),
                 imageUrl: upd.image_url || '',
                 foremanName: foremanName,
                 contractorName: contractorName

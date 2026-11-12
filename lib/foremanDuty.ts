@@ -75,6 +75,139 @@ export function getRoadblockReason(reasonId?: string | null): RoadblockReasonMet
   };
 }
 
+const INTERNAL_REF_MARKER_REGEX = /\s*\[ref:[^\]]+\]/g;
+
+/**
+ * Removes internal deduplication markers (e.g. `[ref:sub_...]`) from text
+ * before displaying to users while preserving stored DB values for idempotency.
+ */
+export function stripInternalRefMarkers(text?: string | null): string {
+  if (!text) return '';
+  return String(text).replace(INTERNAL_REF_MARKER_REGEX, '').trim();
+}
+
+export interface RoadblockDisplayInfo {
+  reasonMeta: RoadblockReasonMeta;
+  icon: string;
+  reasonLabel: string;
+  note: string;
+  cleanText: string;
+  formattedText: string;
+}
+
+function unwrapOuterParens(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.startsWith('(') && trimmed.endsWith(')') && trimmed.length >= 2) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+/**
+ * Parses a roadblock update's text/action into display-safe fields with its matching
+ * reason icon from ROADBLOCK_REASONS and without internal `[ref:...]` markers.
+ * Returns null for non-roadblock updates.
+ */
+export function parseRoadblockDisplay(
+  text?: string | null,
+  action?: string | null
+): RoadblockDisplayInfo | null {
+  const cleanText = stripInternalRefMarkers(text);
+  const actionStr = String(action || '').trim();
+  const isRoadblock =
+    actionStr.startsWith('แจ้งติดปัญหา') ||
+    actionStr.includes('ติดปัญหา') ||
+    cleanText.startsWith('เหตุผล:');
+
+  if (!isRoadblock) return null;
+
+  const actionReason = actionStr.startsWith('แจ้งติดปัญหา:')
+    ? actionStr.slice('แจ้งติดปัญหา:'.length).trim()
+    : '';
+  const textBody = cleanText.startsWith('เหตุผล:')
+    ? cleanText.slice('เหตุผล:'.length).trim()
+    : '';
+
+  const exactFromAction = actionReason
+    ? ROADBLOCK_REASONS.find(r => r.label === actionReason || r.id === actionReason)
+    : undefined;
+  const prefixFromText = textBody
+    ? ROADBLOCK_REASONS.find(r => textBody.startsWith(r.label))
+    : undefined;
+  const fallbackMatch = ROADBLOCK_REASONS.find(
+    r => actionStr.includes(r.label) || textBody.includes(r.label)
+  );
+
+  const matched = exactFromAction || prefixFromText || fallbackMatch;
+  const reasonMeta: RoadblockReasonMeta = matched || {
+    id: actionReason || textBody || 'other',
+    label: actionReason || textBody || 'แจ้งติดปัญหา',
+    icon: '⚠️',
+    color: 'slate',
+    description: actionReason || textBody || 'แจ้งติดปัญหา',
+  };
+
+  let reasonLabel = reasonMeta.label;
+  let note = '';
+
+  if (matched) {
+    if (textBody.startsWith(matched.label)) {
+      const remainder = textBody.slice(matched.label.length).trim();
+      note = remainder ? unwrapOuterParens(remainder) : '';
+    } else if (!textBody && cleanText) {
+      note = cleanText;
+    }
+  } else if (actionReason && textBody.startsWith(actionReason)) {
+    reasonLabel = actionReason;
+    const remainder = textBody.slice(actionReason.length).trim();
+    note = remainder ? unwrapOuterParens(remainder) : '';
+  } else if (textBody) {
+    reasonLabel = textBody;
+  } else if (cleanText) {
+    note = cleanText;
+  }
+
+  const formattedText = cleanText
+    ? `${reasonMeta.icon} ${cleanText}`
+    : `${reasonMeta.icon} เหตุผล: ${reasonLabel}`;
+
+  return {
+    reasonMeta,
+    icon: reasonMeta.icon,
+    reasonLabel,
+    note,
+    cleanText,
+    formattedText,
+  };
+}
+
+/**
+ * Formats any task_updates `text_content` for UI display:
+ * strips internal `[ref:...]` tags and prepends the matching roadblock icon when applicable.
+ */
+export function formatTaskUpdateDisplayText(
+  text?: string | null,
+  action?: string | null
+): string {
+  const roadblock = parseRoadblockDisplay(text, action);
+  if (roadblock) return roadblock.formattedText;
+  return stripInternalRefMarkers(text);
+}
+
+/**
+ * Formats a roadblock `action` string with its matching icon if not already present.
+ */
+export function formatRoadblockActionLabel(
+  action?: string | null,
+  text?: string | null
+): string {
+  const actionStr = stripInternalRefMarkers(action);
+  if (!actionStr) return '';
+  const roadblock = parseRoadblockDisplay(text, actionStr);
+  if (!roadblock || actionStr.startsWith(roadblock.icon)) return actionStr;
+  return `${roadblock.icon} ${actionStr}`;
+}
+
 export interface LoadSnapshotResult {
   status: 'success' | 'empty' | 'cache_fallback' | 'error';
   storage: 'remote' | 'local_cache' | 'none';
@@ -381,7 +514,10 @@ export function getForemanScheduledTasksForDate(options: GetForemanTasksOptions)
       if (!statusReason && isLatestUpdateRoadblock && latestUpdateToday) {
         const actStr = String(latestUpdateToday.action || '');
         const textStr = String(latestUpdateToday.text_content || '');
-        const matchedReason = ROADBLOCK_REASONS.find(r => actStr.includes(r.label) || textStr.includes(r.label));
+        const parsed = parseRoadblockDisplay(textStr, actStr);
+        const matchedReason = parsed && ROADBLOCK_REASONS.some(r => r.id === parsed.reasonMeta.id)
+          ? parsed.reasonMeta
+          : null;
         if (matchedReason) {
           statusReason = matchedReason.id;
         } else if (actStr.startsWith('แจ้งติดปัญหา:')) {
@@ -389,11 +525,8 @@ export function getForemanScheduledTasksForDate(options: GetForemanTasksOptions)
         } else {
           statusReason = 'other';
         }
-        if (!statusNote && textStr) {
-          const noteMatch = textStr.match(/\(([^)]+)\)/);
-          if (noteMatch) {
-            statusNote = noteMatch[1];
-          }
+        if (!statusNote && parsed?.note) {
+          statusNote = parsed.note;
         }
       }
 

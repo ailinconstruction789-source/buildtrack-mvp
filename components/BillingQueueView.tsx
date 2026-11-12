@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { FileText, Loader2, CheckCircle, Clock, X, DollarSign, Activity, FileSpreadsheet, Search, Printer } from 'lucide-react';
 import { constructionQueueBillingPartition } from '@/lib/constructionQueue';
+import { formatRoadblockActionLabel, formatTaskUpdateDisplayText } from '@/lib/foremanDuty';
 
 interface BillingQueueViewProps {
   billingData: any[];
@@ -525,7 +526,7 @@ const BillingQueueView = ({ billingData, setBillingData, loading, onRefresh, all
                           
                           <div className="flex-1 bg-slate-50 border border-slate-100 p-3 rounded-xl">
                              <div className="flex justify-between items-start mb-1">
-                                <span className="font-bold text-sm text-[#1d1d1f]">{upd.action || 'อัปเดตความคืบหน้า'}</span>
+                                <span className="font-bold text-sm text-[#1d1d1f]">{formatRoadblockActionLabel(upd.action, upd.text_content) || 'อัปเดตความคืบหน้า'}</span>
                                 <span className="text-[10px] font-bold text-slate-400">{new Date(upd.created_at).toLocaleDateString('th-TH', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'})}</span>
                              </div>
                              <div className="text-xs font-medium text-slate-600 mt-1">
@@ -534,7 +535,7 @@ const BillingQueueView = ({ billingData, setBillingData, loading, onRefresh, all
                              {(upd.text_content || upd.note) && (
                                 <div className="mt-2 text-xs text-slate-700 bg-white p-2 rounded border border-slate-100">
                                    <span className="font-bold text-slate-400 block mb-0.5">หมายเหตุ:</span>
-                                   {upd.text_content || upd.note}
+                                   {formatTaskUpdateDisplayText(upd.text_content || upd.note, upd.action)}
                                 </div>
                              )}
                           </div>

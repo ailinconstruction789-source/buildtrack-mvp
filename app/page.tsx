@@ -16,6 +16,13 @@ import { GUARDED_ACCOUNT_COMMANDS_ENABLED, runGuardedAccountCommand } from '@/li
 import { isSalesStaffRole } from '@/lib/sales/salesStaff';
 import { triggerBackgroundPhotoAudit } from '@/lib/photoAudit';
 import { evaluatePlotCompletionAndSaleStatus } from '@/lib/plotStatusEvaluator';
+import {
+  formatRoadblockActionLabel,
+  formatTaskUpdateDisplayText,
+  parseRoadblockDisplay,
+  stripInternalRefMarkers,
+} from '@/lib/foremanDuty';
+import RoadblockReasonCallout from '@/components/RoadblockReasonCallout';
 
 // Enable only with the reviewed actor grants, presence RPC and role mappings.
 // The existing account feature flag alone must not cut over the legacy shell.
@@ -3251,7 +3258,7 @@ export default function ConstructionApp() {
           // 1. ดึงข้อมูลอัปเดตงาน (ดึงทุกคนยกเว้น Admin)
           allUpdatesRecord.filter(u => new Date(u.created_at).toLocaleDateString('en-CA') === targetDate && u.role !== 'Admin').forEach(u => {
             const task = taskTemplates.find(t => t.id === u.task_template_id);
-            activities.push({ time: new Date(u.created_at).getTime(), timeStr: new Date(u.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }), user: u.user_name, role: u.role, plot: u.plot_id, taskName: task ? task.task_name : 'อัปเดตงาน', action: u.action, detail: u.text_content || '-', type: 'update' });
+            activities.push({ time: new Date(u.created_at).getTime(), timeStr: new Date(u.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }), user: u.user_name, role: u.role, plot: u.plot_id, taskName: task ? task.task_name : 'อัปเดตงาน', action: formatRoadblockActionLabel(u.action, u.text_content) || u.action, detail: formatTaskUpdateDisplayText(u.text_content, u.action) || '-', type: 'update' });
           });
 
           // 2. ดึงข้อมูลแจ้งซ่อม
@@ -3825,6 +3832,10 @@ export default function ConstructionApp() {
                             (typeof update.action === 'string' && (update.action.includes('ไม่อนุมัติ') || update.action.includes('ไม่ผ่าน') || update.action.includes('แจ้งแก้ไข'))) ||
                             update.progress === 95
                           );
+                          const roadblockDisplay = !isHandover && !isQCPassed && !isQCRejected
+                            ? parseRoadblockDisplay(update.text_content, update.action)
+                            : null;
+                          const displayText = stripInternalRefMarkers(update.text_content);
 
                           return (
                             <div 
@@ -3836,7 +3847,9 @@ export default function ConstructionApp() {
                                     ? 'border-emerald-300 sm:border-emerald-400 shadow-lg shadow-emerald-500/10 ring-2 ring-emerald-500/20' 
                                     : isQCRejected 
                                       ? 'border-rose-300 sm:border-rose-400 shadow-lg shadow-rose-500/10 ring-2 ring-rose-500/20' 
-                                      : 'border-slate-200 shadow-sm hover:shadow-md'
+                                      : roadblockDisplay
+                                        ? 'border-amber-200/90 shadow-sm hover:shadow-md'
+                                        : 'border-slate-200 shadow-sm hover:shadow-md'
                               }`}
                             >
 
@@ -3981,17 +3994,21 @@ export default function ConstructionApp() {
                                 </div>
 
                                 {/* ข้อความบรรยายเนื้อหางาน */}
-                                <p className={`text-xs sm:text-sm font-medium leading-relaxed p-3.5 rounded-xl border ${
-                                  isHandover
-                                    ? 'bg-purple-50/40 border-purple-100 text-slate-800'
-                                    : isQCPassed
-                                      ? 'bg-emerald-50/50 border-emerald-100 text-slate-800'
-                                      : isQCRejected
-                                        ? 'bg-rose-50/50 border-rose-100 text-slate-800'
-                                        : 'bg-slate-50 border-slate-100/50 text-slate-700'
-                                }`}>
-                                  {update.text_content}
-                                </p>
+                                {roadblockDisplay ? (
+                                  <RoadblockReasonCallout roadblock={roadblockDisplay} />
+                                ) : (
+                                  <p className={`text-xs sm:text-sm font-medium leading-relaxed p-3.5 rounded-xl border ${
+                                    isHandover
+                                      ? 'bg-purple-50/40 border-purple-100 text-slate-800'
+                                      : isQCPassed
+                                        ? 'bg-emerald-50/50 border-emerald-100 text-slate-800'
+                                        : isQCRejected
+                                          ? 'bg-rose-50/50 border-rose-100 text-slate-800'
+                                          : 'bg-slate-50 border-slate-100/50 text-slate-700'
+                                  }`}>
+                                    {displayText}
+                                  </p>
+                                )}
 
                                 {/* รูปภาพผลงาน (ถ้ามีรูปภาพ จะรองรับการกดคลิกซูมดูรูปใหญ่ได้ทันที) */}
                                 {update.image_url && (
@@ -6468,7 +6485,7 @@ export default function ConstructionApp() {
 
           allUpdatesRecord.filter(u => new Date(u.created_at).toLocaleDateString('en-CA') === targetDate && u.role !== 'Admin').forEach(u => {
             const task = taskTemplates.find(t => t.id === u.task_template_id);
-            activities.push({ time: new Date(u.created_at).getTime(), timeStr: new Date(u.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }), user: u.user_name, role: u.role, plot: u.plot_id, taskName: task ? task.task_name : 'อัปเดตงาน', action: u.action, detail: u.text_content || '-', type: 'update' });
+            activities.push({ time: new Date(u.created_at).getTime(), timeStr: new Date(u.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }), user: u.user_name, role: u.role, plot: u.plot_id, taskName: task ? task.task_name : 'อัปเดตงาน', action: formatRoadblockActionLabel(u.action, u.text_content) || u.action, detail: formatTaskUpdateDisplayText(u.text_content, u.action) || '-', type: 'update' });
           });
 
           defects.filter(d => new Date(d.created_at).toLocaleDateString('en-CA') === targetDate).forEach(d => {

@@ -10,6 +10,10 @@ import {
   getMonthlyForemanInspectionCompliance,
   getForemanDailyActivities,
   recordForemanTaskRoadblockReason,
+  stripInternalRefMarkers,
+  parseRoadblockDisplay,
+  formatTaskUpdateDisplayText,
+  formatRoadblockActionLabel,
 } from '../foremanDuty';
 
 describe('foremanDuty helper library', () => {
@@ -756,6 +760,97 @@ describe('foremanDuty helper library', () => {
       expect(day2?.tasks).toHaveLength(2);
       expect(day2?.tasks?.map(t => t.project_name)).toEqual(expect.arrayContaining(['ไอลิน 6', 'ไอลิน 7']));
       expect(day2?.tasks?.map(t => t.foreman_name)).toEqual(expect.arrayContaining(['LEAB', 'VIEW']));
+    });
+  });
+
+  describe('Roadblock display formatting & internal ref marker stripping', () => {
+    it('strips [ref:...] markers without altering non-marker text', () => {
+      expect(
+        stripInternalRefMarkers('เหตุผล: อื่นๆ (ระบุในหมายเหตุ) (ช่างเข้าวันจันทร์ที่ 16/11/2569) [ref:sub_1794377594294_ozg2f]')
+      ).toBe('เหตุผล: อื่นๆ (ระบุในหมายเหตุ) (ช่างเข้าวันจันทร์ที่ 16/11/2569)');
+
+      expect(stripInternalRefMarkers('เทปูนเสร็จ 80%')).toBe('เทปูนเสร็จ 80%');
+      expect(stripInternalRefMarkers(null)).toBe('');
+    });
+
+    it('parses roadblock reason with parentheses and preserves note while stripping [ref:...]', () => {
+      const parsed = parseRoadblockDisplay(
+        'เหตุผล: อื่นๆ (ระบุในหมายเหตุ) (ช่างเข้าวันจันทร์ที่ 16/11/2569) [ref:sub_1794377594294_ozg2f]',
+        'แจ้งติดปัญหา: อื่นๆ (ระบุในหมายเหตุ)'
+      );
+
+      expect(parsed).not.toBeNull();
+      expect(parsed?.icon).toBe('📝');
+      expect(parsed?.reasonLabel).toBe('อื่นๆ (ระบุในหมายเหตุ)');
+      expect(parsed?.note).toBe('ช่างเข้าวันจันทร์ที่ 16/11/2569');
+      expect(parsed?.formattedText).toBe('📝 เหตุผล: อื่นๆ (ระบุในหมายเหตุ) (ช่างเข้าวันจันทร์ที่ 16/11/2569)');
+    });
+
+    it('resolves exact reason icon even when note contains keywords from another reason, and preserves nested parens', () => {
+      const otherWithRainNote = parseRoadblockDisplay(
+        'เหตุผล: อื่นๆ (ระบุในหมายเหตุ) (ฝนตกหนักเข้าไซต์ไม่ได้) [ref:sub_1]',
+        'แจ้งติดปัญหา: อื่นๆ (ระบุในหมายเหตุ)'
+      );
+      expect(otherWithRainNote?.icon).toBe('📝');
+      expect(otherWithRainNote?.note).toBe('ฝนตกหนักเข้าไซต์ไม่ได้');
+
+      const materialWithNestedParens = parseRoadblockDisplay(
+        'เหตุผล: ติดปัญหาวัสดุ (ของขาด / จัดส่งล่าช้า) (รอปูน (CPAC) บ่าย 2) [ref:sub_2]',
+        'แจ้งติดปัญหา: ติดปัญหาวัสดุ (ของขาด / จัดส่งล่าช้า)'
+      );
+      expect(materialWithNestedParens?.icon).toBe('🧱');
+      expect(materialWithNestedParens?.reasonLabel).toBe('ติดปัญหาวัสดุ (ของขาด / จัดส่งล่าช้า)');
+      expect(materialWithNestedParens?.note).toBe('รอปูน (CPAC) บ่าย 2');
+    });
+
+    it('handles roadblocks without notes and returns null for non-roadblock progress updates', () => {
+      const noNote = parseRoadblockDisplay(
+        'เหตุผล: ยังไม่สามารถเริ่มงานได้ [ref:sub_3]',
+        'แจ้งติดปัญหา: ยังไม่สามารถเริ่มงานได้'
+      );
+      expect(noNote?.icon).toBe('⏳');
+      expect(noNote?.note).toBe('');
+      expect(noNote?.formattedText).toBe('⏳ เหตุผล: ยังไม่สามารถเริ่มงานได้');
+
+      expect(parseRoadblockDisplay('วันนี้ฝนตกเล็กน้อย ทำได้ 40%', 'อัปเดตความคืบหน้า')).toBeNull();
+      expect(formatTaskUpdateDisplayText('วันนี้ฝนตกเล็กน้อย ทำได้ 40%', 'อัปเดตความคืบหน้า')).toBe(
+        'วันนี้ฝนตกเล็กน้อย ทำได้ 40%'
+      );
+    });
+
+    it('formats roadblock action label with icon without duplicating existing icon', () => {
+      expect(
+        formatRoadblockActionLabel('แจ้งติดปัญหา: ติดปัญหาช่าง (ขาดช่าง / ช่างไม่เข้างาน)')
+      ).toBe('👷 แจ้งติดปัญหา: ติดปัญหาช่าง (ขาดช่าง / ช่างไม่เข้างาน)');
+
+      expect(formatRoadblockActionLabel('🌧️ ติดสภาพอากาศ / ฝนตก', 'ฝนตกช่วงบ่าย')).toBe(
+        '🌧️ ติดสภาพอากาศ / ฝนตก'
+      );
+    });
+
+    it('extracts accurate status_note in getForemanScheduledTasksForDate when reason contains parentheses', () => {
+      const tasks = getForemanScheduledTasksForDate({
+        plots: [{ id: 'plot-72', name: 'แปลง 72', project_name: 'ไอลิน6', foreman: 'VIEW' }],
+        taskTemplates: [{ id: 'task-ceiling', task_name: 'งานฝ้าห้องน้ำ' }],
+        schedules: { 'plot-72-task-ceiling': { planned_start: '2026-11-10', planned_end: '2026-11-12' } },
+        allUpdatesRecord: [
+          {
+            id: 'up-72',
+            plot_id: 'plot-72',
+            task_template_id: 'task-ceiling',
+            action: 'แจ้งติดปัญหา: อื่นๆ (ระบุในหมายเหตุ)',
+            text_content: 'เหตุผล: อื่นๆ (ระบุในหมายเหตุ) (ช่างเข้าวันจันทร์ที่ 16/11/2569) [ref:sub_1794377594294_ozg2f]',
+            created_at: '2026-11-11T06:14:00.000Z',
+            progress: 0,
+          },
+        ],
+        targetDate: '2026-11-11',
+        foremanName: 'VIEW',
+      });
+
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0].status_reason).toBe('other');
+      expect(tasks[0].status_note).toBe('ช่างเข้าวันจันทร์ที่ 16/11/2569');
     });
   });
 });

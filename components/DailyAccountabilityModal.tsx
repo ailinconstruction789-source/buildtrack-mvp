@@ -4,6 +4,7 @@ import {
   Clock, CheckCircle, AlertTriangle, ChevronDown, ChevronUp,
   HardHat, ShieldAlert, FileText, Building2, User
 } from 'lucide-react';
+import { formatRoadblockActionLabel, formatTaskUpdateDisplayText } from '@/lib/foremanDuty';
 
 interface DailyAccountabilityModalProps {
   isOpen: boolean;
@@ -105,8 +106,8 @@ export default function DailyAccountabilityModal({
           role,
           plot: u.plot_id,
           taskName: task ? task.task_name : (u.action || 'อัปเดตงาน'),
-          action: u.action || 'บันทึกงาน',
-          detail: u.text_content || '-',
+          action: formatRoadblockActionLabel(u.action, u.text_content) || 'บันทึกงาน',
+          detail: formatTaskUpdateDisplayText(u.text_content, u.action) || '-',
           progress: u.progress,
           image: extractFirstValidImageUrl(u.image_url || u.images),
           type: 'update'

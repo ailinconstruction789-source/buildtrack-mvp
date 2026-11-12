@@ -28,6 +28,7 @@ import {
   Info,
   ClipboardList
 } from 'lucide-react';
+import { formatRoadblockActionLabel, formatTaskUpdateDisplayText } from '@/lib/foremanDuty';
 import {
   auditPhoto,
   getCachedPhotoAudit,
@@ -282,8 +283,8 @@ export const DailySiteActivitiesView: React.FC<DailySiteActivitiesViewProps> = (
         taskId: update.task_template_id,
         userName: update.user_name || 'ผู้รับผิดชอบ',
         userRole: update.role || 'Foreman',
-        actionText: update.action || 'อัปเดตความคืบหน้า',
-        detailText: update.text_content || '',
+        actionText: formatRoadblockActionLabel(update.action, update.text_content) || 'อัปเดตความคืบหน้า',
+        detailText: formatTaskUpdateDisplayText(update.text_content, update.action),
         createdAt: update.created_at,
         weatherInfo: update.weather_info,
         imageUrls: parseImages(update.image_url)
