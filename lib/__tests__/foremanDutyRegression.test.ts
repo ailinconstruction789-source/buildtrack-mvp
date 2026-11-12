@@ -428,10 +428,14 @@ describe('Foreman Duty Regression Tests (Findings 7, 8, 11, 12, 13, 14)', () => 
         todayDateStr: '2026-11-05'
       });
 
-      // Day 1 tasks should only have 1 task (p1), NOT 2 tasks (p1 + p2)
+      // Day 1 (Sunday Nov 1) is weekly holiday -> 0 scheduled; Day 2 (Monday Nov 2) should only have 1 task (p1), NOT 2 tasks (p1 + p2)
       const day1 = summaryIlin6.days.find(d => d.date === '2026-11-01');
-      expect(day1?.totalScheduled).toBe(1);
-      expect(day1?.plotsCount).toBe(1);
+      expect(day1?.status).toBe('holiday');
+      expect(day1?.totalScheduled).toBe(0);
+
+      const day2 = summaryIlin6.days.find(d => d.date === '2026-11-02');
+      expect(day2?.totalScheduled).toBe(1);
+      expect(day2?.plotsCount).toBe(1);
     });
   });
 });

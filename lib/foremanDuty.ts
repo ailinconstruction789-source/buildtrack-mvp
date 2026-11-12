@@ -6,6 +6,12 @@
  */
 
 import { supabase } from './supabase';
+import {
+  resolveHandoverDefectForeman,
+  isHandoverDefectCompleted,
+  isUnassignedForemanName,
+  canonicalizeForemanName,
+} from './handoverForeman';
 
 export const ROADBLOCK_REASONS = [
   {
@@ -240,6 +246,10 @@ export interface ForemanDailyTask {
   completion_date?: string | null;
   is_out_of_plan?: boolean;
   out_of_plan_badge?: string;
+  is_handover?: boolean;
+  defect_id?: string;
+  handover_round?: number;
+  defectObj?: any;
 }
 
 export interface ForemanDailySummary {
@@ -258,10 +268,15 @@ export interface GetForemanTasksOptions {
   schedules: Record<string, any>;
   assignments?: any[];
   allUpdatesRecord?: any[];
+  defects?: any[];
+  defectUpdates?: any[];
+  contractors?: any[];
+  foremenList?: any[];
   foremanName: string; // specific foreman username or 'all'
   targetDate: string;  // YYYY-MM-DD
   existingSnapshots?: any[];
   preIndexedUpdates?: Map<string, any[]>;
+  preIndexedDefectUpdates?: Map<string, any[]>;
   todayDateStr?: string;
 }
 
@@ -326,6 +341,103 @@ export function getPlotForemanName(plot: any): string {
 }
 
 /**
+ * Checks whether a date falls on Sunday (dayOfWeek === 0),
+ * which is the weekly holiday for foremen (วันหยุดประจำสัปดาห์).
+ */
+export function isForemanWeeklyHoliday(dateInput: any): boolean {
+  const norm = normalizeDateStr(dateInput);
+  if (!norm) return false;
+  const parts = norm.split('-').map(Number);
+  if (parts.length !== 3 || parts.some(n => Number.isNaN(n))) return false;
+  const [year, month, day] = parts;
+  return new Date(year, month - 1, day).getDay() === 0;
+}
+
+/**
+ * Checks whether a construction task template should be excluded from planned
+ * inspection schedules and compliance denominators (e.g. marked "ไม่นำมาคำนวณในแผนงาน",
+ * assigned N/A exclusion for the plot, or globally excluded for the plot's house type).
+ */
+export function isTaskExcludedFromPlan(task: any, assign?: any, plot?: any): boolean {
+  if (task?.is_progress_counted === false) return true;
+  if (Boolean(assign?.is_excluded)) return true;
+  const plotTypeName = String(plot?.house_types?.type_name || plot?.house_type_name || '').trim();
+  if (
+    plotTypeName &&
+    Array.isArray(task?.excluded_house_types) &&
+    task.excluded_house_types.some((ht: any) => String(ht).trim() === plotTypeName)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export const SNAPSHOT_DAY_LOCK_PLOT_ID = '__DAY_LOCK__';
+export const SNAPSHOT_DAY_LOCK_TASK_PREFIX = '__FREEZE__';
+
+/**
+ * Identifies synthetic freeze-marker rows stored in foreman_daily_duty_snapshots
+ * to lock completed past dates against retroactive schedule backdates/additions.
+ */
+export function isDayFreezeMarkerRow(snap: any): boolean {
+  if (!snap) return false;
+  return (
+    String(snap.plot_id || '') === SNAPSHOT_DAY_LOCK_PLOT_ID ||
+    String(snap.task_template_id || '').startsWith(SNAPSHOT_DAY_LOCK_TASK_PREFIX)
+  );
+}
+
+/**
+ * Checks whether a given date already has a freeze marker (either global or for a specific project).
+ */
+export function isPastDateFrozenInSnapshots(
+  targetDate: string,
+  existingSnapshots: any[] = [],
+  projectName?: string | null
+): boolean {
+  const normDate = normalizeDateStr(targetDate) || targetDate;
+  const targetProj = projectName && projectName !== 'all' ? projectName.trim() : null;
+  if (!Array.isArray(existingSnapshots) || existingSnapshots.length === 0) return false;
+
+  for (const snap of existingSnapshots) {
+    if (!isDayFreezeMarkerRow(snap)) continue;
+    const snapDate = normalizeDateStr(snap.snapshot_date);
+    if (snapDate !== normDate) continue;
+    const tid = String(snap.task_template_id || '');
+    if (tid === SNAPSHOT_DAY_LOCK_TASK_PREFIX) return true;
+    if (targetProj && tid === `${SNAPSHOT_DAY_LOCK_TASK_PREFIX}:${targetProj}`) return true;
+  }
+  return false;
+}
+
+/**
+ * Maps a ForemanDailyTask into a database row payload for foreman_daily_duty_snapshots.
+ */
+export function toSnapshotDbRow(t: ForemanDailyTask, snapshotDate: string, updatedBy: string = 'Foreman') {
+  const normDate = normalizeDateStr(snapshotDate) || snapshotDate;
+  const nowIso = new Date().toISOString();
+  return {
+    snapshot_date: normDate,
+    foreman_name: t.foreman_name,
+    plot_id: String(t.plot_id),
+    project_name: t.project_name,
+    task_template_id: String(t.task_template_id),
+    task_name: t.task_name,
+    task_order: t.task_order || 0,
+    planned_start: t.planned_start,
+    planned_end: t.planned_end,
+    current_progress: t.current_progress,
+    contractor_name: t.contractor_name || '',
+    is_updated_today: t.is_updated_today,
+    status_reason: t.status_reason || null,
+    status_note: t.status_note || null,
+    last_updated_at: t.last_updated_at || nowIso,
+    updated_by: updatedBy,
+    updated_at: nowIso,
+  };
+}
+
+/**
  * Core Algorithm: Retrieves scheduled tasks for a foreman on a target date.
  * Enforces Rule 1: Overdue tasks (targetDate > planned_end) are EXCLUDED.
  * Checks whether an update was made on targetDate.
@@ -337,10 +449,15 @@ export function getForemanScheduledTasksForDate(options: GetForemanTasksOptions)
     schedules,
     assignments = [],
     allUpdatesRecord = [],
+    defects = [],
+    defectUpdates = [],
+    contractors = [],
+    foremenList = [],
     foremanName,
     targetDate,
     existingSnapshots = [],
-    preIndexedUpdates
+    preIndexedUpdates,
+    preIndexedDefectUpdates
   } = options;
 
   if (!targetDate || !Array.isArray(plots)) return [];
@@ -349,12 +466,23 @@ export function getForemanScheduledTasksForDate(options: GetForemanTasksOptions)
   const isTargetAll = !foremanName || foremanName.toLowerCase() === 'all';
   const targetFmLower = foremanName ? foremanName.toLowerCase().trim() : '';
 
-  // 1. Build fast map of existing snapshots for this date
+  // 1. Build fast map of existing snapshots and day-lock markers for this date
   const snapshotMap = new Map<string, any>();
+  let hasGlobalFreezeMarker = false;
+  const frozenProjectsOnDate = new Set<string>();
   if (Array.isArray(existingSnapshots)) {
     existingSnapshots.forEach(snap => {
       const snapDate = normalizeDateStr(snap.snapshot_date);
       if (snapDate === normTargetDate) {
+        if (isDayFreezeMarkerRow(snap)) {
+          const tid = String(snap.task_template_id || '');
+          if (tid === SNAPSHOT_DAY_LOCK_TASK_PREFIX) {
+            hasGlobalFreezeMarker = true;
+          } else if (tid.startsWith(`${SNAPSHOT_DAY_LOCK_TASK_PREFIX}:`)) {
+            frozenProjectsOnDate.add(tid.slice(SNAPSHOT_DAY_LOCK_TASK_PREFIX.length + 1).trim());
+          }
+          return;
+        }
         const key = `${snap.plot_id}-${snap.task_template_id}`;
         snapshotMap.set(key, snap);
       }
@@ -402,11 +530,16 @@ export function getForemanScheduledTasksForDate(options: GetForemanTasksOptions)
     ? (normalizeDateStr(options.todayDateStr) || options.todayDateStr)
     : (normalizeDateStr(new Date()) || new Date().toISOString().split('T')[0]);
   const isViewingToday = normTargetDate === nowBangkokStr;
+  const isViewingPast = normTargetDate < nowBangkokStr;
+  const isPlotFrozenOnDate = (p: any): boolean =>
+    isViewingPast &&
+    (hasGlobalFreezeMarker || Boolean(p?.project_name && frozenProjectsOnDate.has(String(p.project_name).trim())));
 
   // Build index of plots with snapshots on target date for target foreman
   const historicalPlotIdsForFm = new Set<string>();
   if (Array.isArray(existingSnapshots)) {
     existingSnapshots.forEach(s => {
+      if (isDayFreezeMarkerRow(s)) return;
       const sDate = normalizeDateStr(s.snapshot_date);
       if (sDate === normTargetDate) {
         const sFm = (s.foreman_name || '').trim().toLowerCase();
@@ -430,7 +563,10 @@ export function getForemanScheduledTasksForDate(options: GetForemanTasksOptions)
   const dailyTasks: ForemanDailyTask[] = [];
 
   matchedPlots.forEach(plot => {
-    const plotFm = getPlotForemanName(plot) || 'ยังไม่ระบุโฟร์แมน';
+    const rawPlotFm = getPlotForemanName(plot);
+    const plotFm = (!rawPlotFm || isUnassignedForemanName(rawPlotFm))
+      ? 'ยังไม่ระบุโฟร์แมน'
+      : canonicalizeForemanName(rawPlotFm, foremenList);
     const plotName = plot.name || plot.plot_number || `แปลง ${plot.id}`;
     const projectName = plot.project_name || 'ไอลิน';
 
@@ -442,8 +578,16 @@ export function getForemanScheduledTasksForDate(options: GetForemanTasksOptions)
     plotTasks.forEach(task => {
       const scheduleKey = `${plot.id}-${task.id}`;
       const altScheduleKey = `${plot.id}_${task.id}`;
-      const plan = schedules[scheduleKey] || schedules[altScheduleKey];
+      const taskAssign = assignmentMap.get(scheduleKey) || assignmentMap.get(altScheduleKey);
+      if (isTaskExcludedFromPlan(task, taskAssign, plot)) {
+        return;
+      }
       const snapshot = snapshotMap.get(scheduleKey);
+      // Frozen past dates strictly lock to existing snapshots; do not inject newly backdated/added schedules
+      if (isPlotFrozenOnDate(plot) && !snapshot) {
+        return;
+      }
+      const plan = schedules[scheduleKey] || schedules[altScheduleKey];
 
       // If a frozen snapshot exists for this task on targetDate, prioritize snapshot values
       const pStart = normalizeDateStr(snapshot?.planned_start || plan?.planned_start);
@@ -462,10 +606,14 @@ export function getForemanScheduledTasksForDate(options: GetForemanTasksOptions)
         return;
       }
 
-      // Historical foreman attribution: if snapshot has foreman_name, attribute strictly to it! (Finding G)
-      const taskForeman = snapshot?.foreman_name
-        ? snapshot.foreman_name
-        : plotFm;
+      // Today (live operational view): reflect live plot foreman immediately even if an earlier morning snapshot existed.
+      // Past dates: preserve historical foreman from snapshot (Finding G), EXCEPT when the snapshot only recorded an
+      // unassigned placeholder ("ยังไม่ระบุโฟร์แมน") and the plot now has a real foreman assigned.
+      const rawSnapFm = String(snapshot?.foreman_name || '').trim();
+      const hasConcreteSnapFm = Boolean(rawSnapFm) && !isUnassignedForemanName(rawSnapFm);
+      const taskForeman = isViewingToday
+        ? plotFm
+        : (hasConcreteSnapFm ? canonicalizeForemanName(rawSnapFm, foremenList) : plotFm);
 
       if (!isTargetAll && taskForeman.toLowerCase() !== targetFmLower) {
         return;
@@ -546,8 +694,11 @@ export function getForemanScheduledTasksForDate(options: GetForemanTasksOptions)
         isUpdatedToday = hasProgressUpdateToday;
       }
 
-      // Check whether task is currently under active rejection / rework
-      const taskUpdates = updatesByTaskMap.get(scheduleKey) || [];
+      // Check whether task is currently under active rejection / rework (capped to <= targetDate on past dates)
+      const rawTaskUpdates = updatesByTaskMap.get(scheduleKey) || [];
+      const taskUpdates = isViewingPast
+        ? rawTaskUpdates.filter(u => (normalizeDateStr(u.created_at || u.date) || '') <= normTargetDate)
+        : rawTaskUpdates;
       let isRejectedCurrently = false;
       if (taskUpdates.length > 0) {
         const sortedDesc = [...taskUpdates].sort((a, b) => {
@@ -624,6 +775,251 @@ export function getForemanScheduledTasksForDate(options: GetForemanTasksOptions)
       });
     });
   });
+
+  // 5. Append scheduled Handover Inspection tasks (`defects` with `defect_stage === 'handover'`)
+  // Handover tasks can be handled by a different foreman than construction (`plots.foreman_name`),
+  // so we look up each defect's plot in `plots` directly and evaluate ownership per defect.
+  if (Array.isArray(defects) && defects.length > 0) {
+    const plotByIdMap = new Map<string, any>();
+    plots.forEach(p => {
+      if (p && p.id !== undefined && p.id !== null) {
+        plotByIdMap.set(String(p.id), p);
+      }
+    });
+
+    const contractorMap = new Map<string, any>();
+    if (Array.isArray(contractors)) {
+      contractors.forEach(c => {
+        if (c && c.id !== undefined && c.id !== null) {
+          contractorMap.set(String(c.id), c);
+        }
+      });
+    }
+
+    const defectUpdatesByDefectId = new Map<string, any[]>();
+    const targetDateDefectUpdatesMap = preIndexedDefectUpdates || new Map<string, any[]>();
+
+    if (Array.isArray(defectUpdates)) {
+      defectUpdates.forEach(du => {
+        if (!du || !du.defect_id) return;
+        const dIdStr = String(du.defect_id);
+        if (!defectUpdatesByDefectId.has(dIdStr)) {
+          defectUpdatesByDefectId.set(dIdStr, []);
+        }
+        defectUpdatesByDefectId.get(dIdStr)!.push(du);
+
+        if (!preIndexedDefectUpdates) {
+          const duDate = normalizeDateStr(du.created_at) || normalizeDateStr(du.date);
+          if (duDate === normTargetDate) {
+            if (!targetDateDefectUpdatesMap.has(dIdStr)) {
+              targetDateDefectUpdatesMap.set(dIdStr, []);
+            }
+            targetDateDefectUpdatesMap.get(dIdStr)!.push(du);
+          }
+        }
+      });
+    }
+
+    const isDefectRoadblockRow = (u: any): boolean => {
+      if (!u) return false;
+      const actStr = String(u.action || '');
+      const noteStr = String(u.note || '');
+      return Boolean(
+        parseRoadblockDisplay(noteStr, actStr) ||
+        actStr.includes('ติดปัญหา') ||
+        actStr.startsWith('แจ้งติดปัญหา') ||
+        noteStr.startsWith('เหตุผล:')
+      );
+    };
+
+    defects.forEach(d => {
+      if (!d || d.defect_stage !== 'handover') return;
+      const plot = plotByIdMap.get(String(d.plot_id));
+      if (!plot) return;
+
+      const templateKey = `handover:${d.id}`;
+      const scheduleKey = `${plot.id}-${templateKey}`;
+      const snapshot = snapshotMap.get(scheduleKey);
+      if (isPlotFrozenOnDate(plot) && !snapshot) {
+        return;
+      }
+
+      const pStart = normalizeDateStr(snapshot?.planned_start || d.planned_start);
+      const pEnd = normalizeDateStr(snapshot?.planned_end || d.planned_end);
+      if (!pStart || !pEnd) return;
+
+      // Enforce exact same date-window & overdue exclusion rules (ข้อ 3)
+      if (normTargetDate < pStart || normTargetDate > pEnd) {
+        return;
+      }
+
+      // Today: live handover foreman (per defect -> plot.handover_foreman_name -> plot.foreman_name)
+      // Past dates: snapshot foreman preserves historical attribution across takeovers, unless snapshot was unassigned placeholder
+      const rawLiveFm = resolveHandoverDefectForeman(d, plot);
+      const liveForeman = (!rawLiveFm || isUnassignedForemanName(rawLiveFm))
+        ? 'ยังไม่ระบุโฟร์แมน'
+        : canonicalizeForemanName(rawLiveFm, foremenList);
+      const rawSnapFm = String(snapshot?.foreman_name || '').trim();
+      const hasConcreteSnapFm = Boolean(rawSnapFm) && !isUnassignedForemanName(rawSnapFm);
+      const taskForeman = isViewingToday
+        ? liveForeman
+        : (hasConcreteSnapFm ? canonicalizeForemanName(rawSnapFm, foremenList) : liveForeman);
+
+      if (!isTargetAll && taskForeman.toLowerCase() !== targetFmLower) {
+        return;
+      }
+
+      const curProgress = isViewingToday
+        ? Number(d.progress ?? snapshot?.current_progress ?? 0)
+        : Number(snapshot?.current_progress ?? d.progress ?? 0);
+
+      const updatesToday = targetDateDefectUpdatesMap.get(String(d.id)) || [];
+      const sortedUpdatesToday = [...updatesToday].sort((a, b) => {
+        const ta = new Date(b.created_at || b.date || 0).getTime();
+        const tb = new Date(a.created_at || a.date || 0).getTime();
+        return ta - tb;
+      });
+      const latestUpdateToday = sortedUpdatesToday[0] || null;
+      const isLatestUpdateRoadblock = Boolean(latestUpdateToday && isDefectRoadblockRow(latestUpdateToday));
+
+      let statusReason = snapshot?.status_reason || null;
+      let statusNote = snapshot?.status_note || null;
+
+      // If today has a newer non-roadblock progress update than snapshot roadblock, clear stale roadblock
+      if (isViewingToday && statusReason && sortedUpdatesToday.length > 0 && !isLatestUpdateRoadblock) {
+        const latestNonRb = sortedUpdatesToday.find(u => !isDefectRoadblockRow(u));
+        const snapTime = new Date(snapshot?.last_updated_at || snapshot?.updated_at || 0).getTime();
+        const updTime = new Date(latestNonRb?.created_at || latestNonRb?.date || 0).getTime();
+        if (!snapTime || updTime >= snapTime) {
+          statusReason = null;
+          statusNote = null;
+        }
+      }
+
+      if (isLatestUpdateRoadblock && latestUpdateToday) {
+        const actStr = String(latestUpdateToday.action || '');
+        const textStr = String(latestUpdateToday.note || '');
+        const parsed = parseRoadblockDisplay(textStr, actStr);
+        const matchedReason = parsed && ROADBLOCK_REASONS.some(r => r.id === parsed.reasonMeta.id)
+          ? parsed.reasonMeta
+          : null;
+        if (matchedReason) {
+          statusReason = matchedReason.id;
+        } else if (actStr.startsWith('แจ้งติดปัญหา:')) {
+          statusReason = actStr.replace('แจ้งติดปัญหา:', '').trim();
+        } else {
+          statusReason = 'other';
+        }
+        statusNote = parsed?.note || statusNote || null;
+      }
+
+      let isUpdatedToday = false;
+      if (statusReason) {
+        isUpdatedToday = false;
+      } else if (!isViewingToday && snapshot?.is_updated_today) {
+        isUpdatedToday = true;
+      } else if (sortedUpdatesToday.some(u => !isDefectRoadblockRow(u))) {
+        isUpdatedToday = true;
+      } else if (snapshot?.is_updated_today) {
+        isUpdatedToday = true;
+      }
+
+      // Check whether defect was completed (100% or closed/resolved) BEFORE targetDate (capped to <= targetDate on past dates)
+      const rawDefectUpds = defectUpdatesByDefectId.get(String(d.id)) || [];
+      const allDefectUpds = isViewingPast
+        ? rawDefectUpds.filter(u => (normalizeDateStr(u.created_at || u.date) || '') <= normTargetDate)
+        : rawDefectUpds;
+      let isRejectedCurrently = false;
+      if (allDefectUpds.length > 0) {
+        const sortedDesc = [...allDefectUpds].sort((a, b) => {
+          const ta = new Date(b.created_at || b.date || 0).getTime();
+          const tb = new Date(a.created_at || a.date || 0).getTime();
+          return ta - tb;
+        });
+        const latestNoteAct = `${sortedDesc[0]?.action || ''} ${sortedDesc[0]?.note || ''}`;
+        if (
+          latestNoteAct.includes('แจ้งแก้ไข') ||
+          latestNoteAct.includes('ไม่อนุมัติ') ||
+          latestNoteAct.includes('ตีกลับ') ||
+          latestNoteAct.includes('ไม่ผ่าน')
+        ) {
+          isRejectedCurrently = true;
+        }
+      }
+
+      let isCompletedEarly = false;
+      let completionDate: string | null = normalizeDateStr(d.actual_end || d.resolved_at || d.completed_at);
+
+      if ((curProgress >= 100 || isHandoverDefectCompleted(d)) && !isRejectedCurrently) {
+        if (!completionDate && allDefectUpds.length > 0) {
+          const sortedAsc = [...allDefectUpds].sort((a, b) => {
+            const ta = new Date(a.created_at || a.date || 0).getTime();
+            const tb = new Date(b.created_at || b.date || 0).getTime();
+            return ta - tb;
+          });
+          for (let i = sortedAsc.length - 1; i >= 0; i--) {
+            if (!isDefectRoadblockRow(sortedAsc[i]) && Number(sortedAsc[i].progress) >= 100) {
+              completionDate = normalizeDateStr(sortedAsc[i].created_at || sortedAsc[i].date);
+            } else if (!isDefectRoadblockRow(sortedAsc[i])) {
+              break;
+            }
+          }
+        }
+
+        if (completionDate) {
+          if (completionDate < normTargetDate) {
+            isCompletedEarly = true;
+          }
+        } else if (updatesToday.length === 0) {
+          isCompletedEarly = true;
+        }
+      }
+
+      const plotName = plot.name || plot.plot_number || `แปลง ${plot.id}`;
+      const projectName = plot.project_name || 'ไอลิน';
+      const contractorName =
+        d.contractor_name ||
+        contractorMap.get(String(d.contractor_id || ''))?.name ||
+        '';
+      const handoverRound = Number(d.inspection_round || d.round || plot.inspection_round || 1);
+      const rbMeta = statusReason ? getRoadblockReason(statusReason) : null;
+
+      dailyTasks.push({
+        id: scheduleKey,
+        plot_id: String(plot.id),
+        plot_name: plotName,
+        project_name: projectName,
+        house_type_id: plot.house_type_id ? String(plot.house_type_id) : undefined,
+        foreman_name: taskForeman,
+        task_template_id: templateKey,
+        task_name: d.description || d.title || snapshot?.task_name || 'รายการตรวจรับบ้าน',
+        task_order: 9000 + handoverRound,
+        planned_start: pStart,
+        planned_end: pEnd,
+        current_progress: curProgress,
+        contractor_name: contractorName,
+        is_updated_today: isUpdatedToday,
+        last_updated_at: snapshot?.last_updated_at || latestUpdateToday?.created_at || null,
+        last_action: isLatestUpdateRoadblock
+          ? `แจ้งติดปัญหา: ${rbMeta?.label || statusReason}`
+          : latestUpdateToday
+          ? (Number(latestUpdateToday.progress) >= 100
+              ? 'แก้ไข Defect เสร็จสิ้น 100%'
+              : `อัปเดตงานตรวจรับ (${latestUpdateToday.progress ?? curProgress}%)`)
+          : (isUpdatedToday ? 'อัปเดตแล้ว' : null),
+        last_role: latestUpdateToday?.created_by ? 'Foreman' : null,
+        status_reason: statusReason,
+        status_note: statusNote,
+        is_snapshot: Boolean(snapshot),
+        is_completed_early: isCompletedEarly,
+        completion_date: completionDate,
+        is_handover: true,
+        defect_id: String(d.id),
+        handover_round: handoverRound,
+        defectObj: d,
+      });
+    });
+  }
 
   // Sort by Plot name, then task order
   dailyTasks.sort((a, b) => {
@@ -717,25 +1113,7 @@ export async function saveForemanDailySnapshot(
 
   // 2. Dual-write to Supabase table foreman_daily_duty_snapshots
   try {
-    const rows = tasks.map(t => ({
-      snapshot_date: normDate,
-      foreman_name: t.foreman_name,
-      plot_id: String(t.plot_id),
-      project_name: t.project_name,
-      task_template_id: String(t.task_template_id),
-      task_name: t.task_name,
-      task_order: t.task_order || 0,
-      planned_start: t.planned_start,
-      planned_end: t.planned_end,
-      current_progress: t.current_progress,
-      contractor_name: t.contractor_name || '',
-      is_updated_today: t.is_updated_today,
-      status_reason: t.status_reason || null,
-      status_note: t.status_note || null,
-      last_updated_at: t.last_updated_at || new Date().toISOString(),
-      updated_by: updatedBy,
-      updated_at: new Date().toISOString(),
-    }));
+    const rows = tasks.map(t => toSnapshotDbRow(t, normDate, updatedBy));
 
     const upsertBuilder = client
       .from('foreman_daily_duty_snapshots')
@@ -783,12 +1161,16 @@ export async function loadForemanDailySnapshot(
       if (pids.length > 0) {
         const sanitizedPids = pids.map(id => id.replace(/[(),"]/g, '').trim()).filter(Boolean);
         if (sanitizedPids.length > 0) {
-          query = query.or(`foreman_name.ilike.${targetFmLower},plot_id.in.(${sanitizedPids.join(',')})`);
+          query = query.or(`foreman_name.ilike.${targetFmLower},plot_id.in.(${sanitizedPids.join(',')}),plot_id.eq.${SNAPSHOT_DAY_LOCK_PLOT_ID}`);
         } else {
-          query = query.ilike('foreman_name', targetFmLower);
+          query = typeof (query as any).or === 'function'
+            ? (query as any).or(`foreman_name.ilike.${targetFmLower},plot_id.eq.${SNAPSHOT_DAY_LOCK_PLOT_ID}`)
+            : query.ilike('foreman_name', targetFmLower);
         }
       } else {
-        query = query.ilike('foreman_name', targetFmLower);
+        query = typeof (query as any).or === 'function'
+          ? (query as any).or(`foreman_name.ilike.${targetFmLower},plot_id.eq.${SNAPSHOT_DAY_LOCK_PLOT_ID}`)
+          : query.ilike('foreman_name', targetFmLower);
       }
     }
 
@@ -867,16 +1249,22 @@ export async function loadForemanMonthlySnapshots(
       if (pids.length > 0) {
         const sanitizedPids = pids.map(id => id.replace(/[(),"]/g, '').trim()).filter(Boolean);
         if (sanitizedPids.length > 0) {
-          query = query.or(`foreman_name.ilike.${targetFmLower},plot_id.in.(${sanitizedPids.join(',')})`);
+          query = query.or(`foreman_name.ilike.${targetFmLower},plot_id.in.(${sanitizedPids.join(',')}),plot_id.eq.${SNAPSHOT_DAY_LOCK_PLOT_ID}`);
         } else {
-          query = query.ilike('foreman_name', targetFmLower);
+          query = typeof (query as any).or === 'function'
+            ? (query as any).or(`foreman_name.ilike.${targetFmLower},plot_id.eq.${SNAPSHOT_DAY_LOCK_PLOT_ID}`)
+            : query.ilike('foreman_name', targetFmLower);
         }
       } else {
-        query = query.ilike('foreman_name', targetFmLower);
+        query = typeof (query as any).or === 'function'
+          ? (query as any).or(`foreman_name.ilike.${targetFmLower},plot_id.eq.${SNAPSHOT_DAY_LOCK_PLOT_ID}`)
+          : query.ilike('foreman_name', targetFmLower);
       }
     }
     if (targetProj) {
-      query = query.eq('project_name', targetProj);
+      query = typeof (query as any).in === 'function'
+        ? (query as any).in('project_name', [targetProj, '__SYSTEM__'])
+        : query.eq('project_name', targetProj);
     }
 
     const { data, error } = await query;
@@ -911,7 +1299,7 @@ export async function loadForemanMonthlySnapshots(
                     if (iFm !== targetFmLower && !matchPlot) return;
                   }
                   if (targetProj) {
-                    if (item.project_name && item.project_name !== targetProj) return;
+                    if (item.project_name && item.project_name !== targetProj && !isDayFreezeMarkerRow(item)) return;
                   }
                   results.push(item);
                 });
@@ -927,6 +1315,212 @@ export async function loadForemanMonthlySnapshots(
   }
 
   return [];
+}
+
+export interface FreezePastSnapshotsOptions {
+  year: number;
+  month: number; // 1-12
+  plots: any[];
+  taskTemplates: any[];
+  schedules: Record<string, any>;
+  assignments?: any[];
+  allUpdatesRecord?: any[];
+  defects?: any[];
+  defectUpdates?: any[];
+  contractors?: any[];
+  foremenList?: any[];
+  existingSnapshots?: any[];
+  projectName?: string;
+  todayDateStr?: string;
+  updatedBy?: string;
+  customSupabase?: any;
+}
+
+/**
+ * Backfills and freezes snapshots for completed past dates (< today) in a month
+ * that do not yet carry a day-lock marker. Preserves existing snapshot rows intact
+ * and writes a freeze marker per past date so later schedule edits cannot alter history.
+ */
+export async function freezePastDailySnapshotsForMonth(
+  options: FreezePastSnapshotsOptions
+): Promise<{ success: boolean; frozenDates: string[]; addedRows: any[]; error?: string }> {
+  const {
+    year,
+    month,
+    plots = [],
+    taskTemplates = [],
+    schedules = {},
+    assignments = [],
+    allUpdatesRecord = [],
+    defects = [],
+    defectUpdates = [],
+    contractors = [],
+    foremenList = [],
+    existingSnapshots = [],
+    projectName,
+    todayDateStr,
+    updatedBy = 'AutoFreeze',
+    customSupabase,
+  } = options;
+
+  const hasSchedules = schedules && Object.keys(schedules).length > 0;
+  const hasHandoverDefects = Array.isArray(defects) && defects.some(d => d?.defect_stage === 'handover');
+  if (!Array.isArray(plots) || plots.length === 0 || !Array.isArray(taskTemplates) || taskTemplates.length === 0 || (!hasSchedules && !hasHandoverDefects)) {
+    return { success: true, frozenDates: [], addedRows: [] };
+  }
+
+  const client = customSupabase || supabase;
+  if (!customSupabase && typeof client?.auth?.getSession === 'function') {
+    try {
+      const { data: sessionData } = await client.auth.getSession();
+      if (!sessionData?.session) {
+        return { success: true, frozenDates: [], addedRows: [] };
+      }
+    } catch {
+      return { success: true, frozenDates: [], addedRows: [] };
+    }
+  }
+
+  const nowBangkokStr = todayDateStr
+    ? (normalizeDateStr(todayDateStr) || todayDateStr)
+    : (normalizeDateStr(new Date()) || new Date().toISOString().split('T')[0]);
+
+  const targetProj = projectName && projectName !== 'all' ? projectName.trim() : null;
+  const scopedPlots = targetProj ? plots.filter(p => p.project_name === targetProj) : plots;
+  if (scopedPlots.length === 0) {
+    return { success: true, frozenDates: [], addedRows: [] };
+  }
+  const scopedPlotIds = targetProj ? new Set(scopedPlots.map(p => String(p.id))) : null;
+  const scopedDefects = scopedPlotIds
+    ? (defects || []).filter(d => d && scopedPlotIds.has(String(d.plot_id)))
+    : (defects || []);
+  const scopedDefectIds = new Set(scopedDefects.map(d => String(d.id)));
+
+  const existingKeySet = new Set<string>();
+  (existingSnapshots || []).forEach(s => {
+    const sDate = normalizeDateStr(s.snapshot_date);
+    if (sDate) {
+      existingKeySet.add(`${sDate}::${s.plot_id}::${s.task_template_id}`);
+    }
+  });
+
+  // Pre-index updates & defect updates by date once for fast multi-day freezing
+  const updatesByDateAndKey = new Map<string, Map<string, any[]>>();
+  if (Array.isArray(allUpdatesRecord)) {
+    allUpdatesRecord.forEach(u => {
+      if (scopedPlotIds && !scopedPlotIds.has(String(u.plot_id))) return;
+      const uDate = normalizeDateStr(u.created_at) || normalizeDateStr(u.date);
+      if (!uDate) return;
+      if (!updatesByDateAndKey.has(uDate)) updatesByDateAndKey.set(uDate, new Map());
+      const key = `${u.plot_id}-${u.task_template_id}`;
+      const m = updatesByDateAndKey.get(uDate)!;
+      if (!m.has(key)) m.set(key, []);
+      m.get(key)!.push(u);
+    });
+  }
+
+  const defectUpdatesByDateAndId = new Map<string, Map<string, any[]>>();
+  if (Array.isArray(defectUpdates)) {
+    defectUpdates.forEach(du => {
+      if (!du || !du.defect_id) return;
+      const dIdStr = String(du.defect_id);
+      if (scopedPlotIds && !scopedDefectIds.has(dIdStr)) return;
+      const duDate = normalizeDateStr(du.created_at) || normalizeDateStr(du.date);
+      if (!duDate) return;
+      if (!defectUpdatesByDateAndId.has(duDate)) defectUpdatesByDateAndId.set(duDate, new Map());
+      const m = defectUpdatesByDateAndId.get(duDate)!;
+      if (!m.has(dIdStr)) m.set(dIdStr, []);
+      m.get(dIdStr)!.push(du);
+    });
+  }
+
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const rowsToInsert: any[] = [];
+  const frozenDates: string[] = [];
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    if (dateStr >= nowBangkokStr) continue;
+    // Sundays are weekly foreman holidays — never freeze as pending/missed duty days
+    if (isForemanWeeklyHoliday(dateStr)) continue;
+    if (isPastDateFrozenInSnapshots(dateStr, existingSnapshots, targetProj)) continue;
+
+    const tasks = getForemanScheduledTasksForDate({
+      plots: scopedPlots,
+      taskTemplates,
+      schedules,
+      assignments,
+      allUpdatesRecord,
+      defects: scopedDefects,
+      defectUpdates,
+      contractors,
+      foremenList,
+      foremanName: 'all',
+      targetDate: dateStr,
+      existingSnapshots,
+      preIndexedUpdates: updatesByDateAndKey.get(dateStr),
+      preIndexedDefectUpdates: defectUpdatesByDateAndId.get(dateStr),
+      todayDateStr: nowBangkokStr,
+    });
+
+    const activeTasks = tasks.filter(t => !t.is_completed_early);
+    activeTasks.forEach(t => {
+      const k = `${dateStr}::${t.plot_id}::${t.task_template_id}`;
+      if (!existingKeySet.has(k)) {
+        existingKeySet.add(k);
+        rowsToInsert.push(toSnapshotDbRow(t, dateStr, updatedBy));
+      }
+    });
+
+    const lockTaskId = targetProj ? `${SNAPSHOT_DAY_LOCK_TASK_PREFIX}:${targetProj}` : SNAPSHOT_DAY_LOCK_TASK_PREFIX;
+    const lockKey = `${dateStr}::${SNAPSHOT_DAY_LOCK_PLOT_ID}::${lockTaskId}`;
+    if (!existingKeySet.has(lockKey)) {
+      existingKeySet.add(lockKey);
+      const nowIso = new Date().toISOString();
+      rowsToInsert.push({
+        snapshot_date: dateStr,
+        foreman_name: '__ALL__',
+        plot_id: SNAPSHOT_DAY_LOCK_PLOT_ID,
+        project_name: targetProj || '__SYSTEM__',
+        task_template_id: lockTaskId,
+        task_name: targetProj ? `FROZEN_PAST_DAY:${targetProj}` : 'FROZEN_PAST_DAY',
+        task_order: 0,
+        planned_start: dateStr,
+        planned_end: dateStr,
+        current_progress: 0,
+        contractor_name: '',
+        is_updated_today: false,
+        status_reason: null,
+        status_note: null,
+        last_updated_at: nowIso,
+        updated_by: updatedBy,
+        updated_at: nowIso,
+      });
+    }
+    frozenDates.push(dateStr);
+  }
+
+  if (rowsToInsert.length === 0) {
+    return { success: true, frozenDates: [], addedRows: [] };
+  }
+
+  try {
+    const CHUNK_SIZE = 300;
+    for (let i = 0; i < rowsToInsert.length; i += CHUNK_SIZE) {
+      const chunk = rowsToInsert.slice(i, i + CHUNK_SIZE);
+      const { error } = await client
+        .from('foreman_daily_duty_snapshots')
+        .upsert(chunk, { onConflict: 'snapshot_date,plot_id,task_template_id', ignoreDuplicates: true });
+      if (error) {
+        console.warn('Auto-freeze past snapshots notice:', error.message);
+        return { success: false, frozenDates: [], addedRows: [], error: error.message };
+      }
+    }
+    return { success: true, frozenDates, addedRows: rowsToInsert };
+  } catch (err: any) {
+    console.warn('Auto-freeze past snapshots error:', err?.message || err);
+    return { success: false, frozenDates: [], addedRows: [], error: err?.message || String(err) };
+  }
 }
 
 /**
@@ -984,93 +1578,156 @@ export async function recordForemanTaskRoadblockReason(
     console.warn('Snapshot reason upsert fallback notice:', snapError);
   }
 
-  // 2. Also log in task_updates so it appears in plot feed and timeline (Idempotent per operation, Issue 5)
+  // 2. Log roadblock in defect_updates (for handover tasks) or task_updates (for construction tasks)
+  const isHandoverTask = Boolean(
+    task.is_handover ||
+    task.defect_id ||
+    String(task.task_template_id || '').startsWith('handover:')
+  );
+  const resolvedDefectId = task.defect_id
+    ? String(task.defect_id)
+    : (String(task.task_template_id || '').startsWith('handover:')
+        ? String(task.task_template_id).replace(/^handover:/, '')
+        : '');
+
   try {
     const subId = options?.clientSubmissionId || '';
     const updateText = note
       ? `เหตุผล: ${reasonLabel} (${note})${subId ? ` [ref:${subId}]` : ''}`
       : `เหตุผล: ${reasonLabel}${subId ? ` [ref:${subId}]` : ''}`;
-    const dateStart = `${normDate}T00:00:00`;
-    const dateEnd = `${normDate}T23:59:59.999Z`;
 
-    // Finding F4: Dedup by unique submission ID across all records without arbitrary limit(10)
-    let existingUpdateId: any = null;
-    if (subId) {
-      const marker = `[ref:${subId}]`;
-      const { data: existingRows, error: searchErr } = await client
-        .from('task_updates')
-        .select('id, text_content')
-        .eq('plot_id', task.plot_id)
-        .ilike('text_content', `%${marker}%`);
+    if (isHandoverTask && resolvedDefectId) {
+      let existingDefectUpdateId: any = null;
+      if (subId) {
+        const marker = `[ref:${subId}]`;
+        const { data: existingRows, error: searchErr } = await client
+          .from('defect_updates')
+          .select('id, note')
+          .eq('defect_id', resolvedDefectId)
+          .ilike('note', `%${marker}%`);
 
-      if (searchErr) {
-        console.error('Search existing roadblock error:', searchErr);
-        return {
-          success: false,
-          error: `เกิดข้อผิดพลาดในการตรวจสอบประวัติการส่งข้อมูล: ${searchErr.message}`
-        };
+        if (searchErr) {
+          console.error('Search existing handover roadblock error:', searchErr);
+          return {
+            success: false,
+            error: `เกิดข้อผิดพลาดในการตรวจสอบประวัติการส่งข้อมูล: ${searchErr.message}`
+          };
+        }
+
+        if (Array.isArray(existingRows) && existingRows.length > 0) {
+          existingDefectUpdateId = existingRows[0].id;
+        }
       }
 
-      if (Array.isArray(existingRows) && existingRows.length > 0) {
-        existingUpdateId = existingRows[0].id;
+      let error: any = null;
+      if (existingDefectUpdateId) {
+        const updateRes = await client
+          .from('defect_updates')
+          .update({
+            note: updateText,
+            progress: task.current_progress,
+            created_by: updatedBy,
+          })
+          .eq('id', existingDefectUpdateId);
+        error = updateRes?.error;
+      } else {
+        const insertRes = await client.from('defect_updates').insert([
+          {
+            defect_id: resolvedDefectId,
+            created_by: updatedBy,
+            progress: task.current_progress,
+            note: updateText,
+            image_urls: null,
+            created_at: new Date().toISOString(),
+          },
+        ]);
+        error = insertRes?.error;
       }
-    }
 
-    let error: any = null;
-    if (existingUpdateId) {
-      const updateRes = await client
-        .from('task_updates')
-        .update({
-          action: `แจ้งติดปัญหา: ${reasonLabel}`,
-          text_content: updateText,
-          progress: task.current_progress,
-          is_worker_present: reasonId !== 'worker_issue',
-          user_name: updatedBy,
-        })
-        .eq('id', existingUpdateId);
-      error = updateRes?.error;
+      if (error) {
+        updateError = error.message;
+        console.warn('Notice: could not insert defect_updates entry for handover roadblock', updateError);
+      }
     } else {
-      const insertRes = await client.from('task_updates').insert([
-        {
-          plot_id: task.plot_id,
-          task_template_id: task.task_template_id,
-          role: 'Foreman',
-          action: `แจ้งติดปัญหา: ${reasonLabel}`,
-          text_content: updateText,
-          progress: task.current_progress,
-          is_worker_present: reasonId !== 'worker_issue',
-          user_name: updatedBy,
-          created_at: new Date().toISOString(),
-        },
-      ]);
-      error = insertRes?.error;
-    }
+      // Finding F4: Dedup by unique submission ID across all records without arbitrary limit(10)
+      let existingUpdateId: any = null;
+      if (subId) {
+        const marker = `[ref:${subId}]`;
+        const { data: existingRows, error: searchErr } = await client
+          .from('task_updates')
+          .select('id, text_content')
+          .eq('plot_id', task.plot_id)
+          .ilike('text_content', `%${marker}%`);
 
-    // Backward compatibility fallback in case legacy database schema uses column 'text'
-    if (error && (error.code === 'PGRST204' || error.message?.includes('text_content'))) {
-      const fallbackRes = await client.from('task_updates').insert([
-        {
-          plot_id: task.plot_id,
-          task_template_id: task.task_template_id,
-          role: 'Foreman',
-          action: `แจ้งติดปัญหา: ${reasonLabel}`,
-          text: updateText,
-          progress: task.current_progress,
-          is_worker_present: reasonId !== 'worker_issue',
-          user_name: updatedBy,
-          created_at: new Date().toISOString(),
-        },
-      ]);
-      error = fallbackRes.error;
-    }
+        if (searchErr) {
+          console.error('Search existing roadblock error:', searchErr);
+          return {
+            success: false,
+            error: `เกิดข้อผิดพลาดในการตรวจสอบประวัติการส่งข้อมูล: ${searchErr.message}`
+          };
+        }
 
-    if (error) {
-      updateError = error.message;
-      console.warn('Notice: could not insert task_updates entry for roadblock', updateError);
+        if (Array.isArray(existingRows) && existingRows.length > 0) {
+          existingUpdateId = existingRows[0].id;
+        }
+      }
+
+      let error: any = null;
+      if (existingUpdateId) {
+        const updateRes = await client
+          .from('task_updates')
+          .update({
+            action: `แจ้งติดปัญหา: ${reasonLabel}`,
+            text_content: updateText,
+            progress: task.current_progress,
+            is_worker_present: reasonId !== 'worker_issue',
+            user_name: updatedBy,
+          })
+          .eq('id', existingUpdateId);
+        error = updateRes?.error;
+      } else {
+        const insertRes = await client.from('task_updates').insert([
+          {
+            plot_id: task.plot_id,
+            task_template_id: task.task_template_id,
+            role: 'Foreman',
+            action: `แจ้งติดปัญหา: ${reasonLabel}`,
+            text_content: updateText,
+            progress: task.current_progress,
+            is_worker_present: reasonId !== 'worker_issue',
+            user_name: updatedBy,
+            created_at: new Date().toISOString(),
+          },
+        ]);
+        error = insertRes?.error;
+      }
+
+      // Backward compatibility fallback in case legacy database schema uses column 'text'
+      if (error && (error.code === 'PGRST204' || error.message?.includes('text_content'))) {
+        const fallbackRes = await client.from('task_updates').insert([
+          {
+            plot_id: task.plot_id,
+            task_template_id: task.task_template_id,
+            role: 'Foreman',
+            action: `แจ้งติดปัญหา: ${reasonLabel}`,
+            text: updateText,
+            progress: task.current_progress,
+            is_worker_present: reasonId !== 'worker_issue',
+            user_name: updatedBy,
+            created_at: new Date().toISOString(),
+          },
+        ]);
+        error = fallbackRes.error;
+      }
+
+      if (error) {
+        updateError = error.message;
+        console.warn('Notice: could not insert task_updates entry for roadblock', updateError);
+      }
     }
   } catch (err: any) {
     updateError = err?.message || String(err);
-    console.warn('Notice: could not insert task_updates entry for roadblock', updateError);
+    console.warn('Notice: could not insert roadblock entry', updateError);
   }
 
   // 3. Cache update locally
@@ -1179,16 +1836,27 @@ export function getForemanReworkItems(options: GetForemanReworkOptions): Foreman
 
   const reworkItems: ForemanReworkItem[] = [];
 
-  // 3. Collect active Defects
+  // 3. Collect active Defects (accounting for independent handover foreman assignment)
   if (Array.isArray(defects)) {
     defects.forEach(d => {
       const plotIdStr = String(d.plot_id);
-      if (!matchedPlotIds.has(plotIdStr)) return;
-
       const plot = plotMap.get(plotIdStr);
       if (!plot) return;
 
-      const pFm = getPlotForemanName(plot) || 'ยังไม่ระบุโฟร์แมน';
+      const isHandover = d.defect_stage === 'handover';
+      const defectFm = isHandover
+        ? resolveHandoverDefectForeman(d, plot)
+        : getPlotForemanName(plot);
+
+      if (!isTargetAll) {
+        if (isHandover) {
+          if (defectFm.toLowerCase() !== targetFmLower) return;
+        } else if (!matchedPlotIds.has(plotIdStr)) {
+          return;
+        }
+      }
+
+      const pFm = defectFm || 'ยังไม่ระบุโฟร์แมน';
       const statusLower = (d.status || '').toLowerCase();
       const isClosed =
         statusLower === 'resolved' ||
@@ -1333,9 +2001,11 @@ export interface DayInspectionCompliance {
   roadblock: number;
   pending: number;
   complianceRate: number; // percentage (0-100)
-  status: 'complete' | 'partial' | 'missed' | 'empty' | 'future';
+  status: 'complete' | 'partial' | 'missed' | 'empty' | 'future' | 'holiday';
   isToday: boolean;
   isFuture: boolean;
+  isHoliday?: boolean;
+  isFrozen?: boolean;
   tasksCount: number;
   plotsCount: number;
   foremanStats: Record<string, { total: number; updated: number; roadblock: number; pending: number; rate: number }>;
@@ -1367,6 +2037,10 @@ export interface GetMonthlyInspectionOptions {
   schedules: Record<string, any>;
   assignments?: any[];
   allUpdatesRecord?: any[];
+  defects?: any[];
+  defectUpdates?: any[];
+  contractors?: any[];
+  foremenList?: any[];
   foremanName?: string;
   projectName?: string;
   existingSnapshots?: any[];
@@ -1390,19 +2064,62 @@ export function getMonthlyForemanInspectionCompliance(options: GetMonthlyInspect
     schedules = {},
     assignments = [],
     allUpdatesRecord = [],
+    defects = [],
+    defectUpdates = [],
+    contractors = [],
+    foremenList = [],
     foremanName = 'all',
     projectName,
     existingSnapshots = [],
     todayDateStr
   } = options;
 
+  // Build case-insensitive canonical foreman display name lookup so e.g. 'DEN' and 'Den' merge cleanly
+  const canonicalForemanDisplayMap = new Map<string, string>();
+  const registerCanonicalForeman = (rawName: any, overwrite = false) => {
+    const trimmed = String(rawName || '').trim();
+    if (!trimmed || isUnassignedForemanName(trimmed)) return;
+    const key = trimmed.toLowerCase();
+    if (overwrite || !canonicalForemanDisplayMap.has(key)) {
+      canonicalForemanDisplayMap.set(key, trimmed);
+    }
+  };
+  if (Array.isArray(foremenList)) {
+    foremenList.forEach(u => registerCanonicalForeman(u?.username || u?.name, true));
+  }
+  plots.forEach(p => {
+    registerCanonicalForeman(p?.foreman_name || p?.foreman);
+    registerCanonicalForeman(p?.handover_foreman_name);
+  });
+  (defects || []).forEach(d => {
+    if (d?.defect_stage === 'handover') registerCanonicalForeman(d?.foreman_name);
+  });
+  const normalizeMonthlyForemanKey = (rawName?: string | null): { key: string; display: string } => {
+    const trimmed = String(rawName || '').trim();
+    if (!trimmed || isUnassignedForemanName(trimmed)) {
+      const unassignedDisplay = trimmed || 'ยังไม่ระบุโฟร์แมน';
+      return { key: '__unassigned__', display: unassignedDisplay };
+    }
+    const key = trimmed.toLowerCase();
+    if (!canonicalForemanDisplayMap.has(key)) {
+      canonicalForemanDisplayMap.set(key, trimmed);
+    }
+    return { key, display: canonicalForemanDisplayMap.get(key)! };
+  };
+
   // Project filtering
   const targetProject = projectName && projectName !== 'all' ? projectName.trim() : null;
   const filteredPlots = targetProject ? plots.filter(p => p.project_name === targetProject) : plots;
   const filteredPlotIds = targetProject ? new Set(filteredPlots.map(p => String(p.id))) : null;
 
+  const scopedDefects = filteredPlotIds
+    ? (defects || []).filter(d => d && filteredPlotIds.has(String(d.plot_id)))
+    : (defects || []);
+  const scopedDefectIds = new Set(scopedDefects.map(d => String(d.id)));
+
   const scopedSnapshots = (existingSnapshots || []).filter(s => {
     if (!targetProject) return true;
+    if (isDayFreezeMarkerRow(s)) return true;
     if (s.project_name === targetProject) return true;
     if (filteredPlotIds && filteredPlotIds.has(String(s.plot_id))) return true;
     return false;
@@ -1428,6 +2145,27 @@ export function getMonthlyForemanInspectionCompliance(options: GetMonthlyInspect
     });
   }
 
+  // Pre-index defectUpdates by date and defect_id ONCE before the 31-day loop
+  const defectUpdatesByDateAndDefectId = new Map<string, Map<string, any[]>>();
+  if (Array.isArray(defectUpdates)) {
+    defectUpdates.forEach(du => {
+      if (!du || !du.defect_id) return;
+      const dIdStr = String(du.defect_id);
+      if (filteredPlotIds && !scopedDefectIds.has(dIdStr)) return;
+      const duDate = normalizeDateStr(du.created_at) || normalizeDateStr(du.date);
+      if (duDate) {
+        if (!defectUpdatesByDateAndDefectId.has(duDate)) {
+          defectUpdatesByDateAndDefectId.set(duDate, new Map<string, any[]>());
+        }
+        const keyMap = defectUpdatesByDateAndDefectId.get(duDate)!;
+        if (!keyMap.has(dIdStr)) {
+          keyMap.set(dIdStr, []);
+        }
+        keyMap.get(dIdStr)!.push(du);
+      }
+    });
+  }
+
   const now = new Date();
   const actualTodayStr = todayDateStr || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   
@@ -1440,24 +2178,56 @@ export function getMonthlyForemanInspectionCompliance(options: GetMonthlyInspect
     const dayOfWeek = dObj.getDay();
     const isToday = dateStr === actualTodayStr;
     const isFuture = dateStr > actualTodayStr;
+    const isHoliday = dayOfWeek === 0;
+
+    // Sundays are weekly foreman holidays: excluded from scheduled duty KPI, missed days, and monthly pending totals
+    if (isHoliday) {
+      days.push({
+        date: dateStr,
+        dayNumber: day,
+        dayOfWeek,
+        totalScheduled: 0,
+        updated: 0,
+        roadblock: 0,
+        pending: 0,
+        complianceRate: 100,
+        status: 'holiday',
+        isToday,
+        isFuture,
+        isHoliday: true,
+        isFrozen: false,
+        tasksCount: 0,
+        plotsCount: 0,
+        foremanStats: {},
+        tasks: [],
+      });
+      continue;
+    }
 
     // Scheduled tasks on this date using pre-indexed updates
     const preIndexedUpdates = updatesByDateAndKey.get(dateStr);
+    const preIndexedDefectUpdates = defectUpdatesByDateAndDefectId.get(dateStr);
     const tasks = getForemanScheduledTasksForDate({
       plots: filteredPlots,
       taskTemplates,
       schedules,
       assignments,
       allUpdatesRecord: allUpdatesRecord,
+      defects: scopedDefects,
+      defectUpdates,
+      contractors,
+      foremenList,
       foremanName: foremanName || 'all',
       targetDate: dateStr,
       existingSnapshots: scopedSnapshots,
       preIndexedUpdates,
+      preIndexedDefectUpdates,
+      todayDateStr: actualTodayStr,
     });
 
     const summary = computeForemanDailySummary(tasks);
 
-    let status: 'complete' | 'partial' | 'missed' | 'empty' | 'future' = 'empty';
+    let status: 'complete' | 'partial' | 'missed' | 'empty' | 'future' | 'holiday' = 'empty';
     if (isFuture) {
       status = tasks.length > 0 ? 'future' : 'empty';
     } else if (tasks.length === 0) {
@@ -1474,7 +2244,7 @@ export function getMonthlyForemanInspectionCompliance(options: GetMonthlyInspect
     const foremanStats: Record<string, { total: number; updated: number; roadblock: number; pending: number; rate: number }> = {};
     const activeTasksForDay = tasks.filter(t => !t.is_completed_early);
     activeTasksForDay.forEach(t => {
-      const fm = t.foreman_name || 'ยังไม่ระบุ';
+      const { display: fm } = normalizeMonthlyForemanKey(t.foreman_name);
       if (!foremanStats[fm]) {
         foremanStats[fm] = { total: 0, updated: 0, roadblock: 0, pending: 0, rate: 0 };
       }
@@ -1501,6 +2271,8 @@ export function getMonthlyForemanInspectionCompliance(options: GetMonthlyInspect
       status,
       isToday,
       isFuture,
+      isHoliday: false,
+      isFrozen: dateStr < actualTodayStr && isPastDateFrozenInSnapshots(dateStr, scopedSnapshots, targetProject),
       tasksCount: summary.totalTasks,
       plotsCount: summary.plotsCount,
       foremanStats,
@@ -1509,7 +2281,7 @@ export function getMonthlyForemanInspectionCompliance(options: GetMonthlyInspect
   }
 
   // Monthly summary
-  const activePastDays = days.filter(d => !d.isFuture && d.totalScheduled > 0);
+  const activePastDays = days.filter(d => !d.isFuture && !d.isHoliday && d.totalScheduled > 0);
   const totalWorkDays = activePastDays.length;
   const completeDays = activePastDays.filter(d => d.status === 'complete').length;
   const partialDays = activePastDays.filter(d => d.status === 'partial').length;
@@ -1519,8 +2291,9 @@ export function getMonthlyForemanInspectionCompliance(options: GetMonthlyInspect
     ? Math.round(activePastDays.reduce((acc, d) => acc + d.complianceRate, 0) / totalWorkDays)
     : 100;
 
-  // Monthly workload aggregation per foreman
+  // Monthly workload aggregation per foreman (grouped case-insensitively with canonical display name)
   const foremanMap: Record<string, {
+    displayName: string;
     total: number;
     updated: number;
     roadblock: number;
@@ -1542,9 +2315,10 @@ export function getMonthlyForemanInspectionCompliance(options: GetMonthlyInspect
 
     const activeDayTasks = (d.tasks || []).filter(t => !t.is_completed_early);
     activeDayTasks.forEach(t => {
-      const fm = t.foreman_name || 'ยังไม่ระบุ';
-      if (!foremanMap[fm]) {
-        foremanMap[fm] = {
+      const { key: fmKey, display: fmDisplay } = normalizeMonthlyForemanKey(t.foreman_name);
+      if (!foremanMap[fmKey]) {
+        foremanMap[fmKey] = {
+          displayName: fmDisplay,
           total: 0,
           updated: 0,
           roadblock: 0,
@@ -1553,21 +2327,21 @@ export function getMonthlyForemanInspectionCompliance(options: GetMonthlyInspect
           projects: new Set<string>(),
         };
       }
-      foremanMap[fm].total++;
+      foremanMap[fmKey].total++;
       if (t.status_reason) {
-        foremanMap[fm].roadblock++;
+        foremanMap[fmKey].roadblock++;
       } else if (t.is_updated_today) {
-        foremanMap[fm].updated++;
+        foremanMap[fmKey].updated++;
       } else {
-        foremanMap[fm].pending++;
+        foremanMap[fmKey].pending++;
       }
-      if (t.plot_id) foremanMap[fm].plots.add(String(t.plot_id));
-      if (t.project_name) foremanMap[fm].projects.add(String(t.project_name));
+      if (t.plot_id) foremanMap[fmKey].plots.add(String(t.plot_id));
+      if (t.project_name) foremanMap[fmKey].projects.add(String(t.project_name));
     });
   });
 
-  const foremanWorkloadStats: MonthForemanWorkloadStat[] = Object.entries(foremanMap)
-    .map(([fmName, st]) => {
+  const foremanWorkloadStats: MonthForemanWorkloadStat[] = Object.values(foremanMap)
+    .map((st) => {
       const complianceRate = st.total > 0
         ? Math.round(((st.updated + st.roadblock) / st.total) * 100)
         : 100;
@@ -1575,7 +2349,7 @@ export function getMonthlyForemanInspectionCompliance(options: GetMonthlyInspect
         ? Math.round((st.total / totalMonthTasks) * 100)
         : 0;
       return {
-        foremanName: fmName,
+        foremanName: st.displayName,
         totalTasks: st.total,
         updatedTasks: st.updated,
         roadblockTasks: st.roadblock,
@@ -1633,6 +2407,8 @@ export interface ForemanDailyActivityItem {
   progress?: number;
   image_urls: string[];
   is_100_percent?: boolean;
+  is_handover?: boolean;
+  contractor_name?: string;
   defectObj?: any;
   taskObj?: any;
   plotObj?: any;
@@ -1652,12 +2428,17 @@ export interface GetForemanActivitiesOptions {
   plots: any[];
   taskTemplates: any[];
   schedules: Record<string, any>;
+  assignments?: any[];
   allUpdatesRecord?: any[];
   defects?: any[];
+  defectUpdates?: any[];
+  contractors?: any[];
+  foremenList?: any[];
   existingSnapshots?: any[];
   foremanName?: string;
   projectName?: string;
   targetDate: string;
+  todayDateStr?: string;
 }
 
 /**
@@ -1669,12 +2450,17 @@ export function getForemanDailyActivities(options: GetForemanActivitiesOptions):
     plots = [],
     taskTemplates = [],
     schedules = {},
+    assignments = [],
     allUpdatesRecord = [],
     defects = [],
+    defectUpdates = [],
+    contractors = [],
+    foremenList = [],
     existingSnapshots = [],
     foremanName = 'all',
     projectName,
     targetDate,
+    todayDateStr,
   } = options;
 
   if (!targetDate || !Array.isArray(plots)) {
@@ -1690,22 +2476,63 @@ export function getForemanDailyActivities(options: GetForemanActivitiesOptions):
   }
 
   const normTargetDate = normalizeDateStr(targetDate) || targetDate;
+  const isWeeklyHolidayTarget = isForemanWeeklyHoliday(normTargetDate);
+  const nowBangkokStr = todayDateStr
+    ? (normalizeDateStr(todayDateStr) || todayDateStr)
+    : (normalizeDateStr(new Date()) || new Date().toISOString().split('T')[0]);
+  const isViewingToday = normTargetDate === nowBangkokStr;
   const isTargetAll = !foremanName || foremanName.toLowerCase() === 'all';
   const targetFmLower = foremanName ? foremanName.toLowerCase().trim() : '';
   const targetProj = projectName && projectName !== 'all' ? projectName.trim() : null;
 
-  // 1. Build plot lookup
+  // 1. Build plot, defect, contractor, snapshot lookups
   const plotMap = new Map<string, any>();
   plots.forEach(plot => {
     const plotIdStr = String(plot.id);
     plotMap.set(plotIdStr, plot);
   });
 
-  // 2. Build task template lookup
+  const defectMap = new Map<string, any>();
+  if (Array.isArray(defects)) {
+    defects.forEach(d => {
+      if (d && d.id !== undefined && d.id !== null) {
+        defectMap.set(String(d.id), d);
+      }
+    });
+  }
+
+  const contractorMap = new Map<string, any>();
+  if (Array.isArray(contractors)) {
+    contractors.forEach(c => {
+      if (c && c.id !== undefined && c.id !== null) {
+        contractorMap.set(String(c.id), c);
+      }
+    });
+  }
+
+  const snapshotMapForDate = new Map<string, any>();
+  if (Array.isArray(existingSnapshots)) {
+    existingSnapshots.forEach(s => {
+      if (isDayFreezeMarkerRow(s)) return;
+      const sDate = normalizeDateStr(s.snapshot_date);
+      if (sDate === normTargetDate) {
+        snapshotMapForDate.set(`${s.plot_id}-${s.task_template_id}`, s);
+      }
+    });
+  }
+
+  // 2. Build task template & assignment lookups
   const taskMap = new Map<string, any>();
   if (Array.isArray(taskTemplates)) {
     taskTemplates.forEach(t => {
       taskMap.set(String(t.id), t);
+    });
+  }
+
+  const assignmentMap = new Map<string, any>();
+  if (Array.isArray(assignments)) {
+    assignments.forEach(a => {
+      assignmentMap.set(`${a.plot_id}-${a.task_template_id}`, a);
     });
   }
 
@@ -1731,7 +2558,10 @@ export function getForemanDailyActivities(options: GetForemanActivitiesOptions):
 
       if (targetProj && plot.project_name !== targetProj) return;
 
-      const plotFm = getPlotForemanName(plot) || 'ยังไม่ระบุ';
+      const rawPlotFm = getPlotForemanName(plot);
+      const plotFm = (!rawPlotFm || isUnassignedForemanName(rawPlotFm))
+        ? 'ยังไม่ระบุ'
+        : canonicalizeForemanName(rawPlotFm, foremenList);
       const actorName = (u.user_name || u.userName || '').trim();
 
       if (!isTargetAll) {
@@ -1745,6 +2575,8 @@ export function getForemanDailyActivities(options: GetForemanActivitiesOptions):
 
       const scheduleKey = `${plot.id}-${u.task_template_id}`;
       const altScheduleKey = `${plot.id}_${u.task_template_id}`;
+      const assign = assignmentMap.get(scheduleKey) || assignmentMap.get(altScheduleKey);
+      const taskExcludedFromPlan = isTaskExcludedFromPlan(task, assign, plot);
       const plan = schedules[scheduleKey] || schedules[altScheduleKey];
       const pStart = normalizeDateStr(plan?.planned_start);
       const pEnd = normalizeDateStr(plan?.planned_end);
@@ -1763,6 +2595,14 @@ export function getForemanDailyActivities(options: GetForemanActivitiesOptions):
         category = 'roadblock';
         categoryLabel = 'แจ้งเหตุผลติดปัญหา';
         categoryColor = 'amber';
+      } else if (taskExcludedFromPlan) {
+        category = 'out_of_plan';
+        categoryLabel = 'งานไม่นับรวมในแผน / นอกแผน';
+        categoryColor = 'purple';
+      } else if (isWeeklyHolidayTarget) {
+        category = 'out_of_plan';
+        categoryLabel = 'งานวันหยุด (วันอาทิตย์)';
+        categoryColor = 'purple';
       } else if (pStart && pEnd) {
         if (normTargetDate >= pStart && normTargetDate <= pEnd) {
           category = 'in_plan';
@@ -1817,6 +2657,133 @@ export function getForemanDailyActivities(options: GetForemanActivitiesOptions):
     });
   }
 
+  // 3b. Scan defectUpdates for targetDate (Handover inspection progress, roadblocks, and defect updates)
+  if (Array.isArray(defectUpdates)) {
+    defectUpdates.forEach(du => {
+      const duDate = normalizeDateStr(du.created_at || du.date);
+      if (duDate !== normTargetDate) return;
+
+      const defect = defectMap.get(String(du.defect_id));
+      if (!defect) return;
+
+      const plotIdStr = String(defect.plot_id);
+      const plot = plotMap.get(plotIdStr);
+      if (!plot) return;
+
+      if (targetProj && plot.project_name !== targetProj) return;
+
+      const isHandover = defect.defect_stage === 'handover';
+      const templateKey = isHandover ? `handover:${defect.id}` : (defect.task_id || defect.task_template_id);
+      const snap = isHandover ? snapshotMapForDate.get(`${plot.id}-handover:${defect.id}`) : null;
+      const rawLiveFm = isHandover ? resolveHandoverDefectForeman(defect, plot) : getPlotForemanName(plot);
+      const liveFm = (!rawLiveFm || isUnassignedForemanName(rawLiveFm))
+        ? 'ยังไม่ระบุ'
+        : canonicalizeForemanName(rawLiveFm, foremenList);
+      const rawSnapFm = String(snap?.foreman_name || '').trim();
+      const hasConcreteSnapFm = Boolean(rawSnapFm) && !isUnassignedForemanName(rawSnapFm);
+      const responsibleFm = (!isViewingToday && hasConcreteSnapFm)
+        ? canonicalizeForemanName(rawSnapFm, foremenList)
+        : liveFm;
+      const actorName = String(du.created_by || '').trim();
+
+      if (!isTargetAll) {
+        const matchesFm = responsibleFm.toLowerCase() === targetFmLower;
+        const matchesActor = actorName.toLowerCase() === targetFmLower;
+        if (!matchesFm && !matchesActor) return;
+      }
+
+      const parsedRb = parseRoadblockDisplay(du.note || '', du.action || '');
+      const isRoadblockUpdate = Boolean(
+        parsedRb ||
+        String(du.action || '').includes('ติดปัญหา') ||
+        String(du.note || '').startsWith('เหตุผล:')
+      );
+
+      const pStart = normalizeDateStr(snap?.planned_start || defect.planned_start);
+      const pEnd = normalizeDateStr(snap?.planned_end || defect.planned_end);
+
+      let category: 'in_plan' | 'out_of_plan' | 'defect' | 'roadblock' = 'defect';
+      let categoryLabel = 'อัปเดตงานแก้ไข Defect';
+      let categoryColor: 'blue' | 'purple' | 'rose' | 'amber' = 'rose';
+
+      if (isRoadblockUpdate) {
+        category = 'roadblock';
+        categoryLabel = 'แจ้งเหตุผลติดปัญหา';
+        categoryColor = 'amber';
+      } else if (isHandover && isWeeklyHolidayTarget) {
+        category = 'out_of_plan';
+        categoryLabel = 'ตรวจรับในวันหยุด (วันอาทิตย์)';
+        categoryColor = 'purple';
+      } else if (isHandover && pStart && pEnd) {
+        if (normTargetDate >= pStart && normTargetDate <= pEnd) {
+          category = 'in_plan';
+          categoryLabel = 'ตรวจรับตามแผนวันนี้';
+          categoryColor = 'blue';
+        } else if (normTargetDate < pStart) {
+          category = 'out_of_plan';
+          categoryLabel = 'เริ่มตรวจรับก่อนแผน';
+          categoryColor = 'purple';
+        } else {
+          category = 'out_of_plan';
+          categoryLabel = 'เก็บตกตรวจรับหลังแผน';
+          categoryColor = 'purple';
+        }
+      } else if (Number(du.progress) === 100) {
+        category = 'defect';
+        categoryLabel = 'แก้ไข Defect สำเร็จ';
+        categoryColor = 'rose';
+      }
+
+      let imageUrls: string[] = [];
+      const rawImgs = du.image_urls ?? du.image_url;
+      if (typeof rawImgs === 'string') {
+        imageUrls = rawImgs.split(',').map((s: string) => s.trim()).filter(Boolean);
+      } else if (Array.isArray(rawImgs)) {
+        imageUrls = rawImgs.filter(Boolean);
+      }
+
+      const { timeStr, timestamp } = formatTimeStr(du.created_at || du.date);
+      const progressNum = typeof du.progress === 'number' ? du.progress : Number(du.progress ?? defect.progress ?? 0);
+      const is100 = progressNum === 100;
+      const taskId = defect.task_id || defect.task_template_id;
+      const task = taskId ? taskMap.get(String(taskId)) : null;
+      const contractorName =
+        defect.contractor_name ||
+        contractorMap.get(String(defect.contractor_id || ''))?.name ||
+        '';
+
+      items.push({
+        id: `defect-upd-${du.id || Math.random()}`,
+        timestamp: timestamp || Date.now(),
+        timeStr,
+        dateStr: normTargetDate,
+        category,
+        categoryLabel,
+        categoryColor,
+        plot_id: plotIdStr,
+        plot_name: plot.name || plot.plot_number || `แปลง ${plot.id}`,
+        project_name: plot.project_name || 'ไอลิน',
+        foreman_name: responsibleFm,
+        actor_name: actorName || responsibleFm,
+        actor_role: du.role || (actorName.includes('QC') ? 'QC' : 'โฟร์แมน'),
+        task_name: defect.description || defect.title || task?.task_name || 'รายการตรวจรับบ้าน',
+        task_template_id: templateKey,
+        action: isRoadblockUpdate
+          ? `แจ้งติดปัญหา: ${parsedRb?.reasonLabel || 'แจ้งติดปัญหา'}`
+          : (is100 ? 'แก้ไข Defect เสร็จสิ้น 100%' : `อัปเดตงาน${isHandover ? 'ตรวจรับบ้าน' : 'แก้ไข Defect'} (${progressNum}%)`),
+        text_content: du.note || '',
+        progress: progressNum,
+        image_urls: imageUrls,
+        is_100_percent: is100,
+        is_handover: isHandover,
+        contractor_name: contractorName,
+        defectObj: defect,
+        taskObj: task,
+        plotObj: plot,
+      });
+    });
+  }
+
   // 4. Scan defects for targetDate
   if (Array.isArray(defects)) {
     defects.forEach(d => {
@@ -1830,7 +2797,11 @@ export function getForemanDailyActivities(options: GetForemanActivitiesOptions):
 
       if (targetProj && plot.project_name !== targetProj) return;
 
-      const plotFm = getPlotForemanName(plot) || 'ยังไม่ระบุ';
+      const isHandover = d.defect_stage === 'handover';
+      const rawDefectFm = isHandover ? resolveHandoverDefectForeman(d, plot) : getPlotForemanName(plot);
+      const plotFm = (!rawDefectFm || isUnassignedForemanName(rawDefectFm))
+        ? 'ยังไม่ระบุ'
+        : canonicalizeForemanName(rawDefectFm, foremenList);
       if (!isTargetAll && plotFm.toLowerCase() !== targetFmLower) return;
 
       const taskId = d.task_id || d.task_template_id;
@@ -1860,13 +2831,15 @@ export function getForemanDailyActivities(options: GetForemanActivitiesOptions):
         foreman_name: plotFm,
         actor_name: d.reporter || d.reported_by || plotFm,
         actor_role: 'QC / โฟร์แมน',
-        task_name: task?.task_name || d.task_name || 'งานแก้ไข Defect',
-        task_template_id: taskId,
+        task_name: d.description || d.title || task?.task_name || 'งานแก้ไข Defect',
+        task_template_id: isHandover ? `handover:${d.id}` : taskId,
         action: d.description || d.title || 'รายการแก้ไข Defect',
         text_content: d.note || d.description || '',
         progress: d.progress,
         image_urls: imageUrls,
         is_100_percent: isResolved,
+        is_handover: isHandover,
+        contractor_name: d.contractor_name || contractorMap.get(String(d.contractor_id || ''))?.name || '',
         defectObj: d,
         taskObj: task,
         plotObj: plot,
@@ -1877,13 +2850,14 @@ export function getForemanDailyActivities(options: GetForemanActivitiesOptions):
   // 5. Scan snapshots for roadblocks reported on targetDate
   if (Array.isArray(existingSnapshots)) {
     existingSnapshots.forEach(s => {
+      if (isDayFreezeMarkerRow(s)) return;
       const sDate = normalizeDateStr(s.snapshot_date);
       if (sDate !== normTargetDate) return;
       if (!s.status_reason) return;
 
       const plotIdStr = String(s.plot_id);
       const taskIdStr = String(s.task_template_id);
-      // Avoid duplicate if already added from task_updates
+      // Avoid duplicate if already added from task_updates / defect_updates
       const alreadyHasRoadblock = items.some(
         it => it.category === 'roadblock' && String(it.plot_id) === plotIdStr && String(it.task_template_id) === taskIdStr
       );
@@ -1894,11 +2868,26 @@ export function getForemanDailyActivities(options: GetForemanActivitiesOptions):
 
       if (targetProj && plot.project_name !== targetProj) return;
 
-      const plotFm = s.foreman_name || getPlotForemanName(plot) || 'ยังไม่ระบุ';
+      const isHandoverSnap = taskIdStr.startsWith('handover:');
+      const snapDefect = isHandoverSnap ? defectMap.get(taskIdStr.slice('handover:'.length)) : undefined;
+      const rawLiveSnapFm = isHandoverSnap && snapDefect
+        ? resolveHandoverDefectForeman(snapDefect, plot)
+        : getPlotForemanName(plot);
+      const liveSnapFm = (!rawLiveSnapFm || isUnassignedForemanName(rawLiveSnapFm))
+        ? 'ยังไม่ระบุ'
+        : canonicalizeForemanName(rawLiveSnapFm, foremenList);
+      const rawSnapFm = String(s.foreman_name || '').trim();
+      const plotFm = (!isViewingToday && rawSnapFm && !isUnassignedForemanName(rawSnapFm))
+        ? canonicalizeForemanName(rawSnapFm, foremenList)
+        : liveSnapFm;
       if (!isTargetAll && plotFm.toLowerCase() !== targetFmLower) return;
 
       const reasonMeta = getRoadblockReason(s.status_reason);
-      const task = taskMap.get(String(s.task_template_id));
+      const task = !isHandoverSnap ? taskMap.get(taskIdStr) : undefined;
+      if (!isHandoverSnap) {
+        const assign = assignmentMap.get(`${plotIdStr}-${taskIdStr}`) || assignmentMap.get(`${plotIdStr}_${taskIdStr}`);
+        if (isTaskExcludedFromPlan(task, assign, plot)) return;
+      }
       const { timeStr, timestamp } = formatTimeStr(s.last_updated_at || s.updated_at);
 
       items.push({
@@ -1915,11 +2904,13 @@ export function getForemanDailyActivities(options: GetForemanActivitiesOptions):
         foreman_name: plotFm,
         actor_name: s.updated_by || plotFm,
         actor_role: 'โฟร์แมน',
-        task_name: task?.task_name || s.task_name || 'งานก่อสร้าง',
+        task_name: snapDefect?.description || snapDefect?.title || task?.task_name || s.task_name || (isHandoverSnap ? 'รายการตรวจรับบ้าน' : 'งานก่อสร้าง'),
         task_template_id: s.task_template_id,
         action: `${reasonMeta?.icon || '⚠️'} ${reasonMeta?.label || s.status_reason}`,
         text_content: s.status_note || '',
         image_urls: [],
+        is_handover: isHandoverSnap,
+        defectObj: snapDefect,
         taskObj: task,
         plotObj: plot,
       });

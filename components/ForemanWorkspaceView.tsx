@@ -39,6 +39,7 @@ import {
   ROADBLOCK_REASONS,
   getRoadblockReason,
   normalizeDateStr,
+  isForemanWeeklyHoliday,
   getPlotForemanName,
   getForemanScheduledTasksForDate,
   computeForemanDailySummary,
@@ -69,6 +70,8 @@ interface ForemanWorkspaceViewProps {
   allUsers?: any[];
   foremenList?: any[];
   defects?: any[];
+  defectUpdates?: any[];
+  contractors?: any[];
   loggedInUser?: any;
   currentUserRole?: string;
   isAdmin?: boolean;
@@ -106,6 +109,8 @@ export default function ForemanWorkspaceView({
   onSelectPlot,
   fetchAllData,
   inspectionQueue = [],
+  defectUpdates = [],
+  contractors = [],
   setSelectedGlobalProject,
 }: ForemanWorkspaceViewProps) {
   // Check if current user has Owner role
@@ -202,8 +207,25 @@ export default function ForemanWorkspaceView({
         }
       });
     }
+    if (Array.isArray(plots)) {
+      plots.forEach(p => {
+        const handoverName = String(p.handover_foreman_name || '').trim();
+        if (handoverName && !set.has(handoverName.toLowerCase())) {
+          set.set(handoverName.toLowerCase(), handoverName);
+        }
+      });
+    }
+    if (Array.isArray(defects)) {
+      defects.forEach(d => {
+        if (d?.defect_stage !== 'handover') return;
+        const fmName = String(d.foreman_name || '').trim();
+        if (fmName && !set.has(fmName.toLowerCase())) {
+          set.set(fmName.toLowerCase(), fmName);
+        }
+      });
+    }
     return Array.from(set.values()).sort((a, b) => a.localeCompare(b, 'th'));
-  }, [foremenList, plots]);
+  }, [foremenList, plots, defects]);
 
   // Load snapshot when date or foreman changes
   const loadSnapshotForCurrentView = useCallback(async () => {
@@ -214,7 +236,7 @@ export default function ForemanWorkspaceView({
     setSnapshotLoadStatus('loading');
     try {
       const relevantPlotIds = targetForeman && targetForeman !== 'all'
-        ? (plots || []).filter(p => (getPlotForemanName(p) || '').toLowerCase() === targetForeman.toLowerCase()).map(p => p.id)
+        ? (plots || []).filter(p => (getPlotForemanName(p) || '').toLowerCase() === targetForeman.toLowerCase() || String(p.handover_foreman_name || '').trim().toLowerCase() === targetForeman.toLowerCase() || (defects || []).some((d: any) => d?.defect_stage === 'handover' && String(d.plot_id) === String(p.id) && String(d.foreman_name || '').trim().toLowerCase() === targetForeman.toLowerCase())).map(p => p.id)
         : [];
       const res: any = await loadForemanDailySnapshot(targetDate, targetForeman, undefined, { plotIds: relevantPlotIds });
       if (activeScopeRef.current.date === targetDate && activeScopeRef.current.foreman === targetForeman) {
@@ -257,9 +279,13 @@ export default function ForemanWorkspaceView({
       taskTemplates,
       schedules,
       assignments,
+      defects,
+      defectUpdates,
+      contractors,
       allUpdatesRecord,
       foremanName: selectedForeman,
       targetDate: selectedDate,
+      foremenList,
       existingSnapshots: snapshots,
     });
 
@@ -274,9 +300,13 @@ export default function ForemanWorkspaceView({
     taskTemplates,
     schedules,
     assignments,
+    defects,
+    defectUpdates,
+    contractors,
     allUpdatesRecord,
     selectedForeman,
     selectedDate,
+    foremenList,
     snapshots,
     selectedProject,
   ]);
@@ -287,10 +317,10 @@ export default function ForemanWorkspaceView({
       if (!q.isRejected) return false;
       if (selectedProject && selectedProject !== 'all' && q.project_name && q.project_name !== selectedProject) return false;
       if (isForeman && loggedInUser?.username) {
-        return q.foreman === loggedInUser.username;
+        return String(q.foreman || '').trim().toLowerCase() === loggedInUser.username.trim().toLowerCase();
       }
       if (selectedForeman && selectedForeman !== 'all') {
-        return q.foreman === selectedForeman;
+        return String(q.foreman || '').trim().toLowerCase() === selectedForeman.trim().toLowerCase();
       }
       return true;
     }).map((q: any) => ({
@@ -334,11 +364,15 @@ export default function ForemanWorkspaceView({
       targetDate: selectedDate,
       foremanName: selectedForeman,
       projectName: selectedProject,
+      defectUpdates,
+      contractors,
       plots,
       taskTemplates,
       schedules,
+      assignments,
       allUpdatesRecord,
       defects,
+      foremenList,
       existingSnapshots: snapshots,
     });
   }, [
@@ -349,7 +383,11 @@ export default function ForemanWorkspaceView({
     taskTemplates,
     schedules,
     allUpdatesRecord,
+    assignments,
     defects,
+    defectUpdates,
+    contractors,
+    foremenList,
     snapshots,
   ]);
 
@@ -413,12 +451,14 @@ export default function ForemanWorkspaceView({
             planned_start: sched?.planned_start || null,
             planned_end: sched?.planned_end || null,
             current_progress: typeof item.progress === 'number' ? item.progress : (item.is_100_percent ? 100 : 0),
-            contractor_name: assign?.contractor_name || assign?.contractor || null,
+            contractor_name: item.contractor_name || assign?.contractor_name || assign?.contractor || null,
             is_updated_today: true,
             last_action: formatRoadblockActionLabel(item.action, item.text_content),
             last_text: formatTaskUpdateDisplayText(item.text_content, item.action),
             last_time: item.timeStr,
             categoryLabel: item.categoryLabel || 'งานนอกแผน / ล่วงหน้า',
+            is_handover: item.is_handover,
+            defectObj: item.defectObj,
             image_urls: item.image_urls || [],
             is_100_percent: item.is_100_percent,
             plotObj: item.plotObj,
@@ -455,6 +495,11 @@ export default function ForemanWorkspaceView({
         <div className="flex items-start justify-between gap-3 mb-3">
           <div className="space-y-1">
             <div className="flex items-center gap-1.5 flex-wrap">
+              {task.is_handover && (
+                <span className="px-2 py-0.5 bg-purple-100 text-purple-800 border border-purple-300 text-[10px] font-black rounded-md inline-flex items-center gap-1">
+                  🏠 ตรวจรับบ้าน
+                </span>
+              )}
               <span className="px-2.5 py-1 bg-purple-50 text-purple-700 font-black text-xs rounded-lg border border-purple-200">
                 {task.plot_name}
               </span>
@@ -559,14 +604,16 @@ export default function ForemanWorkspaceView({
               task_name: task.task_name,
               task_order: 1,
             };
-            if (plot && onNavigateToTaskChat) {
+            if (task.is_handover && task.defectObj && onNavigateToDefectChat) {
+              if (plot) onNavigateToDefectChat(plot, task.defectObj);
+            } else if (plot && onNavigateToTaskChat) {
               onNavigateToTaskChat(plot, tObj);
             }
           }}
           className="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-black shadow-xs transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
         >
           <MessageSquare size={13} />
-          <span>เข้าห้องแชท / อัปเดต</span>
+          <span>{task.is_handover ? 'ห้องแชท / อัปเดต Defect' : 'เข้าห้องแชท / อัปเดต'}</span>
         </button>
       </div>
     </div>
@@ -624,6 +671,7 @@ export default function ForemanWorkspaceView({
 
   const isViewingPast = selectedDate < todayStr;
   const isViewingToday = selectedDate === todayStr;
+  const isViewingWeeklyHoliday = isForemanWeeklyHoliday(selectedDate);
 
   // Automatic Background Snapshot Synchronization
   useEffect(() => {
@@ -641,8 +689,9 @@ export default function ForemanWorkspaceView({
 
     if (lastAutoSaveSignatureRef.current === currentSignature) return;
 
-    // Auto-save is triggered for today's tasks or when viewing a past date that has no snapshot yet
-    if (!isViewingToday) return;
+    // Weekly Sunday holidays do not require compliance auto-save
+    // Auto-save is triggered for today's working-day tasks (skip weekly Sunday holidays)
+    if (!isViewingToday || isViewingWeeklyHoliday) return;
 
 
     const timerDate = selectedDate;
@@ -689,6 +738,7 @@ export default function ForemanWorkspaceView({
     summary.updatedTasks,
     summary.roadblockTasks,
     isViewingToday,
+    isViewingWeeklyHoliday,
     isLoadingSnapshots,
     snapshotLoadStatus,
     loggedInUser,
@@ -737,6 +787,19 @@ export default function ForemanWorkspaceView({
   // Quick navigate to task chat
   const handleOpenChat = (task: ForemanDailyTask) => {
     const plot = plots.find(p => String(p.id) === String(task.plot_id));
+    if (task.is_handover && onNavigateToDefectChat) {
+      const targetDefect =
+        task.defectObj ||
+        (defects || []).find(
+          (d: any) =>
+            String(d.id) ===
+            String(task.defect_id || String(task.task_template_id).replace(/^handover:/, ''))
+        );
+      if (plot && targetDefect) {
+        onNavigateToDefectChat(plot, targetDefect);
+        return;
+      }
+    }
     const targetTaskTemplate = taskTemplates.find(
       t => String(t.id) === String(task.task_template_id)
     ) || {
@@ -929,6 +992,31 @@ export default function ForemanWorkspaceView({
           </button>
         )}
       </div>
+
+      {/* 🌴 Weekly Sunday Holiday Notice (Option B: no penalty, tasks stay accessible for optional updates) */}
+      {(mainTab === 'schedule' || mainTab === 'activity') && isViewingWeeklyHoliday && (
+        <div
+          data-testid="sunday-holiday-banner"
+          className="bg-gradient-to-r from-indigo-50 via-sky-50 to-indigo-50 border border-indigo-200/90 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-indigo-950 shadow-xs animate-in slide-in-from-top-2"
+        >
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-indigo-600 text-white rounded-xl shadow-xs shrink-0">
+              <Calendar size={18} />
+            </div>
+            <div>
+              <p className="text-sm font-black text-indigo-950 flex items-center gap-2 flex-wrap">
+                <span>วันนี้เป็นวันหยุดประจำสัปดาห์ (ไม่บังคับตรวจ)</span>
+                <span className="px-2 py-0.5 bg-indigo-100 text-indigo-800 text-[10px] font-black rounded-full border border-indigo-200">
+                  วันอาทิตย์ • ไม่หัก KPI
+                </span>
+              </p>
+              <p className="text-xs text-indigo-800 font-medium mt-0.5">
+                ระบบไม่นำยอดของวันอาทิตย์ไปนับรวมหรือหักคะแนนรายเดือน แต่ยังคงแสดงรายการงานไว้ด้านล่างเผื่อต้องการกดอัปเดตงานเป็นกรณีพิเศษ
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ⚠️ Actionable Rework Banner (Shown in Schedule mode if rework items exist) */}
       {mainTab === 'schedule' && reworkQueue.length > 0 && (
@@ -1365,6 +1453,11 @@ export default function ForemanWorkspaceView({
                       <div className="flex items-start justify-between gap-3 mb-3">
                         <div className="space-y-1">
                           <div className="flex items-center gap-1.5 flex-wrap">
+                            {task.is_handover && (
+                              <span className="px-2 py-0.5 bg-purple-100 text-purple-800 border border-purple-300 text-[10px] font-black rounded-md inline-flex items-center gap-1">
+                                🏠 ตรวจรับบ้าน{task.handover_round ? ` (รอบ ${task.handover_round})` : ''}
+                              </span>
+                            )}
                             <span className="px-2.5 py-1 bg-blue-50 text-blue-700 font-black text-xs rounded-lg border border-blue-200">
                               {task.plot_name}
                             </span>
@@ -1470,7 +1563,7 @@ export default function ForemanWorkspaceView({
                         title="เข้าห้องแชทและบันทึกอัปเดตงานนี้"
                       >
                         <MessageSquare size={14} className="stroke-[2.5]" />
-                        <span>เข้าห้องแชท / อัปเดต</span>
+                        <span>{task.is_handover ? 'ห้องแชท / อัปเดต Defect' : 'เข้าห้องแชท / อัปเดต'}</span>
                       </button>
 
                       <button
@@ -1796,6 +1889,9 @@ export default function ForemanWorkspaceView({
           foremenList={foremenList}
           selectedForeman={selectedForeman}
           onSelectForeman={setSelectedForeman}
+          defects={defects}
+          defectUpdates={defectUpdates}
+          contractors={contractors}
           snapshots={snapshots}
           onSelectDate={(dateStr) => {
             setSelectedDate(dateStr);

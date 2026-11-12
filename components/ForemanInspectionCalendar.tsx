@@ -23,11 +23,16 @@ import {
   CheckSquare,
   ListFilter,
   Layers,
+  Lock,
 } from 'lucide-react';
 import {
   getMonthlyForemanInspectionCompliance,
   getPlotForemanName,
   loadForemanMonthlySnapshots,
+  freezePastDailySnapshotsForMonth,
+  isDayFreezeMarkerRow,
+  isPastDateFrozenInSnapshots,
+  isForemanWeeklyHoliday,
   getRoadblockReason,
   type MonthInspectionSummary,
   type DayInspectionCompliance,
@@ -41,6 +46,9 @@ interface ForemanInspectionCalendarProps {
   schedules: Record<string, any>;
   assignments?: any[];
   allUpdatesRecord?: any[];
+  defects?: any[];
+  defectUpdates?: any[];
+  contractors?: any[];
   foremenList?: any[];
   selectedForeman?: string;
   onSelectForeman?: (foreman: string) => void;
@@ -63,6 +71,9 @@ export default function ForemanInspectionCalendar({
   schedules = {},
   assignments = [],
   allUpdatesRecord = [],
+  defects = [],
+  defectUpdates = [],
+  contractors = [],
   foremenList = [],
   selectedForeman: propForeman,
   onSelectForeman,
@@ -124,7 +135,9 @@ export default function ForemanInspectionCalendar({
 
   const plotsFingerprint = useMemo(() => {
     if (!plots || plots.length === 0) return '0';
-    return plots.map(p => `${p.id}:${getPlotForemanName(p) || ''}`).join('|');
+    return plots
+      .map(p => `${p.id}:${getPlotForemanName(p) || ''}:${String(p.handover_foreman_name || '').trim()}`)
+      .join('|');
   }, [plots]);
 
   const activeRequestRef = React.useRef<{ year: number; month: number; foreman: string; project: string }>({
@@ -146,7 +159,15 @@ export default function ForemanInspectionCalendar({
     setIsLoadingSnapshots(true);
 
     const relevantPlotIds = reqForeman && reqForeman !== 'all'
-      ? (plots || []).filter(p => (getPlotForemanName(p) || '').toLowerCase() === reqForeman.toLowerCase()).map(p => p.id)
+      ? (plots || []).filter(p =>
+          (getPlotForemanName(p) || '').toLowerCase() === reqForeman.toLowerCase() ||
+          String(p.handover_foreman_name || '').trim().toLowerCase() === reqForeman.toLowerCase() ||
+          (defects || []).some((d: any) =>
+            d?.defect_stage === 'handover' &&
+            String(d.plot_id) === String(p.id) &&
+            String(d.foreman_name || '').trim().toLowerCase() === reqForeman.toLowerCase()
+          )
+        ).map(p => p.id)
       : [];
 
     loadForemanMonthlySnapshots(reqYear, reqMonth, reqForeman, projectName, undefined, { plotIds: relevantPlotIds })
@@ -213,10 +234,23 @@ export default function ForemanInspectionCalendar({
         if (name && !set.has(name.toLowerCase())) {
           set.set(name.toLowerCase(), name);
         }
+        const handoverName = String(p.handover_foreman_name || '').trim();
+        if (handoverName && !set.has(handoverName.toLowerCase())) {
+          set.set(handoverName.toLowerCase(), handoverName);
+        }
+      });
+    }
+    if (Array.isArray(defects)) {
+      defects.forEach(d => {
+        if (d?.defect_stage !== 'handover') return;
+        const fmName = String(d.foreman_name || '').trim();
+        if (fmName && !set.has(fmName.toLowerCase())) {
+          set.set(fmName.toLowerCase(), fmName);
+        }
       });
     }
     return Array.from(set.values()).sort((a, b) => a.localeCompare(b, 'th'));
-  }, [foremenList, plots]);
+  }, [foremenList, plots, defects]);
 
   const targetProject = projectName && projectName !== 'all' ? projectName.trim() : null;
 
@@ -271,11 +305,17 @@ export default function ForemanInspectionCalendar({
     const merged = Array.from(map.values());
     if (!targetProject) return merged;
     return merged.filter(s => {
+      if (isDayFreezeMarkerRow(s)) return true;
       if (s.project_name === targetProject) return true;
       if (scopedPlotIds && scopedPlotIds.has(String(s.plot_id))) return true;
       return false;
     });
   }, [snapshots, monthlySnapshots, targetProject, scopedPlotIds]);
+
+  const scopedDefects = useMemo(() => {
+    if (!scopedPlotIds) return defects;
+    return (defects || []).filter(d => d && scopedPlotIds.has(String(d.plot_id)));
+  }, [defects, scopedPlotIds]);
 
   // Compute monthly data
   const monthlyData: MonthInspectionSummary = useMemo(() => {
@@ -287,6 +327,10 @@ export default function ForemanInspectionCalendar({
       schedules: scopedSchedules,
       assignments,
       allUpdatesRecord: scopedUpdates,
+      defects: scopedDefects,
+      defectUpdates,
+      contractors,
+      foremenList,
       foremanName: activeForeman,
       projectName,
       existingSnapshots: scopedMonthlySnapshots,
@@ -300,10 +344,109 @@ export default function ForemanInspectionCalendar({
     scopedSchedules,
     assignments,
     scopedUpdates,
+    scopedDefects,
+    defectUpdates,
+    contractors,
+    foremenList,
     activeForeman,
     projectName,
     scopedMonthlySnapshots,
     todayStr,
+  ]);
+
+  const attemptedFreezeScopesRef = React.useRef<Set<string>>(new Set());
+
+  // Automatically backfill & lock completed past dates (< todayStr) once snapshots load
+  // so future schedule edits/backdates never retroactively alter historical compliance.
+  useEffect(() => {
+    if (isLoadingSnapshots || propIsLoading) return;
+    if (activeForeman !== 'all') return;
+    if (
+      activeRequestRef.current.year !== currentYear ||
+      activeRequestRef.current.month !== currentMonth
+    ) {
+      return;
+    }
+    if (scopedPlots.length === 0 || !Array.isArray(taskTemplates) || taskTemplates.length === 0) return;
+
+    const hasSchedules = scopedSchedules && Object.keys(scopedSchedules).length > 0;
+    const hasHandoverDefects = Array.isArray(scopedDefects) && scopedDefects.some(d => d?.defect_stage === 'handover');
+    if (!hasSchedules && !hasHandoverDefects) return;
+
+    const freezeScopeKey = `${currentYear}-${String(currentMonth).padStart(2, '0')}::${targetProject || 'all'}::${todayStr}`;
+    if (attemptedFreezeScopesRef.current.has(freezeScopeKey)) return;
+
+    const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
+    let hasUnfrozenPastDate = false;
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      if (
+        dateStr < todayStr &&
+        !isForemanWeeklyHoliday(dateStr) &&
+        !isPastDateFrozenInSnapshots(dateStr, scopedMonthlySnapshots, targetProject)
+      ) {
+        hasUnfrozenPastDate = true;
+        break;
+      }
+    }
+    attemptedFreezeScopesRef.current.add(freezeScopeKey);
+    if (!hasUnfrozenPastDate) return;
+
+    let cancelled = false;
+    freezePastDailySnapshotsForMonth({
+      year: currentYear,
+      month: currentMonth,
+      plots: scopedPlots,
+      taskTemplates,
+      schedules: scopedSchedules,
+      assignments,
+      allUpdatesRecord: scopedUpdates,
+      defects: scopedDefects,
+      defectUpdates,
+      contractors,
+      foremenList,
+      existingSnapshots: scopedMonthlySnapshots,
+      projectName: targetProject || 'all',
+      todayDateStr: todayStr,
+    }).then(res => {
+      if (cancelled || !res.success || res.addedRows.length === 0) return;
+      setMonthlySnapshots(prev => {
+        const map = new Map<string, any>();
+        (prev || []).forEach(s => {
+          const k = `${s.snapshot_date}_${s.plot_id}_${s.task_template_id}`;
+          map.set(k, s);
+        });
+        res.addedRows.forEach(s => {
+          const k = `${s.snapshot_date}_${s.plot_id}_${s.task_template_id}`;
+          if (!map.has(k)) map.set(k, s);
+        });
+        return Array.from(map.values());
+      });
+    }).catch(err => {
+      console.warn('Auto-freeze past days notice:', err);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isLoadingSnapshots,
+    propIsLoading,
+    activeForeman,
+    currentYear,
+    currentMonth,
+    targetProject,
+    todayStr,
+    scopedPlots,
+    taskTemplates,
+    scopedSchedules,
+    assignments,
+    scopedUpdates,
+    scopedDefects,
+    defectUpdates,
+    contractors,
+    foremenList,
+    scopedMonthlySnapshots,
   ]);
 
   // Month navigation
@@ -679,14 +822,19 @@ export default function ForemanInspectionCalendar({
 
           {/* Days of the month */}
           {monthlyData.days.map(day => {
-            const isClickable = day.totalScheduled > 0 || day.isToday;
+            const isHoliday = day.status === 'holiday' || Boolean(day.isHoliday);
+            const isClickable = day.totalScheduled > 0 || day.isToday || isHoliday;
 
             // Determine cell styling
             let cellBg = 'bg-slate-50/70 border-slate-200/80 text-slate-600';
             let badgeBg = 'bg-slate-100 text-slate-500';
             let statusText = 'ไม่มีแผน';
 
-            if (day.isFuture) {
+            if (isHoliday) {
+              cellBg = 'bg-slate-100/80 border-slate-200/90 text-slate-500 hover:bg-slate-100';
+              badgeBg = 'bg-slate-200/90 text-slate-600';
+              statusText = 'วันหยุด';
+            } else if (day.isFuture) {
               cellBg = 'bg-slate-50/40 border-slate-200/50 text-slate-400';
               badgeBg = 'bg-slate-100 text-slate-400';
               statusText = day.totalScheduled > 0 ? `${day.totalScheduled} งาน` : 'ไม่มีแผน';
@@ -730,7 +878,18 @@ export default function ForemanInspectionCalendar({
 
                 {/* Cell Body: Status Pill & Stats */}
                 <div className="mt-1 space-y-1">
-                  {day.totalScheduled > 0 ? (
+                  {isHoliday ? (
+                    <>
+                      <div className="flex items-center justify-between gap-1">
+                        <span className={`text-[9px] sm:text-[10px] font-black px-1.5 py-0.5 rounded-md truncate ${badgeBg}`}>
+                          {statusText}
+                        </span>
+                      </div>
+                      <p className="text-[9px] sm:text-[10px] font-medium text-slate-400 truncate hidden sm:block">
+                        วันอาทิตย์
+                      </p>
+                    </>
+                  ) : day.totalScheduled > 0 ? (
                     <>
                       <div className="flex items-center justify-between gap-1">
                         <span className={`text-[9px] sm:text-[10px] font-black px-1.5 py-0.5 rounded-md truncate ${badgeBg}`}>
@@ -774,9 +933,19 @@ export default function ForemanInspectionCalendar({
             <span>ตรวจน้อย / ไม่อัปเดต</span>
           </span>
           <span className="flex items-center gap-1.5">
+            <span className="w-3 h-3 rounded-md bg-slate-100 border border-slate-300" />
+            <span>วันหยุด (อาทิตย์)</span>
+          </span>
+          <span className="flex items-center gap-1.5">
             <span className="w-3 h-3 rounded-md bg-slate-200 border border-slate-300" />
             <span>ไม่มีแผนงาน / อนาคต</span>
           </span>
+          {monthlyData.days.some(d => d.isFrozen) && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-100 text-slate-600 rounded-md border border-slate-200 text-[11px] font-bold">
+              <Lock size={11} className="text-slate-500" />
+              <span>วันย้อนหลังล็อกยอดตาม Snapshot แล้ว</span>
+            </span>
+          )}
         </div>
 
         <p className="text-[11px] text-slate-400 font-medium">
@@ -798,12 +967,22 @@ export default function ForemanInspectionCalendar({
                 <h3 className="text-base sm:text-lg font-black text-slate-900">
                   วันที่ {selectedDayDetail.date}
                 </h3>
-                <p className="text-xs text-slate-500 font-medium">
-                  {selectedDayDetail.isToday
-                    ? 'วันนี้'
-                    : selectedDayDetail.isFuture
-                    ? 'วันตามแผนในอนาคต'
-                    : 'ประวัติการตรวจงานที่ผ่านมา'}
+                <p className="text-xs text-slate-500 font-medium flex flex-wrap items-center gap-2">
+                  <span>
+                    {selectedDayDetail.status === 'holiday' || selectedDayDetail.isHoliday
+                      ? 'วันหยุดประจำสัปดาห์ (วันอาทิตย์) — ไม่บังคับตรวจ'
+                      : selectedDayDetail.isToday
+                      ? 'วันนี้'
+                      : selectedDayDetail.isFuture
+                      ? 'วันตามแผนในอนาคต'
+                      : 'ประวัติการตรวจงานที่ผ่านมา'}
+                  </span>
+                  {selectedDayDetail.isFrozen && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-100 text-slate-700 rounded-md border border-slate-200 text-[10px] font-bold">
+                      <Lock size={10} />
+                      <span>ล็อกยอดตามแผน ณ วันนั้นแล้ว</span>
+                    </span>
+                  )}
                 </p>
               </div>
               <button
@@ -848,7 +1027,11 @@ export default function ForemanInspectionCalendar({
                 </div>
 
                 {Object.keys(selectedDayDetail.foremanStats).length === 0 ? (
-                  <p className="text-xs text-slate-400 italic py-2">ไม่มีงานตามแผนในวันนี้</p>
+                  <p className="text-xs text-slate-400 italic py-2">
+                    {selectedDayDetail.status === 'holiday' || selectedDayDetail.isHoliday
+                      ? 'วันหยุดประจำสัปดาห์ของโฟร์แมน (ไม่นับใน KPI และไม่หักคะแนน)'
+                      : 'ไม่มีงานตามแผนในวันนี้'}
+                  </p>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {/* All foremen toggle pill */}
@@ -1020,6 +1203,11 @@ export default function ForemanInspectionCalendar({
                           {/* Row 1: Badges & Status */}
                           <div className="flex items-start justify-between gap-2 flex-wrap">
                             <div className="flex items-center gap-1.5 flex-wrap">
+                              {task.is_handover && (
+                                <span className="px-2 py-0.5 bg-purple-100 text-purple-800 border border-purple-300 text-[10px] font-black rounded-md">
+                                  🏠 ตรวจรับบ้าน
+                                </span>
+                              )}
                               <span className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded-md text-[10px] font-black border border-blue-200">
                                 🏢 {task.project_name || 'ไอลิน'}
                               </span>

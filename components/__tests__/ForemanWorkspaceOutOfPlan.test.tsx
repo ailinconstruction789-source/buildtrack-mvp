@@ -93,4 +93,35 @@ describe('ForemanWorkspaceView Out-of-Plan integration in Schedule tab', () => {
     expect(screen.getByText(/เข้าผูกเหล็กคานล่วงหน้า/i)).toBeDefined();
     expect(screen.getByText(/แปลง 02/i)).toBeDefined();
   });
+
+  it('Option B: displays Sunday holiday banner when viewing a Sunday while keeping scheduled tasks accessible', async () => {
+    const sundaySchedules = {
+      'p1-t1': { planned_start: '2026-11-06', planned_end: '2026-11-10' },
+    };
+
+    render(
+      <ForemanWorkspaceView
+        plots={mockPlots}
+        projects={[{ name: 'ไอลิน 6' }]}
+        taskTemplates={mockTemplates}
+        schedules={sundaySchedules}
+        allUpdatesRecord={[]}
+        loggedInUser={{ username: 'LEAB', name: 'LEAB' }}
+        currentUserRole="foreman"
+        isForeman={true}
+        onNavigateToTaskChat={vi.fn()}
+      />
+    );
+
+    // Switch date picker to Sunday 2026-11-08
+    const dateInput = document.querySelector('input[type="date"]') as HTMLInputElement;
+    expect(dateInput).toBeTruthy();
+    fireEvent.change(dateInput, { target: { value: '2026-11-08' } });
+
+    const banner = await screen.findByTestId('sunday-holiday-banner');
+    expect(banner.textContent).toContain('วันนี้เป็นวันหยุดประจำสัปดาห์ (ไม่บังคับตรวจ)');
+
+    // Option B: scheduled task list still renders on Sunday so foreman can optionally update it
+    expect(await screen.findByText('งานเสา')).toBeDefined();
+  });
 });

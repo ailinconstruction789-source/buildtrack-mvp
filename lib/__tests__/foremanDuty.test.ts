@@ -4,11 +4,16 @@ import {
   getRoadblockReason,
   normalizeDateStr,
   getPlotForemanName,
+  isForemanWeeklyHoliday,
+  isTaskExcludedFromPlan,
   getForemanScheduledTasksForDate,
   computeForemanDailySummary,
   getForemanReworkItems,
   getMonthlyForemanInspectionCompliance,
   getForemanDailyActivities,
+  freezePastDailySnapshotsForMonth,
+  SNAPSHOT_DAY_LOCK_PLOT_ID,
+  SNAPSHOT_DAY_LOCK_TASK_PREFIX,
   recordForemanTaskRoadblockReason,
   stripInternalRefMarkers,
   parseRoadblockDisplay,
@@ -851,6 +856,1153 @@ describe('foremanDuty helper library', () => {
       expect(tasks).toHaveLength(1);
       expect(tasks[0].status_reason).toBe('other');
       expect(tasks[0].status_note).toBe('ช่างเข้าวันจันทร์ที่ 16/11/2569');
+    });
+  });
+
+  describe('Handover Inspection integration across daily duty, roadblock, calendar & daily activity', () => {
+    it('attributes scheduled handover defects independently from construction foreman and filters by target date window', () => {
+      const plots = [
+        { id: 'p-72', name: 'แปลง 72', project_name: 'ไอลิน 6', foreman_name: 'LEAB', handover_foreman_name: 'VIEW' },
+      ];
+      const defects = [
+        // Active in-window handover defect handled by VIEW
+        {
+          id: 'def-in-window',
+          plot_id: 'p-72',
+          description: 'แก้: งานสีผนังภายใน',
+          defect_stage: 'handover',
+          planned_start: '2026-11-10',
+          planned_end: '2026-11-12',
+          progress: 50,
+          status: 'in_progress',
+          foreman_name: 'VIEW',
+        },
+        // Completed BEFORE targetDate (2026-11-09) -> is_completed_early on Nov 11
+        {
+          id: 'def-early',
+          plot_id: 'p-72',
+          description: 'แก้: งานประตูหน้าต่าง',
+          defect_stage: 'handover',
+          planned_start: '2026-11-08',
+          planned_end: '2026-11-12',
+          progress: 100,
+          status: 'resolved',
+          actual_end: '2026-11-09T10:00:00.000Z',
+          foreman_name: 'VIEW',
+        },
+        // Overdue handover defect (planned_end 2026-11-10 < 2026-11-11) -> excluded from daily plan
+        {
+          id: 'def-overdue',
+          plot_id: 'p-72',
+          description: 'แก้: งานสุขภัณฑ์ห้องน้ำ',
+          defect_stage: 'handover',
+          planned_start: '2026-11-08',
+          planned_end: '2026-11-10',
+          progress: 20,
+          status: 'in_progress',
+          foreman_name: 'VIEW',
+        },
+        // Unscheduled handover defect (missing dates) -> excluded from daily plan
+        {
+          id: 'def-unscheduled',
+          plot_id: 'p-72',
+          description: 'แก้: ยังไม่ลงแผน',
+          defect_stage: 'handover',
+          progress: 0,
+          status: 'pending',
+          foreman_name: 'VIEW',
+        },
+      ];
+      const defectUpdates = [
+        {
+          id: 'du-1',
+          defect_id: 'def-in-window',
+          progress: 50,
+          note: 'ทาสีรองพื้นเสร็จแล้ว',
+          created_by: 'VIEW',
+          created_at: '2026-11-11T04:00:00.000Z',
+        },
+      ];
+
+      // 1. Construction foreman LEAB should NOT receive VIEW's handover defects
+      const leabTasks = getForemanScheduledTasksForDate({
+        plots,
+        taskTemplates: [],
+        schedules: {},
+        defects,
+        defectUpdates,
+        foremanName: 'LEAB',
+        targetDate: '2026-11-11',
+        todayDateStr: '2026-11-11',
+      });
+      expect(leabTasks).toHaveLength(0);
+
+      // 2. Handover foreman VIEW receives scheduled active + early-completed handover tasks, excluding overdue/unscheduled
+      const viewTasks = getForemanScheduledTasksForDate({
+        plots,
+        taskTemplates: [],
+        schedules: {},
+        defects,
+        defectUpdates,
+        foremanName: 'VIEW',
+        targetDate: '2026-11-11',
+        todayDateStr: '2026-11-11',
+      });
+      expect(viewTasks).toHaveLength(2);
+
+      const inWindowTask = viewTasks.find(t => t.defect_id === 'def-in-window');
+      expect(inWindowTask?.is_handover).toBe(true);
+      expect(inWindowTask?.task_template_id).toBe('handover:def-in-window');
+      expect(inWindowTask?.is_updated_today).toBe(true);
+      expect(inWindowTask?.is_completed_early).toBe(false);
+
+      const earlyTask = viewTasks.find(t => t.defect_id === 'def-early');
+      expect(earlyTask?.is_handover).toBe(true);
+      expect(earlyTask?.is_completed_early).toBe(true);
+
+      // Completed early does not inflate pending numerator or penalize compliance rate
+      const summary = computeForemanDailySummary(viewTasks);
+      expect(summary.totalTasks).toBe(1);
+      expect(summary.updatedTasks).toBe(1);
+      expect(summary.completedEarlyTasks).toBe(1);
+      expect(summary.complianceRate).toBe(100);
+    });
+
+    it('preserves historical snapshot attribution across takeovers while reflecting live takeover immediately on today', () => {
+      const plots = [
+        { id: 'p-1', name: 'แปลง 01', project_name: 'ไอลิน 6', foreman_name: 'LEAB', handover_foreman_name: 'SOMCHAI' },
+      ];
+      const defects = [
+        {
+          id: 'def-1',
+          plot_id: 'p-1',
+          description: 'แก้: งานฝ้าเพดาน',
+          defect_stage: 'handover',
+          planned_start: '2026-11-10',
+          planned_end: '2026-11-12',
+          progress: 30,
+          status: 'in_progress',
+          foreman_name: 'SOMCHAI', // Taken over on Nov 11
+        },
+      ];
+      const snapshots = [
+        {
+          snapshot_date: '2026-11-10',
+          foreman_name: 'VIEW',
+          plot_id: 'p-1',
+          task_template_id: 'handover:def-1',
+          planned_start: '2026-11-10',
+          planned_end: '2026-11-12',
+          is_updated_today: true,
+        },
+        {
+          // Earlier auto-save today before takeover happened
+          snapshot_date: '2026-11-11',
+          foreman_name: 'VIEW',
+          plot_id: 'p-1',
+          task_template_id: 'handover:def-1',
+          planned_start: '2026-11-10',
+          planned_end: '2026-11-12',
+          is_updated_today: false,
+        },
+      ];
+
+      // Yesterday (Nov 10) remains attributed to VIEW
+      const nov10View = getForemanScheduledTasksForDate({
+        plots,
+        taskTemplates: [],
+        schedules: {},
+        defects,
+        existingSnapshots: snapshots,
+        foremanName: 'VIEW',
+        targetDate: '2026-11-10',
+        todayDateStr: '2026-11-11',
+      });
+      expect(nov10View).toHaveLength(1);
+      expect(nov10View[0].foreman_name).toBe('VIEW');
+
+      // Today (Nov 11) switches immediately to SOMCHAI
+      const nov11Somchai = getForemanScheduledTasksForDate({
+        plots,
+        taskTemplates: [],
+        schedules: {},
+        defects,
+        existingSnapshots: snapshots,
+        foremanName: 'SOMCHAI',
+        targetDate: '2026-11-11',
+        todayDateStr: '2026-11-11',
+      });
+      expect(nov11Somchai).toHaveLength(1);
+      expect(nov11Somchai[0].foreman_name).toBe('SOMCHAI');
+    });
+
+    it('writes handover roadblock idempotently to defect_updates and counts toward monthly compliance & daily activities', async () => {
+      const insertedDefectUpdates: any[] = [];
+      const updatedDefectUpdates: any[] = [];
+      const snapshotUpserts: any[] = [];
+
+      const mockSupabase = {
+        from: (table: string) => {
+          if (table === 'foreman_daily_duty_snapshots') {
+            return {
+              upsert: async (rows: any[]) => {
+                snapshotUpserts.push(...rows);
+                return { error: null };
+              },
+            };
+          }
+          if (table === 'defect_updates') {
+            return {
+              select: () => ({
+                eq: () => ({
+                  ilike: async (_col: string, pattern: string) => {
+                    const marker = pattern.replace(/%/g, '');
+                    const matched = insertedDefectUpdates.filter(r => r.note?.includes(marker));
+                    return { data: matched, error: null };
+                  },
+                }),
+              }),
+              insert: async (rows: any[]) => {
+                rows.forEach((r, idx) => insertedDefectUpdates.push({ id: `du-mock-${idx + 1}`, ...r }));
+                return { error: null };
+              },
+              update: (payload: any) => ({
+                eq: async (_col: string, id: string) => {
+                  updatedDefectUpdates.push({ id, ...payload });
+                  return { error: null };
+                },
+              }),
+            };
+          }
+          throw new Error(`Unexpected table call: ${table}`);
+        },
+      };
+
+      const handoverTask = {
+        id: 'plot-1-handover:def-9',
+        plot_id: 'plot-1',
+        plot_name: 'แปลง 01',
+        project_name: 'ไอลิน 6',
+        foreman_name: 'VIEW',
+        task_template_id: 'handover:def-9',
+        task_name: 'แก้: ติดตั้งบัวเชิงผนัง',
+        planned_start: '2026-11-11',
+        planned_end: '2026-11-12',
+        current_progress: 0,
+        is_updated_today: false,
+        is_handover: true,
+        defect_id: 'def-9',
+      };
+
+      // First submit -> inserts defect_updates with [ref:sub_ho_1]
+      const res1 = await recordForemanTaskRoadblockReason(
+        handoverTask,
+        '2026-11-11',
+        'material_issue',
+        'รอบัวเข้าไซต์พรุ่งนี้',
+        'VIEW',
+        mockSupabase,
+        { clientSubmissionId: 'sub_ho_1' }
+      );
+      expect(res1.success).toBe(true);
+      expect(snapshotUpserts[0].task_template_id).toBe('handover:def-9');
+      expect(insertedDefectUpdates).toHaveLength(1);
+      expect(insertedDefectUpdates[0].defect_id).toBe('def-9');
+      expect(insertedDefectUpdates[0].note).toContain('เหตุผล: ติดปัญหาวัสดุ');
+      expect(insertedDefectUpdates[0].note).toContain('[ref:sub_ho_1]');
+
+      // Retry with same submission ID -> updates existing row instead of duplicating
+      const res2 = await recordForemanTaskRoadblockReason(
+        handoverTask,
+        '2026-11-11',
+        'other',
+        'เลื่อนส่งวัสดุเป็นศุกร์',
+        'VIEW',
+        mockSupabase,
+        { clientSubmissionId: 'sub_ho_1' }
+      );
+      expect(res2.success).toBe(true);
+      expect(insertedDefectUpdates).toHaveLength(1);
+      expect(updatedDefectUpdates).toHaveLength(1);
+
+      // Verify monthly calendar & daily activity log pick up the handover task and roadblock update
+      const plots = [{ id: 'plot-1', name: 'แปลง 01', project_name: 'ไอลิน 6', foreman_name: 'LEAB', handover_foreman_name: 'VIEW' }];
+      const defects = [{
+        id: 'def-9',
+        plot_id: 'plot-1',
+        description: 'แก้: ติดตั้งบัวเชิงผนัง',
+        defect_stage: 'handover',
+        planned_start: '2026-11-11',
+        planned_end: '2026-11-12',
+        progress: 0,
+        status: 'pending',
+        foreman_name: 'VIEW',
+      }];
+      const defectUpdates = [
+        {
+          id: 'du-mock-1',
+          defect_id: 'def-9',
+          progress: 0,
+          note: 'เหตุผล: ติดปัญหาวัสดุ (ของขาด / จัดส่งล่าช้า) (รอบัวเข้าไซต์พรุ่งนี้) [ref:sub_ho_1]',
+          created_by: 'VIEW',
+          created_at: '2026-11-11T05:00:00.000Z',
+        },
+        {
+          id: 'du-mock-progress',
+          defect_id: 'def-9',
+          progress: 60,
+          note: 'ช่างเข้าติดบัวแล้ว',
+          created_by: 'VIEW',
+          created_at: '2026-11-12T04:00:00.000Z',
+        },
+      ];
+
+      const monthly = getMonthlyForemanInspectionCompliance({
+        year: 2026,
+        month: 11,
+        plots,
+        taskTemplates: [],
+        schedules: {},
+        defects,
+        defectUpdates,
+        foremanName: 'VIEW',
+        todayDateStr: '2026-11-12',
+      });
+      expect(monthly.totalMonthTasks).toBe(2); // Nov 11 & Nov 12
+      expect(monthly.totalMonthRoadblocks).toBe(1); // Nov 11
+      expect(monthly.totalMonthUpdated).toBe(1); // Nov 12
+      const nov11 = monthly.days.find(d => d.date === '2026-11-11');
+      expect(nov11?.complianceRate).toBe(100);
+      expect(nov11?.tasks?.[0].is_handover).toBe(true);
+
+      const activities = getForemanDailyActivities({
+        plots,
+        taskTemplates: [],
+        schedules: {},
+        defects,
+        defectUpdates,
+        foremanName: 'VIEW',
+        targetDate: '2026-11-12',
+        todayDateStr: '2026-11-12',
+      });
+      expect(activities.inPlanCount).toBe(1);
+      expect(activities.items[0].is_handover).toBe(true);
+      expect(activities.items[0].defectObj?.id).toBe('def-9');
+
+      // Rework items follow handover foreman attribution instead of construction foreman
+      const reworkView = getForemanReworkItems({ plots, defects, foremanName: 'VIEW' });
+      const reworkLeab = getForemanReworkItems({ plots, defects, foremanName: 'LEAB' });
+      expect(reworkView).toHaveLength(1);
+      expect(reworkView[0].foreman_name).toBe('VIEW');
+      expect(reworkLeab).toHaveLength(0);
+    });
+  });
+
+  describe('Placeholder snapshot backfill, live today foreman, and case-insensitive monthly grouping', () => {
+    it('falls back placeholder past snapshots to newly assigned DEN while preserving concrete past foreman snapshots', () => {
+      const plots = [
+        { id: 'p-ailin3', name: 'แปลง 03', project_name: 'ไอลิน 3', foreman_name: 'DEN' },
+        { id: 'p-ailin6', name: 'แปลง 72', project_name: 'ไอลิน6', foreman_name: 'LEAB', foreman_assigned_at: '2026-11-12T00:00:00Z' },
+      ];
+      const taskTemplates = [{ id: 't-1', task_name: 'งานหลังคา' }];
+      const schedules = {
+        'p-ailin3-t-1': { planned_start: '2026-11-10', planned_end: '2026-11-12' },
+        'p-ailin6-t-1': { planned_start: '2026-11-10', planned_end: '2026-11-12' },
+      };
+      const existingSnapshots = [
+        {
+          snapshot_date: '2026-11-10',
+          plot_id: 'p-ailin3',
+          task_template_id: 't-1',
+          foreman_name: 'ยังไม่ระบุโฟร์แมน',
+          planned_start: '2026-11-10',
+          planned_end: '2026-11-12',
+          current_progress: 0,
+        },
+        {
+          snapshot_date: '2026-11-10',
+          plot_id: 'p-ailin6',
+          task_template_id: 't-1',
+          foreman_name: 'VIEW',
+          planned_start: '2026-11-10',
+          planned_end: '2026-11-12',
+          current_progress: 20,
+        },
+      ];
+      const foremenList = [
+        { username: 'DEN', name: 'Den' },
+        { username: 'VIEW', name: 'View' },
+        { username: 'LEAB', name: 'Leab' },
+      ];
+
+      // Past date (Nov 10 < today Nov 12): placeholder 'ยังไม่ระบุโฟร์แมน' yields to live 'DEN', concrete 'VIEW' stays 'VIEW'
+      const nov10Den = getForemanScheduledTasksForDate({
+        plots,
+        taskTemplates,
+        schedules,
+        existingSnapshots,
+        foremenList,
+        foremanName: 'DEN',
+        targetDate: '2026-11-10',
+        todayDateStr: '2026-11-12',
+      });
+      expect(nov10Den).toHaveLength(1);
+      expect(nov10Den[0].plot_id).toBe('p-ailin3');
+      expect(nov10Den[0].foreman_name).toBe('DEN');
+
+      const nov10View = getForemanScheduledTasksForDate({
+        plots,
+        taskTemplates,
+        schedules,
+        existingSnapshots,
+        foremenList,
+        foremanName: 'VIEW',
+        targetDate: '2026-11-10',
+        todayDateStr: '2026-11-12',
+      });
+      expect(nov10View).toHaveLength(1);
+      expect(nov10View[0].plot_id).toBe('p-ailin6');
+      expect(nov10View[0].foreman_name).toBe('VIEW');
+
+      const nov10Unassigned = getForemanScheduledTasksForDate({
+        plots,
+        taskTemplates,
+        schedules,
+        existingSnapshots,
+        foremenList,
+        foremanName: 'ยังไม่ระบุ',
+        targetDate: '2026-11-10',
+        todayDateStr: '2026-11-12',
+      });
+      expect(nov10Unassigned).toHaveLength(0);
+    });
+
+    it('reflects live plot/handover foreman immediately on today even if an older morning snapshot exists', () => {
+      const plots = [
+        { id: 'p-4', name: 'แปลง 04', project_name: 'ไอลิน 4', foreman_name: 'Auen', handover_foreman_name: 'DEN' },
+        { id: 'p-3', name: 'แปลง 03', project_name: 'ไอลิน 3', foreman_name: 'DEN' },
+      ];
+      const taskTemplates = [{ id: 't-1', task_name: 'งานพื้น' }];
+      const schedules = {
+        'p-3-t-1': { planned_start: '2026-11-12', planned_end: '2026-11-12' },
+      };
+      const defects = [
+        {
+          id: 'def-h4',
+          plot_id: 'p-4',
+          description: 'แก้สีผนัง',
+          defect_stage: 'handover',
+          planned_start: '2026-11-12',
+          planned_end: '2026-11-12',
+          progress: 0,
+          status: 'pending',
+          foreman_name: 'DEN',
+        },
+      ];
+      const existingSnapshots = [
+        {
+          snapshot_date: '2026-11-12',
+          plot_id: 'p-3',
+          task_template_id: 't-1',
+          foreman_name: 'ยังไม่ระบุโฟร์แมน',
+          planned_start: '2026-11-12',
+          planned_end: '2026-11-12',
+          current_progress: 0,
+        },
+        {
+          snapshot_date: '2026-11-12',
+          plot_id: 'p-4',
+          task_template_id: 'handover:def-h4',
+          foreman_name: 'Auen',
+          planned_start: '2026-11-12',
+          planned_end: '2026-11-12',
+          current_progress: 0,
+        },
+      ];
+
+      const todayDenTasks = getForemanScheduledTasksForDate({
+        plots,
+        taskTemplates,
+        schedules,
+        defects,
+        existingSnapshots,
+        foremenList: [{ username: 'DEN', name: 'Den' }],
+        foremanName: 'DEN',
+        targetDate: '2026-11-12',
+        todayDateStr: '2026-11-12',
+      });
+      expect(todayDenTasks).toHaveLength(2);
+      expect(todayDenTasks.every(t => t.foreman_name === 'DEN')).toBe(true);
+
+      const todayAuenTasks = getForemanScheduledTasksForDate({
+        plots,
+        taskTemplates,
+        schedules,
+        defects,
+        existingSnapshots,
+        foremenList: [{ username: 'DEN', name: 'Den' }],
+        foremanName: 'Auen',
+        targetDate: '2026-11-12',
+        todayDateStr: '2026-11-12',
+      });
+      expect(todayAuenTasks).toHaveLength(0);
+    });
+
+    it('merges DEN and Den variants into a single canonical DEN card in getMonthlyForemanInspectionCompliance', () => {
+      const plots = [
+        { id: 'p-3', name: 'แปลง 03', project_name: 'ไอลิน 3', foreman_name: 'Den' },
+        { id: 'p-4', name: 'แปลง 04', project_name: 'ไอลิน 4', foreman_name: 'Auen', handover_foreman_name: 'DEN' },
+      ];
+      const taskTemplates = [{ id: 't-1', task_name: 'งานฝ้า' }];
+      const schedules = {
+        'p-3-t-1': { planned_start: '2026-11-11', planned_end: '2026-11-11' },
+      };
+      const defects = [
+        {
+          id: 'def-h4',
+          plot_id: 'p-4',
+          description: 'ตรวจรับสีภายนอก',
+          defect_stage: 'handover',
+          planned_start: '2026-11-11',
+          planned_end: '2026-11-11',
+          progress: 50,
+          status: 'in_progress',
+          foreman_name: 'den',
+        },
+      ];
+      const existingSnapshots = [
+        {
+          snapshot_date: '2026-11-11',
+          plot_id: 'p-3',
+          task_template_id: 't-1',
+          foreman_name: 'ยังไม่ระบุโฟร์แมน',
+          planned_start: '2026-11-11',
+          planned_end: '2026-11-11',
+          current_progress: 0,
+        },
+      ];
+      const foremenList = [{ username: 'DEN', name: 'Den' }, { username: 'Auen', name: 'Auen' }];
+
+      const monthly = getMonthlyForemanInspectionCompliance({
+        year: 2026,
+        month: 11,
+        plots,
+        taskTemplates,
+        schedules,
+        defects,
+        existingSnapshots,
+        foremenList,
+        foremanName: 'all',
+        todayDateStr: '2026-11-12',
+      });
+
+      expect(monthly.foremanWorkloadStats).toHaveLength(1);
+      expect(monthly.foremanWorkloadStats[0].foremanName).toBe('DEN');
+      expect(monthly.foremanWorkloadStats[0].totalTasks).toBe(2);
+      expect(monthly.foremanWorkloadStats[0].plotsCount).toBe(2);
+    });
+  });
+
+  describe('Excluded and non-counted tasks (is_progress_counted=false / is_excluded=true / excluded_house_types)', () => {
+    const basePlots = [
+      {
+        id: 'p-1',
+        name: 'แปลง 01',
+        project_name: 'ไอลิน 6',
+        foreman_name: 'VIEW',
+        house_types: { type_name: 'Type A' },
+      },
+    ];
+    const baseTasks = [
+      { id: 't-counted', task_name: 'งานโครงสร้าง', is_progress_counted: true },
+      { id: 't-uncounted', task_name: 'งานเฟอร์นิเจอร์', is_progress_counted: false },
+      { id: 't-na', task_name: 'งานรั้ว', is_progress_counted: true },
+      { id: 't-type-excl', task_name: 'งานห้องใต้หลังคา', excluded_house_types: ['Type A'] },
+    ];
+    const baseAssignments = [
+      { plot_id: 'p-1', task_template_id: 't-counted', current_progress: 100, is_excluded: false },
+      { plot_id: 'p-1', task_template_id: 't-uncounted', current_progress: 0, is_excluded: false },
+      { plot_id: 'p-1', task_template_id: 't-na', current_progress: 0, is_excluded: true },
+      { plot_id: 'p-1', task_template_id: 't-type-excl', current_progress: 0, is_excluded: false },
+    ];
+
+    it('isTaskExcludedFromPlan detects is_progress_counted=false, assign.is_excluded, and excluded_house_types', () => {
+      expect(isTaskExcludedFromPlan(baseTasks[0], baseAssignments[0], basePlots[0])).toBe(false);
+      expect(isTaskExcludedFromPlan({ id: 't-undef', task_name: 'งานทั่วไป' }, undefined, basePlots[0])).toBe(false);
+      expect(isTaskExcludedFromPlan(baseTasks[1], baseAssignments[1], basePlots[0])).toBe(true);
+      expect(isTaskExcludedFromPlan(baseTasks[2], baseAssignments[2], basePlots[0])).toBe(true);
+      expect(isTaskExcludedFromPlan(baseTasks[3], baseAssignments[3], basePlots[0])).toBe(true);
+    });
+
+    it('excludes non-counted/N-A/house-type-excluded tasks from daily schedule & compliance even if snapshots exist', () => {
+      const schedules = {
+        'p-1-t-counted': { planned_start: '2026-11-12', planned_end: '2026-11-12' },
+        'p-1-t-uncounted': { planned_start: '2026-11-12', planned_end: '2026-11-12' },
+        'p-1-t-na': { planned_start: '2026-11-12', planned_end: '2026-11-12' },
+        'p-1-t-type-excl': { planned_start: '2026-11-12', planned_end: '2026-11-12' },
+      };
+      const existingSnapshots = [
+        {
+          snapshot_date: '2026-11-12',
+          plot_id: 'p-1',
+          task_template_id: 't-uncounted',
+          foreman_name: 'VIEW',
+          planned_start: '2026-11-12',
+          planned_end: '2026-11-12',
+          current_progress: 0,
+        },
+        {
+          snapshot_date: '2026-11-12',
+          plot_id: 'p-1',
+          task_template_id: 't-na',
+          foreman_name: 'VIEW',
+          planned_start: '2026-11-12',
+          planned_end: '2026-11-12',
+          current_progress: 0,
+        },
+      ];
+      const updates = [
+        {
+          id: 'u-1',
+          plot_id: 'p-1',
+          task_template_id: 't-counted',
+          created_at: '2026-11-12T03:00:00.000Z',
+          progress: 100,
+          user_name: 'VIEW',
+        },
+      ];
+
+      const daily = getForemanScheduledTasksForDate({
+        plots: basePlots,
+        taskTemplates: baseTasks,
+        schedules,
+        assignments: baseAssignments,
+        allUpdatesRecord: updates,
+        existingSnapshots,
+        foremanName: 'VIEW',
+        targetDate: '2026-11-12',
+        todayDateStr: '2026-11-12',
+      });
+
+      expect(daily.map(t => t.task_template_id)).toEqual(['t-counted']);
+      const summary = computeForemanDailySummary(daily);
+      expect(summary.totalTasks).toBe(1);
+      expect(summary.updatedTasks).toBe(1);
+      expect(summary.complianceRate).toBe(100);
+    });
+
+    it('excludes non-counted/N-A tasks across full month in getMonthlyForemanInspectionCompliance while keeping counted future tasks', () => {
+      const schedules = {
+        'p-1-t-counted': { planned_start: '2026-11-12', planned_end: '2026-11-13' }, // 2 days (today + future)
+        'p-1-t-uncounted': { planned_start: '2026-11-10', planned_end: '2026-11-14' }, // 5 days (excluded)
+        'p-1-t-na': { planned_start: '2026-11-10', planned_end: '2026-11-14' }, // 5 days (excluded)
+        'p-1-t-type-excl': { planned_start: '2026-11-10', planned_end: '2026-11-14' }, // 5 days (excluded)
+      };
+      const monthlyAssignments = [
+        { plot_id: 'p-1', task_template_id: 't-counted', current_progress: 50, is_excluded: false },
+        { plot_id: 'p-1', task_template_id: 't-uncounted', current_progress: 0, is_excluded: false },
+        { plot_id: 'p-1', task_template_id: 't-na', current_progress: 0, is_excluded: true },
+        { plot_id: 'p-1', task_template_id: 't-type-excl', current_progress: 0, is_excluded: false },
+      ];
+      const existingSnapshots = [
+        {
+          snapshot_date: '2026-11-11',
+          plot_id: 'p-1',
+          task_template_id: 't-uncounted',
+          foreman_name: 'VIEW',
+          planned_start: '2026-11-10',
+          planned_end: '2026-11-14',
+          current_progress: 0,
+        },
+      ];
+      const updates = [
+        {
+          id: 'u-1',
+          plot_id: 'p-1',
+          task_template_id: 't-counted',
+          created_at: '2026-11-12T03:00:00.000Z',
+          progress: 50,
+          user_name: 'VIEW',
+        },
+      ];
+
+      const monthly = getMonthlyForemanInspectionCompliance({
+        year: 2026,
+        month: 11,
+        plots: basePlots,
+        taskTemplates: baseTasks,
+        schedules,
+        assignments: monthlyAssignments,
+        allUpdatesRecord: updates,
+        existingSnapshots,
+        foremanName: 'all',
+        todayDateStr: '2026-11-12',
+      });
+
+      expect(monthly.totalMonthTasks).toBe(2);
+      expect(monthly.totalMonthUpdated).toBe(1);
+      expect(monthly.totalMonthPending).toBe(1);
+      expect(monthly.foremanWorkloadStats).toHaveLength(1);
+      expect(monthly.foremanWorkloadStats[0].totalTasks).toBe(2);
+      expect(monthly.foremanWorkloadStats[0].pendingTasks).toBe(1);
+      expect(monthly.days.find(d => d.date === '2026-11-11')?.totalScheduled ?? 0).toBe(0);
+      expect(monthly.days.find(d => d.date === '2026-11-12')?.totalScheduled).toBe(1);
+      expect(monthly.days.find(d => d.date === '2026-11-13')?.totalScheduled).toBe(1);
+    });
+
+    it('reclassifies real progress updates on excluded/non-counted tasks as out_of_plan in getForemanDailyActivities and skips stale roadblock snapshots', () => {
+      const schedules = {
+        'p-1-t-counted': { planned_start: '2026-11-12', planned_end: '2026-11-12' },
+        'p-1-t-uncounted': { planned_start: '2026-11-12', planned_end: '2026-11-12' },
+        'p-1-t-na': { planned_start: '2026-11-12', planned_end: '2026-11-12' },
+      };
+      const updates = [
+        {
+          id: 'u-counted',
+          plot_id: 'p-1',
+          task_template_id: 't-counted',
+          created_at: '2026-11-12T02:00:00.000Z',
+          progress: 100,
+          user_name: 'VIEW',
+        },
+        {
+          id: 'u-uncounted',
+          plot_id: 'p-1',
+          task_template_id: 't-uncounted',
+          created_at: '2026-11-12T03:00:00.000Z',
+          progress: 50,
+          user_name: 'VIEW',
+        },
+        {
+          id: 'u-na',
+          plot_id: 'p-1',
+          task_template_id: 't-na',
+          created_at: '2026-11-12T04:00:00.000Z',
+          progress: 100,
+          user_name: 'VIEW',
+        },
+      ];
+      const existingSnapshots = [
+        {
+          id: 'snap-rb-excl',
+          snapshot_date: '2026-11-12',
+          plot_id: 'p-1',
+          task_template_id: 't-uncounted',
+          foreman_name: 'VIEW',
+          status_reason: 'RAIN',
+          status_note: 'stale roadblock',
+        },
+      ];
+
+      const activities = getForemanDailyActivities({
+        plots: basePlots,
+        taskTemplates: baseTasks,
+        schedules,
+        assignments: baseAssignments,
+        allUpdatesRecord: updates,
+        existingSnapshots,
+        foremanName: 'VIEW',
+        targetDate: '2026-11-12',
+        todayDateStr: '2026-11-12',
+      });
+
+      expect(activities.inPlanCount).toBe(1);
+      expect(activities.outOfPlanCount).toBe(2);
+      expect(activities.roadblockCount).toBe(0);
+      expect(
+        activities.items
+          .filter(i => i.task_template_id === 't-uncounted' || i.task_template_id === 't-na')
+          .every(i => i.category === 'out_of_plan' && i.categoryLabel === 'งานไม่นับรวมในแผน / นอกแผน')
+      ).toBe(true);
+    });
+  });
+
+  describe('Strict Past-Day Snapshot Lock & Future Dynamic Plan Behavior', () => {
+    it('freezes past dates (< today) without overwriting existing snapshots, blocks retroactive schedule/handover backdates on past dates, and keeps today + gray future days dynamic', async () => {
+      const plots = [
+        { id: 'p-1', name: 'แปลง 01', project_name: 'ไอลิน 6', foreman_name: 'VIEW' },
+      ];
+      const taskTemplates = [
+        { id: 't-1', task_name: 'งานโครงสร้าง', is_progress_counted: true },
+        { id: 't-2', task_name: 'งานหลังคา', is_progress_counted: true },
+      ];
+      const initialSchedules = {
+        'p-1-t-1': { planned_start: '2026-11-11', planned_end: '2026-11-14' },
+      };
+      const assignments = [
+        { plot_id: 'p-1', task_template_id: 't-1', current_progress: 50 },
+        { plot_id: 'p-1', task_template_id: 't-2', current_progress: 0 },
+      ];
+      const updates = [
+        {
+          id: 'u-nov11',
+          plot_id: 'p-1',
+          task_template_id: 't-1',
+          created_at: '2026-11-11T04:00:00.000Z',
+          progress: 50,
+          user_name: 'VIEW',
+        },
+      ];
+      const existingSnapshots = [
+        {
+          snapshot_date: '2026-11-11',
+          plot_id: 'p-1',
+          project_name: 'ไอลิน 6',
+          task_template_id: 't-1',
+          foreman_name: 'VIEW',
+          planned_start: '2026-11-11',
+          planned_end: '2026-11-14',
+          current_progress: 50,
+          is_updated_today: true,
+        },
+      ];
+
+      const upsertedBatches: any[] = [];
+      const mockSupabase = {
+        from: (table: string) => {
+          if (table === 'foreman_daily_duty_snapshots') {
+            return {
+              upsert: async (rows: any[], opts: any) => {
+                upsertedBatches.push({ rows, opts });
+                return { error: null };
+              },
+            };
+          }
+          throw new Error(`Unexpected table: ${table}`);
+        },
+      };
+
+      const freezeRes = await freezePastDailySnapshotsForMonth({
+        year: 2026,
+        month: 11,
+        plots,
+        taskTemplates,
+        schedules: initialSchedules,
+        assignments,
+        allUpdatesRecord: updates,
+        existingSnapshots,
+        todayDateStr: '2026-11-12',
+        customSupabase: mockSupabase,
+      });
+
+      expect(freezeRes.success).toBe(true);
+      // Only past dates (Nov 1..11) can be frozen, NEVER today (Nov 12) or future (Nov 13+)
+      expect(freezeRes.frozenDates.every(d => d < '2026-11-12')).toBe(true);
+      expect(freezeRes.frozenDates).toContain('2026-11-11');
+      expect(freezeRes.frozenDates).not.toContain('2026-11-12');
+      expect(freezeRes.frozenDates).not.toContain('2026-11-13');
+      // Existing snapshot p-1/t-1 on Nov 11 must NOT be duplicated/overwritten
+      expect(
+        freezeRes.addedRows.some(
+          r => r.snapshot_date === '2026-11-11' && r.plot_id === 'p-1' && r.task_template_id === 't-1'
+        )
+      ).toBe(false);
+      // Freeze marker written for Nov 11
+      expect(
+        freezeRes.addedRows.some(
+          r =>
+            r.snapshot_date === '2026-11-11' &&
+            r.plot_id === SNAPSHOT_DAY_LOCK_PLOT_ID &&
+            r.task_template_id === SNAPSHOT_DAY_LOCK_TASK_PREFIX
+        )
+      ).toBe(true);
+      expect(upsertedBatches[0]?.opts).toEqual({
+        onConflict: 'snapshot_date,plot_id,task_template_id',
+        ignoreDuplicates: true,
+      });
+
+      // Now on Nov 12, Project Planner backdates a new schedule (t-2) & handover defect onto Nov 11..15
+      const updatedSchedules = {
+        ...initialSchedules,
+        'p-1-t-2': { planned_start: '2026-11-11', planned_end: '2026-11-15' },
+      };
+      const newHandoverDefects = [
+        {
+          id: 'def-new',
+          plot_id: 'p-1',
+          description: 'ตรวจรับงานใหม่',
+          defect_stage: 'handover',
+          planned_start: '2026-11-11',
+          planned_end: '2026-11-14',
+          progress: 0,
+          status: 'pending',
+          foreman_name: 'VIEW',
+        },
+      ];
+
+      const mergedSnapshots = [...existingSnapshots, ...freezeRes.addedRows];
+      const monthly = getMonthlyForemanInspectionCompliance({
+        year: 2026,
+        month: 11,
+        plots,
+        taskTemplates,
+        schedules: updatedSchedules,
+        assignments,
+        allUpdatesRecord: updates,
+        defects: newHandoverDefects,
+        existingSnapshots: mergedSnapshots,
+        foremanName: 'all',
+        todayDateStr: '2026-11-12',
+      });
+
+      const nov11 = monthly.days.find(d => d.date === '2026-11-11');
+      const nov12 = monthly.days.find(d => d.date === '2026-11-12');
+      const nov13 = monthly.days.find(d => d.date === '2026-11-13');
+      const nov14 = monthly.days.find(d => d.date === '2026-11-14');
+      const nov15 = monthly.days.find(d => d.date === '2026-11-15');
+
+      // Past frozen day (Nov 11) stays 1/1 (100%) — immune to newly backdated t-2 & handover defect!
+      expect(nov11?.isFrozen).toBe(true);
+      expect(nov11?.totalScheduled).toBe(1);
+      expect(nov11?.updated).toBe(1);
+      expect(nov11?.complianceRate).toBe(100);
+
+      // Today (Nov 12) and future gray workdays (Nov 13, 14) dynamically reflect the updated plan!
+      expect(nov12?.isFrozen).toBe(false);
+      expect(nov12?.totalScheduled).toBe(3);
+      expect(nov13?.isFrozen).toBe(false);
+      expect(nov13?.isFuture).toBe(true);
+      expect(nov13?.totalScheduled).toBe(3);
+      expect(nov14?.isFuture).toBe(true);
+      expect(nov14?.totalScheduled).toBe(3);
+
+      // Sunday (Nov 15) is a weekly foreman holiday: excluded from scheduled KPI & monthly totals
+      expect(nov15?.isHoliday).toBe(true);
+      expect(nov15?.status).toBe('holiday');
+      expect(nov15?.totalScheduled).toBe(0);
+
+      // Daily activities skips synthetic __DAY_LOCK__ marker rows cleanly
+      const activities = getForemanDailyActivities({
+        plots,
+        taskTemplates,
+        schedules: updatedSchedules,
+        assignments,
+        allUpdatesRecord: updates,
+        existingSnapshots: mergedSnapshots,
+        foremanName: 'all',
+        targetDate: '2026-11-11',
+        todayDateStr: '2026-11-12',
+      });
+      expect(activities.items.every(it => it.plot_id !== SNAPSHOT_DAY_LOCK_PLOT_ID)).toBe(true);
+    });
+
+    it('prevents future QC rejections (> targetDate) from un-completing an already completed_early task on a past date', () => {
+      const plots = [{ id: 'p-1', name: 'แปลง 01', project_name: 'ไอลิน 6', foreman_name: 'VIEW' }];
+      const taskTemplates = [{ id: 't-1', task_name: 'งานพื้น', is_progress_counted: true }];
+      const schedules = { 'p-1-t-1': { planned_start: '2026-11-09', planned_end: '2026-11-13' } };
+      const assignments = [{ plot_id: 'p-1', task_template_id: 't-1', current_progress: 50, actual_end_date: '2026-11-10' }];
+      const existingSnapshots = [
+        {
+          snapshot_date: '2026-11-11',
+          plot_id: 'p-1',
+          project_name: 'ไอลิน 6',
+          task_template_id: 't-1',
+          foreman_name: 'VIEW',
+          planned_start: '2026-11-09',
+          planned_end: '2026-11-13',
+          current_progress: 100,
+          is_updated_today: false,
+        },
+      ];
+      const updates = [
+        {
+          id: 'u-done',
+          plot_id: 'p-1',
+          task_template_id: 't-1',
+          created_at: '2026-11-10T04:00:00.000Z',
+          progress: 100,
+          action: 'ส่งงาน 100%',
+        },
+        {
+          id: 'u-future-reject',
+          plot_id: 'p-1',
+          task_template_id: 't-1',
+          created_at: '2026-11-12T05:00:00.000Z',
+          progress: 50,
+          action: 'แจ้งแก้ไขงาน',
+        },
+      ];
+
+      const nov11Tasks = getForemanScheduledTasksForDate({
+        plots,
+        taskTemplates,
+        schedules,
+        assignments,
+        allUpdatesRecord: updates,
+        existingSnapshots,
+        foremanName: 'VIEW',
+        targetDate: '2026-11-11',
+        todayDateStr: '2026-11-12',
+      });
+
+      expect(nov11Tasks).toHaveLength(1);
+      expect(nov11Tasks[0].is_completed_early).toBe(true);
+    });
+  });
+
+  describe('Weekly Sunday holiday exclusion & Option B optional updates', () => {
+    it('identifies only Sundays as weekly foreman holidays via isForemanWeeklyHoliday', () => {
+      // November 2026 Sundays: 1, 8, 15, 22, 29
+      expect(isForemanWeeklyHoliday('2026-11-01')).toBe(true);
+      expect(isForemanWeeklyHoliday('2026-11-08')).toBe(true);
+      expect(isForemanWeeklyHoliday('2026-11-15')).toBe(true);
+      expect(isForemanWeeklyHoliday('2026-11-22')).toBe(true);
+      expect(isForemanWeeklyHoliday('2026-11-29')).toBe(true);
+
+      // Mon-Sat are regular working days
+      expect(isForemanWeeklyHoliday('2026-11-02')).toBe(false);
+      expect(isForemanWeeklyHoliday('2026-11-07')).toBe(false);
+      expect(isForemanWeeklyHoliday('2026-11-12')).toBe(false);
+      expect(isForemanWeeklyHoliday('2026-11-14')).toBe(false);
+    });
+
+    it('excludes past and future Sundays from monthly compliance, missedDays, and foreman workload totals (even with Sunday snapshots)', () => {
+      const plots = [{ id: 'p-1', name: 'แปลง 01', project_name: 'ไอลิน 6', foreman_name: 'VIEW' }];
+      const taskTemplates = [{ id: 't-1', task_name: 'งานโครงสร้าง', is_progress_counted: true }];
+      // Mon-Sun schedule spanning Nov 7 (Sat), Nov 8 (Sun), Nov 9 (Mon), Nov 15 (Sun)
+      const schedules = {
+        'p-1-t-1': { planned_start: '2026-11-07', planned_end: '2026-11-16' },
+      };
+      // Stale snapshot that previously recorded Sunday Nov 8 as pending 0%
+      const existingSnapshots = [
+        {
+          snapshot_date: '2026-11-08',
+          plot_id: 'p-1',
+          project_name: 'ไอลิน 6',
+          task_template_id: 't-1',
+          foreman_name: 'VIEW',
+          planned_start: '2026-11-07',
+          planned_end: '2026-11-16',
+          current_progress: 0,
+          is_updated_today: false,
+        },
+      ];
+      // Foreman inspected 100% on Sat Nov 7 and Mon Nov 9
+      const updates = [
+        {
+          id: 'u-sat',
+          plot_id: 'p-1',
+          task_template_id: 't-1',
+          created_at: '2026-11-07T03:00:00.000Z',
+          progress: 40,
+          user_name: 'VIEW',
+        },
+        {
+          id: 'u-mon',
+          plot_id: 'p-1',
+          task_template_id: 't-1',
+          created_at: '2026-11-09T03:00:00.000Z',
+          progress: 60,
+          user_name: 'VIEW',
+        },
+      ];
+
+      const monthly = getMonthlyForemanInspectionCompliance({
+        year: 2026,
+        month: 11,
+        plots,
+        taskTemplates,
+        schedules,
+        allUpdatesRecord: updates,
+        existingSnapshots,
+        foremanName: 'all',
+        todayDateStr: '2026-11-09',
+      });
+
+      const nov8 = monthly.days.find(d => d.date === '2026-11-08');
+      const nov15 = monthly.days.find(d => d.date === '2026-11-15');
+      expect(nov8?.status).toBe('holiday');
+      expect(nov8?.isHoliday).toBe(true);
+      expect(nov8?.totalScheduled).toBe(0);
+      expect(nov8?.pending).toBe(0);
+
+      expect(nov15?.status).toBe('holiday');
+      expect(nov15?.isHoliday).toBe(true);
+      expect(nov15?.totalScheduled).toBe(0);
+
+      // Only Sat Nov 7 and Mon Nov 9 are active past/today workdays (both 100%, 0 missed!)
+      expect(monthly.totalWorkDays).toBe(2);
+      expect(monthly.completeDays).toBe(2);
+      expect(monthly.missedDays).toBe(0);
+      expect(monthly.avgComplianceRate).toBe(100);
+
+      // Scheduled occurrences: Nov 7, 9, 10, 11, 12, 13, 14, 16 (8 workdays, Sundays Nov 8 & 15 excluded)
+      expect(monthly.totalMonthTasks).toBe(8);
+      expect(monthly.foremanWorkloadStats[0].totalTasks).toBe(8);
+    });
+
+    it('skips past Sundays during freezePastDailySnapshotsForMonth', async () => {
+      const plots = [{ id: 'p-1', name: 'แปลง 01', project_name: 'ไอลิน 6', foreman_name: 'VIEW' }];
+      const taskTemplates = [{ id: 't-1', task_name: 'งานเสา', is_progress_counted: true }];
+      const schedules = { 'p-1-t-1': { planned_start: '2026-11-07', planned_end: '2026-11-10' } };
+
+      const insertedChunks: any[] = [];
+      const mockSupabase = {
+        from: () => ({
+          upsert: async (chunk: any[]) => {
+            insertedChunks.push(...chunk);
+            return { error: null };
+          },
+        }),
+      };
+
+      const res = await freezePastDailySnapshotsForMonth({
+        year: 2026,
+        month: 11,
+        plots,
+        taskTemplates,
+        schedules,
+        todayDateStr: '2026-11-10',
+        customSupabase: mockSupabase,
+      });
+
+      expect(res.success).toBe(true);
+      expect(res.frozenDates).not.toContain('2026-11-08');
+      expect(res.frozenDates).toContain('2026-11-07');
+      expect(res.frozenDates).toContain('2026-11-09');
+      expect(insertedChunks.some(r => r.snapshot_date === '2026-11-08')).toBe(false);
+    });
+
+    it('keeps scheduled tasks visible on Sunday for Option B optional updates and logs Sunday updates in daily activities', () => {
+      const plots = [{ id: 'p-1', name: 'แปลง 01', project_name: 'ไอลิน 6', foreman_name: 'VIEW' }];
+      const taskTemplates = [{ id: 't-1', task_name: 'งานก่ออิฐ', is_progress_counted: true }];
+      const schedules = { 'p-1-t-1': { planned_start: '2026-11-06', planned_end: '2026-11-10' } };
+      const updates = [
+        {
+          id: 'u-sun',
+          plot_id: 'p-1',
+          task_template_id: 't-1',
+          created_at: '2026-11-08T03:00:00.000Z',
+          progress: 50,
+          action: 'อัปเดตงานวันอาทิตย์',
+          user_name: 'VIEW',
+        },
+      ];
+
+      const sundayTasks = getForemanScheduledTasksForDate({
+        plots,
+        taskTemplates,
+        schedules,
+        allUpdatesRecord: updates,
+        foremanName: 'VIEW',
+        targetDate: '2026-11-08',
+        todayDateStr: '2026-11-08',
+      });
+      expect(sundayTasks).toHaveLength(1);
+      expect(sundayTasks[0].is_updated_today).toBe(true);
+
+      const activities = getForemanDailyActivities({
+        plots,
+        taskTemplates,
+        schedules,
+        allUpdatesRecord: updates,
+        foremanName: 'VIEW',
+        targetDate: '2026-11-08',
+        todayDateStr: '2026-11-08',
+      });
+      expect(activities.totalActivities).toBe(1);
+      expect(activities.items[0].category).toBe('out_of_plan');
+      expect(activities.items[0].categoryLabel).toContain('วันหยุด');
     });
   });
 });
