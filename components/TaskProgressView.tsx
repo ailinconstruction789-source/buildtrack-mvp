@@ -120,7 +120,7 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
     if (view === 'task-progress' && selectedTask?.id && selectedPlot?.id && selectedPlot?.project_name) {
       void loadQCResolution();
     }
-  }, [view, selectedTask?.id, selectedPlot?.id, selectedPlot?.project_name, loadQCResolution]);
+  }, [view, selectedTask?.id, selectedPlot?.id, selectedPlot?.project_name, updates.length, progressValue, loadQCResolution]);
 
   useEffect(() => {
     if (view !== 'task-progress' || !selectedTask || !selectedPlot || !loggedInUser) {

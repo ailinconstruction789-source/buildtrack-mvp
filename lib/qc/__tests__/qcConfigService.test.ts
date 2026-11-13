@@ -51,6 +51,66 @@ describe('QC Config Service - Opt-in & Legacy Preservation', () => {
     expect(result.method).toBe('legacy');
   });
 
+  it('does NOT falsely detect Site Engineer approval as a started QC inspection', async () => {
+    vi.mocked(supabase.from).mockImplementation((table: string) => {
+      if (table === 'qc_inspections') {
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          order: vi.fn().mockResolvedValue({ data: [], error: null })
+        } as any;
+      }
+      if (table === 'task_updates') {
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          order: vi.fn().mockResolvedValue({
+            data: [
+              { id: 'upd-2', action: 'Site Engineer อนุมัติ', role: 'Site Engineer', created_at: '2026-11-10T10:00:00Z' },
+              { id: 'upd-1', action: 'ส่งงาน 100%', role: 'Foreman', created_at: '2026-11-10T09:00:00Z' }
+            ],
+            error: null
+          })
+        } as any;
+      }
+      return {} as any;
+    });
+
+    const result = await hasInspectionStarted('PLOT-39', 'TASK-33');
+    expect(result.started).toBe(false);
+  });
+
+  it('ignores legacy QC approvals that occurred BEFORE an Admin Reset (0%)', async () => {
+    vi.mocked(supabase.from).mockImplementation((table: string) => {
+      if (table === 'qc_inspections') {
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          order: vi.fn().mockResolvedValue({ data: [], error: null })
+        } as any;
+      }
+      if (table === 'task_updates') {
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          order: vi.fn().mockResolvedValue({
+            data: [
+              { id: 'upd-4', action: 'Site Engineer อนุมัติ', role: 'Site Engineer', created_at: '2026-11-12T10:00:00Z' },
+              { id: 'upd-3', action: 'ส่งงาน 100%', role: 'Foreman', created_at: '2026-11-12T09:00:00Z' },
+              { id: 'upd-2', action: 'แอดมินย้อนสถานะงาน (Reset)', role: 'Admin', created_at: '2026-11-11T15:00:00Z' },
+              { id: 'upd-1', action: 'QC อนุมัติ', role: 'QC', created_at: '2026-11-11T10:00:00Z' }
+            ],
+            error: null
+          })
+        } as any;
+      }
+      return {} as any;
+    });
+
+    const result = await hasInspectionStarted('PLOT-39', 'TASK-33');
+    expect(result.started).toBe(false);
+  });
+
   it('detects inspection already started in new qc_inspections', async () => {
     vi.mocked(supabase.from).mockImplementation((table: string) => {
       if (table === 'qc_inspections') {

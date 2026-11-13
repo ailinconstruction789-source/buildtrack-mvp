@@ -57,7 +57,7 @@ export async function hasInspectionStarted(plotId: string, taskTemplateId: strin
       };
     }
 
-    // 2. ตรวจสอบใน task_updates (ระบบเดิม) ว่ามี action ของ QC หรือไม่
+    // 2. ตรวจสอบใน task_updates (ระบบเดิม) เฉพาะข้อมูลหลังจากการ Reset ครั้งล่าสุด
     const { data: legacyUpdates, error: legError } = await supabase
       .from('task_updates')
       .select('id, action, role, created_at')
@@ -66,18 +66,32 @@ export async function hasInspectionStarted(plotId: string, taskTemplateId: strin
       .order('created_at', { ascending: false });
 
     if (!legError && legacyUpdates && legacyUpdates.length > 0) {
-      const hasQcAction = legacyUpdates.some(u => {
+      // ตัดเฉพาะประวัติหลังจาก 'แอดมินย้อนสถานะงาน (Reset)' ล่าสุด (เรียงจากใหม่ไปเก่า จึงหยุดทันทีเมื่อเจอ Reset)
+      const currentCycleUpdates: typeof legacyUpdates = [];
+      for (const u of legacyUpdates) {
+        const act = String(u.action || '');
+        if (act.includes('Reset') || act.includes('ย้อนสถานะงาน')) {
+          break;
+        }
+        currentCycleUpdates.push(u);
+      }
+
+      // คัดเฉพาะ Action ของตำแหน่ง QC หรือ PE เท่านั้น (ไม่นำ 'Site Engineer อนุมัติ' หรือ 'Site Engineer แจ้งแก้ไข' มาปนเด็ดขาด)
+      const qcActions = currentCycleUpdates.filter(u => {
         const act = String(u.action || '');
         const r = String(u.role || '');
-        return r === 'QC' || act.includes('QC') || act.includes('อนุมัติ') || act.includes('สั่งแก้') || act.includes('แจ้งแก้ไข');
+        if (r === 'Site Engineer' || act.startsWith('Site Engineer')) return false;
+        return r === 'QC' || act.includes('QC') || act.includes('PE อนุมัติ') || act.includes('PE สั่งแก้');
       });
 
-      if (hasQcAction) {
+      if (qcActions.length > 0) {
+        const latestQcAct = String(qcActions[0].action || '');
+        const isApproved = latestQcAct.includes('QC อนุมัติ') || latestQcAct.includes('QC ผ่าน') || latestQcAct.includes('PE อนุมัติ');
         return {
           started: true,
           method: 'legacy',
-          roundCount: 1,
-          latestStatus: 'legacy_active'
+          roundCount: qcActions.length,
+          latestStatus: isApproved ? 'legacy_approved' : 'legacy_active'
         };
       }
     }
@@ -298,13 +312,34 @@ export async function resolveTaskInspectionConfig(params: {
 
     if (startedInfo.started) {
       if (startedInfo.method === 'legacy') {
-        return {
-          state: 'legacy',
-          inspectionMethod: 'legacy',
-          isLocked: true,
-          lockedReason: 'งานนี้เริ่มตรวจด้วยระบบเดิมไปแล้ว ต้องตรวจด้วยระบบเดิมตลอดวงจรงาน',
-          sourceLabel: 'ระบบตรวจเดิม (ล็อกตามประวัติ)'
-        };
+        // หากงานเคยผ่าน QC แบบเดิมไปแล้ว (legacy_approved) ให้ล็อกเป็น legacy ทันที
+        // แต่ถ้ายังไม่ผ่าน QC (เช่น เคยถูกแจ้งแก้ไขในอดีต) แล้วแปลงนี้ถูกตั้งค่าเปิดใช้ form_v2 ให้ใช้ form_v2 ต่อได้
+        let allowFormV2Override = false;
+        if (startedInfo.latestStatus !== 'legacy_approved') {
+          try {
+            const { data: chkCfg } = await supabase
+              .from('qc_plot_task_configs')
+              .select('is_active, inspection_method')
+              .eq('plot_id', plotId)
+              .eq('task_template_id', taskTemplateId)
+              .maybeSingle();
+            if (chkCfg && chkCfg.is_active && chkCfg.inspection_method === 'form_v2') {
+              allowFormV2Override = true;
+            }
+          } catch {
+            // fallback to legacy lock
+          }
+        }
+
+        if (!allowFormV2Override) {
+          return {
+            state: 'legacy',
+            inspectionMethod: 'legacy',
+            isLocked: true,
+            lockedReason: 'งานนี้เริ่มตรวจด้วยระบบเดิมไปแล้ว ต้องตรวจด้วยระบบเดิมตลอดวงจรงาน',
+            sourceLabel: 'ระบบตรวจเดิม (ล็อกตามประวัติ)'
+          };
+        }
       } else {
         // ดึงการตรวจล่าสุดของระบบใหม่
         const { data: latestInspections } = await supabase
@@ -1259,4 +1294,130 @@ export async function executeSmartActivatePlotsQC(params: {
     totalExemptedCompletedTasks: totalExempted,
     totalActivatedTasks: totalActivated
   };
+}
+
+/**
+ * ซิงค์สถานะระบบฟอร์ม QC เมื่อแอดมินกด "ย้อนสถานะล่าสุด (Undo)"
+ * 1. หากมีใบตรวจใน qc_inspections ที่ถูกส่ง/อนุมัติ/ตีกลับไปแล้ว ให้ปลดล็อกกลับเป็น 'draft' เพื่อให้ QC แก้ไขคำตอบเดิมแล้วส่งใหม่ได้ทันที
+ * 2. หากงานเคยถูกตั้งเป็น legacy (เพราะเคยผ่านไปแล้ว) แต่ถูก Undo จนกลับมาเป็นสถานะยังไม่ผ่าน QC ให้สลับเปิดใช้ form_v2 ตามชุดมาตรฐานทันที
+ */
+export async function syncQCOnAdminUndo(params: {
+  plotId: string;
+  taskTemplateId: string;
+  actorUsername: string;
+}): Promise<void> {
+  const { plotId, taskTemplateId, actorUsername } = params;
+  try {
+    // 1. ตรวจสอบใบตรวจรอบล่าสุดใน qc_inspections
+    const { data: inspections } = await supabase
+      .from('qc_inspections')
+      .select('id, round_number, document_status')
+      .eq('plot_id', plotId)
+      .eq('task_template_id', taskTemplateId)
+      .order('round_number', { ascending: false })
+      .limit(1);
+
+    if (inspections && inspections.length > 0) {
+      const latest = inspections[0];
+      if (latest.document_status !== 'draft') {
+        await supabase
+          .from('qc_inspections')
+          .update({
+            document_status: 'draft',
+            reopened_at: new Date().toISOString(),
+            reopened_by: actorUsername,
+            reopened_reason: 'แอดมินกดย้อนสถานะล่าสุด (Undo)',
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', latest.id);
+      }
+    }
+
+    // 2. ตรวจสอบว่ายังมีประวัติ QC อนุมัติค้างอยู่ในรอบปัจจุบันหรือไม่
+    const startedInfo = await hasInspectionStarted(plotId, taskTemplateId);
+    if (startedInfo.latestStatus === 'legacy_approved') {
+      return;
+    }
+
+    // 3. หากงานไม่ได้อยู่ในสถานะผ่าน QC แล้ว และมีชุดมาตรฐาน (Standard Set) ให้เปิดใช้งาน form_v2 อัตโนมัติ
+    await ensurePlotTaskFormV2Activated(plotId, taskTemplateId, actorUsername);
+  } catch (err) {
+    console.warn('Error syncing QC on Admin Undo:', err);
+  }
+}
+
+/**
+ * ซิงค์สถานะระบบฟอร์ม QC เมื่อแอดมินกด "รีเซ็ตงาน (0%)"
+ * 1. ล้างใบตรวจเดิมของงวดงานนี้ใน qc_inspections เพื่อเริ่มนับรอบที่ 1 ใหม่เมื่อโฟร์แมนส่งงานกลับมาที่ 100%
+ * 2. เปิดใช้งาน form_v2 ตามชุดมาตรฐานของแบบบ้านให้พร้อมสำหรับการตรวจรอบใหม่
+ */
+export async function syncQCOnAdminResetToZero(params: {
+  plotId: string;
+  taskTemplateId: string;
+  actorUsername: string;
+}): Promise<void> {
+  const { plotId, taskTemplateId, actorUsername } = params;
+  try {
+    // 1. ค้นหาและลบใบตรวจเดิมของงวดงานนี้
+    const { data: oldInspections } = await supabase
+      .from('qc_inspections')
+      .select('id')
+      .eq('plot_id', plotId)
+      .eq('task_template_id', taskTemplateId);
+
+    if (oldInspections && oldInspections.length > 0) {
+      const ids = oldInspections.map(i => i.id);
+      await supabase.from('qc_drawing_annotations').delete().in('inspection_id', ids);
+      await supabase.from('qc_inspection_answers').delete().in('inspection_id', ids);
+      await supabase.from('qc_inspections').delete().in('id', ids);
+    }
+
+    // 2. เปิดใช้งาน form_v2 ตามชุดมาตรฐานของแบบบ้านให้พร้อมตรวจเมื่อส่งงาน 100% รอบใหม่
+    await ensurePlotTaskFormV2Activated(plotId, taskTemplateId, actorUsername);
+  } catch (err) {
+    console.warn('Error syncing QC on Admin Reset to Zero:', err);
+  }
+}
+
+async function ensurePlotTaskFormV2Activated(
+  plotId: string,
+  taskTemplateId: string,
+  actorUsername: string
+): Promise<void> {
+  const [{ data: plot }, { data: task }] = await Promise.all([
+    supabase.from('plots').select('id, project_name, house_type_id').eq('id', plotId).maybeSingle(),
+    supabase.from('task_templates').select('id, task_name, house_type_id').eq('id', taskTemplateId).maybeSingle()
+  ]);
+
+  if (!plot || !task) return;
+  const houseTypeId = plot.house_type_id || task.house_type_id;
+  if (!houseTypeId) return;
+
+  const { data: stdSet } = await supabase
+    .from('qc_standard_sets')
+    .select('*')
+    .eq('house_type_id', houseTypeId)
+    .eq('task_name', task.task_name.trim())
+    .eq('is_active', true)
+    .maybeSingle();
+
+  if (!stdSet) return;
+
+  await supabase.from('qc_plot_task_configs').upsert({
+    project_name: plot.project_name,
+    plot_id: plot.id,
+    task_template_id: task.id,
+    task_name: task.task_name,
+    inspection_method: 'form_v2',
+    is_active: true,
+    form_template_id: stdSet.form_template_id,
+    form_version: stdSet.form_version,
+    drawing_id: stdSet.drawing_id || null,
+    drawing_version: stdSet.drawing_version || null,
+    selected_pages: stdSet.selected_pages || [],
+    require_plot_drawing: Boolean(stdSet.require_plot_drawing),
+    is_plot_override: false,
+    created_by: actorUsername,
+    updated_at: new Date().toISOString()
+  }, { onConflict: 'plot_id,task_template_id' });
 }

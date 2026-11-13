@@ -16,6 +16,7 @@ import { GUARDED_ACCOUNT_COMMANDS_ENABLED, runGuardedAccountCommand } from '@/li
 import { isSalesStaffRole } from '@/lib/sales/salesStaff';
 import { triggerBackgroundPhotoAudit } from '@/lib/photoAudit';
 import { evaluatePlotCompletionAndSaleStatus } from '@/lib/plotStatusEvaluator';
+import { syncQCOnAdminUndo, syncQCOnAdminResetToZero } from '@/lib/qc/qcConfigService';
 import {
   formatRoadblockActionLabel,
   formatTaskUpdateDisplayText,
@@ -2545,6 +2546,13 @@ export default function ConstructionApp() {
 
           if (deleteError) throw deleteError;
 
+          // ซิงค์สถานะใบตรวจ QC (ปลดล็อกเป็น draft หรือเปิดใช้ form_v2 หากย้อนออกจากสถานะผ่านแล้ว)
+          await syncQCOnAdminUndo({
+            plotId,
+            taskTemplateId,
+            actorUsername: loggedInUser?.username || 'Admin'
+          });
+
           // 3. Database Trigger จะจัดการ plot_task_assignments อัตโนมัติเมื่อมีการลบ row ใน task_updates
 
           // 4. Refresh updates for UI
@@ -2590,6 +2598,13 @@ export default function ConstructionApp() {
             progress: 0, 
             is_completed: false 
           }]);
+
+          // ซิงค์สถานะใบตรวจ QC (ล้างใบตรวจเดิมเพื่อเริ่มนับรอบที่ 1 ใหม่ และเปิดใช้ form_v2)
+          await syncQCOnAdminResetToZero({
+            plotId,
+            taskTemplateId,
+            actorUsername: loggedInUser?.username || 'Admin'
+          });
 
           // 2. Database Trigger จะจัดการเคลียร์ Date และ Progress เป็น 0 ให้เองอัตโนมัติ
 
