@@ -85,15 +85,19 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
 
   // 📋 สถานะ QC ฟอร์มใหม่
   const [qcResolution, setQcResolution] = useState<any>(null);
+  const [qcResolvedKey, setQcResolvedKey] = useState<string | null>(null);
   const [qcLoading, setQcLoading] = useState(false);
   const [showQCRunner, setShowQCRunner] = useState(false);
   const [showQCReport, setShowQCReport] = useState(false);
+  const isQCResolutionReady = qcResolvedKey === selectionKey && !qcLoading;
 
   const loadQCResolution = React.useCallback(async () => {
     if (!selectedTask?.id || !selectedPlot?.id || !selectedPlot?.project_name) {
       setQcResolution(null);
+      setQcResolvedKey(null);
       return;
     }
+    const targetKey = selectionKey;
     setQcLoading(true);
     try {
       const res = await resolveTaskInspectionConfig({
@@ -104,6 +108,7 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
         taskName: selectedTask.task_name
       });
       setQcResolution(res);
+      setQcResolvedKey(targetKey);
     } catch (err: any) {
       setQcResolution({
         state: 'load_error',
@@ -111,16 +116,31 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
         isLocked: false,
         errorMessage: err?.message || 'เกิดข้อผิดพลาดในการโหลดการตั้งค่า QC'
       });
+      setQcResolvedKey(targetKey);
     } finally {
       setQcLoading(false);
     }
-  }, [selectedPlot?.project_name, selectedPlot?.id, selectedPlot?.house_type_id, selectedTask?.id, selectedTask?.house_type_id]);
+  }, [selectionKey, selectedPlot?.project_name, selectedPlot?.id, selectedPlot?.house_type_id, selectedTask?.id, selectedTask?.house_type_id, selectedTask?.task_name]);
 
+  // โหลด QC Resolution ทันทีเมื่อเข้าหน้างานใหม่
   useEffect(() => {
     if (view === 'task-progress' && selectedTask?.id && selectedPlot?.id && selectedPlot?.project_name) {
       void loadQCResolution();
     }
-  }, [view, selectedTask?.id, selectedPlot?.id, selectedPlot?.project_name, updates.length, progressValue, loadQCResolution]);
+  }, [view, selectionKey, loadQCResolution]);
+
+  // รีเฟรช QC Resolution เฉพาะเมื่อมีการเปลี่ยนแปลงจำนวนประวัติหลังจากโหลดครั้งแรกเสร็จแล้ว (เช่น Admin กด Undo / Reset)
+  const prevUpdatesLenRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!hasCurrentHistory) {
+      prevUpdatesLenRef.current = null;
+      return;
+    }
+    if (prevUpdatesLenRef.current !== null && prevUpdatesLenRef.current !== updates.length) {
+      void loadQCResolution();
+    }
+    prevUpdatesLenRef.current = updates.length;
+  }, [hasCurrentHistory, updates.length, loadQCResolution]);
 
   useEffect(() => {
     if (view !== 'task-progress' || !selectedTask || !selectedPlot || !loggedInUser) {
@@ -387,7 +407,29 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                    </div>
                                  ) : ( <div className={`bg-[#f5f5f7] text-slate-400 py-3 sm:py-4 rounded-xl sm:rounded-[1.5rem] font-bold text-center uppercase tracking-widest border border-black/5 ${isMobileLayout ? 'text-[9px]' : 'text-xs sm:text-sm'}`}>รอโฟร์แมน 100% หรือ รอ QC ตรวจ</div> )
                                ) : isQC ? (
-                                  qcResolution?.inspectionMethod === 'form_v2' ? (
+                                  !isQCResolutionReady ? (
+                                    <div className="bg-purple-50/80 border border-purple-200 p-3 sm:p-4 rounded-xl sm:rounded-2xl space-y-2.5">
+                                      <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                          <span className="bg-purple-600 text-white text-[10px] px-2 py-0.5 rounded-md font-bold">
+                                            QC แบบฟอร์มใหม่
+                                          </span>
+                                          <span className="text-xs font-bold text-purple-900 truncate">
+                                            กำลังตรวจสอบชุดแบบฟอร์มมาตรฐาน...
+                                          </span>
+                                        </div>
+                                      </div>
+                                      <div className="flex gap-2">
+                                        <button
+                                          disabled
+                                          className="flex-1 bg-purple-600/80 text-white font-bold py-2.5 sm:py-3 px-4 rounded-xl text-xs sm:text-sm shadow-md flex items-center justify-center gap-2 opacity-80 cursor-wait"
+                                        >
+                                          <Loader2 size={16} className="animate-spin" />
+                                          <span>กำลังเตรียมแบบฟอร์มตรวจ QC...</span>
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : qcResolution?.inspectionMethod === 'form_v2' ? (
                                     qcResolution.state === 'incomplete_config' ? (
                                       <div className={`bg-amber-50 text-amber-800 py-3 sm:py-4 px-4 sm:px-6 rounded-xl sm:rounded-[1.5rem] font-bold text-center border-2 border-amber-300 flex flex-col items-center justify-center gap-1`}>
                                         <span className={`flex items-center gap-1.5 uppercase tracking-widest text-amber-700 ${isMobileLayout ? 'text-[10px]' : 'text-xs sm:text-sm'}`}>

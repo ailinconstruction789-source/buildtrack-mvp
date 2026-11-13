@@ -40,13 +40,28 @@ export async function hasInspectionStarted(plotId: string, taskTemplateId: strin
   latestStatus?: string;
 }> {
   try {
-    // 1. ตรวจสอบใน qc_inspections (ระบบใหม่)
-    const { data: v2Inspections, error: v2Error } = await supabase
+    // 1 & 2. ตรวจสอบใน qc_inspections (ระบบใหม่) และ task_updates (ระบบเดิม) พร้อมกันเพื่อความรวดเร็ว
+    const v2Promise = supabase
       .from('qc_inspections')
       .select('id, round_number, document_status, inspection_result, form_version, drawing_version')
       .eq('plot_id', plotId)
       .eq('task_template_id', taskTemplateId)
       .order('round_number', { ascending: false });
+
+    const legTable: any = supabase.from('task_updates');
+    const legPromise: Promise<{ data: Array<{ id: string; action?: string; role?: string; created_at?: string }> | null; error: any }> =
+      typeof legTable?.select === 'function'
+        ? legTable
+            .select('id, action, role, created_at')
+            .eq('plot_id', plotId)
+            .eq('task_template_id', taskTemplateId)
+            .order('created_at', { ascending: false })
+        : Promise.resolve({ data: null, error: null });
+
+    const [{ data: v2Inspections, error: v2Error }, { data: legacyUpdates, error: legError }] = await Promise.all([
+      v2Promise,
+      legPromise
+    ]);
 
     if (!v2Error && v2Inspections && v2Inspections.length > 0) {
       return {
@@ -56,14 +71,6 @@ export async function hasInspectionStarted(plotId: string, taskTemplateId: strin
         latestStatus: v2Inspections[0].document_status
       };
     }
-
-    // 2. ตรวจสอบใน task_updates (ระบบเดิม) เฉพาะข้อมูลหลังจากการ Reset ครั้งล่าสุด
-    const { data: legacyUpdates, error: legError } = await supabase
-      .from('task_updates')
-      .select('id, action, role, created_at')
-      .eq('plot_id', plotId)
-      .eq('task_template_id', taskTemplateId)
-      .order('created_at', { ascending: false });
 
     if (!legError && legacyUpdates && legacyUpdates.length > 0) {
       // ตัดเฉพาะประวัติหลังจาก 'แอดมินย้อนสถานะงาน (Reset)' ล่าสุด (เรียงจากใหม่ไปเก่า จึงหยุดทันทีเมื่อเจอ Reset)
@@ -292,44 +299,52 @@ export async function resolveTaskInspectionConfig(params: {
   const { projectName, plotId, houseTypeId, taskTemplateId, taskName } = params;
 
   try {
-    // ดึงทิศทางโรงจอดรถของแปลงนี้ (left, right, standard)
-    let plotGarageOrientation: QCGarageOrientation = 'standard';
-    try {
-      const { data: pData } = await supabase
-        .from('plots')
-        .select('garage_orientation')
-        .eq('id', plotId)
-        .maybeSingle();
-      if (pData?.garage_orientation === 'left' || pData?.garage_orientation === 'right') {
-        plotGarageOrientation = pData.garage_orientation;
+    // ดึงทิศทางโรงจอดรถของแปลงนี้ควบคู่กับการเช็คประวัติเริ่มตรวจ เพื่อลดเวลารอโหลด
+    const orientationPromise = (async (): Promise<QCGarageOrientation> => {
+      try {
+        const plotsTable: any = supabase.from('plots');
+        if (typeof plotsTable?.select !== 'function') return 'standard';
+        const { data: pData } = await plotsTable
+          .select('garage_orientation')
+          .eq('id', plotId)
+          .maybeSingle();
+        if (pData?.garage_orientation === 'left' || pData?.garage_orientation === 'right') {
+          return pData.garage_orientation;
+        }
+      } catch {
+        // fallback
       }
-    } catch {
-      // fallback
-    }
+      return 'standard';
+    })();
 
-    // 1. ตรวจสอบว่าเคยเริ่มตรวจแล้วหรือไม่
-    const startedInfo = await hasInspectionStarted(plotId, taskTemplateId);
+    const plotConfigPromise = (async (): Promise<{ data: any; error: any }> => {
+      try {
+        const cfgTable: any = supabase.from('qc_plot_task_configs');
+        if (typeof cfgTable?.select !== 'function') return { data: null, error: null };
+        const res = await cfgTable
+          .select('*, form_template:qc_form_templates(*, items:qc_form_items(*)), reference_drawing:qc_reference_drawings(*, pages:qc_drawing_pages(*))')
+          .eq('plot_id', plotId)
+          .eq('task_template_id', taskTemplateId)
+          .maybeSingle();
+        return res || { data: null, error: null };
+      } catch (e: any) {
+        return { data: null, error: e };
+      }
+    })();
+
+    const [plotGarageOrientation, startedInfo, { data: plotConfig, error: configError }] = await Promise.all([
+      orientationPromise,
+      hasInspectionStarted(plotId, taskTemplateId),
+      plotConfigPromise
+    ]);
 
     if (startedInfo.started) {
       if (startedInfo.method === 'legacy') {
         // หากงานเคยผ่าน QC แบบเดิมไปแล้ว (legacy_approved) ให้ล็อกเป็น legacy ทันที
         // แต่ถ้ายังไม่ผ่าน QC (เช่น เคยถูกแจ้งแก้ไขในอดีต) แล้วแปลงนี้ถูกตั้งค่าเปิดใช้ form_v2 ให้ใช้ form_v2 ต่อได้
-        let allowFormV2Override = false;
-        if (startedInfo.latestStatus !== 'legacy_approved') {
-          try {
-            const { data: chkCfg } = await supabase
-              .from('qc_plot_task_configs')
-              .select('is_active, inspection_method')
-              .eq('plot_id', plotId)
-              .eq('task_template_id', taskTemplateId)
-              .maybeSingle();
-            if (chkCfg && chkCfg.is_active && chkCfg.inspection_method === 'form_v2') {
-              allowFormV2Override = true;
-            }
-          } catch {
-            // fallback to legacy lock
-          }
-        }
+        const allowFormV2Override =
+          startedInfo.latestStatus !== 'legacy_approved' &&
+          Boolean(plotConfig && plotConfig.is_active && plotConfig.inspection_method === 'form_v2');
 
         if (!allowFormV2Override) {
           return {
@@ -351,31 +366,33 @@ export async function resolveTaskInspectionConfig(params: {
 
         const latest = latestInspections && latestInspections.length > 0 ? latestInspections[0] : null;
 
-        // ดึง form template ตาม version ที่เคยตรวจ
-        let formTmpl: QCFormTemplate | undefined;
-        if (latest?.form_template_id) {
-          const { data: tmplData } = await supabase
-            .from('qc_form_templates')
-            .select('*, items:qc_form_items(*)')
-            .eq('id', latest.form_template_id)
-            .single();
-          if (tmplData) formTmpl = tmplData;
-        }
-
-        // ดึง reference drawing ตาม version ที่เคยตรวจ
-        let refDrawing: QCReferenceDrawing | undefined;
-        let resolvedViewport: QCPlotDrawingViewport | null = null;
-        if (latest?.drawing_id) {
-          const { data: drawData } = await supabase
-            .from('qc_reference_drawings')
-            .select('*, pages:qc_drawing_pages(*)')
-            .eq('id', latest.drawing_id)
-            .single();
-          if (drawData) {
-            refDrawing = drawData;
-            resolvedViewport = await getPlotDrawingViewport(plotId, drawData.id);
-          }
-        }
+        // ดึง form template และ reference drawing ตาม version ที่เคยตรวจพร้อมกัน
+        const [formTmpl, drawingResult] = await Promise.all([
+          (async (): Promise<QCFormTemplate | undefined> => {
+            if (!latest?.form_template_id) return undefined;
+            const { data: tmplData } = await supabase
+              .from('qc_form_templates')
+              .select('*, items:qc_form_items(*)')
+              .eq('id', latest.form_template_id)
+              .single();
+            return tmplData || undefined;
+          })(),
+          (async (): Promise<{ refDrawing?: QCReferenceDrawing; resolvedViewport: QCPlotDrawingViewport | null }> => {
+            if (!latest?.drawing_id) return { resolvedViewport: null };
+            const [{ data: drawData }, vp] = await Promise.all([
+              supabase
+                .from('qc_reference_drawings')
+                .select('*, pages:qc_drawing_pages(*)')
+                .eq('id', latest.drawing_id)
+                .single(),
+              getPlotDrawingViewport(plotId, latest.drawing_id)
+            ]);
+            return {
+              refDrawing: drawData || undefined,
+              resolvedViewport: drawData ? vp : null
+            };
+          })()
+        ]);
 
         return {
           state: 'form_v2_ready',
@@ -384,22 +401,15 @@ export async function resolveTaskInspectionConfig(params: {
           lockedReason: `งานนี้เริ่มตรวจด้วยฟอร์มใหม่ (รอบที่ ${latest?.round_number || 1}) ล็อกเวอร์ชันฟอร์มและแบบ`,
           sourceLabel: `ระบบฟอร์มใหม่ (รอบที่ ${latest?.round_number || 1})`,
           formTemplate: formTmpl,
-          referenceDrawing: refDrawing,
-          viewport: resolvedViewport,
+          referenceDrawing: drawingResult.refDrawing,
+          viewport: drawingResult.resolvedViewport,
           latestInspection: latest,
           totalRounds: latestInspections?.length || 1
         };
       }
     }
 
-    // 2. งานยังไม่เคยเริ่มตรวจ: ตรวจสอบการตั้งค่าระดับแปลง (qc_plot_task_configs)
-    const { data: plotConfig, error: configError } = await supabase
-      .from('qc_plot_task_configs')
-      .select('*, form_template:qc_form_templates(*, items:qc_form_items(*)), reference_drawing:qc_reference_drawings(*, pages:qc_drawing_pages(*))')
-      .eq('plot_id', plotId)
-      .eq('task_template_id', taskTemplateId)
-      .maybeSingle();
-
+    // 2. งานยังไม่เคยเริ่มตรวจ: ตรวจสอบการตั้งค่าระดับแปลง (qc_plot_task_configs ที่ดึงมาพร้อมกันแล้ว)
     if (configError) {
       return {
         state: 'load_error',
