@@ -1029,20 +1029,27 @@ export async function previewSmartPlotsQC(params: {
     tasksByHouseType.get(t.house_type_id)!.push(t);
   }
 
-  // 4. ดึงสถานะงานที่สำเร็จแล้วจาก task_updates (แบ่ง chunk ละ 30 แปลงเพื่อป้องกัน URL limit และ query row limit)
+  // 4. ดึงสถานะงานที่ QC อนุมัติผ่านแล้วจริงๆ จาก task_updates (แบ่ง chunk ละ 30 แปลงเพื่อป้องกัน URL limit และ query row limit)
   const completedSet = new Set<string>();
   const chunkSize = 30;
   for (let i = 0; i < plotIds.length; i += chunkSize) {
     const chunk = plotIds.slice(i, i + chunkSize);
     const { data: updates } = await supabase
       .from('task_updates')
-      .select('plot_id, task_template_id, is_completed, progress')
+      .select('plot_id, task_template_id, action, created_at')
       .in('plot_id', chunk)
-      .or('is_completed.eq.true,progress.eq.100')
+      .or('action.ilike.%QC%,action.ilike.%PE%')
+      .order('created_at', { ascending: true })
       .limit(10000);
 
     for (const u of updates || []) {
-      completedSet.add(`${u.plot_id}_${u.task_template_id}`);
+      const key = `${u.plot_id}_${u.task_template_id}`;
+      const action = u.action || '';
+      if (action.includes('QC อนุมัติ') || action.includes('QC ผ่าน') || action.includes('PE อนุมัติ')) {
+        completedSet.add(key);
+      } else if (action.includes('แจ้งแก้ไข') || action.includes('ไม่อนุมัติ') || action.includes('ตีกลับ')) {
+        completedSet.delete(key);
+      }
     }
   }
 
@@ -1141,20 +1148,27 @@ export async function executeSmartActivatePlotsQC(params: {
     stdSetMap.set(`${s.house_type_id}_${s.task_name.trim()}`, s);
   }
 
-  // 4. ดึงสถานะงานสำเร็จจาก task_updates (แบ่ง chunk ละ 30 แปลงเพื่อป้องกัน URL limit และ query row limit)
+  // 4. ดึงสถานะงานที่ QC อนุมัติผ่านแล้วจริงๆ จาก task_updates (แบ่ง chunk ละ 30 แปลงเพื่อป้องกัน URL limit และ query row limit)
   const completedSet = new Set<string>();
   const chunkSize = 30;
   for (let i = 0; i < selectedPlotIds.length; i += chunkSize) {
     const chunk = selectedPlotIds.slice(i, i + chunkSize);
     const { data: updates } = await supabase
       .from('task_updates')
-      .select('plot_id, task_template_id, is_completed, progress')
+      .select('plot_id, task_template_id, action, created_at')
       .in('plot_id', chunk)
-      .or('is_completed.eq.true,progress.eq.100')
+      .or('action.ilike.%QC%,action.ilike.%PE%')
+      .order('created_at', { ascending: true })
       .limit(10000);
 
     for (const u of updates || []) {
-      completedSet.add(`${u.plot_id}_${u.task_template_id}`);
+      const key = `${u.plot_id}_${u.task_template_id}`;
+      const action = u.action || '';
+      if (action.includes('QC อนุมัติ') || action.includes('QC ผ่าน') || action.includes('PE อนุมัติ')) {
+        completedSet.add(key);
+      } else if (action.includes('แจ้งแก้ไข') || action.includes('ไม่อนุมัติ') || action.includes('ตีกลับ')) {
+        completedSet.delete(key);
+      }
     }
   }
 
