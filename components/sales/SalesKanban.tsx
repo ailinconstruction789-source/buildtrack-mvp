@@ -706,9 +706,11 @@ export default function SalesKanban({
               phone: l.phone || '',
               occupation: l.occupation || '',
               interest: l.interest || projName,
-              status: getLeadStage(l) === 'booked' && !STATUS_CONFIG[l.status]
+              status: getLeadStage(l) === 'transferred' || Boolean(transferDate)
+                ? (salesDealStageOf(l) === 'handover' ? 'Handover' : 'Transferred')
+                : getLeadStage(l) === 'booked' && !STATUS_CONFIG[l.status]
                 ? 'Reserved'
-                : (l.status || (transferDate ? 'Transferred' : (bookDate ? 'Reserved' : 'Visit'))),
+                : (l.status || (bookDate ? 'Reserved' : 'Visit')),
               plot: l.interested_plot_id || matchingPlot?.id || null,
               plotName: l.interested_plot_name || matchingPlot?.plot_name || l.interested_plot_id || null,
               bank: customerDealDetails(l.notes).bank,
@@ -1037,8 +1039,10 @@ export default function SalesKanban({
     if (status === 'Available' || status === 'Cancelled' || status === 'Rejected' || !lead) {
       setPanelState({ type: 'booking', plotId, lead: null });
     } else if (lead) {
-      const canonicalStatus = STATUS_CONFIG[lead.status] ? lead.status : (stageToKanbanStatus(lead.status) || 'Reserved');
-      const initialForm = { name: lead.name, phone: lead.phone, occupation: lead.occupation || '', status: canonicalStatus, plot: lead.plot || '', salePrice: lead.salePrice?.toString() || '', bank: lead.bank || '', cancelReason: lead.cancelReason || '', landOfficePrice: lead.landOfficePrice || '', transactionDate: new Date().toISOString().split('T')[0], agentName: lead.agentName || '', note: '' };
+      const canonicalStatus = status === 'Transferred' || status === 'Handover'
+        ? status
+        : (STATUS_CONFIG[lead.status] ? lead.status : (stageToKanbanStatus(lead.status) || 'Reserved'));
+      const initialForm = { name: lead.name, phone: lead.phone, occupation: lead.occupation || '', status: canonicalStatus, plot: lead.plot || '', salePrice: lead.salePrice?.toString() || '', bank: lead.bank || '', cancelReason: lead.cancelReason || '', landOfficePrice: lead.landOfficePrice || '', transactionDate: lead.transferredDate || new Date().toISOString().split('T')[0], agentName: lead.agentName || '', note: '' };
       setPanelState({ type: 'customer', plotId, lead });
       formBaselineRef.current = initialForm;
       isFormDirtyRef.current = false;
@@ -1048,8 +1052,9 @@ export default function SalesKanban({
 
   const handleEditLeadClick = (lead: any) => {
     setActiveTab('map');
-    const canonicalStatus = STATUS_CONFIG[lead.status] ? lead.status : (stageToKanbanStatus(lead.status) || 'Reserved');
-    const initialForm = { name: lead.name, phone: lead.phone, occupation: lead.occupation || '', status: canonicalStatus, plot: lead.plot || '', salePrice: lead.salePrice?.toString() || '', bank: lead.bank || '', cancelReason: lead.cancelReason || '', landOfficePrice: lead.landOfficePrice || '', transactionDate: new Date().toISOString().split('T')[0], agentName: lead.agentName || '', note: '' };
+    const isTransferred = lead.status === 'Transferred' || Boolean(lead.transferredDate);
+    const canonicalStatus = isTransferred ? 'Transferred' : (STATUS_CONFIG[lead.status] ? lead.status : (stageToKanbanStatus(lead.status) || 'Reserved'));
+    const initialForm = { name: lead.name, phone: lead.phone, occupation: lead.occupation || '', status: canonicalStatus, plot: lead.plot || '', salePrice: lead.salePrice?.toString() || '', bank: lead.bank || '', cancelReason: lead.cancelReason || '', landOfficePrice: lead.landOfficePrice || '', transactionDate: lead.transferredDate || new Date().toISOString().split('T')[0], agentName: lead.agentName || '', note: '' };
     setPanelState({ type: 'customer', plotId: lead.plot || '', lead });
     formBaselineRef.current = initialForm;
     isFormDirtyRef.current = false;

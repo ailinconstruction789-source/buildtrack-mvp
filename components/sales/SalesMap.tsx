@@ -5,6 +5,8 @@ import { supabase } from '@/lib/supabase';
 import { Map as MapIcon, ZoomIn, ZoomOut, Pickaxe, Home, Loader2, User, Sun, Moon, AlertTriangle } from 'lucide-react';
 import { isSampleHouse, fetchTodayInspectionStatus, fetchTodayInspectionMap, SampleHouseInspectionStatus } from '@/lib/sales/sampleHouseHelper';
 import { subscribeToSalesSync } from '@/lib/sales/salesSyncBroadcast';
+import { getLeadStage } from '@/lib/sales/leadStage';
+import { salesDealStageOf } from '@/lib/sales/dealStatus';
 
 interface SalesMapProps {
   projectName?: string;
@@ -24,6 +26,10 @@ interface MapCustomerIdentity {
   booked_at?: string | null;
   bookingDate?: string | null;
   booking_date?: string | null;
+  transferred_date?: string | null;
+  transferredDate?: string | null;
+  transferred_at?: string | null;
+  crm_status?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -224,6 +230,10 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
     if (lead) {
       if (lead.deal_type === 'rent' || lead.rental_status === 'Active' || lead.status === 'Rented' || lead.rental_status === 'PendingContract') {
         return lead.status === 'Rented' || lead.rental_status === 'Active' ? 'Rented' : 'Reserved';
+      }
+      const stage = getLeadStage(lead);
+      if (stage === 'transferred' || lead.status === 'Transferred' || Boolean(lead.transferredDate || lead.transferred_date || (lead as any).transferred_at)) {
+        return salesDealStageOf(lead) === 'handover' ? 'Handover' : 'Transferred';
       }
       return lead.status;
     }

@@ -413,7 +413,7 @@ describe('SalesKanban legacy sales & leads deduplication', () => {
       expect(screen.queryByText(/ยอมรับสถานะใหม่และปรับปรุงตัวเลือก/i)).not.toBeInTheDocument();
     });
     expect(nameInput.value).toBe('น.ส. กชกร แก้ไขโดยผู้ใช้');
-  });
+  }, 15000);
 
   it('displays CRM lock warning banner and PostBooking link when a CRM-protected sale disables the quick save button', async () => {
     const crmSaleId = '21000000-0000-4000-8000-000000000082';

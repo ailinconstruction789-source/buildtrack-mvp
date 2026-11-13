@@ -25,6 +25,13 @@ describe('native project map customer identity', () => {
     expect(clicked).toHaveBeenCalledWith('AL6-05', 'Reserved', row);
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
   });
+  it('identifies transferred status when customer has transferred_date even if status was Reserved', async () => {
+    const clicked = vi.fn();
+    const transferredCustomer = { ...row, status: 'Reserved', transferred_date: '2026-11-12' };
+    render(<SalesMap projectName="ไอลิน6" leads={[transferredCustomer]} onPlotClick={clicked} />);
+    fireEvent.click(await screen.findByText('AL6-05'));
+    expect(clicked).toHaveBeenCalledWith('AL6-05', 'Transferred', transferredCustomer);
+  });
   it('resolves only this project prefix and confirmed leading zero plot labels', () => {
     expect(matchingMapCustomer('AL6-05', 'ไอลิน6', fixture.plots, [row])).toBe(row);
     expect(matchingMapCustomer('AL4-05', 'ไอลิน6', fixture.plots, [row])).toBeNull();
