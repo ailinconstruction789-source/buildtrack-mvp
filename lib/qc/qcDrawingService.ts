@@ -60,7 +60,7 @@ export function generateNextPinLabel(existingPins: QCDrawingAnnotation[], pageNu
 /**
  * สีและสัญลักษณ์สำหรับแต่ละสถานะของหมุด
  */
-export function getPinStatusStyle(status?: 'passed' | 'failed' | 'na' | null): {
+export function getPinStatusStyle(status?: 'passed' | 'failed' | 'conditional' | 'na' | null): {
   bgColor: string;
   borderColor: string;
   textColor: string;
@@ -81,6 +81,13 @@ export function getPinStatusStyle(status?: 'passed' | 'failed' | 'na' | null): {
         textColor: 'text-white',
         badgeText: 'ไม่ผ่าน'
       };
+    case 'conditional':
+      return {
+        bgColor: 'bg-amber-600',
+        borderColor: 'border-amber-300',
+        textColor: 'text-white',
+        badgeText: 'มีเงื่อนไข'
+      };
     case 'na':
       return {
         bgColor: 'bg-slate-400',
@@ -96,6 +103,78 @@ export function getPinStatusStyle(status?: 'passed' | 'failed' | 'na' | null): {
         badgeText: 'จุดวัด'
       };
   }
+}
+
+export interface PinEvaluationResult {
+  status: 'passed' | 'failed' | 'uninspected';
+  difference?: number | null;
+  tolerance?: number | null;
+  isWithinTolerance: boolean;
+  message: string;
+}
+
+/**
+ * คำนวณและประเมินค่าตัวเลขของหมุดจุดวัดเทียบกับเกณฑ์มาตรฐาน (Target vs Actual)
+ * รองรับทั้ง:
+ * 1. Target Value พร้อม Tolerance (เช่น Target = -0.29, Tolerance = 0.01 => [-0.30, -0.28])
+ * 2. Min Value / Max Value (เช่น Min = 10, Max = 20)
+ */
+export function evaluatePinMeasurement(params: {
+  measuredValue?: number | null;
+  targetValue?: number | null;
+  tolerance?: number | null;
+  minValue?: number | null;
+  maxValue?: number | null;
+  unit?: string | null;
+}): PinEvaluationResult {
+  const { measuredValue, targetValue, tolerance, minValue, maxValue, unit = '' } = params;
+
+  if (measuredValue === undefined || measuredValue === null || Number.isNaN(measuredValue)) {
+    return {
+      status: 'uninspected',
+      isWithinTolerance: false,
+      message: 'ยังไม่ได้ระบุค่าที่วัดได้'
+    };
+  }
+
+  // 1. ถ้ามี min/max ชัดเจน
+  if (minValue !== undefined && minValue !== null && maxValue !== undefined && maxValue !== null) {
+    const isPass = measuredValue >= minValue && measuredValue <= maxValue;
+    return {
+      status: isPass ? 'passed' : 'failed',
+      isWithinTolerance: isPass,
+      message: isPass 
+        ? `ค่าที่วัดได้ ${measuredValue} ${unit} อยู่ในช่วงยอมรับได้ (${minValue} - ${maxValue} ${unit})`
+        : `ค่าที่วัดได้ ${measuredValue} ${unit} หลุดช่วงมาตรฐาน (${minValue} - ${maxValue} ${unit})`
+    };
+  }
+
+  // 2. ถ้ามี Target Value
+  if (targetValue !== undefined && targetValue !== null) {
+    const diff = Number((measuredValue - targetValue).toFixed(4));
+    const absDiff = Math.abs(diff);
+    const tol = (tolerance !== undefined && tolerance !== null && tolerance >= 0) ? tolerance : 0;
+
+    const isPass = absDiff <= (tol + 0.00001); // ป้องกัน floating point precision
+    const sign = diff > 0 ? `+${diff}` : `${diff}`;
+
+    return {
+      status: isPass ? 'passed' : 'failed',
+      difference: diff,
+      tolerance: tol,
+      isWithinTolerance: isPass,
+      message: isPass
+        ? `ค่าที่วัดได้ ${measuredValue} ${unit} (คลาดเคลื่อน ${sign} ${unit} อยู่ในเกณฑ์ ±${tol} ${unit})`
+        : `ค่าที่วัดได้ ${measuredValue} ${unit} (คลาดเคลื่อน ${sign} ${unit} เกินเกณฑ์ยอมรับ ±${tol} ${unit})`
+    };
+  }
+
+  // 3. ถ้าไม่มีเกณฑ์ตัวเลขเปรียบเทียบเลย ถือว่าผ่าน
+  return {
+    status: 'passed',
+    isWithinTolerance: true,
+    message: `ค่าที่วัดได้ ${measuredValue} ${unit}`
+  };
 }
 
 

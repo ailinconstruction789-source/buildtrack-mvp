@@ -19,6 +19,7 @@ export interface FormEvaluationResult {
   totalItems: number;
   passedItems: number;
   failedItems: number;
+  conditionalItems: number;
   naItems: number;
   criticalFailedItems: number;
 }
@@ -32,6 +33,8 @@ export interface FormEvaluationResult {
  * 4. ตรวจสอบขอบเขต min/max
  * 5. ข้อสำคัญ (is_critical) ที่ไม่ผ่าน จะทำให้ผลรวมไม่ผ่านทันที (ไม่เฉลี่ยให้ผ่าน)
  * 6. ตรวจสอบเงื่อนไขข้อบังคับเมื่อไม่ผ่าน (require_remark_on_fail, require_photo_on_fail)
+ * 7. รายการที่ผ่านแบบมีเงื่อนไข (conditional) ต้องระบุหมายเหตุ/เงื่อนไข และส่งผลรวมเป็น 'conditional'
+ * 8. ข้อตัวเลขที่ยังไม่ได้ปักหมุดหรือไม่ได้กรอกตัวเลข แต่ QC กดประเมินผ่าน/ไม่ผ่านหน้างาน ให้ยอมรับได้ (Fallback)
  */
 export function evaluateInspectionAnswers(
   items: QCFormItem[],
@@ -43,6 +46,7 @@ export function evaluateInspectionAnswers(
 
   let passedItems = 0;
   let failedItems = 0;
+  let conditionalItems = 0;
   let naItems = 0;
   let criticalFailedItems = 0;
 
@@ -65,19 +69,21 @@ export function evaluateInspectionAnswers(
       continue;
     }
 
+    if (status === 'conditional') {
+      conditionalItems++;
+      if (!ans?.remarks || !ans.remarks.trim()) {
+        errors.push({
+          itemId: item.id,
+          message: `รายการ "${item.item_code}" ผ่านแบบมีเงื่อนไข จำเป็นต้องระบุหมายเหตุหรือข้อบกพร่องที่ต้องแก้ไข`
+        });
+      }
+      continue;
+    }
+
     // 2. ตรวจสอบชนิดตัวเลข (Number validation)
     if (item.item_type === 'number') {
       const numVal = ans?.numeric_value;
-      // ต้องตรวจว่าไม่เป็น undefined หรือ null (เลข 0 และเลขติดลบถือเป็นตัวเลขที่ถูกต้อง)
       const hasNumber = typeof numVal === 'number' && !Number.isNaN(numVal);
-
-      if (item.is_required && !hasNumber) {
-        errors.push({
-          itemId: item.id,
-          message: `รายการ "${item.item_code}" จำเป็นต้องระบุค่าตัวเลขที่วัดได้`
-        });
-        continue;
-      }
 
       if (hasNumber) {
         let isPass = true;
@@ -88,7 +94,6 @@ export function evaluateInspectionAnswers(
           isPass = false;
         }
 
-        // ถ้าไม่มีเกณฑ์ min/max ให้ดูจากสถานะที่ผู้ตรวจประเมิน
         const itemPassed = (item.min_value !== undefined || item.max_value !== undefined) 
           ? isPass 
           : status === 'passed';
@@ -99,25 +104,40 @@ export function evaluateInspectionAnswers(
           failedItems++;
           if (item.is_critical) criticalFailedItems++;
         }
+      } else {
+        // กรณีไม่มีการกรอกตัวเลข แต่ QC ได้ประเมินผลผ่าน/ไม่ผ่านหน้างานโดยตรง (Fallback)
+        if (status === 'passed') {
+          passedItems++;
+        } else if (status === 'failed') {
+          failedItems++;
+          if (item.is_critical) criticalFailedItems++;
+        }
       }
     } 
     // 3. ตรวจสอบจุดปักหมุดบนแบบ (Drawing points)
     else if (item.item_type === 'drawing_point') {
       const relatedPins = annotations.filter(pin => pin.form_item_id === item.id);
-      if (item.is_required && relatedPins.length === 0) {
-        errors.push({
-          itemId: item.id,
-          message: `รายการ "${item.item_code}" จำเป็นต้องปักหมุดจุดวัดบนแบบอย่างน้อย 1 จุด`
-        });
-        continue;
-      }
+      
+      if (relatedPins.length > 0) {
+        const hasFailedPin = relatedPins.some(pin => pin.status === 'failed');
+        const hasConditionalPin = relatedPins.some(pin => pin.status === 'conditional');
 
-      const hasFailedPin = relatedPins.some(pin => pin.status === 'failed');
-      if (hasFailedPin || status === 'failed') {
-        failedItems++;
-        if (item.is_critical) criticalFailedItems++;
+        if (hasFailedPin || status === 'failed') {
+          failedItems++;
+          if (item.is_critical) criticalFailedItems++;
+        } else if (hasConditionalPin) {
+          conditionalItems++;
+        } else {
+          passedItems++;
+        }
       } else {
-        passedItems++;
+        // ถ้าไม่มีหมุดปัก แต่ตรวจประเมินหน้างานโดยตรง
+        if (status === 'passed') {
+          passedItems++;
+        } else if (status === 'failed') {
+          failedItems++;
+          if (item.is_critical) criticalFailedItems++;
+        }
       }
     } 
     // 4. ตรวจสอบคำถาม Pass/Fail/NA และอื่นๆ
@@ -151,6 +171,8 @@ export function evaluateInspectionAnswers(
   let overallResult: QCInspectionResult = 'passed';
   if (criticalFailedItems > 0 || failedItems > 0) {
     overallResult = 'failed';
+  } else if (conditionalItems > 0) {
+    overallResult = 'conditional';
   } else if (passedItems === 0 && naItems > 0) {
     overallResult = 'conditional';
   }
@@ -162,6 +184,7 @@ export function evaluateInspectionAnswers(
     totalItems: items.length,
     passedItems,
     failedItems,
+    conditionalItems,
     naItems,
     criticalFailedItems
   };
@@ -209,6 +232,7 @@ export async function saveInspectionDraft(params: {
     // คำนวณสรุปเบื้องต้น
     const passedCount = answers.filter(a => a.status === 'passed').length;
     const failedCount = answers.filter(a => a.status === 'failed').length;
+    const conditionalCount = answers.filter(a => a.status === 'conditional').length;
     const naCount = answers.filter(a => a.status === 'na').length;
 
     const payload: Partial<QCInspection> = {
@@ -231,6 +255,7 @@ export async function saveInspectionDraft(params: {
       total_items: formTemplate.items?.length || answers.length,
       passed_items: passedCount,
       failed_items: failedCount,
+      conditional_items: conditionalCount,
       na_items: naCount,
       notes: notes || '',
       photo_urls: photoUrls,
@@ -271,6 +296,8 @@ export async function saveInspectionDraft(params: {
         selected_options: a.selected_options || [],
         photo_urls: a.photo_urls || [],
         remarks: a.remarks || null,
+        transferred_to_task_template_id: a.transferred_to_task_template_id || null,
+        transferred_to_task_name: a.transferred_to_task_name || null,
         updated_at: new Date().toISOString()
       }));
 
@@ -291,11 +318,17 @@ export async function saveInspectionDraft(params: {
           pin_label: p.pin_label,
           x_ratio: p.x_ratio,
           y_ratio: p.y_ratio,
+          target_value: p.target_value ?? null,
+          tolerance: p.tolerance ?? null,
+          min_value: p.min_value ?? null,
+          max_value: p.max_value ?? null,
           measured_value: p.measured_value ?? null,
           unit: p.unit || null,
           status: p.status || null,
           remarks: p.remarks || null,
-          photo_url: p.photo_url || null
+          photo_url: p.photo_url || null,
+          transferred_to_task_template_id: p.transferred_to_task_template_id || null,
+          transferred_to_task_name: p.transferred_to_task_name || null
         }));
         await supabase.from('qc_drawing_annotations').insert(pinsPayload);
       }
@@ -310,6 +343,7 @@ export async function saveInspectionDraft(params: {
 
 /**
  * ส่งผลการตรวจ (Submit Inspection)
+ * - หากมีข้อที่มีสถานะ conditional (ผ่านแบบมีเงื่อนไข) สถานะเอกสารจะกลายเป็น 'pending_pe' รอวิศวกรโครงการตรวจสอบ
  */
 export async function submitInspection(params: {
   inspectionId: string;
@@ -332,14 +366,18 @@ export async function submitInspection(params: {
   }
 
   try {
-    // 2. อัปเดตสถานะเป็น 'submitted' พร้อมบันทึกผลการตรวจ
+    // ถ้าผลรวมเป็น conditional ให้ตั้งสถานะเป็น 'pending_pe'
+    const nextDocStatus = evaluation.overallResult === 'conditional' ? 'pending_pe' : 'submitted';
+
+    // 2. อัปเดตสถานะใน qc_inspections
     const { error: updErr } = await supabase
       .from('qc_inspections')
       .update({
-        document_status: 'submitted',
+        document_status: nextDocStatus,
         inspection_result: evaluation.overallResult,
         passed_items: evaluation.passedItems,
         failed_items: evaluation.failedItems,
+        conditional_items: evaluation.conditionalItems,
         na_items: evaluation.naItems,
         submitted_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
@@ -361,6 +399,26 @@ export async function submitInspection(params: {
         failedItems: evaluation.failedItems
       }
     }]);
+
+    // ส่งแจ้งเตือนไปยัง Project Engineer (PE) โดยตรง (ไม่ส่งหา SE)
+    if (evaluation.overallResult === 'conditional') {
+      const { data: inspData } = await supabase
+        .from('qc_inspections')
+        .select('plot_id, task_template_id, task_name')
+        .eq('id', inspectionId)
+        .maybeSingle();
+
+      if (inspData) {
+        await supabase.from('notifications').insert([{
+          plot_id: inspData.plot_id,
+          task_template_id: inspData.task_template_id,
+          title: 'งานรอวิศวกรโครงการ (PE) พิจารณาอนุมัติแบบมีเงื่อนไข',
+          message: `QC ตรวจงาน "${inspData.task_name}" แปลง ${inspData.plot_id} ผ่านแบบมีเงื่อนไข รอ PE ตรวจสอบและลงนาม`,
+          target_role: 'Project Engineer',
+          is_read: false
+        }]);
+      }
+    }
 
     return { success: true, evaluation };
   } catch (err: any) {
@@ -617,5 +675,164 @@ export async function reopenInspection(params: {
     return { success: true };
   } catch (err: any) {
     return { success: false, error: err?.message || 'ไม่สามารถเปิดผลตรวจกลับมาแก้ไขได้' };
+  }
+}
+
+/**
+ * วิศวกรโครงการ (PE) ตรวจสอบและอนุมัติผลการตรวจแบบมีเงื่อนไข (Conditional Approval by PE)
+ * - หากอนุมัติ: progress = 100%, สร้าง defect ติดตามส่งต่อไปยังงวดงานถัดไป (transferred_to_task_template_id)
+ * - หากไม่อนุมัติ: progress = 95%, แจ้งเตือน Foreman ให้แก้ไข
+ */
+export async function reviewPEInspection(params: {
+  inspection: QCInspection;
+  decision: 'approve' | 'reject';
+  peUsername: string;
+  peRole: string;
+  notes?: string;
+  answers: QCInspectionAnswer[];
+}): Promise<{ success: boolean; error?: string }> {
+  const { inspection, decision, peUsername, peRole, notes, answers } = params;
+
+  try {
+    const isApproved = decision === 'approve';
+    const finalDocStatus = isApproved ? 'approved' : 'rejected';
+    const finalResult = isApproved ? 'conditional' : 'failed';
+
+    // 1. อัปเดตสถานะใน qc_inspections
+    const { error: inspErr } = await supabase
+      .from('qc_inspections')
+      .update({
+        document_status: finalDocStatus,
+        inspection_result: finalResult,
+        pe_reviewer_name: peUsername,
+        pe_reviewed_at: new Date().toISOString(),
+        pe_review_decision: decision,
+        pe_review_notes: notes || null,
+        approved_at: isApproved ? new Date().toISOString() : null,
+        approved_by: isApproved ? peUsername : null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', inspection.id);
+
+    if (inspErr) throw inspErr;
+
+    // 2. ซิงค์ไปยัง task_updates
+    const finalProgress = isApproved ? 100 : 95;
+    const actionLabel = isApproved ? 'PE อนุมัติผ่านมีเงื่อนไข' : 'PE สั่งแก้ไขงาน';
+    const summaryText = notes || (isApproved 
+      ? `ผ่านการตรวจ QC แบบมีเงื่อนไข (อนุมัติโดยวิศวกรโครงการ ${peUsername} - มีรายการส่งต่องานถัดไป)`
+      : `ไม่ผ่านการตรวจ QC โดยวิศวกรโครงการ (${peUsername} แจ้งแก้ไขงาน)`
+    );
+
+    const { error: updErr } = await supabase.from('task_updates').insert([{
+      plot_id: inspection.plot_id,
+      task_template_id: inspection.task_template_id,
+      user_name: peUsername,
+      role: peRole || 'PE',
+      action: actionLabel,
+      text_content: summaryText,
+      progress: finalProgress,
+      is_completed: isApproved,
+      image_url: (inspection.photo_urls || []).join(',')
+    }]);
+
+    if (updErr) throw updErr;
+
+    // 3. ถ้าอนุมัติผ่านแบบมีเงื่อนไข: ส่งต่อ Defect ไปยังงวดงานปลายทาง (Downstream Task Transfer)
+    if (isApproved) {
+      const conditionalAnswers = answers.filter(a => a.status === 'conditional');
+      const defectsToInsert: any[] = [];
+
+      for (const a of conditionalAnswers) {
+        const targetTaskId = a.transferred_to_task_template_id || inspection.task_template_id;
+        const targetTaskName = a.transferred_to_task_name ? ` (ส่งต่อเข้า ${a.transferred_to_task_name})` : '';
+
+        defectsToInsert.push({
+          plot_id: inspection.plot_id,
+          task_id: targetTaskId,
+          description: `[QC มีเงื่อนไขจากงาน "${inspection.task_name}"] ${a.item_code} ${a.item_text}: ${a.remarks || 'มีข้อบกพร่องที่ต้องแก้ไขในงวดงานถัดไป'}${targetTaskName}`,
+          reported_by: peUsername,
+          status: 'pending',
+          image_url: (a.photo_urls || []).join(',')
+        });
+      }
+
+      if (defectsToInsert.length > 0) {
+        await supabase.from('defects').insert(defectsToInsert);
+      }
+    } else {
+      // สั่งแก้ไข
+      await supabase.from('notifications').insert([{
+        plot_id: inspection.plot_id,
+        task_template_id: inspection.task_template_id,
+        title: 'วิศวกรโครงการสั่งแก้ไขงาน (PE Reject)',
+        message: `วิศวกรโครงการ ${peUsername} ไม่อนุมัติงาน "${inspection.task_name}" แปลง ${inspection.plot_id}: ${notes || 'กรุณาแก้ไขก่อนส่งตรวจใหม่'}`,
+        target_role: 'Foreman',
+        is_read: false
+      }]);
+    }
+
+    // 4. บันทึก Audit Log
+    await supabase.from('qc_audit_logs').insert([{
+      action_type: 'pe_review',
+      entity_type: 'qc_inspections',
+      entity_id: inspection.id,
+      actor_username: peUsername,
+      actor_role: peRole,
+      details: {
+        decision,
+        finalDocStatus,
+        finalResult,
+        notes
+      }
+    }]);
+
+    return { success: true };
+  } catch (err: any) {
+    console.error('Error reviewing PE inspection:', err);
+    return { success: false, error: err?.message || 'ไม่สามารถบันทึกผลการพิจารณาของ PE ได้' };
+  }
+}
+
+/**
+ * ดึงรายการข้อบกพร่องที่ส่งต่อมาจากงวดงานก่อนหน้า (Carried-over defects from upstream tasks)
+ */
+export async function fetchDownstreamDefects(plotId: string, taskTemplateId: string) {
+  try {
+    const { data, error } = await supabase
+      .from('defects')
+      .select('*')
+      .eq('plot_id', plotId)
+      .eq('task_id', taskTemplateId)
+      .neq('status', 'resolved');
+
+    if (error) {
+      console.warn('Could not fetch downstream defects:', error);
+      return [];
+    }
+    return data || [];
+  } catch (err) {
+    console.warn('Error fetching downstream defects:', err);
+    return [];
+  }
+}
+
+/**
+ * บันทึกการแก้ไขข้อบกพร่องที่ส่งต่อมาเรียบร้อยแล้ว
+ */
+export async function resolveDownstreamDefect(defectId: string, resolvedBy: string) {
+  try {
+    const { error } = await supabase
+      .from('defects')
+      .update({
+        status: 'resolved',
+        resolved_at: new Date().toISOString()
+      })
+      .eq('id', defectId);
+
+    if (error) throw error;
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'ไม่สามารถปลดสถานะข้อบกพร่องได้' };
   }
 }

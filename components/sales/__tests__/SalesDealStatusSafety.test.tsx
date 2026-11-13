@@ -305,4 +305,56 @@ describe('protected CRM details and bounded server entry', () => {
     expect(mocks.write).toHaveBeenCalledWith('sales', expect.objectContaining({ crm_stage: 'transferred', contract_status: 'Transferred' }), expect.objectContaining({ id: 'legacy-S99' }));
     expect(mocks.write).toHaveBeenCalledWith('leads', expect.objectContaining({ status: 'Transferred' }), expect.objectContaining({ id: 'L99' }));
   });
+  it('saves backdated transferred_date, updates transferred_at, and records status_history when editing transfer date', async () => {
+    const transferredLead = { id: 'L1', customer_name: 'Transferred Cust', status: 'Transferred', transferred_date: '2026-11-10T12:00:00+07:00', notes: 'existing notes', updated_at: 'v-trans-1' };
+    const transferredSale = { id: 'S1', lead_id: 'L1', crm_stage: 'transferred', contract_status: 'Transferred', sale_price: 3182000, bank_name: 'ธอส.', transferred_at: '2026-11-10T12:00:00+07:00', updated_at: 'sale-trans-1' };
+    mocks.read.mockImplementation((table: string, filters: Record<string, unknown>) => {
+      if (table === 'leads') return Promise.resolve({ error: null, data: { ...transferredLead } });
+      if (table === 'sales') return Promise.resolve({ error: null, data: filters.lead_id ? [{ ...transferredSale }] : { ...transferredSale } });
+      if (table === 'status_history') return Promise.resolve({ error: null, data: [] });
+      return Promise.resolve({ error: null, data: null });
+    });
+    mocks.write.mockResolvedValue({ error: null, data: { id: 'written' } });
+
+    render(<SalesDealStatusModal lead={{ id: 'L1', leadId: 'L1', saleId: 'S1', status: 'Transferred', transferredDate: '2026-11-10' }} currentUser={{ id: 'U1', role: 'Sales' }} onClose={vi.fn()} onSaved={saved} />);
+    const dateInput = await screen.findByLabelText('วันที่ทำรายการ');
+    expect(dateInput).toHaveValue('2026-11-10');
+    expect(screen.getByRole('button', { name: 'บันทึกข้อมูล' })).toBeDisabled();
+
+    // Change to backdated date
+    fireEvent.change(dateInput, { target: { value: '2026-11-12' } });
+    expect(dateInput).toHaveValue('2026-11-12');
+    expect(screen.getByRole('button', { name: 'บันทึกข้อมูล' })).not.toBeDisabled();
+
+    // Confirm checkbox if required
+    const confirmBox = screen.queryByRole('checkbox', { name: 'ยืนยันรายการ' });
+    if (confirmBox) fireEvent.click(confirmBox);
+
+    fireEvent.click(screen.getByRole('button', { name: 'บันทึกข้อมูล' }));
+    await waitFor(() => expect(saved).toHaveBeenCalledOnce());
+
+    // Verify sales write
+    expect(mocks.write).toHaveBeenCalledWith(
+      'sales',
+      expect.objectContaining({ transferred_at: expect.stringContaining('2026-11-12') }),
+      expect.objectContaining({ id: 'S1' })
+    );
+
+    // Verify leads write
+    expect(mocks.write).toHaveBeenCalledWith(
+      'leads',
+      expect.objectContaining({ transferred_date: expect.stringContaining('2026-11-12') }),
+      expect.objectContaining({ id: 'L1' })
+    );
+
+    // Verify status_history insert
+    expect(mocks.write).toHaveBeenCalledWith(
+      'status_history',
+      expect.objectContaining({
+        new_status: 'transferred',
+        created_at: expect.stringContaining('2026-11-12'),
+      }),
+      expect.anything()
+    );
+  });
 });

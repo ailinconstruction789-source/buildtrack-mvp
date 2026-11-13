@@ -973,3 +973,276 @@ export async function confirmScopeAssignment(params: {
     details
   };
 }
+
+export interface SmartPlotQCPreview {
+  plotId: string;
+  plotName: string;
+  houseTypeId: string;
+  houseTypeName: string;
+  totalTasks: number;
+  completedTasksCount: number;
+  activeTasksCount: number;
+  completedTaskNames: string[];
+  activeTaskNames: string[];
+  overallProgress: number;
+}
+
+/**
+ * คำนวณภาพรวมงานของแปลงในโครงการ (Smart Plot QC Preview)
+ * - คำนวณงานที่เคยทำเสร็จไปแล้ว (completed/passed) vs งานที่ยังต้องตรวจด้วยฟอร์มใหม่
+ */
+export async function previewSmartPlotsQC(params: {
+  projectName: string;
+  plotIds: string[];
+}): Promise<SmartPlotQCPreview[]> {
+  const { projectName, plotIds } = params;
+  if (!plotIds || plotIds.length === 0) return [];
+
+  // 1. ดึงข้อมูลแปลง
+  const { data: plots, error: pErr } = await supabase
+    .from('plots')
+    .select('id, plot_name, house_type_id, project_name')
+    .in('id', plotIds)
+    .limit(5000);
+  if (pErr) throw pErr;
+
+  // 2. ดึงข้อมูลแบบบ้าน
+  const houseTypeIds = Array.from(new Set((plots || []).map(p => p.house_type_id).filter(Boolean)));
+  const { data: houseTypes } = await supabase
+    .from('house_types')
+    .select('id, type_name')
+    .in('id', houseTypeIds)
+    .limit(5000);
+  const htNameMap = new Map((houseTypes || []).map(h => [h.id, h.type_name]));
+
+  // 3. ดึง task_templates ทั้งหมดของแบบบ้านเหล่านี้
+  const { data: taskTemplates } = await supabase
+    .from('task_templates')
+    .select('id, house_type_id, task_name, task_order')
+    .in('house_type_id', houseTypeIds)
+    .order('task_order', { ascending: true })
+    .limit(5000);
+
+  const tasksByHouseType = new Map<string, any[]>();
+  for (const t of taskTemplates || []) {
+    if (!tasksByHouseType.has(t.house_type_id)) tasksByHouseType.set(t.house_type_id, []);
+    tasksByHouseType.get(t.house_type_id)!.push(t);
+  }
+
+  // 4. ดึงสถานะงานที่สำเร็จแล้วจาก task_updates (แบ่ง chunk ละ 30 แปลงเพื่อป้องกัน URL limit และ query row limit)
+  const completedSet = new Set<string>();
+  const chunkSize = 30;
+  for (let i = 0; i < plotIds.length; i += chunkSize) {
+    const chunk = plotIds.slice(i, i + chunkSize);
+    const { data: updates } = await supabase
+      .from('task_updates')
+      .select('plot_id, task_template_id, is_completed, progress')
+      .in('plot_id', chunk)
+      .or('is_completed.eq.true,progress.eq.100')
+      .limit(10000);
+
+    for (const u of updates || []) {
+      completedSet.add(`${u.plot_id}_${u.task_template_id}`);
+    }
+  }
+
+  // 5. สรุปผลรายแปลง
+  const previews: SmartPlotQCPreview[] = [];
+  for (const plot of plots || []) {
+    const tasks = tasksByHouseType.get(plot.house_type_id) || [];
+    const completedTaskNames: string[] = [];
+    const activeTaskNames: string[] = [];
+
+    for (const t of tasks) {
+      if (completedSet.has(`${plot.id}_${t.id}`)) {
+        completedTaskNames.push(t.task_name);
+      } else {
+        activeTaskNames.push(t.task_name);
+      }
+    }
+
+    const total = tasks.length;
+    const completedCount = completedTaskNames.length;
+    const activeCount = activeTaskNames.length;
+    const overallProgress = total > 0 ? Math.round((completedCount / total) * 100) : 0;
+
+    previews.push({
+      plotId: plot.id,
+      plotName: plot.plot_name || `แปลง ${plot.id}`,
+      houseTypeId: plot.house_type_id,
+      houseTypeName: htNameMap.get(plot.house_type_id) || 'ไม่ระบุแบบบ้าน',
+      totalTasks: total,
+      completedTasksCount: completedCount,
+      activeTasksCount: activeCount,
+      completedTaskNames,
+      activeTaskNames,
+      overallProgress
+    });
+  }
+
+  return previews;
+}
+
+/**
+ * ดำเนินการเปิดใช้งานฟอร์มตรวจอัจฉริยะ (Smart Forward QC Activation)
+ * - งานที่ผ่านแล้ว: ล็อกเป็น legacy เพื่อไม่ให้มีภาระตรวจย้อนหลัง
+ * - งานที่ยังไม่ผ่าน: เปิดใช้งานแบบฟอร์ม QC V2 โดยผูกกับ standard set อัตโนมัติ
+ */
+export async function executeSmartActivatePlotsQC(params: {
+  projectName: string;
+  selectedPlotIds: string[];
+  exemptCompletedTasks?: boolean;
+  actorUsername: string;
+  actorRole: string;
+}): Promise<{
+  success: boolean;
+  totalPlotsProcessed: number;
+  totalExemptedCompletedTasks: number;
+  totalActivatedTasks: number;
+}> {
+  const { projectName, selectedPlotIds, exemptCompletedTasks = true, actorUsername, actorRole } = params;
+
+  if (!selectedPlotIds || selectedPlotIds.length === 0) {
+    return { success: true, totalPlotsProcessed: 0, totalExemptedCompletedTasks: 0, totalActivatedTasks: 0 };
+  }
+
+  // 1. ดึงข้อมูลแปลง
+  const { data: plots } = await supabase
+    .from('plots')
+    .select('id, plot_name, house_type_id')
+    .in('id', selectedPlotIds)
+    .limit(5000);
+
+  const houseTypeIds = Array.from(new Set((plots || []).map(p => p.house_type_id).filter(Boolean)));
+
+  // 2. ดึง task_templates
+  const { data: taskTemplates } = await supabase
+    .from('task_templates')
+    .select('id, house_type_id, task_name, task_order')
+    .in('house_type_id', houseTypeIds)
+    .limit(5000);
+
+  const tasksByHouseType = new Map<string, any[]>();
+  for (const t of taskTemplates || []) {
+    if (!tasksByHouseType.has(t.house_type_id)) tasksByHouseType.set(t.house_type_id, []);
+    tasksByHouseType.get(t.house_type_id)!.push(t);
+  }
+
+  // 3. ดึง qc_standard_sets ของโครงการ
+  const { data: stdSets } = await supabase
+    .from('qc_standard_sets')
+    .select('*')
+    .eq('project_name', projectName)
+    .eq('is_active', true)
+    .limit(5000);
+
+  const stdSetMap = new Map<string, any>();
+  for (const s of stdSets || []) {
+    stdSetMap.set(`${s.house_type_id}_${s.task_name.trim()}`, s);
+  }
+
+  // 4. ดึงสถานะงานสำเร็จจาก task_updates (แบ่ง chunk ละ 30 แปลงเพื่อป้องกัน URL limit และ query row limit)
+  const completedSet = new Set<string>();
+  const chunkSize = 30;
+  for (let i = 0; i < selectedPlotIds.length; i += chunkSize) {
+    const chunk = selectedPlotIds.slice(i, i + chunkSize);
+    const { data: updates } = await supabase
+      .from('task_updates')
+      .select('plot_id, task_template_id, is_completed, progress')
+      .in('plot_id', chunk)
+      .or('is_completed.eq.true,progress.eq.100')
+      .limit(10000);
+
+    for (const u of updates || []) {
+      completedSet.add(`${u.plot_id}_${u.task_template_id}`);
+    }
+  }
+
+  let totalExempted = 0;
+  let totalActivated = 0;
+
+  // 5. บันทึกลง qc_plot_task_configs
+  for (const plot of plots || []) {
+    const tasks = tasksByHouseType.get(plot.house_type_id) || [];
+    const configsToUpsert: any[] = [];
+
+    for (const task of tasks) {
+      const isCompleted = completedSet.has(`${plot.id}_${task.id}`);
+      const stdSet = stdSetMap.get(`${plot.house_type_id}_${task.task_name.trim()}`);
+
+      if (isCompleted && exemptCompletedTasks) {
+        // งานที่ทำเสร็จแล้ว: กำหนดเป็น legacy เพื่อไม่ให้รบกวนหน้างาน
+        configsToUpsert.push({
+          project_name: projectName,
+          plot_id: plot.id,
+          task_template_id: task.id,
+          task_name: task.task_name,
+          inspection_method: 'legacy',
+          is_active: false,
+          form_template_id: null,
+          form_version: null,
+          drawing_id: null,
+          drawing_version: null,
+          selected_pages: [],
+          require_plot_drawing: false,
+          is_plot_override: false,
+          created_by: actorUsername,
+          updated_at: new Date().toISOString()
+        });
+        totalExempted++;
+      } else if (stdSet) {
+        // งานที่ยังไม่เสร็จ: เปิดใช้งานฟอร์มตรวจ QC V2 ทันที
+        configsToUpsert.push({
+          project_name: projectName,
+          plot_id: plot.id,
+          task_template_id: task.id,
+          task_name: task.task_name,
+          inspection_method: 'form_v2',
+          is_active: true,
+          form_template_id: stdSet.form_template_id,
+          form_version: stdSet.form_version,
+          drawing_id: stdSet.drawing_id || null,
+          drawing_version: stdSet.drawing_version || null,
+          selected_pages: stdSet.selected_pages || [],
+          require_plot_drawing: stdSet.require_plot_drawing || false,
+          is_plot_override: false,
+          created_by: actorUsername,
+          updated_at: new Date().toISOString()
+        });
+        totalActivated++;
+      }
+    }
+
+    if (configsToUpsert.length > 0) {
+      await supabase
+        .from('qc_plot_task_configs')
+        .upsert(configsToUpsert, { onConflict: 'plot_id,task_template_id' });
+    }
+  }
+
+  // Audit Log
+  try {
+    await supabase.from('qc_audit_logs').insert([{
+      action_type: 'smart_scope_activate',
+      entity_type: 'qc_plot_task_configs',
+      entity_id: `${projectName}:smart_activate`,
+      actor_username: actorUsername,
+      actor_role: actorRole,
+      details: {
+        totalPlots: plots?.length || 0,
+        totalExempted,
+        totalActivated,
+        exemptCompletedTasks
+      }
+    }]);
+  } catch (err) {
+    console.warn('Could not record QC audit log:', err);
+  }
+
+  return {
+    success: true,
+    totalPlotsProcessed: plots?.length || 0,
+    totalExemptedCompletedTasks: totalExempted,
+    totalActivatedTasks: totalActivated
+  };
+}

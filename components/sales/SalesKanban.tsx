@@ -266,17 +266,40 @@ export default function SalesKanban({
         : row.new_status;
 
       let effectiveTimestamp = row.created_at;
+      let recordedAt: string | null = null;
+
+      const recordedMatch = typeof row.changed_by === 'string'
+        ? row.changed_by.match(/\[บันทึกเข้าระบบ:\s*([^\]]+)\]/)
+        : null;
+      if (recordedMatch?.[1]) {
+        recordedAt = recordedMatch[1].trim();
+      }
+
+      const leadTransferDate = panelState.lead?.transferred_date || panelState.lead?.transferredDate || panelState.lead?.transferred_at || null;
       if ((canonicalStatus === 'จองแล้ว' || row.new_status === 'Reserved') && leadBookingDate) {
         effectiveTimestamp = leadBookingDate;
       } else if ((canonicalStatus === 'สัญญาเช่า' || row.new_status === 'Rented') && leadContractDate) {
         effectiveTimestamp = leadContractDate;
+      } else if ((canonicalStatus === 'Transferred' || canonicalStatus === 'โอนกรรมสิทธิ์' || row.new_status === 'transferred' || row.new_status === 'Transferred') && leadTransferDate) {
+        effectiveTimestamp = typeof leadTransferDate === 'string' && leadTransferDate.includes('T') ? leadTransferDate : `${leadTransferDate}T12:00:00.000Z`;
+        if (!recordedAt) {
+          const noteStampMatch = typeof panelState.lead?.notes === 'string'
+            ? panelState.lead.notes.match(/\[([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[^\]]*)\s*อัปเดตข้อมูลการขาย[^\]]*\]\s*Transferred/i)
+            : null;
+          recordedAt = noteStampMatch?.[1] || panelState.lead?.updated_at || (row.created_at !== effectiveTimestamp ? row.created_at : null);
+        }
       }
+
+      const cleanNote = typeof row.changed_by === 'string'
+        ? row.changed_by.replace(/\s*\|\s*\[บันทึกเข้าระบบ:\s*[^\]]+\]/, '').replace(/\[บันทึกเข้าระบบ:\s*[^\]]+\]/, '').trim()
+        : '';
 
       return {
         id: row.id,
         status: canonicalStatus,
         timestamp: effectiveTimestamp,
-        note: row.changed_by || ''
+        recordedAt,
+        note: cleanNote
       };
     });
 
@@ -285,10 +308,18 @@ export default function SalesKanban({
       ? (STATUS_CONFIG[panelState.lead.status] ? panelState.lead.status : stageToKanbanStatus(panelState.lead.status))
       : (panelState.lead?.crm_status ? (parseStageFromNoteText(panelState.lead.crm_status) || stageToKanbanStatus(panelState.lead.crm_status)) : null);
 
+    const leadTransferDate = panelState.lead?.transferred_date || panelState.lead?.transferredDate || panelState.lead?.transferred_at || null;
     const baseHistory = panelState.lead?.history || [];
+    const transferFallback = (leadTransferDate && !baseHistory.some((h: any) => h.status === 'Transferred')) ? [{
+      status: 'Transferred',
+      timestamp: typeof leadTransferDate === 'string' && leadTransferDate.includes('T') ? leadTransferDate : `${leadTransferDate}T12:00:00.000Z`,
+      recordedAt: panelState.lead?.updated_at || null,
+      note: panelState.lead?.agentName || panelState.lead?.agent_name || ''
+    }] : [];
+    const fullBaseHistory = [...baseHistory, ...transferFallback];
     const baseStatuses = new Set([
       ...mappedRows.map(r => r.status),
-      ...baseHistory.map((h: any) => h.status)
+      ...fullBaseHistory.map((h: any) => h.status)
     ]);
 
     const filteredNoteMilestones = noteMilestones.filter(m => !baseStatuses.has(m.status));
@@ -300,7 +331,7 @@ export default function SalesKanban({
       note: panelState.lead?.agentName || panelState.lead?.agent_name || ''
     }] : [];
 
-    const fallbackHistory = [...baseHistory, ...filteredNoteMilestones, ...currentFallback];
+    const fallbackHistory = [...fullBaseHistory, ...filteredNoteMilestones, ...currentFallback];
     const merged = mergeSalesTimeline(mappedRows, fallbackHistory);
     const deduped: typeof merged = [];
     for (const item of merged) {
@@ -1042,7 +1073,8 @@ export default function SalesKanban({
       const canonicalStatus = status === 'Transferred' || status === 'Handover'
         ? status
         : (STATUS_CONFIG[lead.status] ? lead.status : (stageToKanbanStatus(lead.status) || 'Reserved'));
-      const initialForm = { name: lead.name, phone: lead.phone, occupation: lead.occupation || '', status: canonicalStatus, plot: lead.plot || '', salePrice: lead.salePrice?.toString() || '', bank: lead.bank || '', cancelReason: lead.cancelReason || '', landOfficePrice: lead.landOfficePrice || '', transactionDate: lead.transferredDate || new Date().toISOString().split('T')[0], agentName: lead.agentName || '', note: '' };
+      const leadTransDate = lead.transferredDate || (lead.transferred_date ? String(lead.transferred_date).split('T')[0] : null) || (lead.transferred_at ? String(lead.transferred_at).split('T')[0] : null) || new Date().toISOString().split('T')[0];
+      const initialForm = { name: lead.name, phone: lead.phone, occupation: lead.occupation || '', status: canonicalStatus, plot: lead.plot || '', salePrice: lead.salePrice?.toString() || '', bank: lead.bank || '', cancelReason: lead.cancelReason || '', landOfficePrice: lead.landOfficePrice || '', transactionDate: leadTransDate, agentName: lead.agentName || '', note: '' };
       setPanelState({ type: 'customer', plotId, lead });
       formBaselineRef.current = initialForm;
       isFormDirtyRef.current = false;
@@ -1054,7 +1086,8 @@ export default function SalesKanban({
     setActiveTab('map');
     const isTransferred = lead.status === 'Transferred' || Boolean(lead.transferredDate);
     const canonicalStatus = isTransferred ? 'Transferred' : (STATUS_CONFIG[lead.status] ? lead.status : (stageToKanbanStatus(lead.status) || 'Reserved'));
-    const initialForm = { name: lead.name, phone: lead.phone, occupation: lead.occupation || '', status: canonicalStatus, plot: lead.plot || '', salePrice: lead.salePrice?.toString() || '', bank: lead.bank || '', cancelReason: lead.cancelReason || '', landOfficePrice: lead.landOfficePrice || '', transactionDate: lead.transferredDate || new Date().toISOString().split('T')[0], agentName: lead.agentName || '', note: '' };
+    const leadTransDate = lead.transferredDate || (lead.transferred_date ? String(lead.transferred_date).split('T')[0] : null) || (lead.transferred_at ? String(lead.transferred_at).split('T')[0] : null) || new Date().toISOString().split('T')[0];
+    const initialForm = { name: lead.name, phone: lead.phone, occupation: lead.occupation || '', status: canonicalStatus, plot: lead.plot || '', salePrice: lead.salePrice?.toString() || '', bank: lead.bank || '', cancelReason: lead.cancelReason || '', landOfficePrice: lead.landOfficePrice || '', transactionDate: leadTransDate, agentName: lead.agentName || '', note: '' };
     setPanelState({ type: 'customer', plotId: lead.plot || '', lead });
     formBaselineRef.current = initialForm;
     isFormDirtyRef.current = false;
@@ -3663,6 +3696,17 @@ export default function SalesKanban({
                           }
                           const isDateOnly = typeof h.timestamp === 'string' && (/^\d{4}-\d{2}-\d{2}$/.test(h.timestamp) || h.timestamp.includes('T00:00:00') || h.timestamp.includes('T12:00:00'));
                           const timeStr = isDateOnly ? '' : new Date(h.timestamp).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+                          const formatRecordedDateTime = (val: unknown) => {
+                            if (!val) return '';
+                            const d = new Date(val as string);
+                            if (isNaN(d.getTime())) return String(val);
+                            const day = d.getDate();
+                            const thaiMonths = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+                            const month = thaiMonths[d.getMonth()];
+                            const thaiYear = (d.getFullYear() + 543) % 100;
+                            const time = d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+                            return `${day} ${month} ${thaiYear} ${time} น.`;
+                          };
                           
                           return (
                             <div key={h.id || `milestone-${i}`} className="flex gap-3 relative">
@@ -3677,8 +3721,16 @@ export default function SalesKanban({
                                   <div className="flex items-center gap-2">
                                     <span className={`text-sm font-bold ${config.color}`}>{config.label}</span>
                                   </div>
-                                  <span className="text-[10px] text-slate-400 font-medium bg-slate-50 px-2 py-0.5 rounded-full">{timeStr ? `${dateStr} ${timeStr}` : dateStr}</span>
+                                  <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${h.status === 'Transferred' ? 'text-violet-700 bg-violet-50 font-bold border border-violet-200' : 'text-slate-400 bg-slate-50'}`}>
+                                    {h.status === 'Transferred' ? `วันโอนจริง: ${dateStr}` : (timeStr ? `${dateStr} ${timeStr}` : dateStr)}
+                                  </span>
                                 </div>
+                                {h.status === 'Transferred' && h.recordedAt && (
+                                  <div className="flex items-center gap-1.5 text-[11px] text-slate-500 font-medium my-1.5 bg-slate-50 border border-slate-200/60 rounded-lg px-2.5 py-1">
+                                    <Clock size={12} className="text-slate-400 shrink-0" />
+                                    <span>บันทึกเข้าระบบเมื่อ: <strong className="text-slate-700 font-semibold">{formatRecordedDateTime(h.recordedAt)}</strong></span>
+                                  </div>
+                                )}
                                 <p className="text-xs text-slate-500 font-medium mt-1">ผู้ทำรายการ: {h.note || panelState.lead?.agentName || panelState.lead?.agent_name || 'System'}</p>
                               </div>
                             </div>

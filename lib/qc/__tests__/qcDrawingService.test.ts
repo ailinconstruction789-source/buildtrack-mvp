@@ -3,7 +3,8 @@ import {
   generateNextPinLabel,
   calculateNormalizedRatio,
   calculatePixelPosition,
-  getPinStatusStyle
+  getPinStatusStyle,
+  evaluatePinMeasurement
 } from '../qcDrawingService';
 import { QCDrawingAnnotation } from '@/types/qc.types';
 
@@ -99,10 +100,82 @@ describe('qcDrawingService', () => {
       expect(style.badgeText).toBe('ผ่าน');
     });
 
+    it('returns amber styles for conditional status', () => {
+      const style = getPinStatusStyle('conditional');
+      expect(style.bgColor).toContain('amber');
+      expect(style.badgeText).toBe('มีเงื่อนไข');
+    });
+
     it('returns slate styles for na status', () => {
       const style = getPinStatusStyle('na');
       expect(style.bgColor).toContain('slate');
       expect(style.badgeText).toBe('N/A');
+    });
+  });
+
+  describe('evaluatePinMeasurement (Target vs Actual with Tolerance)', () => {
+    it('passes when actual measurement equals target', () => {
+      const result = evaluatePinMeasurement({
+        measuredValue: -0.29,
+        targetValue: -0.29,
+        tolerance: 0.01,
+        unit: 'ม.'
+      });
+      expect(result.status).toBe('passed');
+      expect(result.isWithinTolerance).toBe(true);
+      expect(result.difference).toBe(0);
+    });
+
+    it('passes when actual measurement is within tolerance', () => {
+      // Target -0.29, Measured -0.28 (diff +0.01 <= tolerance 0.01)
+      const result = evaluatePinMeasurement({
+        measuredValue: -0.28,
+        targetValue: -0.29,
+        tolerance: 0.01,
+        unit: 'ม.'
+      });
+      expect(result.status).toBe('passed');
+      expect(result.isWithinTolerance).toBe(true);
+    });
+
+    it('fails when actual measurement exceeds tolerance', () => {
+      // Target -0.29, Measured -0.26 (diff +0.03 > tolerance 0.01)
+      const result = evaluatePinMeasurement({
+        measuredValue: -0.26,
+        targetValue: -0.29,
+        tolerance: 0.01,
+        unit: 'ม.'
+      });
+      expect(result.status).toBe('failed');
+      expect(result.isWithinTolerance).toBe(false);
+      expect(result.message).toContain('เกินเกณฑ์ยอมรับ');
+    });
+
+    it('evaluates min and max ranges correctly', () => {
+      const passRes = evaluatePinMeasurement({
+        measuredValue: 15,
+        minValue: 10,
+        maxValue: 20,
+        unit: 'มม.'
+      });
+      expect(passRes.status).toBe('passed');
+
+      const failRes = evaluatePinMeasurement({
+        measuredValue: 25,
+        minValue: 10,
+        maxValue: 20,
+        unit: 'มม.'
+      });
+      expect(failRes.status).toBe('failed');
+    });
+
+    it('returns uninspected when no value entered', () => {
+      const result = evaluatePinMeasurement({
+        measuredValue: null,
+        targetValue: -0.29,
+        tolerance: 0.01
+      });
+      expect(result.status).toBe('uninspected');
     });
   });
 });

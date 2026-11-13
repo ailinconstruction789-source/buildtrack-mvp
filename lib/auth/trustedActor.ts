@@ -1,4 +1,4 @@
-export const APP_ROLES = ['Admin','Owner','Sales','Foreman','Site Engineer','QC','Project Planner','Procurement','Store'] as const;
+export const APP_ROLES = ['Admin','Owner','Sales','Foreman','Site Engineer','Project Engineer','QC','Project Planner','Procurement','Store'] as const;
 export type AppRole = typeof APP_ROLES[number];
 export interface TrustedActor {
     contract: 'buildtrack.actor.v1'; authUserId: string; legacyUserId: number;

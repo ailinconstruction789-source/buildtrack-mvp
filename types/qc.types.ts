@@ -15,9 +15,9 @@ export type QCFormItemType =
   | 'photo' 
   | 'drawing_point';
 
-export type QCAnswerStatus = 'uninspected' | 'passed' | 'failed' | 'na';
+export type QCAnswerStatus = 'uninspected' | 'passed' | 'failed' | 'conditional' | 'na';
 
-export type QCDocumentStatus = 'draft' | 'submitted' | 'approved' | 'rejected';
+export type QCDocumentStatus = 'draft' | 'submitted' | 'pending_pe' | 'approved' | 'rejected';
 
 export type QCInspectionResult = 'passed' | 'failed' | 'conditional';
 
@@ -157,11 +157,17 @@ export interface QCDrawingAnnotation {
   pin_label: string;
   x_ratio: number; // 0.0 to 1.0
   y_ratio: number; // 0.0 to 1.0
+  target_value?: number | null;
+  tolerance?: number | null;
+  min_value?: number | null;
+  max_value?: number | null;
   measured_value?: number | null;
   unit?: string | null;
-  status?: 'passed' | 'failed' | 'na' | null;
+  status?: 'passed' | 'failed' | 'conditional' | 'na' | null;
   remarks?: string | null;
   photo_url?: string | null;
+  transferred_to_task_template_id?: string | null;
+  transferred_to_task_name?: string | null;
   created_at?: string;
 }
 
@@ -180,6 +186,12 @@ export interface QCInspectionAnswer {
   selected_options?: string[];
   photo_urls?: string[];
   remarks?: string | null;
+  transferred_to_task_template_id?: string | null;
+  transferred_to_task_name?: string | null;
+  pe_approval_status?: 'pending' | 'approved' | 'rejected' | null;
+  pe_approved_by?: string | null;
+  pe_approved_at?: string | null;
+  pe_remarks?: string | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -207,9 +219,14 @@ export interface QCInspection {
   total_items: number;
   passed_items: number;
   failed_items: number;
+  conditional_items?: number;
   na_items: number;
   notes?: string;
   photo_urls?: string[];
+  pe_reviewer_name?: string | null;
+  pe_reviewed_at?: string | null;
+  pe_review_decision?: 'approved' | 'rejected' | null;
+  pe_review_notes?: string | null;
   submitted_at?: string | null;
   approved_at?: string | null;
   approved_by?: string | null;

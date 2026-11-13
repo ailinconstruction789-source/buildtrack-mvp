@@ -1,0 +1,24 @@
+{
+  "prototype": true,
+  "reference": "แบบบ้าน/บ้านชั้นเดียว.skp",
+  "dimensionsAreApproximate": true,
+  "triangles": 528,
+  "meshes": 13,
+  "glbBytes": 61548,
+  "front": "+Z",
+  "entranceAnchor": [
+    -0.1,
+    0.32,
+    4.75
+  ],
+  "foremanAnchor": [
+    -0.1,
+    0,
+    7.07
+  ],
+  "notYetVerified": [
+    "real plot placement",
+    "construction stages",
+    "multi-house performance"
+  ]
+}

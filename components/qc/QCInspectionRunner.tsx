@@ -6,7 +6,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   CheckCircle, XCircle, AlertTriangle, Clock, Camera, Save, Send, ShieldCheck, 
   MapPin, FileText, ChevronRight, ArrowLeft, RefreshCw, AlertCircle, Eye, 
-  RotateCcw, Check, Plus, Trash2, Loader2, Sparkles, Image as ImageIcon
+  RotateCcw, Check, Plus, Trash2, Loader2, Sparkles, Image as ImageIcon, Info, CornerDownRight 
 } from 'lucide-react';
 import { 
   QCFormTemplate, 
@@ -23,8 +23,12 @@ import {
   approveInspection, 
   createRetestRound, 
   reopenInspection,
-  evaluateInspectionAnswers 
+  evaluateInspectionAnswers,
+  reviewPEInspection,
+  fetchDownstreamDefects,
+  resolveDownstreamDefect
 } from '@/lib/qc/qcInspectionService';
+import { supabase } from '@/lib/supabase';
 import QCDrawingViewer from './QCDrawingViewer';
 
 interface QCInspectionRunnerProps {
@@ -107,7 +111,80 @@ export default function QCInspectionRunner({
 
   const isQC = currentUserRole === 'QC';
   const isAdmin = currentUserRole === 'Admin' || currentUserRole === 'Owner';
+  // สิทธิ์พิจารณาอนุมัติผ่านแบบมีเงื่อนไข (PE Review): เฉพาะ Project Engineer (PE), Admin และ Owner เท่านั้น (SE ไม่มีสิทธิ์)
+  const isPE = currentUserRole === 'Project Engineer' || currentUserRole === 'Admin' || currentUserRole === 'Owner';
   const isReadOnly = Boolean(previewOnly) || (currentInspection?.document_status === 'approved' && !reopenModalOpen);
+
+  const [downstreamDefects, setDownstreamDefects] = useState<any[]>([]);
+  const [houseTasks, setHouseTasks] = useState<{ id: string; task_name: string; task_order: number }[]>([]);
+  const [peNotes, setPeNotes] = useState('');
+  const [isPEReviewing, setIsPEReviewing] = useState(false);
+  const [conditionalModalItem, setConditionalModalItem] = useState<QCFormItem | null>(null);
+
+  // Load downstream defect reminders and house task templates
+  useEffect(() => {
+    let isMounted = true;
+    async function loadData() {
+      if (plotId && taskTemplateId) {
+        const defects = await fetchDownstreamDefects(plotId, taskTemplateId);
+        if (isMounted) setDownstreamDefects(defects);
+      }
+      if (houseTypeId) {
+        const { data: tasks } = await supabase
+          .from('task_templates')
+          .select('id, task_name, task_order')
+          .eq('house_type_id', houseTypeId)
+          .order('task_order', { ascending: true });
+        if (isMounted && tasks) setHouseTasks(tasks);
+      }
+    }
+    loadData();
+    return () => { isMounted = false; };
+  }, [plotId, taskTemplateId, houseTypeId]);
+
+  // Handle resolving a carried-over defect
+  const handleResolveDefect = async (defectId: string) => {
+    const res = await resolveDownstreamDefect(defectId, loggedInUser.username);
+    if (res.success) {
+      setDownstreamDefects(prev => prev.filter(d => d.id !== defectId));
+      setStatusMessage({ text: 'บันทึกการแก้ไขข้อบกพร่องที่ส่งต่อมาเรียบร้อยแล้ว', type: 'success' });
+    }
+  };
+
+  // Handle PE Review & Decision
+  const handlePEReview = async (decision: 'approve' | 'reject') => {
+    if (!currentInspection) return;
+    setIsPEReviewing(true);
+    const res = await reviewPEInspection({
+      inspection: currentInspection,
+      decision,
+      peUsername: loggedInUser.username,
+      peRole: currentUserRole,
+      notes: peNotes,
+      answers
+    });
+    setIsPEReviewing(false);
+    if (res.success) {
+      setStatusMessage({
+        text: decision === 'approve' 
+          ? 'วิศวกรโครงการ (PE) อนุมัติผ่านแบบมีเงื่อนไขเรียบร้อยแล้ว (Progress 100%) พร้อมส่งต่อข้อบกพร่องไปยังงวดงานถัดไป' 
+          : 'วิศวกรโครงการ (PE) สั่งแก้ไขงาน (Progress 95%)',
+        type: 'success'
+      });
+      setCurrentInspection(prev => prev ? ({
+        ...prev,
+        document_status: decision === 'approve' ? 'approved' : 'rejected',
+        inspection_result: decision === 'approve' ? 'conditional' : 'failed',
+        pe_reviewer_name: loggedInUser.username,
+        pe_reviewed_at: new Date().toISOString(),
+        pe_review_decision: decision === 'approve' ? 'approved' : 'rejected',
+        pe_review_notes: peNotes
+      }) : null);
+      onInspectionUpdated();
+    } else {
+      setStatusMessage({ text: res.error || 'เกิดข้อผิดพลาดในการบันทึกผลการพิจารณาของ PE', type: 'error' });
+    }
+  };
 
   // Real-time evaluation calculation
   const currentEvaluation = useMemo(() => {
@@ -125,6 +202,12 @@ export default function QCInspectionRunner({
   const handleAddAnnotation = (pin: QCDrawingAnnotation) => {
     if (isReadOnly) return;
     setAnnotations(prev => [...prev, pin]);
+  };
+
+  // Update Annotation Pin
+  const handleUpdateAnnotation = (updatedPin: QCDrawingAnnotation) => {
+    if (isReadOnly) return;
+    setAnnotations(prev => prev.map(p => p.pin_label === updatedPin.pin_label ? updatedPin : p));
   };
 
   // Delete Annotation Pin
@@ -492,12 +575,15 @@ export default function QCInspectionRunner({
                   </p>
                 </div>
                 <div className="h-8 w-px bg-slate-200" />
-                <div className="flex items-center gap-2 text-xs font-bold">
+                <div className="flex items-center gap-2 text-xs font-bold flex-wrap">
                   <span className="text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 flex items-center gap-1">
                     <CheckCircle size={12} /> ผ่าน: {answers.filter(a => a.status === 'passed').length}
                   </span>
                   <span className="text-rose-600 bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-200 flex items-center gap-1">
                     <XCircle size={12} /> ไม่ผ่าน: {answers.filter(a => a.status === 'failed').length}
+                  </span>
+                  <span className="text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200 flex items-center gap-1">
+                    <AlertTriangle size={12} /> มีเงื่อนไข: {answers.filter(a => a.status === 'conditional').length}
                   </span>
                   <span className="text-slate-600 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200">
                     N/A: {answers.filter(a => a.status === 'na').length}
@@ -514,12 +600,95 @@ export default function QCInspectionRunner({
               )}
             </div>
 
+            {/* 🌟 Carried-Over Defects Reminder Banner (ข้อบกพร่องที่ส่งต่อมาจากงวดงานก่อนหน้า) 🌟 */}
+            {downstreamDefects.length > 0 && (
+              <div className="bg-amber-500/10 border-2 border-amber-500/40 p-4 sm:p-5 rounded-2xl space-y-3">
+                <div className="flex items-center gap-2 text-amber-900 font-bold text-sm sm:text-base">
+                  <AlertTriangle className="text-amber-600 shrink-0" size={20} />
+                  <span>มีข้อบกพร่องที่ส่งต่อมาจากงวดงานก่อนหน้า (ผ่านแบบมีเงื่อนไขโดย PE) ให้ตรวจสอบก่อนส่งมอบงานนี้</span>
+                </div>
+                <div className="space-y-2">
+                  {downstreamDefects.map((d: any) => (
+                    <div key={d.id} className="bg-white p-3.5 rounded-xl border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-sm">
+                      <div className="space-y-1">
+                        <p className="font-bold text-slate-800 text-sm">{d.description}</p>
+                        <p className="text-[11px] text-slate-400">
+                          ส่งต่อโดย: <span className="font-bold text-slate-600">{d.reported_by}</span> • สถานะ: <span className="text-amber-600 font-bold">รอการแก้ไขในงวดงานนี้</span>
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleResolveDefect(d.id)}
+                        className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center gap-1.5 shrink-0 self-start sm:self-center shadow-md transition"
+                      >
+                        <Check size={14} /> ยืนยันว่าแก้ไขเรียบร้อยแล้ว
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 🌟 PE Review & Approval Card (วิศวกรโครงการพิจารณาอนุมัติผ่านแบบมีเงื่อนไข) 🌟 */}
+            {currentInspection?.document_status === 'pending_pe' && isPE && (
+              <div className="bg-gradient-to-r from-slate-900 via-amber-950/60 to-slate-900 text-white p-5 rounded-2xl border-2 border-amber-500/50 shadow-xl space-y-3">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck size={22} className="text-amber-400" />
+                  <h3 className="font-bold text-base text-amber-300">วิศวกรโครงการพิจารณาอนุมัติผ่านแบบมีเงื่อนไข (PE Review)</h3>
+                </div>
+                <p className="text-xs text-slate-300">
+                  การตรวจรอบนี้มีรายการที่ระบุว่า "ผ่านแบบมีเงื่อนไข" ({answers.filter(a => a.status === 'conditional').length} รายการ) 
+                  หากท่านอนุมัติ รายการเหล่านี้จะถูกบันทึกส่งต่อ (Carryover) ไปเป็น Defect ในงวดงานถัดไปโดยอัตโนมัติเพื่อให้ติดตามแก้ไขต่อได้
+                </p>
+                <div>
+                  <label className="text-[11px] font-bold text-slate-400 block mb-1">ความเห็น/เงื่อนไขของวิศวกรโครงการ (PE Notes):</label>
+                  <textarea
+                    value={peNotes}
+                    onChange={(e) => setPeNotes(e.target.value)}
+                    placeholder="ระบุข้อตกลงหรือหมายเหตุประกอบการอนุมัติผ่านแบบมีเงื่อนไข..."
+                    className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none focus:border-amber-400"
+                    rows={2}
+                  />
+                </div>
+                <div className="flex gap-2 justify-end pt-1">
+                  <button
+                    onClick={() => handlePEReview('reject')}
+                    disabled={isPEReviewing}
+                    className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition"
+                  >
+                    <XCircle size={14} /> PE สั่งแก้ไขงาน (Progress 95%)
+                  </button>
+                  <button
+                    onClick={() => handlePEReview('approve')}
+                    disabled={isPEReviewing}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-emerald-900/50 transition"
+                  >
+                    <CheckCircle size={14} /> PE อนุมัติผ่านแบบมีเงื่อนไข (Progress 100%)
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* แสดงสถานะสำหรับผู้ใช้ที่ไม่ใช่ PE (เช่น SE, QC, Foreman) ว่าเอกสารรอ PE พิจารณา */}
+            {currentInspection?.document_status === 'pending_pe' && !isPE && (
+              <div className="bg-amber-50 border border-amber-300 text-amber-900 p-4 rounded-2xl flex items-start gap-3 shadow-sm">
+                <Clock size={20} className="text-amber-600 shrink-0 mt-0.5" />
+                <div className="text-xs sm:text-sm">
+                  <p className="font-bold text-amber-900">งานนี้อยู่ระหว่างรอวิศวกรโครงการ (PE) พิจารณาอนุมัติผ่านแบบมีเงื่อนไข</p>
+                  <p className="text-[11px] text-amber-700 mt-1">
+                    QC ตรวจพบรายการที่มีเงื่อนไขส่งต่องวดงานถัดไป สิทธิ์การอนุมัติส่งต่อไปยัง <strong>Project Engineer (PE)</strong> โดยตรง (Site Engineer ไม่มีสิทธิ์อนุมัติรายการนี้)
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Checklist Items List */}
             <div className="space-y-3">
               {(formTemplate.items || []).map((item, idx) => {
                 const ans = answers.find(a => a.form_item_id === item.id);
                 const status = ans?.status || 'uninspected';
                 const relatedPins = annotations.filter(p => p.form_item_id === item.id);
+                const isNumericItem = item.item_type === 'number' || item.target_value != null || item.min_value != null || item.max_value != null;
+                const hasPins = relatedPins.length > 0;
 
                 return (
                   <div 
@@ -527,6 +696,7 @@ export default function QCInspectionRunner({
                     className={`bg-white p-4 sm:p-5 rounded-2xl border transition-all shadow-sm ${
                       status === 'passed' ? 'border-emerald-200 bg-emerald-50/20' :
                       status === 'failed' ? 'border-rose-300 bg-rose-50/20 ring-1 ring-rose-200' :
+                      status === 'conditional' ? 'border-amber-300 bg-amber-50/30 ring-1 ring-amber-200' :
                       status === 'na' ? 'border-slate-200 opacity-75' :
                       'border-slate-200'
                     }`}
@@ -565,10 +735,20 @@ export default function QCInspectionRunner({
                             {item.max_value !== null && <span>(สูงสุด: {item.max_value} {item.unit})</span>}
                           </div>
                         )}
+
+                        {/* ℹ️ แจ้งเตือนข้อกำหนดตัวเลขที่ยังไม่ได้ปักหมุดบนแบบแปลน (Fallback Mode) ℹ️ */}
+                        {isNumericItem && !hasPins && (
+                          <div className="mt-2.5 p-2.5 bg-blue-50/90 border border-blue-200/90 rounded-xl flex items-start sm:items-center gap-2 text-xs text-blue-900">
+                            <Info size={16} className="text-blue-600 shrink-0 mt-0.5 sm:mt-0" />
+                            <span>
+                              ข้อนี้มีเกณฑ์ตัวเลขกำกับ (ยังไม่มีการปักหมุดบนแบบแปลน — สามารถตรวจวัดหน้างานจริงแล้วกดประเมิน <strong>ผ่าน / ไม่ผ่าน / มีเงื่อนไข</strong> ได้ทันที)
+                            </span>
+                          </div>
+                        )}
                       </div>
 
                       {/* Status / Answer Selectors */}
-                      <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex items-center gap-2 shrink-0 flex-wrap sm:flex-nowrap">
                         {/* Number Input if item_type is number */}
                         {item.item_type === 'number' && (
                           <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-xl border border-slate-200">
@@ -588,7 +768,7 @@ export default function QCInspectionRunner({
                                 handleAnswerChange(item.id, { numeric_value: val, status: autoStatus });
                               }}
                               placeholder="ระบุตัวเลข"
-                              className="w-24 bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs font-bold text-slate-800 text-right outline-none focus:border-purple-500"
+                              className="w-24 bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs font-bold text-slate-800 text-right outline-none focus:border-purple-500 font-mono"
                             />
                             <span className="text-xs font-bold text-slate-600 pr-1">{item.unit || ''}</span>
                           </div>
@@ -613,7 +793,7 @@ export default function QCInspectionRunner({
                           </button>
                         )}
 
-                        {/* Pass / Fail / NA buttons */}
+                        {/* Pass / Fail / Conditional / NA buttons */}
                         <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 gap-1">
                           <button
                             type="button"
@@ -627,6 +807,7 @@ export default function QCInspectionRunner({
                           >
                             <Check size={12} /> ผ่าน
                           </button>
+
                           <button
                             type="button"
                             disabled={isReadOnly}
@@ -639,6 +820,23 @@ export default function QCInspectionRunner({
                           >
                             <XCircle size={12} /> ไม่ผ่าน
                           </button>
+
+                          <button
+                            type="button"
+                            disabled={isReadOnly}
+                            onClick={() => {
+                              handleAnswerChange(item.id, { status: 'conditional' });
+                              setConditionalModalItem(item);
+                            }}
+                            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-all disabled:cursor-not-allowed ${
+                              status === 'conditional' 
+                                ? 'bg-amber-600 text-white shadow-sm ring-1 ring-amber-400' 
+                                : 'text-amber-700 hover:text-amber-800 hover:bg-amber-100 disabled:hover:text-amber-700'
+                            }`}
+                          >
+                            <AlertTriangle size={12} /> มีเงื่อนไข
+                          </button>
+
                           <button
                             type="button"
                             disabled={isReadOnly}
@@ -654,6 +852,38 @@ export default function QCInspectionRunner({
                         </div>
                       </div>
                     </div>
+
+                    {/* แสดงรายละเอียดการผ่านแบบมีเงื่อนไข (Conditional Details) */}
+                    {status === 'conditional' && (
+                      <div className="mt-3 p-3 bg-amber-50/80 border border-amber-200 rounded-xl space-y-1.5 text-xs text-amber-950">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5 font-bold text-amber-800">
+                            <AlertTriangle size={14} />
+                            <span>ผ่านแบบมีเงื่อนไข (ต้องได้รับความเห็นชอบจากวิศวกรโครงการ / PE)</span>
+                          </div>
+                          {!isReadOnly && (
+                            <button
+                              type="button"
+                              onClick={() => setConditionalModalItem(item)}
+                              className="text-[11px] font-bold text-purple-700 hover:text-purple-900 underline"
+                            >
+                              แก้ไขเงื่อนไข/งวดงานที่ส่งต่อ
+                            </button>
+                          )}
+                        </div>
+                        {ans?.remarks ? (
+                          <p className="text-slate-700 font-medium">เงื่อนไข: {ans.remarks}</p>
+                        ) : (
+                          <p className="text-rose-600 font-bold">*จำเป็นต้องระบุเงื่อนไขหรือสิ่งที่ต้องแก้ไข</p>
+                        )}
+                        {ans?.transferred_to_task_name && (
+                          <p className="text-purple-700 font-bold flex items-center gap-1">
+                            <CornerDownRight size={13} />
+                            <span>ส่งต่อไปตรวจติดตามที่งวดงาน: {ans.transferred_to_task_name}</span>
+                          </p>
+                        )}
+                      </div>
+                    )}
 
                     {/* Remarks and Photo upload section (especially if failed or required) */}
                     {(status === 'failed' || ans?.remarks || (ans?.photo_urls && ans.photo_urls.length > 0)) && (
@@ -705,6 +935,7 @@ export default function QCInspectionRunner({
                 drawing={referenceDrawing}
                 annotations={annotations}
                 onAddAnnotation={handleAddAnnotation}
+                onUpdateAnnotation={handleUpdateAnnotation}
                 onDeleteAnnotation={handleDeleteAnnotation}
                 selectedFormItems={formTemplate.items || []}
                 readOnly={isReadOnly}
@@ -730,7 +961,9 @@ export default function QCInspectionRunner({
                           <th className="py-2 px-3">จุด</th>
                           <th className="py-2 px-3">หน้า</th>
                           <th className="py-2 px-3">ข้อตรวจที่เชื่อม</th>
-                          <th className="py-2 px-3">ค่าที่วัด</th>
+                          <th className="py-2 px-3">เกณฑ์เป้าหมาย</th>
+                          <th className="py-2 px-3">ค่าจริงที่วัดได้</th>
+                          <th className="py-2 px-3">คลาดเคลื่อน (Diff)</th>
                           <th className="py-2 px-3">ผลประเมิน</th>
                           <th className="py-2 px-3">หมายเหตุ</th>
                           {!isReadOnly && <th className="py-2 px-3 text-right">จัดการ</th>}
@@ -739,6 +972,11 @@ export default function QCInspectionRunner({
                       <tbody className="divide-y divide-slate-100">
                         {annotations.map((pin, pIdx) => {
                           const linkedItem = formTemplate.items?.find(it => it.id === pin.form_item_id);
+                          const hasTarget = pin.target_value != null;
+                          const diff = (hasTarget && pin.measured_value != null) 
+                            ? Number((pin.measured_value - pin.target_value!).toFixed(4))
+                            : null;
+
                           return (
                             <tr key={pIdx} className="hover:bg-slate-50">
                               <td className="py-2.5 px-3 font-mono font-bold text-purple-700">{pin.pin_label}</td>
@@ -746,16 +984,27 @@ export default function QCInspectionRunner({
                               <td className="py-2.5 px-3 font-bold text-slate-800">
                                 {linkedItem ? `${linkedItem.item_code} ${linkedItem.item_text}` : '-'}
                               </td>
-                              <td className="py-2.5 px-3 font-bold text-slate-700">
+                              <td className="py-2.5 px-3 font-mono text-purple-900 font-bold">
+                                {pin.target_value != null ? `${pin.target_value} (±${pin.tolerance || 0}) ${pin.unit || ''}` : '-'}
+                              </td>
+                              <td className="py-2.5 px-3 font-mono font-bold text-slate-800">
                                 {pin.measured_value !== null ? `${pin.measured_value} ${pin.unit || ''}` : '-'}
+                              </td>
+                              <td className="py-2.5 px-3 font-mono text-xs">
+                                {diff != null ? (
+                                  <span className={`font-bold ${Math.abs(diff) <= (pin.tolerance || 0) ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                    {diff > 0 ? `+${diff}` : `${diff}`} {pin.unit || ''}
+                                  </span>
+                                ) : '-'}
                               </td>
                               <td className="py-2.5 px-3">
                                 <span className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${
                                   pin.status === 'passed' ? 'bg-emerald-100 text-emerald-700' :
                                   pin.status === 'failed' ? 'bg-rose-100 text-rose-700' :
+                                  pin.status === 'conditional' ? 'bg-amber-100 text-amber-800' :
                                   'bg-slate-100 text-slate-600'
                                 }`}>
-                                  {pin.status === 'passed' ? 'ผ่าน' : pin.status === 'failed' ? 'ไม่ผ่าน' : 'N/A'}
+                                  {pin.status === 'passed' ? 'ผ่าน' : pin.status === 'failed' ? 'ไม่ผ่าน' : pin.status === 'conditional' ? 'มีเงื่อนไข' : 'N/A'}
                                 </span>
                               </td>
                               <td className="py-2.5 px-3 text-slate-500 truncate max-w-xs">{pin.remarks || '-'}</td>
@@ -886,6 +1135,97 @@ export default function QCInspectionRunner({
           <img src={selectedPhotoPreview} alt="รูปหลักฐานเต็ม" className="max-h-[90vh] max-w-[90vw] object-contain rounded-xl shadow-2xl" />
         </div>
       )}
+
+      {/* 🌟 Modal ระบุเงื่อนไขและส่งต่องาน (Conditional Pass & Downstream Transfer) 🌟 */}
+      {conditionalModalItem && (() => {
+        const item = conditionalModalItem;
+        const ans = answers.find(a => a.form_item_id === item.id);
+        const downstreamTasks = houseTasks.filter(t => t.id !== taskTemplateId);
+
+        return (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[999]">
+            <div className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl border border-slate-200 animate-in zoom-in-95 space-y-4">
+              <div className="flex justify-between items-start">
+                <div className="flex items-center gap-2">
+                  <div className="bg-amber-100 text-amber-800 p-2 rounded-xl">
+                    <AlertTriangle size={20} />
+                  </div>
+                  <div>
+                    <span className="font-mono text-xs font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md">
+                      {item.item_code}
+                    </span>
+                    <h3 className="font-bold text-slate-800 text-base mt-0.5">ระบุเงื่อนไขและส่งต่องาน</h3>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setConditionalModalItem(null)} 
+                  className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg"
+                >
+                  <XCircle size={20} />
+                </button>
+              </div>
+
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs">
+                <p className="font-bold text-slate-700">{item.item_text}</p>
+                {item.description && <p className="text-slate-500 mt-0.5">{item.description}</p>}
+              </div>
+
+              {/* Remarks */}
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  เงื่อนไขหรือสิ่งที่ต้องแก้ไข (จำเป็น) <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  rows={3}
+                  value={ans?.remarks || ''}
+                  onChange={(e) => handleAnswerChange(item.id, { remarks: e.target.value })}
+                  placeholder="ระบุข้อบกพร่องเล็กน้อย หรือเงื่อนไขที่ตกลงกัน เช่น ปูนฉาบมีรอยบิ่นมุมเสา ให้ช่างเก็บงานก่อนเข้าทาสี..."
+                  className="w-full border border-slate-300 rounded-xl p-3 text-xs font-bold text-slate-800 outline-none focus:border-purple-500"
+                />
+              </div>
+
+              {/* Downstream Task Selection */}
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  ส่งต่อ Defect ไปยังงวดงานถัดไป (Downstream Task Transfer)
+                </label>
+                <select
+                  value={ans?.transferred_to_task_template_id || ''}
+                  onChange={(e) => {
+                    const selId = e.target.value;
+                    const selTask = houseTasks.find(t => t.id === selId);
+                    handleAnswerChange(item.id, {
+                      transferred_to_task_template_id: selId || null,
+                      transferred_to_task_name: selTask ? selTask.task_name : null
+                    });
+                  }}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs font-bold text-slate-800 outline-none focus:border-purple-500"
+                >
+                  <option value="">-- ไม่ระบุ (บันทึกเป็น Defect ของงวดงานปัจจุบัน) --</option>
+                  {downstreamTasks.map((t, tIdx) => (
+                    <option key={t.id} value={t.id}>
+                      งวดที่ {t.task_order || tIdx + 1}: {t.task_name}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  เมื่อวิศวกรโครงการ (PE) อนุมัติ รายการนี้จะไปปรากฏเป็นแจ้งเตือนในงวดงานปลายทางโดยอัตโนมัติ
+                </p>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setConditionalModalItem(null)}
+                  className="flex-1 bg-purple-600 hover:bg-purple-700 py-2.5 rounded-xl text-xs font-bold text-white shadow-md"
+                >
+                  บันทึกเงื่อนไข
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

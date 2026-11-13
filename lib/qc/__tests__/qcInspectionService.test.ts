@@ -9,7 +9,8 @@ import {
   submitInspection, 
   approveInspection, 
   createRetestRound, 
-  reopenInspection 
+  reopenInspection,
+  reviewPEInspection
 } from '../qcInspectionService';
 import { QCFormItem, QCInspectionAnswer, QCDrawingAnnotation, QCInspection } from '@/types/qc.types';
 import { supabase } from '@/lib/supabase';
@@ -211,6 +212,179 @@ describe('QC Form Evaluation Logic', () => {
     const result = evaluateInspectionAnswers(sampleItems, answers);
     expect(result.isValid).toBe(false);
     expect(result.errors.some(e => e.message.includes('จำเป็นต้องระบุหมายเหตุ/ข้อบกพร่อง'))).toBe(true);
+  });
+
+  it('supports fallback direct pass/fail on numeric items when no number or pin is entered', () => {
+    // QC sees numeric item without pin, clicks "passed" directly
+    const answers: QCInspectionAnswer[] = [
+      {
+        form_item_id: 'item-1',
+        item_code: 'Q01',
+        item_text: 'ตรวจแนวดิ่งผนัง',
+        item_type: 'pass_fail_na',
+        is_critical: true,
+        status: 'passed'
+      },
+      {
+        form_item_id: 'item-2',
+        item_code: 'Q02',
+        item_text: 'ความหนาปูนก่อ',
+        item_type: 'number',
+        is_critical: false,
+        status: 'passed',
+        numeric_value: null // No number entered, evaluated directly!
+      },
+      {
+        form_item_id: 'item-3',
+        item_code: 'Q03',
+        item_text: 'จุดต่อเสากับผนัง',
+        item_type: 'drawing_point',
+        is_critical: false,
+        status: 'passed'
+      }
+    ];
+
+    const result = evaluateInspectionAnswers(sampleItems, answers);
+    expect(result.isValid).toBe(true);
+    expect(result.overallResult).toBe('passed');
+    expect(result.passedItems).toBe(3);
+  });
+
+  it('handles conditional pass and requires remarks', () => {
+    // Case 1: Conditional without remark -> error
+    const answersNoRemark: QCInspectionAnswer[] = [
+      {
+        form_item_id: 'item-1',
+        item_code: 'Q01',
+        item_text: 'ตรวจแนวดิ่งผนัง',
+        item_type: 'pass_fail_na',
+        is_critical: false,
+        status: 'conditional',
+        remarks: ''
+      }
+    ];
+    const resNoRemark = evaluateInspectionAnswers(sampleItems, answersNoRemark);
+    expect(resNoRemark.isValid).toBe(false);
+    expect(resNoRemark.errors.some(e => e.message.includes('ผ่านแบบมีเงื่อนไข จำเป็นต้องระบุหมายเหตุ'))).toBe(true);
+
+    // Case 2: Conditional with remark -> overall result conditional
+    const answersWithRemark: QCInspectionAnswer[] = [
+      {
+        form_item_id: 'item-1',
+        item_code: 'Q01',
+        item_text: 'ตรวจแนวดิ่งผนัง',
+        item_type: 'pass_fail_na',
+        is_critical: false,
+        status: 'conditional',
+        remarks: 'บิ่นขอบเสาเล็กน้อย ส่งต่อช่างฉาบเก็บงาน'
+      },
+      {
+        form_item_id: 'item-2',
+        item_code: 'Q02',
+        item_text: 'ความหนาปูนก่อ',
+        item_type: 'number',
+        is_critical: false,
+        status: 'passed',
+        numeric_value: 15
+      },
+      {
+        form_item_id: 'item-3',
+        item_code: 'Q03',
+        item_text: 'จุดต่อเสากับผนัง',
+        item_type: 'drawing_point',
+        is_critical: false,
+        status: 'passed'
+      }
+    ];
+    const resValid = evaluateInspectionAnswers(sampleItems, answersWithRemark);
+    expect(resValid.isValid).toBe(true);
+    expect(resValid.overallResult).toBe('conditional');
+    expect(resValid.conditionalItems).toBe(1);
+  });
+});
+
+describe('Project Engineer (PE) Review & Conditional Approval', () => {
+  it('approves inspection with conditional pass and creates downstream carryover defect', async () => {
+    const mockUpdate = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null })
+    });
+    const mockInsert = vi.fn().mockResolvedValue({ data: [], error: null });
+
+    vi.mocked(supabase.from).mockImplementation((table: string) => {
+      if (table === 'qc_inspections') {
+        return { update: mockUpdate } as any;
+      }
+      if (table === 'task_updates' || table === 'defects' || table === 'qc_audit_logs') {
+        return { insert: mockInsert } as any;
+      }
+      return {} as any;
+    });
+
+    const inspection: QCInspection = {
+      id: 'insp-pe-1',
+      project_name: 'ไอลิน6',
+      plot_id: 'PLOT-01',
+      task_template_id: 'TASK-BRICK',
+      task_name: 'งานก่อผนัง',
+      round_number: 1,
+      inspection_method: 'form_v2',
+      form_version: 1,
+      form_title: 'แบบฟอร์มงานก่อ',
+      inspector_name: 'QCMan',
+      inspector_role: 'QC',
+      document_status: 'pending_pe',
+      inspection_result: 'conditional',
+      total_items: 10,
+      passed_items: 9,
+      failed_items: 0,
+      conditional_items: 1,
+      na_items: 0
+    };
+
+    const answers: QCInspectionAnswer[] = [
+      {
+        form_item_id: 'item-1',
+        item_code: 'Q-WALL',
+        item_text: 'ตรวจแนวก่อ',
+        item_type: 'pass_fail_na',
+        is_critical: false,
+        status: 'conditional',
+        remarks: 'มีรอยบิ่น รอช่างฉาบแต่ง',
+        transferred_to_task_template_id: 'TASK-PLASTER',
+        transferred_to_task_name: 'งานฉาบปูน'
+      }
+    ];
+
+    const result = await reviewPEInspection({
+      inspection,
+      decision: 'approve',
+      peUsername: 'EngSomkid',
+      peRole: 'Project Engineer',
+      notes: 'อนุมัติให้ผ่านตามเงื่อนไข ให้ช่างฉาบปูนตรวจสอบซ้ำ',
+      answers
+    });
+
+    expect(result.success).toBe(true);
+
+    // Verifies qc_inspections updated with approved & conditional
+    expect(mockUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        document_status: 'approved',
+        inspection_result: 'conditional',
+        pe_reviewer_name: 'EngSomkid',
+        pe_review_decision: 'approve'
+      })
+    );
+
+    // Verifies transferred defect was inserted
+    expect(mockInsert).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          task_id: 'TASK-PLASTER',
+          description: expect.stringContaining('งานก่อผนัง')
+        })
+      ])
+    );
   });
 });
 

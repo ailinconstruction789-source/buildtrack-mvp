@@ -5,10 +5,16 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { 
   ZoomIn, ZoomOut, RotateCcw, MapPin, Eye, Plus, X, CheckCircle, AlertTriangle, 
-  ChevronLeft, ChevronRight, Maximize2, Minimize2, Info 
+  ChevronLeft, ChevronRight, Maximize2, Minimize2, Info, Check, Save, Sparkles, Trash2 
 } from 'lucide-react';
 import { QCReferenceDrawing, QCDrawingPage, QCDrawingAnnotation, QCFormItem, QCPlotDrawingViewport } from '@/types/qc.types';
-import { calculateNormalizedRatio, calculatePixelPosition, generateNextPinLabel, getPinStatusStyle } from '@/lib/qc/qcDrawingService';
+import { 
+  calculateNormalizedRatio, 
+  calculatePixelPosition, 
+  generateNextPinLabel, 
+  getPinStatusStyle,
+  evaluatePinMeasurement 
+} from '@/lib/qc/qcDrawingService';
 
 interface QCDrawingViewerProps {
   drawing: QCReferenceDrawing;
@@ -171,16 +177,25 @@ export default function QCDrawingViewer({
     const coord = calculateNormalizedRatio(e.clientX, e.clientY, rect);
     const label = generateNextPinLabel(annotations, currentPage);
 
+    const defaultItem = selectedFormItems.length > 0 ? selectedFormItems[0] : null;
+    const defaultTolerance = (defaultItem?.max_value != null && defaultItem?.target_value != null)
+      ? Number((defaultItem.max_value - defaultItem.target_value).toFixed(4))
+      : null;
+
     const newPin: QCDrawingAnnotation = {
       page_number: currentPage,
       pin_label: label,
       x_ratio: coord.xRatio,
       y_ratio: coord.yRatio,
       status: 'passed',
+      target_value: defaultItem?.target_value ?? null,
+      tolerance: defaultTolerance,
+      min_value: defaultItem?.min_value ?? null,
+      max_value: defaultItem?.max_value ?? null,
       measured_value: null,
-      unit: '',
+      unit: defaultItem?.unit || '',
       remarks: '',
-      form_item_id: selectedFormItems.length > 0 ? selectedFormItems[0].id : null
+      form_item_id: defaultItem ? defaultItem.id : null
     };
 
     setTemporaryPin(newPin);
@@ -384,7 +399,21 @@ export default function QCDrawingViewer({
                   <label className="text-[10px] text-slate-400 font-bold uppercase block mb-1">เชื่อมกับข้อตรวจ</label>
                   <select
                     value={temporaryPin.form_item_id || ''}
-                    onChange={(e) => setTemporaryPin({ ...temporaryPin, form_item_id: e.target.value })}
+                    onChange={(e) => {
+                      const sel = selectedFormItems.find(i => i.id === e.target.value);
+                      const tol = (sel?.max_value != null && sel?.target_value != null)
+                        ? Number((sel.max_value - sel.target_value).toFixed(4))
+                        : temporaryPin.tolerance;
+                      setTemporaryPin({
+                        ...temporaryPin,
+                        form_item_id: e.target.value,
+                        target_value: sel?.target_value ?? temporaryPin.target_value,
+                        tolerance: tol,
+                        min_value: sel?.min_value ?? temporaryPin.min_value,
+                        max_value: sel?.max_value ?? temporaryPin.max_value,
+                        unit: sel?.unit || temporaryPin.unit
+                      });
+                    }}
                     className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none focus:border-purple-500"
                   >
                     {selectedFormItems.map(item => (
@@ -396,51 +425,118 @@ export default function QCDrawingViewer({
                 </div>
               )}
 
+              {/* แสดงเกณฑ์เป้าหมาย (Target & Tolerance) ถ้ามี */}
+              {(temporaryPin.target_value != null || temporaryPin.min_value != null || temporaryPin.max_value != null) && (
+                <div className="bg-slate-900/90 p-2.5 rounded-xl border border-purple-500/30 text-xs">
+                  <div className="flex items-center gap-1.5 text-purple-300 font-bold text-[11px] mb-1">
+                    <Sparkles size={12} />
+                    <span>เกณฑ์เป้าหมายที่กำหนด (Design Target)</span>
+                  </div>
+                  <div className="text-slate-300 text-[11px] font-mono">
+                    {temporaryPin.target_value != null && (
+                      <span className="font-bold text-white">Target: {temporaryPin.target_value} {temporaryPin.unit} </span>
+                    )}
+                    {temporaryPin.tolerance != null && (
+                      <span className="text-purple-300">(±{temporaryPin.tolerance} {temporaryPin.unit}) </span>
+                    )}
+                    {temporaryPin.min_value != null && temporaryPin.max_value != null && (
+                      <span className="text-slate-400">[{temporaryPin.min_value} ถึง {temporaryPin.max_value} {temporaryPin.unit}]</span>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* ค่าที่วัดได้และหน่วย */}
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-[10px] text-slate-400 font-bold uppercase block mb-1">ค่าที่วัดได้</label>
+                  <label className="text-[10px] text-slate-400 font-bold uppercase block mb-1">ค่าจริงที่วัดได้หน้างาน (Actual)</label>
                   <input
                     type="number"
                     step="any"
                     value={temporaryPin.measured_value ?? ''}
-                    onChange={(e) => setTemporaryPin({
-                      ...temporaryPin,
-                      measured_value: e.target.value === '' ? null : Number(e.target.value)
-                    })}
-                    placeholder="เช่น 15.5"
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none focus:border-purple-500"
+                    onChange={(e) => {
+                      const val = e.target.value === '' ? null : Number(e.target.value);
+                      const evalRes = evaluatePinMeasurement({
+                        measuredValue: val,
+                        targetValue: temporaryPin.target_value,
+                        tolerance: temporaryPin.tolerance,
+                        minValue: temporaryPin.min_value,
+                        maxValue: temporaryPin.max_value,
+                        unit: temporaryPin.unit
+                      });
+                      setTemporaryPin({
+                        ...temporaryPin,
+                        measured_value: val,
+                        status: evalRes.status === 'uninspected' ? 'passed' : evalRes.status
+                      });
+                    }}
+                    placeholder="เช่น 15.5 หรือ -0.29"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none focus:border-purple-500 font-mono font-bold"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-slate-400 font-bold uppercase block mb-1">หน่วย</label>
+                  <label className="text-[10px] text-slate-400 font-bold uppercase block mb-1">หน่วยวัด</label>
                   <input
                     type="text"
                     value={temporaryPin.unit || ''}
                     onChange={(e) => setTemporaryPin({ ...temporaryPin, unit: e.target.value })}
-                    placeholder="เช่น มม., ซม."
+                    placeholder="เช่น มม., ซม., ม."
                     className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none focus:border-purple-500"
                   />
                 </div>
               </div>
 
+              {/* ข้อความผลลัพธ์คำนวณ Target vs Actual */}
+              {temporaryPin.measured_value != null && (
+                <div className="text-[11px] font-bold">
+                  {(() => {
+                    const evalRes = evaluatePinMeasurement({
+                      measuredValue: temporaryPin.measured_value,
+                      targetValue: temporaryPin.target_value,
+                      tolerance: temporaryPin.tolerance,
+                      minValue: temporaryPin.min_value,
+                      maxValue: temporaryPin.max_value,
+                      unit: temporaryPin.unit
+                    });
+                    return evalRes.isWithinTolerance ? (
+                      <div className="bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 p-2 rounded-xl flex items-center gap-1.5">
+                        <CheckCircle size={14} className="shrink-0" />
+                        <span>{evalRes.message}</span>
+                      </div>
+                    ) : (
+                      <div className="bg-rose-950/60 border border-rose-500/40 text-rose-300 p-2 rounded-xl flex items-center gap-1.5">
+                        <AlertTriangle size={14} className="shrink-0" />
+                        <span>{evalRes.message}</span>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+
               {/* ผลการประเมิน */}
               <div>
                 <label className="text-[10px] text-slate-400 font-bold uppercase block mb-1">ผลประเมินจุดนี้</label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-4 gap-1.5">
                   <button
                     type="button"
                     onClick={() => setTemporaryPin({ ...temporaryPin, status: 'passed' })}
-                    className={`py-1.5 rounded-xl font-bold text-xs ${temporaryPin.status === 'passed' ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-slate-300'}`}
+                    className={`py-1.5 rounded-xl font-bold text-xs ${temporaryPin.status === 'passed' ? 'bg-emerald-600 text-white shadow-md' : 'bg-slate-900 text-slate-300'}`}
                   >
                     ผ่าน
                   </button>
                   <button
                     type="button"
                     onClick={() => setTemporaryPin({ ...temporaryPin, status: 'failed' })}
-                    className={`py-1.5 rounded-xl font-bold text-xs ${temporaryPin.status === 'failed' ? 'bg-rose-600 text-white' : 'bg-slate-900 text-slate-300'}`}
+                    className={`py-1.5 rounded-xl font-bold text-xs ${temporaryPin.status === 'failed' ? 'bg-rose-600 text-white shadow-md' : 'bg-slate-900 text-slate-300'}`}
                   >
                     ไม่ผ่าน
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTemporaryPin({ ...temporaryPin, status: 'conditional' })}
+                    className={`py-1.5 rounded-xl font-bold text-[11px] ${temporaryPin.status === 'conditional' ? 'bg-amber-600 text-white shadow-md' : 'bg-slate-900 text-amber-300'}`}
+                  >
+                    มีเงื่อนไข
                   </button>
                   <button
                     type="button"
@@ -485,43 +581,128 @@ export default function QCDrawingViewer({
         </div>
       )}
 
-      {/* 🌟 Detail Sheet สำหรับดู/ลบหมุดที่คลิกเลือก 🌟 */}
-      {selectedPinIndex !== null && annotations[selectedPinIndex] && (
-        <div className="absolute bottom-3 left-3 right-3 bg-slate-800/95 backdrop-blur-md border border-slate-700 rounded-xl p-3 text-white z-30 shadow-2xl flex items-center justify-between gap-3 animate-in slide-in-from-bottom-2">
-          <div className="flex items-center gap-3">
-            <span className={`px-2 py-1 rounded-lg text-xs font-mono font-bold ${getPinStatusStyle(annotations[selectedPinIndex].status).bgColor}`}>
-              {annotations[selectedPinIndex].pin_label}
-            </span>
-            <div>
-              <p className="text-xs font-bold">
-                {annotations[selectedPinIndex].measured_value !== null ? `ค่าที่วัด: ${annotations[selectedPinIndex].measured_value} ${annotations[selectedPinIndex].unit || ''}` : 'จุดตรวจพิกัด'}
-              </p>
-              {annotations[selectedPinIndex].remarks && (
-                <p className="text-[10px] text-slate-300 truncate max-w-xs">{annotations[selectedPinIndex].remarks}</p>
-              )}
+      {/* 🌟 Detail Sheet สำหรับดู/แก้ไข/ลบหมุดที่คลิกเลือก 🌟 */}
+      {selectedPinIndex !== null && annotations[selectedPinIndex] && (() => {
+        const pin = annotations[selectedPinIndex];
+        const statusStyle = getPinStatusStyle(pin.status);
+        const hasTarget = pin.target_value != null || pin.min_value != null || pin.max_value != null;
+        
+        return (
+          <div className="absolute bottom-3 left-3 right-3 bg-slate-900/95 backdrop-blur-md border border-slate-700 rounded-2xl p-3 sm:p-4 text-white z-30 shadow-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in slide-in-from-bottom-2">
+            <div className="flex items-start sm:items-center gap-3">
+              <span className={`px-2.5 py-1 rounded-xl text-xs font-mono font-bold ${statusStyle.bgColor} shadow-md`}>
+                {pin.pin_label}
+              </span>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-bold text-white">
+                    {pin.measured_value !== null ? `วัดได้จริง: ${pin.measured_value} ${pin.unit || ''}` : 'ยังไม่ได้วัด'}
+                  </span>
+                  {hasTarget && (
+                    <span className="text-[11px] font-mono text-purple-300 bg-purple-950/60 border border-purple-500/30 px-2 py-0.5 rounded-lg">
+                      {pin.target_value != null && `Target: ${pin.target_value} `}
+                      {pin.tolerance != null && `(±${pin.tolerance}) `}
+                      {pin.unit || ''}
+                    </span>
+                  )}
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${statusStyle.bgColor} text-white`}>
+                    {statusStyle.badgeText}
+                  </span>
+                </div>
+                {pin.remarks && (
+                  <p className="text-[11px] text-slate-300 mt-0.5">{pin.remarks}</p>
+                )}
+              </div>
             </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {!readOnly && onDeleteAnnotation && (
+
+            {/* Quick Edit Controls */}
+            {!readOnly && onUpdateAnnotation && (
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                <div className="flex items-center bg-slate-800 border border-slate-700 rounded-xl px-2 py-1 gap-1">
+                  <input
+                    type="number"
+                    step="any"
+                    value={pin.measured_value ?? ''}
+                    onChange={(e) => {
+                      const val = e.target.value === '' ? null : Number(e.target.value);
+                      const evalRes = evaluatePinMeasurement({
+                        measuredValue: val,
+                        targetValue: pin.target_value,
+                        tolerance: pin.tolerance,
+                        minValue: pin.min_value,
+                        maxValue: pin.max_value,
+                        unit: pin.unit
+                      });
+                      onUpdateAnnotation({
+                        ...pin,
+                        measured_value: val,
+                        status: evalRes.status === 'uninspected' ? 'passed' : evalRes.status
+                      });
+                    }}
+                    placeholder="แก้ไขค่าจริง"
+                    className="w-20 bg-transparent text-xs font-mono font-bold text-white outline-none text-right"
+                  />
+                  <span className="text-[11px] text-slate-400 font-bold">{pin.unit || ''}</span>
+                </div>
+
+                {/* Status Toggle Buttons */}
+                <div className="flex items-center bg-slate-800 rounded-xl p-0.5 border border-slate-700 gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => onUpdateAnnotation({ ...pin, status: 'passed' })}
+                    className={`px-2 py-1 rounded-lg text-[10px] font-bold ${pin.status === 'passed' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                  >
+                    ผ่าน
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onUpdateAnnotation({ ...pin, status: 'failed' })}
+                    className={`px-2 py-1 rounded-lg text-[10px] font-bold ${pin.status === 'failed' ? 'bg-rose-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                  >
+                    ไม่ผ่าน
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onUpdateAnnotation({ ...pin, status: 'conditional' })}
+                    className={`px-2 py-1 rounded-lg text-[10px] font-bold ${pin.status === 'conditional' ? 'bg-amber-600 text-white' : 'text-amber-400 hover:text-white'}`}
+                  >
+                    มีเงื่อนไข
+                  </button>
+                </div>
+
+                {onDeleteAnnotation && (
+                  <button
+                    onClick={() => {
+                      onDeleteAnnotation(selectedPinIndex);
+                      setSelectedPinIndex(null);
+                    }}
+                    className="p-1.5 text-rose-400 hover:text-rose-300 hover:bg-rose-950/50 rounded-lg transition"
+                    title="ลบจุดนี้"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
+
+                <button
+                  onClick={() => setSelectedPinIndex(null)}
+                  className="text-slate-400 hover:text-white p-1"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            )}
+
+            {readOnly && (
               <button
-                onClick={() => {
-                  onDeleteAnnotation(selectedPinIndex);
-                  setSelectedPinIndex(null);
-                }}
-                className="bg-rose-900/60 hover:bg-rose-800 text-rose-200 px-2.5 py-1 rounded-lg text-[10px] font-bold"
+                onClick={() => setSelectedPinIndex(null)}
+                className="text-slate-400 hover:text-white p-1"
               >
-                ลบจุดนี้
+                <X size={16} />
               </button>
             )}
-            <button
-              onClick={() => setSelectedPinIndex(null)}
-              className="text-slate-400 hover:text-white p-1"
-            >
-              <X size={16} />
-            </button>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

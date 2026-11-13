@@ -55,4 +55,25 @@ describe('scoped Sales status history', () => {
     expect(result).toHaveLength(3);
     expect(result.map(item => item.id || item.status)).toEqual(['Transferred', 'H2', 'H1']);
   });
+  it('places Transferred at the top of the timeline even when backdated before later intermediary steps', () => {
+    const recorded = [
+      { id: 'H1', status: 'Reserved', timestamp: '2026-09-03T10:00:00Z', note: 'Booking' },
+      { id: 'H2', status: 'Contracted', timestamp: '2026-11-11T15:17:00Z', note: 'Contract' },
+      { id: 'H3', status: 'DocumentPrep', timestamp: '2026-11-11T15:18:00Z', note: 'Doc' },
+      { id: 'H4', status: 'LoanProcessing', timestamp: '2026-11-11T15:19:00Z', note: 'Loan' },
+      { id: 'H5', status: 'Approved', timestamp: '2026-11-11T15:19:30Z', note: 'Approved' },
+      { id: 'H6', status: 'TransferPending', timestamp: '2026-11-11T15:21:00Z', note: 'Wait transfer' },
+      { id: 'H7', status: 'Transferred', timestamp: '2026-10-30T12:00:00Z', note: 'Actual transfer' },
+    ];
+    const result = mergeSalesTimeline(recorded, []);
+    expect(result.map(r => r.status)).toEqual([
+      'Transferred',
+      'TransferPending',
+      'Approved',
+      'LoanProcessing',
+      'DocumentPrep',
+      'Contracted',
+      'Reserved'
+    ]);
+  });
 });

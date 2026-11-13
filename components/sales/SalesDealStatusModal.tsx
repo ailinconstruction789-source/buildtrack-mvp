@@ -44,8 +44,8 @@ export interface SalesDealEditorModel {
   lockReason?: 'protected_crm' | 'read_only_role' | 'terminal_stage' | 'missing_record' | null;
   changed?: boolean;
 }
-const leadColumns = 'id,customer_name,phone,occupation,agent_name,status,crm_status,notes,project_name,interested_plot_id,interested_plot_name,updated_at';
-const saleColumns = 'id,lead_id,plot_id,booking_route,crm_stage,contract_status,sale_price,land_office_price,bank_name,payment_method,project_interest_id,external_booking_id,updated_at';
+const leadColumns = 'id,customer_name,phone,occupation,agent_name,status,crm_status,notes,project_name,interested_plot_id,interested_plot_name,transferred_date,updated_at';
+const saleColumns = 'id,lead_id,plot_id,booking_route,crm_stage,contract_status,sale_price,land_office_price,bank_name,payment_method,project_interest_id,external_booking_id,transferred_at,updated_at';
 const str = (value: unknown) => value == null ? '' : String(value);
 function draftOf(lead: Row | null, sale: Row | null): Draft {
   const details = customerDealDetails(lead?.notes);
@@ -65,6 +65,12 @@ function draftOf(lead: Row | null, sale: Row | null): Draft {
   };
 }
 
+function extractInitialEventDate(record: Record<string, unknown> | null | undefined): string {
+  const raw = (record as any)?.transferred_date || (record as any)?.transferredDate || (record as any)?.transferred_at || (record as any)?.transferredAt || (record as any)?.eventDate || (record as any)?.transactionDate;
+  if (!raw) return bangkokToday(new Date());
+  return typeof raw === 'string' && raw.includes('T') ? raw.split('T')[0] : String(raw);
+}
+
 /** Lead and native Project Map share all post-booking progress and confirmation rules. */
 export default function SalesDealStatusModal(props: Props) {
   const { lead, currentUser } = props;
@@ -82,7 +88,16 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
   draftRef.current = draft;
   const [note, setNote] = useState('');
   const [reason, setReason] = useState('');
-  const [eventDate, setEventDate] = useState(() => bangkokToday(new Date()));
+  const [eventDate, setEventDateState] = useState(() => extractInitialEventDate(lead));
+  const initialEventDateRef = useRef<string>(extractInitialEventDate(lead));
+  const isEventDateDirtyRef = useRef(false);
+  const setEventDate = useCallback((valOrUpdater: any) => {
+    setEventDateState(prev => {
+      const next = typeof valOrUpdater === 'function' ? valOrUpdater(prev) : valOrUpdater;
+      isEventDateDirtyRef.current = Boolean(initialEventDateRef.current && next !== initialEventDateRef.current);
+      return next;
+    });
+  }, []);
   const [confirmed, setConfirmed] = useState(false);
   const [cancelCategory, setCancelCategory] = useState('booking_cancelled');
   const [busy, setBusy] = useState(false);
@@ -159,8 +174,9 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
     return unsub;
   }, [leadId, suppliedSaleId]);
 
+  const eventDateChanged = Boolean(initialEventDateRef.current && eventDate && eventDate !== initialEventDateRef.current);
   const needsStatusSync = Boolean((leadInitial.current && leadInitial.current !== target) || (lead && (lead as any).status !== salesDealLeadStatus(target)));
-  const changed = Boolean((originalBaseline.current || baseline) && (target !== initial || needsStatusSync || note.trim() || reason.trim() || dirtyFieldsRef.current.size > 0));
+  const changed = Boolean((originalBaseline.current || baseline) && (target !== initial || needsStatusSync || eventDateChanged || note.trim() || reason.trim() || dirtyFieldsRef.current.size > 0));
   const isDirtyRef = useRef(changed);
   isDirtyRef.current = changed;
   const initialRef = useRef(initial);
@@ -262,10 +278,11 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         const values = draftOf(currentLead, currentSale);
         serverSnapshot.current = { stage, values, leadStage: currentLeadStage };
 
-        const isWorkflowDirty = targetRef.current !== initialRef.current || noteRef.current.trim() !== '' || reasonRef.current.trim() !== '';
+        const isWorkflowDirty = targetRef.current !== initialRef.current || isEventDateDirtyRef.current || noteRef.current.trim() !== '' || reasonRef.current.trim() !== '';
         const hasCustomerFieldDraft = dirtyFieldsRef.current.size > 0;
         const hasLocalChanges = Boolean(originalBaseline.current && (hasCustomerFieldDraft || isWorkflowDirty));
 
+        const serverEventDate = extractInitialEventDate(currentLead || currentSale || lead);
         if (!hasLocalChanges) {
           originalBaseline.current = { ...values };
           setBaselineState({ ...values });
@@ -276,6 +293,14 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
           setTarget(stage);
           setCancelCategory(stage === 'loan_rejected' ? 'final_loan_rejection' : stage === 'downpayment' ? 'downpayment_abandoned' : 'booking_cancelled');
           setConflictNotice(null);
+          if (serverEventDate) {
+            setEventDateState(serverEventDate);
+            initialEventDateRef.current = serverEventDate;
+            isEventDateDirtyRef.current = false;
+          }
+        } else if (!isEventDateDirtyRef.current && serverEventDate) {
+          setEventDateState(serverEventDate);
+          initialEventDateRef.current = serverEventDate;
         } else {
           const base = originalBaseline.current || { ...values };
           let fieldConflict: string | null = null;
@@ -327,7 +352,7 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
     return () => { cancelled = true; controller.abort(); };
   }, [editable, leadId, suppliedSaleId, projectName, actorId, lead.status, lead.crm_status, lead.crm_stage, (lead as any).updated_at, refreshTrigger]);
   const choices = [initial, ...salesDealNextStages(initial, draft.method)];
-  const lifecycle = target !== initial && ['transferred', 'handover', 'cancelled'].includes(target);
+  const lifecycle = ['transferred', 'handover', 'cancelled'].includes(target);
   const reasonRequired = target !== initial && ['loan_rejected', 'cancelled'].includes(target);
   async function save(options?: { confirmedBySubmit?: boolean }) {
     if (!editable || !resolved || !baseline || inFlight.current || (!changed && !progress.current.payload)) return;
@@ -420,10 +445,10 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         if (stageChanged || saleNeedsStatusSync) Object.assign(patch, { crm_stage: submitted.target, contract_status: targetContractStatus });
         if (dirtyFieldsRef.current.has('method') && submitted.draft.method !== originalBaseline.current?.method) patch.payment_method = submitted.draft.method;
         const stamp = ['transferred', 'handover', 'cancelled'].includes(submitted.target) ? new Date(submitted.eventDate + 'T12:00:00+07:00').toISOString() : new Date().toISOString();
-        if ((stageChanged || saleNeedsStatusSync) && submitted.target === 'contracted') patch.contracted_at = stamp;
-        if ((stageChanged || saleNeedsStatusSync) && submitted.target === 'transferred') patch.transferred_at = stamp;
-        if ((stageChanged || saleNeedsStatusSync) && submitted.target === 'handover') patch.crm_handover_at = stamp;
-        if ((stageChanged || saleNeedsStatusSync) && submitted.target === 'cancelled') Object.assign(patch, { cancelled_at: stamp, cancellation_reason: submitted.reason, cancellation_category: submitted.cancelCategory });
+        if ((stageChanged || saleNeedsStatusSync || eventDateChanged) && submitted.target === 'contracted') patch.contracted_at = stamp;
+        if ((stageChanged || saleNeedsStatusSync || eventDateChanged || submitted.target === 'transferred') && submitted.target === 'transferred') patch.transferred_at = stamp;
+        if ((stageChanged || saleNeedsStatusSync || eventDateChanged) && submitted.target === 'handover') patch.crm_handover_at = stamp;
+        if ((stageChanged || saleNeedsStatusSync || eventDateChanged) && submitted.target === 'cancelled') Object.assign(patch, { cancelled_at: stamp, cancellation_reason: submitted.reason, cancellation_category: submitted.cancelCategory });
         if (dirtyFieldsRef.current.has('price') && submitted.draft.price !== originalBaseline.current?.price) patch.sale_price = submitted.draft.price.trim() ? Number(submitted.draft.price.replace(/,/g, '')) : null;
         if (dirtyFieldsRef.current.has('landOfficePrice') && submitted.draft.landOfficePrice !== originalBaseline.current?.landOfficePrice) patch.land_office_price = submitted.draft.landOfficePrice?.trim() ? Number(submitted.draft.landOfficePrice.replace(/,/g, '')) : null;
         if (dirtyFieldsRef.current.has('bank') && submitted.draft.bank !== originalBaseline.current?.bank) patch.bank_name = submitted.draft.bank.trim() || null;
@@ -454,7 +479,7 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         const added = `[${stamp} อัปเดตข้อมูลการขาย โดย ${currentUser?.username || currentUser?.displayName || 'ฝ่ายขาย'}] ${option.label}\n${customerDealSummary(dealPrice, dealBank, effectiveLandOfficePrice)}\n• วิธีชำระเงิน: ${dealMethod === 'cash' ? 'เงินสด' : 'กู้ธนาคาร'}${submitted.reason ? '\n• เหตุผล: ' + submitted.reason : ''}${lifecycle ? '\n• วันที่ทำรายการ: ' + submitted.eventDate : ''}${submitted.note ? '\n' + submitted.note : ''}`;
         const patch: Row = { notes: `${added}\n\n${str(currentLead?.notes)}`, updated_at: stamp };
         if (stageChanged || leadInitial.current !== submitted.target || leadNeedsStatusSync) Object.assign(patch, { status: targetLeadStatus, crm_status: option.label });
-        if ((stageChanged || leadNeedsStatusSync || !currentLead?.transferred_date) && submitted.target === 'transferred') patch.transferred_date = new Date(submitted.eventDate + 'T12:00:00+07:00').toISOString();
+        if ((stageChanged || leadNeedsStatusSync || eventDateChanged || !currentLead?.transferred_date || submitted.target === 'transferred') && submitted.target === 'transferred') patch.transferred_date = new Date(submitted.eventDate + 'T12:00:00+07:00').toISOString();
         if (stageChanged && submitted.target === 'cancelled') patch.lost_reason = submitted.reason;
         for (const [key, column] of [['name', 'customer_name'], ['phone', 'phone'], ['occupation', 'occupation'], ['agentName', 'agent_name']] as const) {
           if (dirtyFieldsRef.current.has(key)) patch[column] = submitted.draft[key]?.trim() || null;
@@ -467,20 +492,37 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         progress.current.lead = true;
       }
       if (!mounted.current) return;
-      const needsHistoryEntry = stageChanged || leadNeedsStatusSync || saleNeedsStatusSync || (!resolved.leadId && submitted.note);
+      const isLifecycleTarget = ['transferred', 'handover', 'cancelled'].includes(submitted.target);
+      const historyCreatedAt = isLifecycleTarget ? new Date(submitted.eventDate + 'T12:00:00+07:00').toISOString() : submitted.occurredAt;
+      const needsHistoryEntry = stageChanged || leadNeedsStatusSync || saleNeedsStatusSync || eventDateChanged || (!resolved.leadId && submitted.note) || (submitted.target === 'transferred');
       if (!progress.current.history && needsHistoryEntry) {
-        const historyCreatedAt = lifecycle ? new Date(submitted.eventDate + 'T12:00:00+07:00').toISOString() : submitted.occurredAt;
-        const checkQ = await supabase.from('status_history')
-          .select('id')
+        const baseCheckQ = supabase.from('status_history')
+          .select('id,created_at')
           .eq('entity_type', resolved.leadId ? 'lead' : 'sale')
           .eq('entity_id', resolved.leadId || resolved.saleId)
-          .eq('new_status', submitted.target)
-          .limit(1);
+          .eq('new_status', submitted.target);
+        const checkQ = await ((baseCheckQ as any).order ? (baseCheckQ as any).order('created_at', { ascending: false }).limit(1) : baseCheckQ.limit(1));
+
+        const recordedStamp = submitted.occurredAt || new Date().toISOString();
+        const detail = [
+          submitted.reason,
+          submitted.note,
+          effectiveBank ? `ธนาคาร: ${effectiveBank}` : '',
+          `วิธีชำระเงิน: ${effectiveMethod === 'cash' ? 'เงินสด' : 'กู้ธนาคาร'}`,
+          effectiveLandOfficePrice ? `ราคา ทด.13: ฿${effectiveLandOfficePrice.toLocaleString('th-TH')}` : '',
+          `[บันทึกเข้าระบบ: ${recordedStamp}]`
+        ].filter(Boolean).join(' | ');
 
         if (checkQ.data && Array.isArray(checkQ.data) && checkQ.data.length > 0) {
+          const existingHistoryId = checkQ.data[0].id;
+          if (eventDateChanged || checkQ.data[0].created_at !== historyCreatedAt) {
+            await supabase.from('status_history').update({
+              created_at: historyCreatedAt,
+              changed_by: `${currentUser?.username || currentUser?.displayName || 'ฝ่ายขาย'}${detail ? ' (' + detail + ')' : ''}`
+            }).eq('id', existingHistoryId);
+          }
           progress.current.history = true;
         } else {
-          const detail = [submitted.reason, submitted.note, effectiveBank ? `ธนาคาร: ${effectiveBank}` : '', `วิธีชำระเงิน: ${effectiveMethod === 'cash' ? 'เงินสด' : 'กู้ธนาคาร'}`, effectiveLandOfficePrice ? `ราคา ทด.13: ฿${effectiveLandOfficePrice.toLocaleString('th-TH')}` : ''].filter(Boolean).join(' | ');
           const result = await supabase.from('status_history').insert({
             entity_type: resolved.leadId ? 'lead' : 'sale', entity_id: resolved.leadId || resolved.saleId,
             old_status: initial, new_status: submitted.target,
@@ -494,7 +536,7 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
       }
 
       const targetPlotId = currentSale?.plot_id || currentLead?.interested_plot_id || (lead as any)?.plot || (lead as any)?.plotId;
-      if (targetPlotId && (stageChanged || leadNeedsStatusSync || saleNeedsStatusSync)) {
+      if (targetPlotId && (stageChanged || leadNeedsStatusSync || saleNeedsStatusSync || submitted.target === 'transferred')) {
         if (submitted.target === 'transferred') {
           try {
             await supabase.from('plots').update({ sale_status: 'transferred', has_customer: true }).eq('id', targetPlotId);
@@ -513,6 +555,8 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
       dirtyFieldsRef.current.clear();
       originalBaseline.current = { ...submitted.draft };
       setBaselineState({ ...submitted.draft });
+      initialEventDateRef.current = submitted.eventDate;
+      isEventDateDirtyRef.current = false;
       if (mounted.current) onSaved(`อัปเดตข้อมูลลูกค้าและการขายแล้ว${stageChanged ? ` — ${option.label}` : ''}`);
     } catch (failure) {
       if (!mounted.current) return;
@@ -552,6 +596,12 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         draftRef.current = next;
         return next;
       });
+    }
+    const serverEventDate = extractInitialEventDate((authoritative?.values as any) || lead);
+    if (serverEventDate) {
+      setEventDateState(serverEventDate);
+      initialEventDateRef.current = serverEventDate;
+      isEventDateDirtyRef.current = false;
     }
     setConflictNotice(null);
     setError("");

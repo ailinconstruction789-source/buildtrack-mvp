@@ -36,7 +36,16 @@ export default function AdminUsersView({
         <div className="flex flex-col sm:flex-row gap-3 mb-8">
           <input type="text" value={newUser.name} onChange={(e) => setNewUser({ ...newUser, name: e.target.value })} placeholder="ชื่อผู้ใช้ใหม่..." className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:border-rose-500" />
           <select value={newUser.role} onChange={(e) => setNewUser({ ...newUser, role: e.target.value })} className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:border-rose-500 text-slate-700">
-            <option value="Foreman">Foreman</option><option value="Site Engineer">Site Engineer</option><option value="QC">QC</option><option value="Project Planner">Project Planner (วางแผน)</option><option value="Procurement">Procurement (จัดจ้าง)</option><option value="Store">Store (สโตร์)</option><option value="Sales">Sales (ฝ่ายขาย)</option><option value="Admin">Admin</option><option value="Owner">Owner (ผู้บริหาร / ดูได้อย่างเดียว)</option>
+            <option value="Foreman">Foreman</option>
+            <option value="Site Engineer">Site Engineer (วิศวกรสนาม)</option>
+            <option value="Project Engineer">Project Engineer (วิศวกรโครงการ / PE)</option>
+            <option value="QC">QC</option>
+            <option value="Project Planner">Project Planner (วางแผน)</option>
+            <option value="Procurement">Procurement (จัดจ้าง)</option>
+            <option value="Store">Store (สโตร์)</option>
+            <option value="Sales">Sales (ฝ่ายขาย)</option>
+            <option value="Admin">Admin</option>
+            <option value="Owner">Owner (ผู้บริหาร / ดูได้อย่างเดียว)</option>
           </select>
           <button onClick={handleAddUser} disabled={isSubmitting} className="bg-rose-600 text-white px-6 py-3 rounded-xl font-black shadow-lg hover:bg-rose-700 flex justify-center items-center gap-2">{isSubmitting ? <Loader2 className="animate-spin" size={18} /> : 'เพิ่มผู้ใช้'}</button>
         </div>
@@ -53,7 +62,7 @@ export default function AdminUsersView({
                   <span className="font-bold text-slate-700 block text-sm sm:text-base">{u.username}</span>
                 </div>
                 <div className="flex items-center gap-2 mt-1">
-                  <span className={`text-[9px] sm:text-xs font-black uppercase tracking-widest inline-block ${u.role === 'Admin' ? 'text-rose-500' : u.role === 'QC' ? 'text-purple-500' : u.role === 'Site Engineer' ? 'text-blue-500' : u.role === 'Project Planner' ? 'text-pink-500' : u.role === 'Procurement' ? 'text-emerald-500' : 'text-orange-500'}`}>{u.role}</span>
+                  <span className={`text-[9px] sm:text-xs font-black uppercase tracking-widest inline-block ${u.role === 'Admin' ? 'text-rose-500' : u.role === 'QC' ? 'text-purple-500' : (u.role === 'Site Engineer' || u.role === 'Project Engineer') ? 'text-blue-500' : u.role === 'Project Planner' ? 'text-pink-500' : u.role === 'Procurement' ? 'text-emerald-500' : 'text-orange-500'}`}>{u.role}</span>
                   {u.last_seen_at && !isOnline ? <span className="text-[9px] text-slate-400">ล่าสุด: {new Date(u.last_seen_at).toLocaleString('th-TH', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' })}</span> : null}
                 </div>
               </div>

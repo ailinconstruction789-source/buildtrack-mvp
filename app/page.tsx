@@ -2458,7 +2458,7 @@ export default function ConstructionApp() {
   };
   const handleReviewAction = async (isApproved: any) => {
     const isCurrentTimeline = captureTimelineScope();
-    setIsSending(true); const finalP = isApproved ? 100 : 95; const roleLabel = currentUserRole === 'Site Engineer' ? 'Site Engineer' : 'QC'; const actionLabel = isApproved ? `${roleLabel} อนุมัติ` : `${roleLabel} แจ้งแก้ไข`;
+    setIsSending(true); const finalP = isApproved ? 100 : 95; const roleLabel = (currentUserRole === 'Site Engineer' || currentUserRole === 'Project Engineer') ? currentUserRole : 'QC'; const actionLabel = isApproved ? `${roleLabel} อนุมัติ` : `${roleLabel} แจ้งแก้ไข`;
     try {
       let imageUrls: any[] = [];
       if (selectedFiles.length > 0) {
@@ -2474,7 +2474,7 @@ export default function ConstructionApp() {
       if (error) throw error;
       if (!isApproved) {
         const notifPayload = [];
-        if (currentUserRole === 'Site Engineer') { notifPayload.push({ plot_id: selectedPlot.id, task_template_id: selectedTask.id, message: `ตีกลับงานโดย Site Engineer: ${selectedTask.task_name}`, target_user: selectedPlot.foreman, target_role: 'Foreman' }); }
+        if (currentUserRole === 'Site Engineer' || currentUserRole === 'Project Engineer') { notifPayload.push({ plot_id: selectedPlot.id, task_template_id: selectedTask.id, message: `ตีกลับงานโดย ${currentUserRole}: ${selectedTask.task_name}`, target_user: selectedPlot.foreman, target_role: 'Foreman' }); }
         else if (currentUserRole === 'QC') { notifPayload.push({ plot_id: selectedPlot.id, task_template_id: selectedTask.id, message: `ตีกลับงานโดย QC: ${selectedTask.task_name}`, target_user: selectedPlot.foreman, target_role: 'Foreman' }); notifPayload.push({ plot_id: selectedPlot.id, task_template_id: selectedTask.id, message: `QC ตีกลับงานที่อนุมัติแล้ว: ${selectedTask.task_name}`, target_user: null, target_role: 'Site Engineer' }); }
         if (notifPayload.length > 0) await supabase.from('notifications').insert(notifPayload);
       }
@@ -2763,7 +2763,8 @@ export default function ConstructionApp() {
   const isProcurement = currentUserRole?.toLowerCase() === 'procurement';
   const isProjectPlanner = currentUserRole?.toLowerCase() === 'project planner';
   const isQC = currentUserRole?.toLowerCase() === 'qc';
-  const isSiteEngineer = currentUserRole?.toLowerCase() === 'site engineer';
+  const isProjectEngineer = currentUserRole?.toLowerCase() === 'project engineer';
+  const isSiteEngineer = currentUserRole?.toLowerCase() === 'site engineer' || isProjectEngineer;
   const isForeman = currentUserRole?.toLowerCase() === 'foreman';
   const isOwner = currentUserRole?.toLowerCase() === 'owner';
   const isStore = currentUserRole?.toLowerCase() === 'store';
@@ -5937,7 +5938,7 @@ export default function ConstructionApp() {
 
                     <div className="flex justify-between items-center text-[10px] sm:text-xs text-slate-500 mt-2 border-t border-slate-100 pt-2.5">
                       <span className="flex items-center gap-1 font-bold text-slate-400"><HardHat size={12} /> ผู้แจ้ง: {defect.reported_by}</span>
-                      {defect.status === 'pending' && ['QC', 'Foreman', 'Site Engineer', 'Admin'].includes(currentUserRole) && (
+                      {defect.status === 'pending' && ['QC', 'Foreman', 'Site Engineer', 'Project Engineer', 'Admin'].includes(currentUserRole) && (
                         <button onClick={async () => {
                           await supabase.from('defects').update({ status: 'resolved' }).eq('id', defect.id);
                           const { data } = await supabase.from('defects').select('*'); setDefects(data || []);
@@ -5952,7 +5953,7 @@ export default function ConstructionApp() {
             </div>
 
             {/* ช่องพิมพ์และแนบรูป */}
-            {['QC', 'Foreman', 'Site Engineer', 'Admin'].includes(currentUserRole) && (
+            {['QC', 'Foreman', 'Site Engineer', 'Project Engineer', 'Admin'].includes(currentUserRole) && (
               <div className="p-3 sm:p-4 border-t border-slate-200 bg-white shrink-0">
                 {/* โซนแสดงรูปที่เลือก */}
                 {defectFiles.length > 0 && (

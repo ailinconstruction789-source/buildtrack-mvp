@@ -11,6 +11,7 @@ function createChainMock(result: any) {
   const chain: any = {
     select: () => chain,
     eq: () => chain,
+    in: () => chain,
     order: () => chain,
     limit: () => chain,
     maybeSingle: () => promise,
@@ -233,7 +234,7 @@ describe('QCStandardConfigView Component (Step 1)', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/กำหนดการใช้งานฟอร์ม QC \(Scope & Bulk Assignment\)/i)).toBeInTheDocument();
+      expect(screen.getByText(/เปิดใช้งานฟอร์มตรวจ QC กับแปลงบ้าน/i)).toBeInTheDocument();
     });
   });
 

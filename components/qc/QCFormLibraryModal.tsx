@@ -66,7 +66,8 @@ export default function QCFormLibraryModal({
   const [applyToAllHouseTypes, setApplyToAllHouseTypes] = useState<boolean>(false);
   const [autoSyncCode, setAutoSyncCode] = useState<boolean>(true);
 
-  const canEdit = currentUserRole === 'Admin' || currentUserRole === 'Owner' || currentUserRole === 'QC';
+  const isAdmin = currentUserRole === 'Admin' || currentUserRole === 'Owner';
+  const canEdit = isAdmin;
 
   // Fetch templates
   const fetchTemplates = async () => {
@@ -278,6 +279,43 @@ export default function QCFormLibraryModal({
     }
   };
 
+  // Delete template (Admin only)
+  const handleDeleteTemplate = async (tmpl: QCFormTemplate) => {
+    if (!isAdmin) {
+      alert('เฉพาะผู้ดูแลระบบ (Admin) เท่านั้นที่สามารถลบแบบฟอร์มได้');
+      return;
+    }
+
+    const confirmDelete = window.confirm(
+      `คุณแน่ใจหรือไม่ว่าต้องการลบแบบฟอร์ม "${tmpl.title}" (${tmpl.code} v${tmpl.version}) ออกจากระบบ?\n\nข้อตรวจและข้อมูลทั้งหมดของฟอร์มนี้จะถูกลบอย่างถาวร`
+    );
+    if (!confirmDelete) return;
+
+    setLoading(true);
+    try {
+      // Clean standard sets referencing this template
+      await supabase.from('qc_standard_sets').delete().eq('form_template_id', tmpl.id);
+      // Clean plot task configs referencing this template
+      await supabase.from('qc_plot_task_configs').delete().eq('form_template_id', tmpl.id);
+      // Delete form items
+      await supabase.from('qc_form_items').delete().eq('form_template_id', tmpl.id);
+      // Delete template
+      const { error } = await supabase.from('qc_form_templates').delete().eq('id', tmpl.id);
+      if (error) throw error;
+
+      if (editingTemplate?.id === tmpl.id) {
+        setEditingTemplate(null);
+      }
+
+      await fetchTemplates();
+    } catch (err: any) {
+      console.error('Error deleting template:', err);
+      alert(err.message || 'ไม่สามารถลบแบบฟอร์มได้');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -401,22 +439,31 @@ export default function QCFormLibraryModal({
 
                       <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
                         <div className="flex items-center gap-1">
-                          {canEdit && (
+                          {isAdmin && (
                             <button
                               onClick={() => {
                                 setAutoSyncCode(false);
                                 setEditingTemplate(tmpl);
                               }}
-                              className="p-1.5 text-slate-600 hover:text-purple-600 hover:bg-purple-50 rounded-lg text-xs font-bold"
-                              title="แก้ไข"
+                              className="p-1.5 text-slate-600 hover:text-purple-600 hover:bg-purple-50 rounded-lg text-xs font-bold transition-colors"
+                              title="แก้ไขฟอร์ม (เฉพาะ Admin)"
                             >
                               <Edit3 size={16} />
                             </button>
                           )}
-                          {canEdit && tmpl.status === 'published' && (
+                          {isAdmin && (
+                            <button
+                              onClick={() => handleDeleteTemplate(tmpl)}
+                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg text-xs font-bold transition-colors"
+                              title="ลบฟอร์ม (เฉพาะ Admin)"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          )}
+                          {isAdmin && tmpl.status === 'published' && (
                             <button
                               onClick={() => handleCloneNewVersion(tmpl)}
-                              className="p-1.5 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg text-xs font-bold flex items-center gap-1"
+                              className="p-1.5 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors"
                               title="สร้างเวอร์ชันใหม่ (Clone)"
                             >
                               <Copy size={14} />
@@ -475,6 +522,17 @@ export default function QCFormLibraryModal({
 
                   {!isPreviewMode && (
                     <>
+                      {editingTemplate.id && isAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteTemplate(editingTemplate)}
+                          className="px-3 py-1.5 text-rose-600 hover:bg-rose-50 border border-rose-200 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors"
+                          title="ลบฟอร์มนี้ออกจากระบบ"
+                        >
+                          <Trash2 size={14} />
+                          <span>ลบฟอร์ม</span>
+                        </button>
+                      )}
                       <button
                         onClick={() => handleSaveTemplate(false)}
                         className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold"
