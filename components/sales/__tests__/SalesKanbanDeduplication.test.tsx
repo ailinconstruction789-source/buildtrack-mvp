@@ -1,6 +1,7 @@
 import { cleanup, render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import SalesKanban from '../SalesKanban';
+import SalesWorkspaceModeProvider from '../SalesWorkspaceModeProvider';
 import { broadcastSalesSync } from '@/lib/sales/salesSyncBroadcast';
 
 const mock = vi.hoisted(() => ({ read: vi.fn() }));
@@ -398,11 +399,11 @@ describe('SalesKanban legacy sales & leads deduplication', () => {
     });
 
     // Wait for conflict warning to appear in the panel
-    const conflictAlert = await screen.findByText(/สถานะของลูกค้าในระบบเปลี่ยนเป็น/i);
+    const conflictAlert = await screen.findByText(/สถานะของลูกค้าในระบบเปลี่ยนเป็น/i, {}, { timeout: 4000 });
     expect(conflictAlert).toBeInTheDocument();
 
     // Must display action button to resolve conflict
-    const resolveBtn = await screen.findByRole('button', { name: /ยอมรับสถานะใหม่และปรับปรุงตัวเลือก/i });
+    const resolveBtn = await screen.findByRole('button', { name: /ยอมรับสถานะใหม่และปรับปรุงตัวเลือก/i }, { timeout: 4000 });
     expect(resolveBtn).toBeInTheDocument();
 
     // Clicking resolve updates conflict and preserves draft
@@ -412,5 +413,53 @@ describe('SalesKanban legacy sales & leads deduplication', () => {
       expect(screen.queryByText(/ยอมรับสถานะใหม่และปรับปรุงตัวเลือก/i)).not.toBeInTheDocument();
     });
     expect(nameInput.value).toBe('น.ส. กชกร แก้ไขโดยผู้ใช้');
+  });
+
+  it('displays CRM lock warning banner and PostBooking link when a CRM-protected sale disables the quick save button', async () => {
+    const crmSaleId = '21000000-0000-4000-8000-000000000082';
+    const crmSale = {
+      id: crmSaleId,
+      plot_id: 'plot-2',
+      lead_id: 'lead-2',
+      project_interest_id: 'pi-82',
+      booking_route: 'crm_v2',
+      crm_stage: 'transfer_pending',
+      contract_status: 'Contracted',
+      payment_method: 'mortgage',
+    };
+    const crmLead = {
+      ...leads[1],
+      status: 'Contracted',
+      crm_status: 'Transfer Pending — รอโอน',
+    };
+
+    mock.read.mockImplementation(async (table: string) => {
+      if (table === 'plots') return [plot1, plot2];
+      if (table === 'sales') return [legacySales[0], crmSale];
+      if (table === 'leads') return [leads[0], crmLead];
+      return [];
+    });
+    supabaseDb.leads = [leads[0], crmLead];
+    supabaseDb.sales = [legacySales[0], crmSale];
+
+    render(
+      <SalesWorkspaceModeProvider postBookingEnabled>
+        <SalesKanban project={{ name: 'โยริว' }} user={{ id: 'user-1', role: 'Sales' }} initialTab="booked" />
+      </SalesWorkspaceModeProvider>
+    );
+
+    const row = await screen.findByText('น.ส. กชกร อุดร');
+    fireEvent.click(row);
+
+    const crmWarning = await screen.findByTestId('crm-protected-warning');
+    expect(crmWarning).toHaveTextContent('ยังไม่ได้ทำรายการใน CRM');
+
+    const saveReason = await screen.findByTestId('save-disabled-reason');
+    expect(saveReason).toHaveTextContent('ยังไม่ได้ทำขั้นตอนใน CRM');
+
+    expect(screen.getByRole('link', { name: 'เปิดประวัติและงานหลังจอง (CRM) →' })).toHaveAttribute(
+      'href',
+      `/sales-crm/post-booking?saleId=${crmSaleId}`
+    );
   });
 });

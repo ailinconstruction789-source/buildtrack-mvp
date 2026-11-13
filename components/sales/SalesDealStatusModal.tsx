@@ -40,6 +40,9 @@ export interface SalesDealEditorModel {
   save: (options?: { confirmedBySubmit?: boolean }) => Promise<void>;
   conflictNotice?: string | null;
   resolveConflict?: () => void;
+  protectedSale?: { id: string; stage: string; editingAvailable?: boolean } | null;
+  lockReason?: 'protected_crm' | 'read_only_role' | 'terminal_stage' | 'missing_record' | null;
+  changed?: boolean;
 }
 const leadColumns = 'id,customer_name,phone,occupation,agent_name,status,crm_status,notes,project_name,interested_plot_id,interested_plot_name,updated_at';
 const saleColumns = 'id,lead_id,plot_id,booking_route,crm_stage,contract_status,sale_price,land_office_price,bank_name,payment_method,project_interest_id,external_booking_id,updated_at';
@@ -536,11 +539,24 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
     setError("");
   };
   const canSave = Boolean(editable && !protectedSale && !busy && !loading && resolved && (changed || progress.current.payload) && !conflictNotice);
+  const lockReason: SalesDealEditorModel['lockReason'] = protectedSale
+    ? 'protected_crm'
+    : !canEditSalesRole(currentUser?.role)
+    ? 'read_only_role'
+    : terminal
+    ? 'terminal_stage'
+    : !Boolean(leadId || suppliedSaleId)
+    ? 'missing_record'
+    : null;
+  const protectedSummary = protectedSale
+    ? { id: protectedSale.id, stage: protectedSale.stage, editingAvailable: protectedSale.editingAvailable }
+    : null;
   if (renderEditor) return renderEditor({ draft: protectedSale ? { ...draft, ...protectedSale.details } : draft, setDraft,
     initial: protectedSale?.stage || initial, target: protectedSale?.stage || target, setTarget,
     note, setNote, reason, setReason, eventDate, setEventDate, choices: protectedSale ? [protectedSale.stage] : choices,
     busy, loading, locked: locked || !editable || Boolean(protectedSale), editable: editable && !protectedSale,
-    error, resolved, canSave, save, conflictNotice, resolveConflict });
+    error, resolved, canSave, save, conflictNotice, resolveConflict,
+    protectedSale: protectedSummary, lockReason, changed });
   return <SalesOverlay role="dialog" aria-modal="true" aria-label="สถานะหลังจอง" className="fixed inset-0 z-[300] bg-slate-950/70 flex items-center justify-center p-4">
     <div className="bg-white rounded-2xl w-full max-w-lg p-5 space-y-4 max-h-[90vh] overflow-y-auto">
       <div className="flex justify-between gap-3"><h2 className="font-bold">{editable && !protectedSale ? 'อัปเดตข้อมูลลูกค้าและการขาย' : 'รายละเอียดสถานะลูกค้า'}</h2><button type="button" disabled={busy} onClick={onClose} className="text-sm font-bold">ปิด</button></div>

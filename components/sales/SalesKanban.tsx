@@ -13,6 +13,7 @@ import RentalActionModal from './RentalActionModal';
 import RentalPaymentLedgerModal from './RentalPaymentLedgerModal';
 import CentralLeadBookingModal from './CentralLeadBookingModal';
 import SalesDealStatusModal, { type SalesDealEditorModel } from './SalesDealStatusModal';
+import PostBookingLink from './PostBookingLink';
 import { SALES_BANK_LOGOS as BANK_LOGOS } from '@/lib/sales/banks';
 import { salesDealStageOf, salesDealStages } from '@/lib/sales/dealStatus';
 import { customerDealDetails, extractAgreedPrices, extractExpectedTransferDate, updateExpectedTransferDateInNotes } from '@/lib/sales/customerDealDetails';
@@ -3161,6 +3162,39 @@ export default function SalesKanban({
                     </div>
                   )}
                   {editor?.error && <p role="alert" className="text-sm text-red-700">{editor.error}</p>}
+                  {!editor?.loading && editor?.protectedSale && (
+                    <div
+                      data-testid="crm-protected-warning"
+                      role="status"
+                      className="p-3.5 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-950 space-y-2 mb-3"
+                    >
+                      <div className="font-bold flex items-center gap-1.5 text-amber-900">
+                        <AlertTriangle size={15} className="shrink-0 text-amber-600" />
+                        <span>ยังไม่ได้ทำรายการใน CRM (รายการนี้ถูกล็อกให้ปรับสถานะผ่านระบบ CRM)</span>
+                      </div>
+                      <p className="text-amber-800 leading-relaxed">
+                        ดีลนี้เชื่อมกับระบบ CRM (สถานะปัจจุบัน: {salesDealStages.find(s => s.id === editor.protectedSale?.stage)?.label || editor.protectedSale.stage}) จึงล็อกการแก้สถานะและปรับเป็นโอนจากหน้าแผนผังโดยตรง กรุณาไปดำเนินการต่อในหน้างานหลังจอง (CRM)
+                      </p>
+                      {/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(editor.protectedSale.id) && (
+                        <div>
+                          <PostBookingLink saleId={editor.protectedSale.id} label="เปิดประวัติและงานหลังจอง (CRM) →" />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {!editor?.loading && !editor?.protectedSale && editor?.lockReason && (
+                    <div
+                      data-testid="deal-lock-warning"
+                      role="status"
+                      className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 mb-3"
+                    >
+                      {editor.lockReason === 'missing_record'
+                        ? '⚠️ ยังไม่ได้ทำ CRM หรือยังไม่พบข้อมูลลูกค้า/รายการขายที่เชื่อมกับแปลงนี้ จึงยังไม่สามารถบันทึกสถานะโอนได้'
+                        : editor.lockReason === 'terminal_stage'
+                        ? `ℹ️ สถานะปัจจุบันของรายการนี้ (${salesDealStages.find(s => s.id === editor.initial)?.label || editor.initial}) ไม่เปิดให้แก้ไขขั้นตอนเพิ่มเติมจากฟอร์มนี้`
+                        : 'ℹ️ สิทธิ์ผู้ใช้งานปัจจุบันเป็นแบบดูข้อมูลเท่านั้น ไม่สามารถบันทึกการเปลี่ยนแปลงได้'}
+                    </div>
+                  )}
                   <form onSubmit={handleUpdateCustomer} className="space-y-4 flex-1" autoComplete="off">
                     <div className="flex flex-col items-center p-4 bg-slate-50 border border-slate-100 rounded-2xl text-center mb-2">
                       <div className="w-14 h-14 bg-white rounded-full shadow-sm flex items-center justify-center text-2xl font-bold text-[#0f172a] mb-3">
@@ -3541,6 +3575,33 @@ export default function SalesKanban({
                     </div>
                     
                     <div className="pt-2 flex flex-col gap-2">
+                      {editor && !editor.loading && !editor.canSave && !editor.conflictNotice && (
+                        editor.protectedSale ? (
+                          <p data-testid="save-disabled-reason" className="text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                            ⚠️ ปุ่มบันทึกล็อกอยู่: รายการนี้ต้องอัปเดตสถานะในระบบ CRM (ยังไม่ได้ทำขั้นตอนใน CRM)
+                          </p>
+                        ) : editor.lockReason === 'missing_record' ? (
+                          <p data-testid="save-disabled-reason" className="text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                            ⚠️ ปุ่มบันทึกล็อกอยู่: ยังไม่ได้ทำ CRM หรือยังไม่พบรายการขายที่เชื่อมกับแปลงนี้
+                          </p>
+                        ) : editor.lockReason === 'terminal_stage' ? (
+                          <p data-testid="save-disabled-reason" className="text-xs font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                            ℹ️ รายการนี้อยู่ในสถานะสิ้นสุดแล้ว จึงไม่สามารถแก้ไขขั้นตอนเพิ่มเติมจากฟอร์มนี้ได้
+                          </p>
+                        ) : editor.lockReason === 'read_only_role' ? (
+                          <p data-testid="save-disabled-reason" className="text-xs font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                            ℹ️ สิทธิ์ผู้ใช้งานปัจจุบันเป็นแบบดูข้อมูลเท่านั้น
+                          </p>
+                        ) : editor.editable && editor.resolved && !editor.resolved.saleId ? (
+                          <p data-testid="save-disabled-reason" className="text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">
+                            ⚠️ ยังไม่มีรายการขาย (Sale / CRM) ผูกกับลูกค้ารายนี้
+                          </p>
+                        ) : editor.editable && !editor.changed ? (
+                          <p data-testid="save-disabled-reason" className="text-xs font-medium text-slate-500 text-center">
+                            เลือกสถานะใหม่ (เช่น รอโอน / โอนกรรมสิทธิ์) หรือแก้ไขข้อมูลก่อนกดบันทึก
+                          </p>
+                        ) : null
+                      )}
                       <button type="submit" disabled={editor ? !editor.canSave : isSubmitting} className={`w-full text-white font-bold py-3 rounded-xl transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 ${editCustomerForm.status === 'Cancelled' ? 'bg-red-600 hover:bg-red-700' : 'bg-[#0f172a] hover:bg-[#1e293b]'}`}>
                         {isSubmitting ? <><Loader2 className="animate-spin" size={18} /> กำลังบันทึก...</> : 'บันทึกการเปลี่ยนแปลง'}
                       </button>
