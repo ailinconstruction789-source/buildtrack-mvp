@@ -68,3 +68,72 @@ CREATE POLICY "Allow admin write assignments" ON public.plot_task_assignments
 FOR ALL TO authenticated 
 USING ((auth.jwt() -> 'user_metadata' ->> 'role') IN ('Admin', 'Owner', 'Project Planner', 'Site Engineer', 'Project Engineer')) 
 WITH CHECK ((auth.jwt() -> 'user_metadata' ->> 'role') IN ('Admin', 'Owner', 'Project Planner', 'Site Engineer', 'Project Engineer'));
+
+DROP POLICY IF EXISTS "Allow admin/planner write projects" ON public.projects;
+CREATE POLICY "Allow admin/planner write projects" ON public.projects 
+FOR ALL TO authenticated 
+USING ((auth.jwt() -> 'user_metadata' ->> 'role') IN ('Admin', 'Project Planner', 'Project Engineer', 'Owner')) 
+WITH CHECK ((auth.jwt() -> 'user_metadata' ->> 'role') IN ('Admin', 'Project Planner', 'Project Engineer', 'Owner'));
+
+DROP POLICY IF EXISTS "Allow admin/planner write plots" ON public.plots;
+CREATE POLICY "Allow admin/planner write plots" ON public.plots 
+FOR ALL TO authenticated 
+USING ((auth.jwt() -> 'user_metadata' ->> 'role') IN ('Admin', 'Project Planner', 'Project Engineer', 'Owner')) 
+WITH CHECK ((auth.jwt() -> 'user_metadata' ->> 'role') IN ('Admin', 'Project Planner', 'Project Engineer', 'Owner'));
+
+DROP POLICY IF EXISTS "Allow admin/planner write task_templates" ON public.task_templates;
+CREATE POLICY "Allow admin/planner write task_templates" ON public.task_templates 
+FOR ALL TO authenticated 
+USING ((auth.jwt() -> 'user_metadata' ->> 'role') IN ('Admin', 'Project Planner', 'Project Engineer', 'Owner')) 
+WITH CHECK ((auth.jwt() -> 'user_metadata' ->> 'role') IN ('Admin', 'Project Planner', 'Project Engineer', 'Owner'));
+
+-- 3. อัปเดตผู้ใช้เดิมที่เป็น Project Planner ให้เป็น Project Engineer (PE)
+UPDATE public.users SET role = 'Project Engineer' WHERE role = 'Project Planner';
+UPDATE auth.users 
+SET raw_user_meta_data = jsonb_set(COALESCE(raw_user_meta_data::jsonb, '{}'::jsonb), '{role}', '"Project Engineer"')
+WHERE (raw_user_meta_data ->> 'role') = 'Project Planner';
+
+-- 4. อัปเดต View vw_inspection_queue ให้รองรับสถานะ 'PE' (งานรอ PE พิจารณาเงื่อนไข)
+CREATE OR REPLACE VIEW vw_inspection_queue AS
+SELECT 
+    pta.plot_id,
+    pta.task_template_id,
+    pta.current_progress AS progress,
+    pta.latest_action AS action,
+    pta.latest_role AS role,
+    pta.latest_update_created_at AS created_at,
+    tt.task_name,
+    p.project_name,
+    p.foreman_name AS foreman,
+    (pta.latest_action LIKE '%ไม่อนุมัติ%' OR pta.latest_action LIKE '%ไม่ผ่าน%' OR pta.latest_action LIKE '%แจ้งแก้ไข%' OR pta.latest_action LIKE '%สั่งแก้%') AS "isRejected",
+    (EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - pta.latest_update_created_at)) / 86400 >= 2) AS "isUrgent",
+    CASE 
+        WHEN pta.current_progress = 100 AND (
+            pta.latest_action LIKE '%รอ PE%'
+            OR EXISTS (
+                SELECT 1 FROM qc_inspections qi 
+                WHERE qi.plot_id = pta.plot_id 
+                  AND qi.task_template_id = pta.task_template_id 
+                  AND qi.document_status = 'pending_pe'
+            )
+        ) THEN 'PE'
+        WHEN pta.current_progress = 100 AND (pta.latest_action = 'ส่งงาน 100%' OR pta.latest_role = 'Foreman') THEN 'Site Engineer'
+        WHEN pta.current_progress = 100 AND pta.latest_action = 'Site Engineer อนุมัติ' THEN 'QC'
+        WHEN pta.current_progress = 95 AND (pta.latest_action LIKE '%ไม่อนุมัติ%' OR pta.latest_action LIKE '%ไม่ผ่าน%' OR pta.latest_action LIKE '%แจ้งแก้ไข%' OR pta.latest_action LIKE '%สั่งแก้%') THEN 'Rework'
+        ELSE NULL
+    END AS "statusFor"
+FROM plot_task_assignments pta
+JOIN plots p ON p.id::text = pta.plot_id
+JOIN task_templates tt ON tt.id = pta.task_template_id
+WHERE (pta.current_progress = 100 AND (
+        pta.latest_action IN ('ส่งงาน 100%', 'Site Engineer อนุมัติ')
+        OR pta.latest_action LIKE '%รอ PE%'
+        OR pta.latest_role = 'Foreman'
+        OR EXISTS (
+            SELECT 1 FROM qc_inspections qi 
+            WHERE qi.plot_id = pta.plot_id 
+              AND qi.task_template_id = pta.task_template_id 
+              AND qi.document_status = 'pending_pe'
+        )
+   ))
+   OR (pta.current_progress = 95 AND (pta.latest_action LIKE '%ไม่อนุมัติ%' OR pta.latest_action LIKE '%ไม่ผ่าน%' OR pta.latest_action LIKE '%แจ้งแก้ไข%' OR pta.latest_action LIKE '%สั่งแก้%'));

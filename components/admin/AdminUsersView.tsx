@@ -38,9 +38,8 @@ export default function AdminUsersView({
           <select value={newUser.role} onChange={(e) => setNewUser({ ...newUser, role: e.target.value })} className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:border-rose-500 text-slate-700">
             <option value="Foreman">Foreman</option>
             <option value="Site Engineer">Site Engineer (วิศวกรสนาม)</option>
-            <option value="Project Engineer">Project Engineer (วิศวกรโครงการ / PE)</option>
+            <option value="Project Engineer">Project Engineer (วิศวกรโครงการ / วางแผน)</option>
             <option value="QC">QC</option>
-            <option value="Project Planner">Project Planner (วางแผน)</option>
             <option value="Procurement">Procurement (จัดจ้าง)</option>
             <option value="Store">Store (สโตร์)</option>
             <option value="Sales">Sales (ฝ่ายขาย)</option>

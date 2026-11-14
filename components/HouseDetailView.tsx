@@ -1399,7 +1399,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                               }
                               if (!latestQCUpdate && (
                                 act.includes('QC') ||
-                                role === 'QC'
+                                role === 'QC' || act.includes('PE อนุมัติ') || act.includes('PE สั่งแก้')
                               )) {
                                 latestQCUpdate = u;
                               }
@@ -1411,11 +1411,11 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                             if (!latestSEUpdate && (mapRole === 'Site Engineer' || mapAction.includes('Site Engineer'))) {
                               latestSEUpdate = latestUpdatesMap[key];
                             }
-                            if (!latestQCUpdate && (mapRole === 'QC' || mapAction.includes('QC'))) {
+                            if (!latestQCUpdate && (mapRole === 'QC' || mapAction.includes('QC') || mapAction.includes('PE อนุมัติ') || mapAction.includes('PE สั่งแก้'))) {
                               latestQCUpdate = latestUpdatesMap[key];
                             }
 
-                            const isQCAction = (u: any) => u && (u.role === 'QC' || String(u.action || '').includes('QC'));
+                            const isQCAction = (u: any) => u && (u.role === 'QC' || String(u.action || '').includes('QC') || String(u.action || '').includes('PE อนุมัติ') || String(u.action || '').includes('PE สั่งแก้'));
                             const isSEAction = (u: any) => u && (u.role === 'Site Engineer' || String(u.action || '').includes('Site Engineer') || String(u.action || '').includes('วิศวกร'));
 
                             const isQCApproved = (u: any) => isQCAction(u) && (String(u.action || '').includes('อนุมัติ') || String(u.action || '').includes('ผ่าน'));
@@ -1605,7 +1605,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                                             </div>
 
                                             {/* 📦 ปุ่มสั่งวัสดุ / สถานะ (Mobile) */}
-                                            {(currentUserRole === 'Foreman' || currentUserRole === 'Site Engineer' || currentUserRole === 'Project Planner' || currentUserRole === 'Admin' || currentUserRole === 'Owner') && (() => {
+                                            {(isProjectPlanner || currentUserRole === 'Foreman' || currentUserRole === 'Site Engineer' || currentUserRole === 'Project Planner' || currentUserRole === 'Project Engineer' || currentUserRole === 'Admin' || currentUserRole === 'Owner') && (() => {
                                               const taskRequests = materialRequests?.filter((r: any) => String(r.plot_id) === String(selectedPlot.id) && String(r.task_template_id) === String(task.id)) || [];
                                               const currentRequest = taskRequests.sort((a: any, b: any) => new Date(b.requested_at).getTime() - new Date(a.requested_at).getTime())[0];
                                               if (!currentRequest) {
@@ -1673,7 +1673,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
 
                                             {/* ปุ่มกด Action */}
                                             <div className="flex gap-2">
-                                              {(currentUserRole === 'Project Planner' || currentUserRole === 'Admin' || currentUserRole === 'Owner' || currentUserRole === 'Procurement') && (
+                                              {(isProjectPlanner || currentUserRole === 'Project Planner' || currentUserRole === 'Project Engineer' || currentUserRole === 'Admin' || currentUserRole === 'Owner' || currentUserRole === 'Procurement') && (
                                                   <button onClick={(e) => { e.stopPropagation(); setAssignModal({ isOpen: true, task: task, name: contractorName, phone: contractorPhone }); }} className="flex-[1] py-3 bg-white border-2 border-black/5 text-[#86868b] text-[11px] font-bold rounded-xl hover:bg-[#f5f5f7] hover:border-black/10 active:scale-95 transition-all flex flex-col items-center justify-center gap-1 shadow-sm">
                                                     <UserCog size={16} className={contractorName ? 'text-amber-500' : 'text-slate-400'} /> {contractorName ? 'เปลี่ยนช่าง' : 'เลือกช่าง'}
                                                   </button>
@@ -1776,7 +1776,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                                           </div>
                                           <div className="flex items-center gap-1 shrink-0">
                                             {/* 📦 ปุ่มสั่งวัสดุ / สถานะการเบิก (แสดงเฉพาะคนที่สั่งได้) */}
-                                            {(currentUserRole === 'Foreman' || currentUserRole === 'Site Engineer' || currentUserRole === 'Project Planner' || currentUserRole === 'Admin' || currentUserRole === 'Owner') && (() => {
+                                            {(isProjectPlanner || currentUserRole === 'Foreman' || currentUserRole === 'Site Engineer' || currentUserRole === 'Project Planner' || currentUserRole === 'Project Engineer' || currentUserRole === 'Admin' || currentUserRole === 'Owner') && (() => {
                                               const taskRequests = materialRequests?.filter((r: any) => String(r.plot_id) === String(selectedPlot.id) && String(r.task_template_id) === String(task.id)) || [];
                                               const currentRequest = taskRequests.sort((a: any, b: any) => new Date(b.requested_at).getTime() - new Date(a.requested_at).getTime())[0];
                                               if (!currentRequest) {
@@ -1831,7 +1831,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                                     </div>
                                  </td>
 
-                                   {(currentUserRole === 'Project Planner' || currentUserRole === 'Site Engineer') && (() => {
+                                   {(isProjectPlanner || currentUserRole === 'Project Planner' || currentUserRole === 'Project Engineer' || currentUserRole === 'Site Engineer') && (() => {
                                     const currentStart = scheduleInputs[task.id]?.start !== undefined ? scheduleInputs[task.id].start : (plan.planned_start || '');
                                     const currentEnd = scheduleInputs[task.id]?.end !== undefined ? scheduleInputs[task.id].end : (plan.planned_end || '');
                                     
@@ -1938,7 +1938,7 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                                     );
                                  })()}
 
-                                  {(currentUserRole !== 'Project Planner' && currentUserRole !== 'Site Engineer') && (() => {
+                                  {(!isProjectPlanner && currentUserRole !== 'Project Planner' && currentUserRole !== 'Project Engineer' && currentUserRole !== 'Site Engineer') && (() => {
                                     let durationText = '-';
                                     if (plan.planned_start && plan.planned_end) {
                                        const diff = new Date(plan.planned_end).getTime() - new Date(plan.planned_start).getTime();

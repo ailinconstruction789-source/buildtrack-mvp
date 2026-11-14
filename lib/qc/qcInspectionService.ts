@@ -400,23 +400,48 @@ export async function submitInspection(params: {
       }
     }]);
 
-    // ส่งแจ้งเตือนไปยัง Project Engineer (PE) โดยตรง (ไม่ส่งหา SE)
+    // ส่งแจ้งเตือนไปยัง Project Engineer (PE) โดยตรง (ไม่ส่งหา SE) และบันทึกสถานะรอ PE ใน task_updates
     if (evaluation.overallResult === 'conditional') {
       const { data: inspData } = await supabase
         .from('qc_inspections')
-        .select('plot_id, task_template_id, task_name')
+        .select('plot_id, task_template_id, task_name, photo_urls')
         .eq('id', inspectionId)
         .maybeSingle();
 
       if (inspData) {
-        await supabase.from('notifications').insert([{
-          plot_id: inspData.plot_id,
-          task_template_id: inspData.task_template_id,
-          title: 'งานรอวิศวกรโครงการ (PE) พิจารณาอนุมัติแบบมีเงื่อนไข',
-          message: `QC ตรวจงาน "${inspData.task_name}" แปลง ${inspData.plot_id} ผ่านแบบมีเงื่อนไข รอ PE ตรวจสอบและลงนาม`,
-          target_role: 'Project Engineer',
-          is_read: false
-        }]);
+        await supabase.from('notifications').insert([
+          {
+            plot_id: inspData.plot_id,
+            task_template_id: inspData.task_template_id,
+            title: 'งานรอวิศวกรโครงการ (PE) พิจารณาอนุมัติแบบมีเงื่อนไข',
+            message: `QC ตรวจงาน "${inspData.task_name}" แปลง ${inspData.plot_id} ผ่านแบบมีเงื่อนไข รอ PE ตรวจสอบและลงนาม`,
+            target_role: 'Project Engineer',
+            is_read: false
+          },
+          {
+            plot_id: inspData.plot_id,
+            task_template_id: inspData.task_template_id,
+            title: 'งานรอวิศวกรโครงการ (PE) พิจารณาอนุมัติแบบมีเงื่อนไข',
+            message: `QC ตรวจงาน "${inspData.task_name}" แปลง ${inspData.plot_id} ผ่านแบบมีเงื่อนไข รอ PE ตรวจสอบและลงนาม`,
+            target_role: 'Project Planner',
+            is_read: false
+          }
+        ]);
+
+        const taskUpdTable: any = supabase.from('task_updates');
+        if (typeof taskUpdTable?.insert === 'function') {
+          await taskUpdTable.insert([{
+            plot_id: inspData.plot_id,
+            task_template_id: inspData.task_template_id,
+            user_name: actorUsername,
+            role: actorRole || 'QC',
+            action: 'QC ส่งตรวจแบบมีเงื่อนไข (รอ PE อนุมัติ)',
+            text_content: `ตรวจพบรายการผ่านแบบมีเงื่อนไข (${evaluation.conditionalItems} ข้อ) ส่งต่อให้วิศวกรโครงการ (PE) พิจารณาอนุมัติ`,
+            progress: 100,
+            is_completed: false,
+            image_url: (inspData.photo_urls || []).join(',')
+          }]);
+        }
       }
     }
 

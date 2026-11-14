@@ -168,7 +168,7 @@ const DashboardOverview = function DashboardOverview({
         <>
           <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-4 sm:mb-8 mt-10">
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6">
-            <h2 className="font-semibold text-xl tracking-tight sm:text-2xl text-[#1d1d1f] flex items-center gap-2"><ClipboardList className={isForeman ? 'text-orange-500' : (isQC ? 'text-purple-500' : 'text-blue-500')} size={24}/> {isForeman ? '⚠️ งานที่ต้องแก้ไขด่วน' : 'Inspection Queue'} <span className="bg-[#1d1d1f] text-white text-[11px] px-2.5 py-0.5 rounded-full font-medium">{inspectionQueue.length}</span></h2>
+            <h2 className="font-semibold text-xl tracking-tight sm:text-2xl text-[#1d1d1f] flex items-center gap-2"><ClipboardList className={isForeman ? 'text-orange-500' : isProjectPlanner ? 'text-amber-500' : (isQC ? 'text-purple-500' : 'text-blue-500')} size={24}/> {isForeman ? '⚠️ งานที่ต้องแก้ไขด่วน' : isProjectPlanner ? '📋 งานรอ PE พิจารณาเงื่อนไข' : 'Inspection Queue'} <span className="bg-[#1d1d1f] text-white text-[11px] px-2.5 py-0.5 rounded-full font-medium">{inspectionQueue.length}</span></h2>
             
             {/* 🌟 1. TABS คัดงานด่วน */}
             {(!isForeman) && (
@@ -236,8 +236,8 @@ const DashboardOverview = function DashboardOverview({
                               return (
                                 <button key={`${q.plot_id}-${q.task_template_id}`} onClick={clickAction} className={`p-4 sm:p-5 text-left flex flex-col sm:flex-row sm:items-center justify-between gap-4 group transition-all duration-300 ${idx !== items.length - 1 ? 'border-b border-black/5' : ''} hover:bg-black/[0.02] ${isUrgent ? 'border-l-4 border-l-rose-500 bg-rose-50/30' : 'border-l-4 border-l-transparent'}`}>
                                   <div className="flex items-center gap-4 flex-1 overflow-hidden">
-                                      <div className={`w-12 h-12 rounded-2xl flex flex-col items-center justify-center shrink-0 shadow-sm ${q.statusFor === 'Rework' ? 'bg-orange-100 text-orange-600' : (q.statusFor === 'QC' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600')}`}>
-                                        <span className="text-[10px] font-bold uppercase tracking-wider">{q.statusFor === 'Rework' ? 'แก้ไข' : `รอ ${q.statusFor}`}</span>
+                                      <div className={`w-12 h-12 rounded-2xl flex flex-col items-center justify-center shrink-0 shadow-sm ${q.statusFor === 'Rework' ? 'bg-orange-100 text-orange-600' : q.statusFor === 'PE' ? 'bg-amber-100 text-amber-700' : (q.statusFor === 'QC' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600')}`}>
+                                        <span className="text-[10px] font-bold uppercase tracking-wider">{q.statusFor === 'Rework' ? 'แก้ไข' : q.statusFor === 'PE' ? 'รอ PE' : `รอ ${q.statusFor}`}</span>
                                       </div>
                                       <div className="flex-1 min-w-0">
                                         <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -272,7 +272,7 @@ const DashboardOverview = function DashboardOverview({
                   <button key={`${q.plot_id}-${q.task_template_id}`} onClick={clickAction} className={`bg-white/80 backdrop-blur-xl p-5 sm:p-6 rounded-[1.5rem] border ${isUrgent ? 'border-rose-400 bg-rose-50/50' : 'border-white'} shadow-[0_4px_20px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] hover:-translate-y-1 active:scale-[0.98] transition-all duration-300 text-left group relative overflow-hidden`}>
                       {isUrgent && <div className="absolute top-0 left-0 w-full h-1.5 bg-rose-500"></div>}
                       <div className="flex justify-between items-start mb-4">
-                        <span className={`text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-lg text-white shadow-sm ${q.statusFor === 'Rework' ? 'bg-orange-500' : (q.statusFor === 'QC' ? 'bg-purple-500' : 'bg-blue-500')}`}>{q.statusFor === 'Rework' ? 'แก้ไข' : `รอ ${q.statusFor}`}</span>
+                        <span className={`text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-lg text-white shadow-sm ${q.statusFor === 'Rework' ? 'bg-orange-500' : q.statusFor === 'PE' ? 'bg-amber-500' : (q.statusFor === 'QC' ? 'bg-purple-500' : 'bg-blue-500')}`}>{q.statusFor === 'Rework' ? 'แก้ไข' : q.statusFor === 'PE' ? 'รอ PE พิจารณาเงื่อนไข' : `รอ ${q.statusFor}`}</span>
                         <span className={`text-[10px] font-medium flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${isUrgent ? 'bg-rose-100 text-rose-600' : 'bg-black/5 text-[#86868b]'}`}><Clock size={12}/> {new Date(q.time).toLocaleDateString('th-TH',{day:'numeric', month:'short'})} {new Date(q.time).toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'})}</span>
                       </div>
                       <div className="flex items-center gap-2 mb-2 flex-wrap">

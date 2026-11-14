@@ -88,7 +88,7 @@ export function constructionQueueBillingPartition<T extends ConstructionQueueBil
     const template = byId.get(row.task_template_id);
     const requireQC = template ? template.require_qc : true;
     const action = row.latest_action || '';
-    const approved = action.includes('QC อนุมัติ') || (!requireQC && action.includes('Site Engineer อนุมัติ'));
+    const approved = action.includes('QC อนุมัติ') || action.includes('PE อนุมัติ') || (!requireQC && action.includes('Site Engineer อนุมัติ'));
     if (!approved) continue;
     const updateTime = row.latest_update_created_at === null ? 0 : Date.parse(row.latest_update_created_at || '');
     const billed = row.billing_status === 'billed' || updateTime < cutoff;

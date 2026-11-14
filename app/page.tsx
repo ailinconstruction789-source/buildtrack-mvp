@@ -2776,10 +2776,10 @@ export default function ConstructionApp() {
   // 🌟 SAFE ROLE CHECKS (Case-Insensitive) 🌟
   const isAdmin = currentUserRole?.toLowerCase() === 'admin';
   const isProcurement = currentUserRole?.toLowerCase() === 'procurement';
-  const isProjectPlanner = currentUserRole?.toLowerCase() === 'project planner';
+  const isProjectEngineer = currentUserRole?.toLowerCase() === 'project engineer' || currentUserRole?.toLowerCase() === 'project planner';
+  const isProjectPlanner = isProjectEngineer;
   const isQC = currentUserRole?.toLowerCase() === 'qc';
-  const isProjectEngineer = currentUserRole?.toLowerCase() === 'project engineer';
-  const isSiteEngineer = currentUserRole?.toLowerCase() === 'site engineer' || isProjectEngineer;
+  const isSiteEngineer = currentUserRole?.toLowerCase() === 'site engineer';
   const isForeman = currentUserRole?.toLowerCase() === 'foreman';
   const isOwner = currentUserRole?.toLowerCase() === 'owner';
   const isStore = currentUserRole?.toLowerCase() === 'store';
@@ -2853,10 +2853,82 @@ export default function ConstructionApp() {
     return isCurrentProject && matchSearch && matchForeman && roleAllowed;
   }), [plots, selectedProject?.name, searchPlot, filterForeman, isForeman, loggedInUser?.username]);
 
+  // ดึงรายการที่รอวิศวกรโครงการ (PE) พิจารณาอนุมัติแบบมีเงื่อนไข (document_status = 'pending_pe')
+  const [pendingPEInspections, setPendingPEInspections] = useState<any[]>([]);
+  useEffect(() => {
+    if (!loggedInUser) {
+      setPendingPEInspections([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const tbl: any = supabase.from('qc_inspections');
+        if (typeof tbl?.select !== 'function') return;
+        const { data } = await tbl
+          .select('id, project_name, plot_id, task_template_id, task_name, submitted_at, updated_at, inspector_name, conditional_items')
+          .eq('document_status', 'pending_pe');
+        if (!cancelled && Array.isArray(data)) {
+          setPendingPEInspections(data);
+        }
+      } catch {
+        // ignore if table not mocked in tests
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [loggedInUser, allUpdatesRecord, notifications, activeView]);
+
   const inspectionQueue = useMemo(() => {
-      if (!(isSiteEngineer || isQC || isAdmin || isOwner || isForeman)) return [];
+      if (!(isSiteEngineer || isProjectPlanner || isQC || isAdmin || isOwner || isForeman)) return [];
+
+      // แผนที่งานที่อยู่ในสถานะ pending_pe (รอ PE พิจารณาเงื่อนไข)
+      const pendingPEMap = new Map<string, any>();
+      (pendingPEInspections || []).forEach((insp: any) => {
+        if (insp?.plot_id && insp?.task_template_id) {
+          pendingPEMap.set(`${String(insp.plot_id)}:::${String(insp.task_template_id)}`, insp);
+        }
+      });
+
+      const seenKeys = new Set<string>();
+      const mergedRaw: any[] = [];
+
+      (inspectionQueueView || []).forEach((upd: any) => {
+        const key = `${String(upd.plot_id)}:::${String(upd.task_template_id)}`;
+        seenKeys.add(key);
+        const peInsp = pendingPEMap.get(key);
+        const isWaitingPE = Boolean(peInsp) || (typeof upd.action === 'string' && upd.action.includes('รอ PE'));
+        mergedRaw.push({
+          ...upd,
+          statusFor: isWaitingPE ? 'PE' : upd.statusFor,
+          created_at: peInsp?.submitted_at || peInsp?.updated_at || upd.created_at
+        });
+      });
+
+      // เพิ่มรายการจาก qc_inspections (pending_pe) ที่อาจยังไม่อยู่ใน vw_inspection_queue
+      pendingPEMap.forEach((insp, key) => {
+        if (!seenKeys.has(key)) {
+          const plot = plots.find(p => String(p.id) === String(insp.plot_id));
+          const task = taskTemplates.find(t => String(t.id) === String(insp.task_template_id));
+          if (plot && task) {
+            mergedRaw.push({
+              plot_id: plot.id,
+              task_template_id: task.id,
+              progress: 100,
+              action: 'QC ส่งตรวจแบบมีเงื่อนไข (รอ PE อนุมัติ)',
+              role: 'QC',
+              created_at: insp.submitted_at || insp.updated_at || new Date().toISOString(),
+              task_name: task.task_name,
+              project_name: plot.project_name || insp.project_name,
+              foreman: plot.foreman || plot.foreman_name || '-',
+              isRejected: false,
+              isUrgent: false,
+              statusFor: 'PE'
+            });
+          }
+        }
+      });
       
-      const queue = (inspectionQueueView || []).filter((upd: any) => {
+      const queue = mergedRaw.filter((upd: any) => {
         // Ensure plot and task exist (filter out orphans)
         const plot = plots.find(p => String(p.id) === String(upd.plot_id));
         const task = taskTemplates.find(t => String(t.id) === String(upd.task_template_id));
@@ -2864,13 +2936,15 @@ export default function ConstructionApp() {
         // Only show items for current project
         if (selectedProject?.name && selectedProject.name !== 'all' && upd.project_name !== selectedProject.name) return false;
         
+        // สำหรับ PE (Project Engineer / Project Planner): เห็นเฉพาะงาน "รอ PE พิจารณาเงื่อนไข" (statusFor === 'PE') เท่านั้น
+        const isPendingPEItem = isProjectPlanner && upd.statusFor === 'PE';
         const isPendingSEItem = isSiteEngineer && upd.statusFor === 'Site Engineer';
         const isPendingQCItem = isQC && upd.statusFor === 'QC';
-        const isAdminView = (isAdmin || isOwner) && (upd.statusFor === 'Site Engineer' || upd.statusFor === 'QC');
+        const isAdminView = (isAdmin || isOwner) && (upd.statusFor === 'Site Engineer' || upd.statusFor === 'QC' || upd.statusFor === 'PE');
         const isRejectedAdminView = (isAdmin || isOwner) && upd.isRejected;
         const isRejectedForemanItem = isForeman && upd.isRejected && upd.foreman === loggedInUser?.username;
         
-        return isPendingSEItem || isPendingQCItem || isAdminView || isRejectedAdminView || isRejectedForemanItem;
+        return isPendingPEItem || isPendingSEItem || isPendingQCItem || isAdminView || isRejectedAdminView || isRejectedForemanItem;
       }).map((upd: any) => ({
         ...upd,
         time: new Date(upd.created_at).getTime()
@@ -2881,7 +2955,7 @@ export default function ConstructionApp() {
         return b.time - a.time; 
       });
       return queue;
-    }, [inspectionQueueView, isSiteEngineer, isQC, isAdmin, isOwner, isForeman, loggedInUser?.username, inspectionSort, selectedProject?.name]);
+    }, [inspectionQueueView, pendingPEInspections, plots, taskTemplates, isSiteEngineer, isProjectPlanner, isQC, isAdmin, isOwner, isForeman, loggedInUser?.username, inspectionSort, selectedProject?.name]);
 
   const urgentQueueCount = useMemo(() => inspectionQueue.filter(q => q.isUrgent).length, [inspectionQueue]);
   const displayInspectionQueue = useMemo(() => inspectionQueue.filter(q => inspectionFilterTab === 'all' || (inspectionFilterTab === 'urgent' && q.isUrgent) || (inspectionFilterTab === 'rework' && q.isRejected)), [inspectionQueue, inspectionFilterTab]);
@@ -2889,7 +2963,7 @@ export default function ConstructionApp() {
   const lastUpd = updates.length > 0 ? updates[updates.length - 1] : null;
   const isPendingSE = lastUpd?.progress === 100 && (lastUpd?.action === 'ส่งงาน 100%' || lastUpd?.role === 'Foreman');
   const isPendingQC = lastUpd?.progress === 100 && lastUpd?.action === 'Site Engineer อนุมัติ';
-  const isTaskCompleted = lastUpd?.progress === 100 && (lastUpd?.action === 'QC อนุมัติ' || lastUpd?.action === 'QC อนุมัติผ่าน');
+  const isTaskCompleted = lastUpd?.progress === 100 && (lastUpd?.action === 'QC อนุมัติ' || lastUpd?.action === 'QC อนุมัติผ่าน' || Boolean(lastUpd?.action && String(lastUpd.action).includes('PE อนุมัติ')));
   const currentAssignment = assignments.slice().reverse().find(a => String(a.plot_id) === String(selectedPlot?.id) && String(a.task_template_id) === String(selectedTask?.id));
   const isLockedForForeman = isForeman && !currentAssignment;
 
@@ -6331,7 +6405,7 @@ export default function ConstructionApp() {
                                 let actualEndUI = <div className="text-[10px] sm:text-[11px] font-bold text-slate-400 whitespace-nowrap bg-slate-50 px-2 py-0.5 rounded w-[90px] text-center">-</div>;
                                 if (taskProgress === 100 && actualEndRaw !== '-') {
                                     const tTemplate = taskTemplates.find(t => t.id === taskId);
-                                    if (taskAction === 'QC อนุมัติ' || taskAction === 'QC อนุมัติผ่าน' || (!tTemplate?.require_qc && taskAction === 'Site Engineer อนุมัติ')) {
+                                    if (taskAction === 'QC อนุมัติ' || taskAction === 'QC อนุมัติผ่าน' || String(taskAction || '').includes('PE อนุมัติ') || (!tTemplate?.require_qc && taskAction === 'Site Engineer อนุมัติ')) {
                                       actualEndUI = <div className="flex items-center justify-center gap-1 text-[10px] sm:text-[11px] font-bold text-emerald-700 whitespace-nowrap bg-emerald-50 px-2 py-0.5 rounded w-[110px] text-center"><span>{actualEndRaw}</span><span className="text-[8px] bg-emerald-200 text-emerald-800 px-1 rounded-sm">✅ สำเร็จ</span></div>;
                                     } else if (taskAction === 'Site Engineer อนุมัติ' && tTemplate?.require_qc) {
                                       actualEndUI = <div className="flex items-center justify-center gap-1 text-[10px] sm:text-[11px] font-bold text-orange-700 whitespace-nowrap bg-orange-50 px-2 py-0.5 rounded w-[110px] text-center"><span>{actualEndRaw}</span><span className="text-[8px] bg-orange-200 text-orange-800 px-1 rounded-sm">🔍 รอ QC</span></div>;

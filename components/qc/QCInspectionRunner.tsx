@@ -111,8 +111,8 @@ export default function QCInspectionRunner({
 
   const isQC = currentUserRole === 'QC';
   const isAdmin = currentUserRole === 'Admin' || currentUserRole === 'Owner';
-  // สิทธิ์พิจารณาอนุมัติผ่านแบบมีเงื่อนไข (PE Review): เฉพาะ Project Engineer (PE), Admin และ Owner เท่านั้น (SE ไม่มีสิทธิ์)
-  const isPE = currentUserRole === 'Project Engineer' || currentUserRole === 'Admin' || currentUserRole === 'Owner';
+  // สิทธิ์พิจารณาอนุมัติผ่านแบบมีเงื่อนไข (PE Review): เฉพาะ Project Engineer (PE / Project Planner เดิม), Admin และ Owner เท่านั้น (SE ไม่มีสิทธิ์)
+  const isPE = currentUserRole === 'Project Engineer' || currentUserRole === 'Project Planner' || currentUserRole === 'Admin' || currentUserRole === 'Owner';
   const isReadOnly = Boolean(previewOnly) || (currentInspection?.document_status === 'approved' && !reopenModalOpen);
 
   const [downstreamDefects, setDownstreamDefects] = useState<any[]>([]);

@@ -441,7 +441,7 @@ const MapVisualizer = function MapVisualizer(props: MapVisualizerProps) {
                           </button>
 
                           {/* 🌟 ปุ่มเปิด Presentation Mode */}
-                          {['Project Planner', 'Admin', 'Owner'].includes(currentUserRole) && (
+                          {['Project Planner', 'Project Engineer', 'Admin', 'Owner'].includes(currentUserRole) && (
                               <button onClick={() => { setIsPresentationOpen(true); setCurrentSlideIndex(0); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl font-bold text-xs sm:text-sm shadow-md transition-all flex items-center gap-1.5 shrink-0">
                                 <Monitor size={16} /> <span className="hidden sm:inline">Presentation Mode</span><span className="inline sm:hidden">โหมดนำเสนอ</span>
                               </button>

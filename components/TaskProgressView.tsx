@@ -451,12 +451,12 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                         <button onClick={loadQCResolution} className="px-3 py-1 bg-rose-600 text-white rounded-lg text-xs font-bold hover:bg-rose-700">ลองใหม่</button>
                                       </div>
                                     ) : qcResolution.state === 'form_v2_ready' ? (
-                                      isPendingQC ? (
+                                      (isPendingQC || qcResolution.latestInspection?.document_status === 'pending_pe') ? (
                                         <div className="bg-purple-50/80 border border-purple-200 p-3 sm:p-4 rounded-xl sm:rounded-2xl space-y-2.5">
                                           <div className="flex items-center justify-between">
                                             <div className="flex items-center gap-2">
                                               <span className="bg-purple-600 text-white text-[10px] px-2 py-0.5 rounded-md font-bold">
-                                                QC แบบฟอร์มใหม่
+                                                {qcResolution.latestInspection?.document_status === 'pending_pe' ? 'รอ PE อนุมัติเงื่อนไข' : 'QC แบบฟอร์มใหม่'}
                                               </span>
                                               <span className="text-xs font-bold text-purple-900 truncate">
                                                 {qcResolution.formTemplate?.title} (v{qcResolution.formTemplate?.version})
@@ -507,6 +507,46 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                    </div>
                                  ) : ( <div className={`bg-[#f5f5f7] text-slate-400 py-3 sm:py-4 rounded-xl sm:rounded-[1.5rem] font-bold text-center uppercase tracking-widest border border-black/5 ${isMobileLayout ? 'text-[9px]' : 'text-xs sm:text-sm'}`}>รองานผ่าน Site Engineer ก่อน</div> )
                                   )
+                                ) : (isProjectPlanner || isAdmin || isOwner) && !isQCResolutionReady ? (
+                                   <div className="bg-amber-50/80 border border-amber-200 p-3 sm:p-4 rounded-xl sm:rounded-2xl flex items-center justify-center gap-2 text-amber-800 text-xs sm:text-sm font-bold">
+                                     <Loader2 size={16} className="animate-spin text-amber-600" />
+                                     <span>กำลังตรวจสอบข้อมูลใบตรวจ QC...</span>
+                                   </div>
+                                ) : (isProjectPlanner || isAdmin || isOwner) && qcResolution?.latestInspection?.document_status === 'pending_pe' ? (
+                                   <div className="bg-amber-50/90 border-2 border-amber-300 p-3 sm:p-4 rounded-xl sm:rounded-2xl space-y-2.5">
+                                     <div className="flex items-center justify-between">
+                                       <div className="flex items-center gap-2">
+                                         <span className="bg-amber-600 text-white text-[10px] px-2 py-0.5 rounded-md font-bold">
+                                           รอ PE พิจารณาเงื่อนไข
+                                         </span>
+                                         <span className="text-xs font-bold text-amber-950 truncate">
+                                           {qcResolution.formTemplate?.title || qcResolution.latestInspection?.form_title} (รอบที่ {qcResolution.latestInspection.round_number})
+                                         </span>
+                                       </div>
+                                       {qcResolution.referenceDrawing && (
+                                         <span className="text-[10px] text-amber-800 font-bold bg-white px-2 py-0.5 rounded border border-amber-200">
+                                           📐 มีแบบแปลน
+                                         </span>
+                                       )}
+                                     </div>
+                                     <div className="flex gap-2">
+                                       <button
+                                         onClick={() => setShowQCRunner(true)}
+                                         className="flex-1 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold py-2.5 sm:py-3 px-4 rounded-xl text-xs sm:text-sm shadow-md flex items-center justify-center gap-2 transition-all"
+                                       >
+                                         <FileText size={16} />
+                                         <span>เปิดฟอร์มพิจารณาอนุมัติเงื่อนไข (PE Review)</span>
+                                       </button>
+                                       <button
+                                         onClick={() => setShowQCReport(true)}
+                                         className="bg-white hover:bg-amber-100 text-amber-800 border border-amber-300 font-bold py-2.5 sm:py-3 px-3 rounded-xl text-xs sm:text-sm shadow-sm flex items-center gap-1"
+                                         title="ดูรายงานผลตรวจ"
+                                       >
+                                         <Printer size={16} />
+                                         <span className="hidden sm:inline">ดูรายงาน</span>
+                                       </button>
+                                     </div>
+                                   </div>
                                 ) : isProcurement || isProjectPlanner || isOwner ? (
                                    <div className={`bg-[#f5f5f7] text-[#86868b] py-3 sm:py-4 px-4 sm:px-6 rounded-xl sm:rounded-[1.5rem] font-bold text-center uppercase tracking-widest border border-black/5 flex items-center justify-center gap-2 ${isMobileLayout ? 'text-[10px]' : 'text-xs sm:text-sm'}`}><AlertCircle size={18}/> ใช้สิทธิ์อัปเดตงานไม่ได้</div>
                                ) : (

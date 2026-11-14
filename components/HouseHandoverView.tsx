@@ -413,7 +413,7 @@ export default function HouseHandoverView({
     );
   };
 
-  const canAssignContractor = ['Admin', 'Project Planner', 'Procurement', 'Foreman'].includes(currentUserRole) && !isHandoverCompleted;
+  const canAssignContractor = ['Admin', 'Project Planner', 'Project Engineer', 'Procurement', 'Foreman'].includes(currentUserRole) && !isHandoverCompleted;
 
   const handleSaveDefectContractor = async (defectId: string, contractorId: string | null) => {
     if (!canAssignContractor) {
@@ -1201,7 +1201,7 @@ export default function HouseHandoverView({
             </button>
           )}
 
-          {['Admin', 'Project Planner', 'Owner', 'Foreman', 'Procurement'].includes(currentUserRole) && Object.keys(defectScheduleInputs).length > 0 && (
+          {['Admin', 'Project Planner', 'Project Engineer', 'Owner', 'Foreman', 'Procurement'].includes(currentUserRole) && Object.keys(defectScheduleInputs).length > 0 && (
             <button onClick={handleSaveDefectSchedules} disabled={isSubmitting} className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold px-4 py-2 rounded-xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer">
               {isSubmitting ? <Loader2 className="animate-spin" size={16}/> : 'บันทึกแผนซ่อม (Save)'}
             </button>
@@ -1343,7 +1343,7 @@ export default function HouseHandoverView({
                           durationText = `${Math.max(0, Math.ceil(diff / (86400000))) + 1} วัน`;
                       }
 
-                      const canEditSchedule = ['Project Planner', 'Admin', 'Owner', 'Foreman', 'Procurement'].includes(currentUserRole) && !isHandoverCompleted;
+                      const canEditSchedule = ['Project Planner', 'Project Engineer', 'Admin', 'Owner', 'Foreman', 'Procurement'].includes(currentUserRole) && !isHandoverCompleted;
                       const isProcurement = currentUserRole === 'Procurement';
                       const canEditEndDate = canEditSchedule && !isProcurement;
                       const currentInput = defectScheduleInputs[defect.id];
@@ -1747,7 +1747,7 @@ export default function HouseHandoverView({
       </div>
 
       {/* 📱 Mobile Floating Save Button */}
-      {isMobileLayout && ['Admin', 'Project Planner', 'Owner', 'Foreman', 'Procurement'].includes(currentUserRole) && Object.keys(defectScheduleInputs).length > 0 && (
+      {isMobileLayout && ['Admin', 'Project Planner', 'Project Engineer', 'Owner', 'Foreman', 'Procurement'].includes(currentUserRole) && Object.keys(defectScheduleInputs).length > 0 && (
         <div className="fixed bottom-5 left-3 right-3 sm:left-4 sm:right-4 z-50 animate-fade-in">
           <button 
             type="button"
