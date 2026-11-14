@@ -31,6 +31,110 @@ import {
 import { supabase } from '@/lib/supabase';
 import QCDrawingViewer from './QCDrawingViewer';
 
+const MAX_QC_IMAGES = 20;
+
+const compressQCImage = (file: File): Promise<File> => {
+  return new Promise((resolve) => {
+    const isImage = file.type.startsWith('image/') || /\.(jpe?g|png|webp|gif|heic|heif)$/i.test(file.name);
+    if (!isImage || typeof window === 'undefined' || typeof Image === 'undefined') {
+      return resolve(file);
+    }
+
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.src = objectUrl;
+
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(file);
+    };
+
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return resolve(file);
+
+      const MAX_WIDTH = 1280;
+      const MAX_HEIGHT = 1280;
+      let width = img.width;
+      let height = img.height;
+
+      if (width > height) {
+        if (width > MAX_WIDTH) {
+          height *= MAX_WIDTH / width;
+          width = MAX_WIDTH;
+        }
+      } else {
+        if (height > MAX_HEIGHT) {
+          width *= MAX_HEIGHT / height;
+          height = MAX_HEIGHT;
+        }
+      }
+      canvas.width = width;
+      canvas.height = height;
+      ctx.drawImage(img, 0, 0, width, height);
+
+      const outputName = file.name.replace(/\.(heic|heif|png|webp)$/i, '.jpg');
+      canvas.toBlob((blob) => {
+        canvas.width = 0;
+        canvas.height = 0;
+        if (blob) {
+          try {
+            resolve(new File([blob], outputName, { type: 'image/jpeg', lastModified: Date.now() }));
+          } catch {
+            const b: any = blob;
+            b.lastModifiedDate = new Date();
+            b.name = outputName;
+            resolve(b as File);
+          }
+        } else {
+          resolve(file);
+        }
+      }, 'image/jpeg', 0.7);
+    };
+  });
+};
+
+const uploadQCPhotosInQueue = async (
+  files: File[],
+  plotId: string,
+  onProgress?: (current: number, total: number) => void
+): Promise<string[]> => {
+  const urls: string[] = [];
+  const total = files.length;
+  const safeId = String(plotId || 'plot_images').replace(/[^a-zA-Z0-9-]/g, '') || 'plot_images';
+
+  for (let i = 0; i < total; i++) {
+    onProgress?.(i + 1, total);
+    const comp = await compressQCImage(files[i]);
+    const ext = comp.name.toLowerCase().endsWith('.png') ? 'png' : 'jpg';
+    const path = `${safeId}/qc-${Date.now()}-${Math.random().toString(36).slice(2, 11)}.${ext}`;
+
+    let uploadSuccess = false;
+    let lastErr: any = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const { error } = await supabase.storage.from('task_images').upload(path, comp);
+        if (!error) {
+          uploadSuccess = true;
+          break;
+        }
+        lastErr = error;
+      } catch (err) {
+        lastErr = err;
+      }
+      if (attempt === 0) await new Promise(r => setTimeout(r, 600));
+    }
+    if (!uploadSuccess) {
+      throw new Error(`อัปโหลดรูปที่ ${i + 1}/${total} ไม่สำเร็จ: ${lastErr?.message || 'สัญญาณเน็ตไม่เสถียร'}`);
+    }
+    const publicUrl = supabase.storage.from('task_images').getPublicUrl(path).data.publicUrl;
+    urls.push(publicUrl);
+  }
+  return urls;
+};
+
 interface QCInspectionRunnerProps {
   resolution: QCTaskConfigResolution;
   plotId: string;
@@ -100,6 +204,14 @@ export default function QCInspectionRunner({
   const [annotations, setAnnotations] = useState<QCDrawingAnnotation[]>(
     initialInspection?.annotations || []
   );
+  const [photoUrls, setPhotoUrls] = useState<string[]>(
+    initialInspection?.photo_urls || []
+  );
+  const [isUploadingPhotos, setIsUploadingPhotos] = useState<{
+    uploading: boolean;
+    current: number;
+    total: number;
+  }>({ uploading: false, current: 0, total: 0 });
 
   const [isSaving, setIsSaving] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -156,7 +268,10 @@ export default function QCInspectionRunner({
     if (!currentInspection) return;
     setIsPEReviewing(true);
     const res = await reviewPEInspection({
-      inspection: currentInspection,
+      inspection: {
+        ...currentInspection,
+        photo_urls: photoUrls
+      },
       decision,
       peUsername: loggedInUser.username,
       peRole: currentUserRole,
@@ -178,7 +293,8 @@ export default function QCInspectionRunner({
         pe_reviewer_name: loggedInUser.username,
         pe_reviewed_at: new Date().toISOString(),
         pe_review_decision: decision === 'approve' ? 'approved' : 'rejected',
-        pe_review_notes: peNotes
+        pe_review_notes: peNotes,
+        photo_urls: photoUrls
       }) : null);
       onInspectionUpdated();
     } else {
@@ -216,6 +332,48 @@ export default function QCInspectionRunner({
     setAnnotations(prev => prev.filter((_, i) => i !== index));
   };
 
+  // Upload overall work photos
+  const handleOverallPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isReadOnly) return;
+    const rawFiles = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (rawFiles.length === 0) return;
+
+    const remainingSlots = Math.max(0, MAX_QC_IMAGES - photoUrls.length);
+    if (remainingSlots <= 0) {
+      setStatusMessage({ text: `แนบรูปภาพครบสูงสุด ${MAX_QC_IMAGES} รูปแล้ว`, type: 'info' });
+      return;
+    }
+
+    const filesToUpload = rawFiles.slice(0, remainingSlots);
+    setIsUploadingPhotos({ uploading: true, current: 1, total: filesToUpload.length });
+    setStatusMessage(null);
+
+    try {
+      const uploadedUrls = await uploadQCPhotosInQueue(
+        filesToUpload,
+        plotId,
+        (current, total) => setIsUploadingPhotos({ uploading: true, current, total })
+      );
+      const nextPhotos = [...photoUrls, ...uploadedUrls];
+      setPhotoUrls(nextPhotos);
+      setCurrentInspection(prev => prev ? { ...prev, photo_urls: nextPhotos } : prev);
+      setStatusMessage({ text: `อัปโหลดรูปภาพผลงานเพิ่ม ${uploadedUrls.length} รูปเรียบร้อยแล้ว`, type: 'success' });
+      setTimeout(() => setStatusMessage(null), 2500);
+    } catch (err: any) {
+      setStatusMessage({ text: err?.message || 'อัปโหลดรูปภาพไม่สำเร็จ', type: 'error' });
+    } finally {
+      setIsUploadingPhotos({ uploading: false, current: 0, total: 0 });
+    }
+  };
+
+  const handleRemoveOverallPhoto = (index: number) => {
+    if (isReadOnly) return;
+    const nextPhotos = photoUrls.filter((_, idx) => idx !== index);
+    setPhotoUrls(nextPhotos);
+    setCurrentInspection(prev => prev ? { ...prev, photo_urls: nextPhotos } : prev);
+  };
+
   // Save Draft
   const handleSaveDraft = async () => {
     if (!formTemplate) return;
@@ -237,20 +395,38 @@ export default function QCInspectionRunner({
       answers,
       annotations,
       notes: currentInspection?.notes || '',
-      photoUrls: []
+      photoUrls
     });
 
     setIsSaving(false);
     if (res.success) {
       setStatusMessage({ text: 'บันทึกร่างเรียบร้อยแล้ว', type: 'success' });
-      if (!currentInspection?.id) {
-        setCurrentInspection(prev => ({
-          ...(prev || {} as any),
-          id: res.inspectionId,
+      setCurrentInspection(prev => ({
+        ...(prev || {
+          project_name: projectName,
+          plot_id: plotId,
+          task_template_id: taskTemplateId,
+          task_name: taskName,
+          round_number: 1,
+          inspection_method: 'form_v2',
+          form_template_id: formTemplate.id,
+          form_version: formTemplate.version,
+          form_title: formTemplate.title,
+          drawing_id: referenceDrawing?.id || null,
+          drawing_version: referenceDrawing?.version || null,
+          drawing_title: referenceDrawing?.title || null,
+          inspector_name: loggedInUser.username,
+          inspector_role: currentUserRole,
           document_status: 'draft',
-          round_number: 1
-        }));
-      }
+          total_items: formTemplate.items?.length || answers.length,
+          passed_items: answers.filter(a => a.status === 'passed').length,
+          failed_items: answers.filter(a => a.status === 'failed').length,
+          conditional_items: answers.filter(a => a.status === 'conditional').length,
+          na_items: answers.filter(a => a.status === 'na').length
+        }),
+        id: res.inspectionId,
+        photo_urls: photoUrls
+      }));
       setTimeout(() => setStatusMessage(null), 2500);
     } else {
       setStatusMessage({ text: res.error || 'บันทึกร่างไม่สำเร็จ', type: 'error' });
@@ -261,28 +437,29 @@ export default function QCInspectionRunner({
   const handleSubmitInspection = async () => {
     if (!formTemplate?.items) return;
 
-    // First auto-save draft if needed to get an inspection ID
-    let activeInspectionId = currentInspection?.id;
-    if (!activeInspectionId) {
-      const draftRes = await saveInspectionDraft({
-        projectName,
-        plotId,
-        taskTemplateId,
-        taskName,
-        roundNumber: currentInspection?.round_number || 1,
-        formTemplate,
-        drawing: referenceDrawing ? { id: referenceDrawing.id, version: referenceDrawing.version, title: referenceDrawing.title } : null,
-        inspectorName: loggedInUser.username,
-        inspectorRole: currentUserRole,
-        answers,
-        annotations
-      });
-      if (!draftRes.success) {
-        setStatusMessage({ text: 'บันทึกร่างไม่สำเร็จก่อนส่งผลตรวจ', type: 'error' });
-        return;
-      }
-      activeInspectionId = draftRes.inspectionId;
+    // Auto-save latest draft (answers, annotations, and photoUrls) before submitting
+    const draftRes = await saveInspectionDraft({
+      inspectionId: currentInspection?.id,
+      projectName,
+      plotId,
+      taskTemplateId,
+      taskName,
+      roundNumber: currentInspection?.round_number || 1,
+      previousInspectionId: currentInspection?.previous_inspection_id,
+      formTemplate,
+      drawing: referenceDrawing ? { id: referenceDrawing.id, version: referenceDrawing.version, title: referenceDrawing.title } : null,
+      inspectorName: loggedInUser.username,
+      inspectorRole: currentUserRole,
+      answers,
+      annotations,
+      notes: currentInspection?.notes || '',
+      photoUrls
+    });
+    if (!draftRes.success) {
+      setStatusMessage({ text: 'บันทึกร่างไม่สำเร็จก่อนส่งผลตรวจ', type: 'error' });
+      return;
     }
+    const activeInspectionId = draftRes.inspectionId;
 
     setIsSubmitting(true);
     const subRes = await submitInspection({
@@ -296,8 +473,39 @@ export default function QCInspectionRunner({
     setIsSubmitting(false);
 
     if (subRes.success) {
+      const nextStatus = subRes.evaluation.overallResult === 'conditional' ? 'pending_pe' : 'submitted';
       setStatusMessage({ text: 'ส่งผลการตรวจเรียบร้อยแล้ว รอดำเนินการรับรอง', type: 'success' });
-      setCurrentInspection(prev => prev ? ({ ...prev, document_status: 'submitted', inspection_result: subRes.evaluation.overallResult }) : null);
+      setCurrentInspection(prev => ({
+        ...(prev || {
+          project_name: projectName,
+          plot_id: plotId,
+          task_template_id: taskTemplateId,
+          task_name: taskName,
+          round_number: 1,
+          inspection_method: 'form_v2',
+          form_template_id: formTemplate.id,
+          form_version: formTemplate.version,
+          form_title: formTemplate.title,
+          drawing_id: referenceDrawing?.id || null,
+          drawing_version: referenceDrawing?.version || null,
+          drawing_title: referenceDrawing?.title || null,
+          inspector_name: loggedInUser.username,
+          inspector_role: currentUserRole,
+          total_items: subRes.evaluation.totalItems,
+          passed_items: subRes.evaluation.passedItems,
+          failed_items: subRes.evaluation.failedItems,
+          conditional_items: subRes.evaluation.conditionalItems,
+          na_items: subRes.evaluation.naItems
+        }),
+        id: activeInspectionId,
+        document_status: nextStatus,
+        inspection_result: subRes.evaluation.overallResult,
+        passed_items: subRes.evaluation.passedItems,
+        failed_items: subRes.evaluation.failedItems,
+        conditional_items: subRes.evaluation.conditionalItems,
+        na_items: subRes.evaluation.naItems,
+        photo_urls: photoUrls
+      }));
       onInspectionUpdated();
     } else {
       setStatusMessage({ text: subRes.error || 'ไม่สามารถส่งผลตรวจได้เนื่องจากข้อมูลยังไม่ครบถ้วน', type: 'error' });
@@ -310,7 +518,10 @@ export default function QCInspectionRunner({
     setIsApproving(true);
 
     const appRes = await approveInspection({
-      inspection: currentInspection,
+      inspection: {
+        ...currentInspection,
+        photo_urls: photoUrls
+      },
       answers,
       actorUsername: loggedInUser.username,
       actorRole: currentUserRole,
@@ -326,7 +537,8 @@ export default function QCInspectionRunner({
       setCurrentInspection(prev => prev ? ({
         ...prev,
         document_status: decision === 'approve' ? 'approved' : 'rejected',
-        inspection_result: decision === 'approve' ? 'passed' : 'failed'
+        inspection_result: decision === 'approve' ? 'passed' : 'failed',
+        photo_urls: photoUrls
       }) : null);
       onInspectionUpdated();
     } else {
@@ -497,7 +709,7 @@ export default function QCInspectionRunner({
             <>
               <button
                 onClick={handleSaveDraft}
-                disabled={isSaving}
+                disabled={isSaving || isUploadingPhotos.uploading}
                 className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all disabled:opacity-50"
                 title="บันทึกร่าง"
               >
@@ -507,7 +719,7 @@ export default function QCInspectionRunner({
 
               <button
                 onClick={handleSubmitInspection}
-                disabled={isSubmitting || !currentEvaluation?.isValid}
+                disabled={isSubmitting || isUploadingPhotos.uploading || !currentEvaluation?.isValid}
                 className="px-4 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md transition-all disabled:opacity-40"
               >
                 {isSubmitting ? <Loader2 className="animate-spin" size={14} /> : <Send size={14} />}
@@ -597,6 +809,114 @@ export default function QCInspectionRunner({
                   <AlertTriangle size={14} />
                   <span>มีข้อสำคัญไม่ผ่าน ({currentEvaluation.criticalFailedItems} ข้อ) ผลตรวจรวมจะไม่ผ่าน</span>
                 </div>
+              )}
+            </div>
+
+            {/* 🌟 Overall Work Photo Upload Card (รูปภาพผลงานรวมประกอบผลตรวจ QC) 🌟 */}
+            <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="bg-purple-100 text-purple-700 p-2 rounded-xl shrink-0">
+                    <Camera size={18} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-bold text-slate-800 text-xs sm:text-sm">
+                        รูปภาพผลงานรวม ({photoUrls.length}/{MAX_QC_IMAGES} รูป)
+                      </h3>
+                      {photoUrls.length >= MAX_QC_IMAGES && (
+                        <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                          ครบจำนวนสูงสุดแล้ว
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      แนบรูปภาพหน้างานประกอบการส่งผลตรวจ (รูปจะแสดงในหน้าแชทและรายงานผลตรวจ QC)
+                    </p>
+                  </div>
+                </div>
+
+                {!isReadOnly && (
+                  <label
+                    className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all ${
+                      isUploadingPhotos.uploading || photoUrls.length >= MAX_QC_IMAGES
+                        ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                        : 'bg-purple-600 hover:bg-purple-700 active:scale-95 text-white cursor-pointer'
+                    }`}
+                  >
+                    {isUploadingPhotos.uploading ? (
+                      <>
+                        <Loader2 size={14} className="animate-spin" />
+                        <span>กำลังอัปโหลด ({isUploadingPhotos.current}/{isUploadingPhotos.total})...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Camera size={15} />
+                        <span>+ อัปโหลดรูปภาพผลงาน</span>
+                      </>
+                    )}
+                    <input
+                      type="file"
+                      multiple
+                      accept="image/*"
+                      disabled={isReadOnly || isUploadingPhotos.uploading || photoUrls.length >= MAX_QC_IMAGES}
+                      className="hidden"
+                      onChange={handleOverallPhotoUpload}
+                    />
+                  </label>
+                )}
+              </div>
+
+              {photoUrls.length > 0 ? (
+                <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-6 gap-2.5 pt-1">
+                  {photoUrls.map((url, idx) => (
+                    <div
+                      key={`${url}-${idx}`}
+                      className="relative aspect-square rounded-xl overflow-hidden border-2 border-purple-200 bg-slate-100 group shadow-xs"
+                    >
+                      <img
+                        src={url}
+                        alt={`รูปผลงาน ${idx + 1}`}
+                        onClick={() => setSelectedPhotoPreview(url)}
+                        className="w-full h-full object-cover cursor-zoom-in group-hover:opacity-90 transition-opacity"
+                      />
+                      {!isReadOnly && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveOverallPhoto(idx)}
+                          className="absolute top-1.5 right-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-full p-1 shadow-md border border-white transition-transform hover:scale-105"
+                          title="ลบรูปภาพนี้"
+                        >
+                          <Trash2 size={11} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : !isReadOnly ? (
+                <label
+                  className={`border-2 border-dashed border-purple-200 hover:border-purple-400 bg-purple-50/30 hover:bg-purple-50/60 rounded-xl p-4 flex flex-col items-center justify-center gap-1.5 text-center transition-colors ${
+                    isUploadingPhotos.uploading ? 'opacity-60 cursor-wait' : 'cursor-pointer'
+                  }`}
+                >
+                  <ImageIcon size={22} className="text-purple-400" />
+                  <span className="text-xs font-bold text-purple-800">
+                    แตะที่นี่เพื่อเลือกรูปภาพผลงานหน้างาน (เลือกได้หลายรูปพร้อมกัน)
+                  </span>
+                  <span className="text-[10px] text-slate-400">
+                    รองรับไฟล์ภาพ JPG, PNG, HEIC สูงสุด {MAX_QC_IMAGES} รูป
+                  </span>
+                  <input
+                    type="file"
+                    multiple
+                    accept="image/*"
+                    disabled={isReadOnly || isUploadingPhotos.uploading}
+                    className="hidden"
+                    onChange={handleOverallPhotoUpload}
+                  />
+                </label>
+              ) : (
+                <p className="text-xs text-slate-400 italic py-1">ไม่มีรูปภาพผลงานแนบในรอบการตรวจนี้</p>
               )}
             </div>
 

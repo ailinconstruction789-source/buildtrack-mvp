@@ -103,6 +103,12 @@ const DashboardOverview = function DashboardOverview({
         )}
       </div>
       
+      {isAdmin && (
+        <button onClick={() => { setSelectedProject(null); setView('admin-demo-projects'); }} className="mb-5 flex w-full items-center gap-3 rounded-2xl border border-violet-200 bg-violet-50 p-4 text-left text-violet-900">
+          <MapIcon size={22} className="shrink-0" />
+          <span><span className="block text-sm font-bold">โครงการ Demo · เฉพาะ Admin</span><span className="block text-xs text-violet-700">สร้างและทดลองผังสาธารณูปโภค แยกจากโครงการจริง</span></span>
+        </button>
+      )}
       <div className={`grid gap-4 sm:gap-6 ${isMobileLayout ? 'grid-cols-1' : 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'}`}>
         {projects.filter(p => (showClosedProjects ? p.is_closed : !p.is_closed)).map((proj) => {
           let plannedAvg = 0;

@@ -25,6 +25,7 @@ vi.mock('next/dynamic', () => ({ default: (loader: () => unknown) => {
     <button disabled={props.isLoggingIn || props.isLoggingOut} onClick={props.handleLogin}>Sign in test</button>
   </div>; };
   if (loader.toString().includes('AdminUsersView')) return () => <span>Account management test</span>;
+  if (loader.toString().includes('AdminDemoProjects')) return () => <span>Demo workspace test</span>;
   return () => null;
 } }));
 vi.mock('@/components/Sidebar', () => ({ default: (props: {
@@ -32,6 +33,7 @@ vi.mock('@/components/Sidebar', () => ({ default: (props: {
 }) => <div>
   <span data-testid="canonical-role">{props.isAdmin ? 'Admin' : props.isSales ? 'Sales' : 'Construction'}</span>
   <button onClick={() => props.setView('admin-users')}>Accounts test</button>
+  <button onClick={() => props.setView('admin-demo-projects')}>Demo route test</button>
 </div> }));
 
 const userId = 'a0250000-0000-4000-8000-000000000002';
@@ -74,6 +76,19 @@ async function openRoot() {
 }
 
 describe('root trusted authorization cutover', () => {
+  it('does not open the Demo route for Sales even when metadata claims Admin', async () => {
+    await openRoot(); await screen.findByTestId('canonical-role');
+    fireEvent.click(screen.getByText('Demo route test'));
+    expect(screen.queryByText('Demo workspace test')).not.toBeInTheDocument();
+  });
+
+  it('opens the Demo route for a verified Admin', async () => {
+    mocks.rpc.mockImplementation(async (name: string) => ({ data: name === 'app_current_actor' ? { ...actor, role: 'Admin', canManageAccounts: true } : null, error: null }));
+    await openRoot(); await waitFor(() => expect(screen.getByTestId('canonical-role')).toHaveTextContent('Admin'));
+    fireEvent.click(screen.getByText('Demo route test'));
+    expect(await screen.findByText('Demo workspace test')).toBeInTheDocument();
+  });
+
   it('ignores forged metadata and runs only the trusted listener and self-presence path', async () => {
     await openRoot();
     await waitFor(() => expect(screen.getByTestId('canonical-role')).toHaveTextContent('Sales'));

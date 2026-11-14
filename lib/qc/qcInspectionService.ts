@@ -478,6 +478,7 @@ export async function approveInspection(params: {
       .update({
         document_status: finalDocStatus,
         inspection_result: finalResult,
+        ...(Array.isArray(inspection.photo_urls) ? { photo_urls: inspection.photo_urls } : {}),
         approved_at: new Date().toISOString(),
         approved_by: actorUsername,
         updated_at: new Date().toISOString()

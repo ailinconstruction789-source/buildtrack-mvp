@@ -76,6 +76,7 @@ const AdminVisualizerView = dynamic(() => import('@/components/admin/AdminVisual
 const AdminHouseTypesView = dynamic(() => import('@/components/admin/AdminHouseTypesView'));
 const AdminTasksView = dynamic(() => import('@/components/admin/AdminTasksView'));
 const AdminProjectView = dynamic(() => import('@/components/admin/AdminProjectView'));
+const AdminDemoProjects = dynamic(() => import('@/components/admin/AdminDemoProjects'));
 const AdminPlotView = dynamic(() => import('@/components/admin/AdminPlotView'));
 const BillingQueueView = dynamic(() => import('@/components/BillingQueueView'));
 const ProcurementDashboard = dynamic(() => import('@/components/ProcurementDashboard'));
@@ -228,7 +229,7 @@ export default function ConstructionApp() {
   // Sales opens its own workspace. Construction detail rows are requested when
   // navigating to a view that consumes them, rather than on that landing screen.
   const salesWorkspaceOnly = activeView === 'my-sales-workspace';
-  const constructionOverviewOnly = activeView === 'dashboard';
+  const constructionOverviewOnly = activeView === 'dashboard' || activeView === 'admin-demo-projects';
   const {
     loading, setLoading,
     projects, setProjects,
@@ -261,7 +262,18 @@ export default function ConstructionApp() {
 
 
 
+  const demoDirtyRef = useRef(false);
+  const viewRef = useRef(view);
+  viewRef.current = view;
+
   const setView = useCallback((newView: any) => {
+    if (viewRef.current === 'admin-demo-projects') {
+      if (newView === 'admin-demo-projects') return;
+      if (demoDirtyRef.current && typeof window !== 'undefined' && !window.confirm('ผังยังไม่ได้บันทึก ต้องการออกและทิ้งการแก้ไขหรือไม่?')) {
+        return;
+      }
+      demoDirtyRef.current = false;
+    }
     if (newView === 'sales-dashboard-excel') setHasOpenedSalesDashboard(true);
     if (newView === 'global-feed' || newView === 'daily-activities') {
       setSelectedProject(null);
@@ -2860,6 +2872,7 @@ export default function ConstructionApp() {
       setPendingPEInspections([]);
       return;
     }
+    if (activeView === 'admin-demo-projects') return;
     let cancelled = false;
     (async () => {
       try {
@@ -5732,6 +5745,14 @@ export default function ConstructionApp() {
                 />
               )}
               {/* 🌟 3. ADMIN FORMS: PROJECTS 🌟 */}
+              {view === 'admin-demo-projects' && isAdmin && (
+                <AdminDemoProjects
+                  key={loggedInUser?.authUserId || loggedInUser?.id || loggedInUser?.username}
+                  isAdmin={isAdmin}
+                  onDirtyChange={(isDirty) => { demoDirtyRef.current = isDirty; }}
+                  onBack={() => { demoDirtyRef.current = false; setView('dashboard'); setSelectedProject(null); }}
+                />
+              )}
               {view === 'admin-project' && isAdmin && (
                 <AdminProjectView
                   setView={setView}

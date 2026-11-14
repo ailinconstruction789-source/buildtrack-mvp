@@ -428,6 +428,7 @@ const Sidebar = React.memo(({
                       {isAdmin && (
                         <>
                           <button onClick={() => setView('admin-project')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'admin-project' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><PlusCircle size={18} /> สร้างโครงการ</button>
+                          <button onClick={() => { setSelectedProject(null); setView('admin-demo-projects'); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'admin-demo-projects' ? 'bg-violet-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><MapIcon size={18} /> โครงการ Demo</button>
                           <button onClick={() => setView('admin-plot')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'admin-plot' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><MapIcon size={18} /> เพิ่มแปลงบ้าน</button>
                           <button onClick={() => setView('admin-users')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'admin-users' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Users size={18} /> จัดการผู้ใช้งาน</button>
                           {/* ✅ ปุ่มเมนูจัดการแบบบ้าน (Desktop) */}
