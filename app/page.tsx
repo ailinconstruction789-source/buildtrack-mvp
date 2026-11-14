@@ -5793,7 +5793,7 @@ export default function ConstructionApp() {
           {isMobileLayout && (
             <nav className="bg-white border-t border-slate-200 p-2 fixed bottom-0 left-[14px] right-[14px] rounded-b-[2rem] z-[100] shadow-[0_-10px_40px_rgba(0,0,0,0.1)] flex justify-around">
               {/* 📜 ปุ่มแรกบนมือถือ: ฟีดรวม */}
-              {(isAdmin || isOwner) && (
+              {(isAdmin || isOwner || isProjectPlanner) && (
                 <button onClick={() => { setSelectedProject(null); setView('global-feed'); }} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'global-feed' ? 'text-blue-600' : 'text-slate-400'}`}>
                   <ClipboardList size={20} className={activeView === 'global-feed' ? 'fill-blue-100' : ''} />
                   <span className="text-[9px] font-black mt-1">ฟีดรวม</span>
@@ -5819,6 +5819,12 @@ export default function ConstructionApp() {
                 <button onClick={() => setView('planner-scoring')} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'planner-scoring' ? 'text-amber-600' : 'text-slate-400 hover:text-slate-600'}`}>
                   <Award size={20} className={activeView === 'planner-scoring' ? 'fill-amber-100' : ''} />
                   <span className="text-[9px] font-black mt-1">คะแนนแผน</span>
+                </button>
+              )}
+              {isProjectPlanner && !isAdmin && !isOwner && (
+                <button onClick={() => { setSelectedProject(null); setView('transfer-tracking-matrix'); }} className={`flex flex-col items-center p-2 rounded-xl w-16 ${activeView === 'transfer-tracking-matrix' ? 'text-[#d4af37]' : 'text-slate-400 hover:text-slate-600'}`}>
+                  <FileSpreadsheet size={20} className={activeView === 'transfer-tracking-matrix' ? 'fill-[#d4af37]/20' : ''} />
+                  <span className="text-[9px] font-black mt-1">บ้านรอโอน</span>
                 </button>
               )}
               {(isAdmin || isOwner || isSiteEngineer || isForeman || isProjectPlanner) && (

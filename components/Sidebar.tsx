@@ -119,8 +119,8 @@ const Sidebar = React.memo(({
                 <div>
                   <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3 px-2">Overview</p>
                     <nav className="space-y-1">
-                      {/* 📜 เมนูแรกสุด: ไทม์ไลน์รวมหน้าไซต์ (สำหรับ Owner และ Admin) */}
-                      {(isAdmin || isOwner || isSiteEngineer) && (
+                      {/* 📜 เมนูแรกสุด: ไทม์ไลน์รวมหน้าไซต์ (สำหรับ Owner, Admin, SE และ PE) */}
+                      {(isAdmin || isOwner || isSiteEngineer || isProjectPlanner) && (
                         <button onClick={() => { setView('global-feed'); setSelectedProject(null); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'global-feed' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><ClipboardList size={18} /> Live Feed หน้าไซต์</button>
                       )}
                       {(isAdmin || isOwner || isSiteEngineer || isForeman || isQC || isProjectPlanner) && (
@@ -390,6 +390,15 @@ const Sidebar = React.memo(({
                       <nav className="space-y-1">
                         <button onClick={() => setView('master-gantt')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'master-gantt' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Grid size={18} /> Master Gantt Chart</button>
                         <button onClick={() => { setView('planner-scoring'); setSelectedProject(null); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'planner-scoring' ? 'bg-amber-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Award size={18} /> คะแนนแผนงานก่อสร้าง</button>
+                        {isProjectPlanner && !isAdmin && !isOwner && (
+                          <button
+                            onClick={() => { setSelectedProject(null); setView('transfer-tracking-matrix'); }}
+                            onMouseEnter={() => { import('@/components/sales/TransferTrackingMatrixView').catch(() => {}); }}
+                            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'transfer-tracking-matrix' ? 'bg-[#d4af37] text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}
+                          >
+                            <FileSpreadsheet size={18} /> ตารางติดตามบ้านรอโอน
+                          </button>
+                        )}
                       </nav>
                     </div>
                   )}
