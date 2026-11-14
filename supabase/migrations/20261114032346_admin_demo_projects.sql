@@ -94,6 +94,43 @@ CREATE TRIGGER admin_demo_projects_revision
   BEFORE UPDATE ON public.admin_demo_projects
   FOR EACH ROW EXECUTE FUNCTION buildtrack_demo_private.advance_revision();
 
+CREATE FUNCTION buildtrack_demo_private.current_actor_role()
+RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
+AS $actor_role$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_session uuid;
+  v_role text;
+BEGIN
+  IF current_setting('transaction_read_only', true) <> 'on' THEN
+    RETURN public.app_current_actor()->>'role';
+  END IF;
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'APP_ACTOR_REQUIRED';
+  END IF;
+  BEGIN
+    v_session := NULLIF(auth.jwt()->>'session_id', '')::uuid;
+  EXCEPTION WHEN invalid_text_representation THEN
+    RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'APP_ACTOR_REQUIRED';
+  END;
+  SELECT r.role INTO v_role
+  FROM account_security_private.reviewed_roles r
+  JOIN auth.users u ON u.id = r.auth_user_id
+  JOIN auth.sessions s ON s.user_id = u.id AND s.id = v_session
+  JOIN public.users p ON p.id = r.legacy_user_id
+  WHERE r.auth_user_id = v_uid AND r.enabled
+    AND u.deleted_at IS NULL AND NOT COALESCE(u.is_anonymous, false)
+    AND (u.banned_until IS NULL OR u.banned_until <= statement_timestamp())
+    AND (s.not_after IS NULL OR s.not_after > statement_timestamp());
+  IF NOT FOUND THEN
+    RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'APP_ACTOR_REQUIRED';
+  END IF;
+  RETURN v_role;
+END;
+$actor_role$;
+REVOKE ALL ON FUNCTION buildtrack_demo_private.current_actor_role() FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION buildtrack_demo_private.current_actor_role() TO authenticated;
+
 ALTER TABLE public.admin_demo_projects ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.admin_demo_projects FORCE ROW LEVEL SECURITY;
 REVOKE ALL ON public.admin_demo_projects FROM PUBLIC, anon, authenticated, service_role;
@@ -103,7 +140,7 @@ GRANT UPDATE (name, layout_data) ON public.admin_demo_projects TO authenticated;
 
 CREATE POLICY admin_demo_projects_admin_only ON public.admin_demo_projects
   FOR ALL TO authenticated
-  USING (((SELECT public.app_current_actor())->>'role') = 'Admin')
+  USING ((SELECT buildtrack_demo_private.current_actor_role()) = 'Admin')
   WITH CHECK (((SELECT public.app_current_actor())->>'role') = 'Admin');
 
 -- No DELETE/TRUNCATE privilege. Ownership, timestamps and revision are never

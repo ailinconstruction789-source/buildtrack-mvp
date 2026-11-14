@@ -46,3 +46,6 @@ ALTER TABLE qc_drawing_annotations ADD COLUMN IF NOT EXISTS transferred_to_task_
 CREATE INDEX IF NOT EXISTS idx_qc_inspection_answers_transferred 
   ON qc_inspection_answers(transferred_to_task_template_id) 
   WHERE transferred_to_task_template_id IS NOT NULL;
+
+NOTIFY pgrst, 'reload schema';
+

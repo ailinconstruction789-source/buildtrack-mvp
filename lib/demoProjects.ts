@@ -16,14 +16,14 @@ export interface DemoProject {
 
 export const DEMO_LAYERS: ReadonlyArray<{ kind: DemoCellKind; label: string; color: string }> = [
   { kind: 'earthwork', label: 'งานถมดิน', color: '#d6b58b' },
-  { kind: 'plot', label: 'แปลงบ้าน', color: '#93c5fd' },
-  { kind: 'road', label: 'ถนน', color: '#64748b' },
-  { kind: 'walkway', label: 'ทางเดิน', color: '#cbd5e1' },
-  { kind: 'fence', label: 'รั้ว', color: '#a16207' },
-  { kind: 'drainage', label: 'ระบายน้ำ', color: '#0f766e' },
-  { kind: 'water', label: 'ประปา', color: '#0284c7' },
+  { kind: 'plot', label: 'แปลงบ้าน', color: '#3b82f6' },
+  { kind: 'road', label: 'ถนน', color: '#475569' },
+  { kind: 'walkway', label: 'ทางเท้า', color: '#94a3b8' },
+  { kind: 'drainage', label: 'ท่อใยหิน/ระบายน้ำ', color: '#0f766e' },
+  { kind: 'water', label: 'ท่อประปา', color: '#0284c7' },
   { kind: 'electric', label: 'แนวไฟฟ้า', color: '#ca8a04' },
   { kind: 'pole', label: 'เสาไฟ', color: '#7c3aed' },
+  { kind: 'fence', label: 'รั้วโครงการ', color: '#a16207' },
 ];
 
 const table = 'admin_demo_projects';
@@ -85,28 +85,61 @@ export function parseDemoProject(value: unknown): DemoProject {
   };
 }
 
+/** Empty 24x16 sandbox layout for drawing from scratch. */
+export function createEmptyDemoLayout(): DemoLayout {
+  return { version: 1, cols: 24, rows: 16, cells: [] };
+}
+
 /** Synthetic draft coordinates only: the grid does not imply surveyed metres. */
 export function createDemoLayout(): DemoLayout {
   const cells: DemoCell[] = [];
-  const add = (kind: DemoCellKind, x: number, y: number) => cells.push({ id: `${kind}-${x}-${y}`, x, y, kind });
+  const seen = new Set<string>();
+  const add = (kind: DemoCellKind, x: number, y: number) => {
+    const key = `${kind}:${x}:${y}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    cells.push({ id: `${kind}-${x}-${y}`, x, y, kind });
+  };
+
+  // ขั้นที่ 1: งานถมดิน และ วางผังแปลงบ้าน (A1-A4 ฝั่งเหนือ y=2..5, B1-B4 ฝั่งใต้ y=10..13 ติดทางเท้าพอดี)
+  for (let x = 2; x <= 21; x++) {
+    for (const y of [2, 3, 4, 5, 10, 11, 12, 13]) add('earthwork', x, y);
+  }
+  for (const startX of [2, 7, 12, 17]) {
+    for (let x = startX; x < startX + 4; x++) {
+      for (const y of [2, 3, 4, 5]) add('plot', x, y);
+      for (const y of [10, 11, 12, 13]) add('plot', x, y);
+    }
+  }
+
+  // ขั้นที่ 2: ถนนหลัก 2 เลน (y=7..8) และทางเท้าขนาบ 2 ฝั่ง (y=6 คั่นหน้าบ้านฝั่งเหนือ, y=9 คั่นหน้าบ้านฝั่งใต้)
   for (let x = 2; x <= 21; x++) {
     for (const y of [7, 8]) add('road', x, y);
     for (const y of [6, 9]) add('walkway', x, y);
-    add('drainage', x, 7);
-    add('water', x, 9);
-    add('electric', x, 10);
   }
-  for (const startX of [3, 8, 13, 18]) {
-    for (const startY of [3, 11]) {
-      for (let x = startX; x < startX + 3; x++) {
-        for (let y = startY; y < startY + 2; y++) add('plot', x, y);
-      }
+
+  // ขั้นที่ 3: งานวางท่อใยหิน/ระบายน้ำ และ ท่อประปา วิ่งคู่ขนานอยู่ในแนวทางเท้าทั้ง 2 ฝั่ง (+ ท่อลอดข้ามถนนที่ x=2..3)
+  for (let x = 2; x <= 21; x++) {
+    for (const y of [6, 9]) {
+      add('drainage', x, y);
+      add('water', x, y);
     }
   }
-  for (let x = 2; x <= 11; x++) for (let y = 2; y <= 5; y++) add('earthwork', x, y);
+  for (const y of [7, 8]) {
+    add('drainage', 2, y);
+    add('water', 3, y);
+  }
+
+  // ขั้นที่ 4: แนวสายไฟฟ้า + เสาไฟตามแนวทางเท้าหน้าบ้าน และรั้วรอบโครงการ
+  for (let x = 2; x <= 21; x++) {
+    for (const y of [6, 9]) add('electric', x, y);
+  }
+  for (const x of [2, 6, 11, 16, 21]) {
+    for (const y of [6, 9]) add('pole', x, y);
+  }
   for (let x = 1; x <= 22; x++) for (const y of [1, 14]) add('fence', x, y);
   for (let y = 2; y <= 13; y++) for (const x of [1, 22]) add('fence', x, y);
-  for (const x of [4, 8, 12, 16, 20]) add('pole', x, 10);
+
   return { version: 1, cols: 24, rows: 16, cells };
 }
 
@@ -145,11 +178,15 @@ export async function listDemoProjects(): Promise<DemoProject[]> {
   return result.data.map(parseDemoProject);
 }
 
-export async function createDemoProject(name: string, requestId: string): Promise<DemoProject> {
+export async function createDemoProject(
+  name: string,
+  requestId: string,
+  options?: { empty?: boolean },
+): Promise<DemoProject> {
   const cleanName = validateDemoProjectName(name);
   if (!uuid.test(requestId)) throw new Error(invalidData);
   const session = await requireAdmin();
-  const layout = createDemoLayout();
+  const layout = options?.empty ? createEmptyDemoLayout() : createDemoLayout();
   const result = await supabase.from(table).insert({ id: requestId, name: cleanName, layout_data: layout }).select(projection).single();
   await checkSession(session);
   if (result.error?.code === '23505') {

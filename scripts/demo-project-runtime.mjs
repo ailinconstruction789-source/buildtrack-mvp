@@ -102,7 +102,10 @@ try {
     const row = JSON.parse(asActor(1, `${insert(201)} RETURNING json_build_object('owner',created_by,'revision',revision,'name',name)`));
     assert.deepEqual(row, { owner: uuid(1), revision: 1, name: 'Infrastructure Demo' });
   });
-  test('Admin reads sandbox', () => assert.equal(asActor(1, 'SELECT count(*) FROM public.admin_demo_projects'), '1'));
+  test('Admin reads sandbox (including PostgREST read-only GET transactions)', () => {
+    assert.equal(asActor(1, 'SELECT count(*) FROM public.admin_demo_projects'), '1');
+    assert.equal(asActor(1, 'SET LOCAL transaction_read_only = on; SELECT count(*) FROM public.admin_demo_projects'), '1');
+  });
   test('Duplicate creation id does not create a second demo', () => {
     assert.match(asActor(1, insert(201), { fail: true }), /duplicate key/);
     assert.equal(asActor(1, 'SELECT count(*) FROM public.admin_demo_projects'), '1');
