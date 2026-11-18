@@ -30,8 +30,8 @@ export default function QCInspectionReportModal({
     window.print();
   };
 
-  const isApproved = inspection.document_status === 'approved';
-  const isRejected = inspection.document_status === 'rejected';
+  const isApproved = inspection.document_status === 'approved' || (inspection.document_status === 'submitted' && inspection.inspection_result === 'passed');
+  const isRejected = inspection.document_status === 'rejected' || inspection.inspection_result === 'failed';
 
   return (
     <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 z-[999] animate-in fade-in">
@@ -133,7 +133,7 @@ export default function QCInspectionReportModal({
           </div>
 
           {/* Results Summary Box */}
-          <div className="flex items-center gap-4 border p-4 rounded-2xl bg-white border-slate-200 text-xs">
+          <div className="flex flex-wrap items-center gap-3 border p-4 rounded-2xl bg-white border-slate-200 text-xs">
             <span className="font-bold text-slate-600">ผลสรุปรายการตรวจ:</span>
             <span className="text-emerald-700 font-bold bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
               ผ่าน: {inspection.passed_items} ข้อ
@@ -141,6 +141,11 @@ export default function QCInspectionReportModal({
             <span className="text-rose-700 font-bold bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-200">
               ไม่ผ่าน: {inspection.failed_items} ข้อ
             </span>
+            {(inspection.conditional_items || 0) > 0 && (
+              <span className="text-amber-800 font-bold bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
+                มีเงื่อนไข: {inspection.conditional_items} ข้อ
+              </span>
+            )}
             <span className="text-slate-600 font-bold bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200">
               N/A: {inspection.na_items} ข้อ
             </span>
@@ -160,7 +165,7 @@ export default function QCInspectionReportModal({
                   <tr className="bg-slate-100 text-slate-500 uppercase text-[10px] border-b border-slate-200">
                     <th className="py-2.5 px-4">รหัส</th>
                     <th className="py-2.5 px-4">รายการตรวจ</th>
-                    <th className="py-2.5 px-4">ค่าที่วัด</th>
+                    <th className="py-2.5 px-4">ค่าที่วัด / บันทึก</th>
                     <th className="py-2.5 px-4 text-center">ผลการตรวจ</th>
                     <th className="py-2.5 px-4">หมายเหตุ / ข้อบกพร่อง</th>
                   </tr>
@@ -178,21 +183,31 @@ export default function QCInspectionReportModal({
                         )}
                       </td>
                       <td className="py-2.5 px-4 font-mono font-bold text-slate-700">
-                        {ans.numeric_value !== null && ans.numeric_value !== undefined 
-                          ? `${ans.numeric_value} ${ans.unit || ''}` 
-                          : '-'}
+                        {ans.numeric_value !== null && ans.numeric_value !== undefined
+                          ? `${ans.numeric_value} ${ans.unit || ''}`
+                          : ans.text_value
+                            ? ans.text_value
+                            : Array.isArray(ans.selected_options) && ans.selected_options.length > 0
+                              ? ans.selected_options.join(', ')
+                              : '-'}
                       </td>
                       <td className="py-2.5 px-4 text-center">
                         <span className={`px-2.5 py-0.5 rounded-full font-bold text-[10px] ${
                           ans.status === 'passed' ? 'bg-emerald-100 text-emerald-700' :
                           ans.status === 'failed' ? 'bg-rose-100 text-rose-700' :
+                          ans.status === 'conditional' ? 'bg-amber-100 text-amber-800' :
                           'bg-slate-100 text-slate-500'
                         }`}>
-                          {ans.status === 'passed' ? 'ผ่าน' : ans.status === 'failed' ? 'ไม่ผ่าน' : 'N/A'}
+                          {ans.status === 'passed' ? 'ผ่าน' : ans.status === 'failed' ? 'ไม่ผ่าน' : ans.status === 'conditional' ? 'มีเงื่อนไข' : 'N/A'}
                         </span>
                       </td>
                       <td className="py-2.5 px-4 text-slate-600">
                         {ans.remarks || '-'}
+                        {ans.transferred_to_task_name && (
+                          <span className="block text-[10px] font-bold text-amber-700 mt-0.5">
+                            ส่งต่องวด: {ans.transferred_to_task_name}
+                          </span>
+                        )}
                       </td>
                     </tr>
                   ))}

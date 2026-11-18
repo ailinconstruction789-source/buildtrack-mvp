@@ -13,6 +13,7 @@ import {
   reviewPEInspection
 } from '../qcInspectionService';
 import { QCFormItem, QCInspectionAnswer, QCDrawingAnnotation, QCInspection } from '@/types/qc.types';
+import { buildConstructionLiveFeed, mergeTaskUpdatesWithQCInspections } from '@/lib/constructionLiveFeed';
 import { supabase } from '@/lib/supabase';
 
 vi.mock('@/lib/supabase', () => ({
@@ -500,3 +501,100 @@ describe('Reopening Approved Inspection', () => {
     expect(result.error).toContain('จำเป็นต้องระบุเหตุผล');
   });
 });
+
+describe('QC Form Display in Task Chat and Live Feed', () => {
+  const sampleInspection: QCInspection = {
+    id: 'insp-plot-39',
+    project_name: 'ไอลิน 6',
+    plot_id: '39',
+    task_template_id: 'task-conduit',
+    task_name: 'งานเดินท่อร้อยสายไฟ',
+    round_number: 1,
+    inspection_method: 'form_v2',
+    form_version: 1,
+    form_title: 'งานร้อยสายไฟ',
+    inspector_name: 'QC_SOMCHAI',
+    inspector_role: 'QC',
+    document_status: 'approved',
+    inspection_result: 'passed',
+    total_items: 2,
+    passed_items: 2,
+    failed_items: 0,
+    conditional_items: 0,
+    na_items: 0,
+    photo_urls: ['https://example.com/qc-photo-1.jpg'],
+    submitted_at: '2026-11-17T03:00:00.000Z',
+    approved_at: '2026-11-17T03:01:00.000Z',
+    approved_by: 'QC_SOMCHAI',
+    answers: [
+      {
+        form_item_id: 'item-1',
+        item_code: 'E01',
+        item_text: 'การยึดกิ๊บจับท่อทุกระยะ 1.5 เมตร',
+        item_type: 'pass_fail_na',
+        is_critical: true,
+        status: 'passed',
+        remarks: 'ยึดแน่นหนาครบทุกจุด'
+      },
+      {
+        form_item_id: 'item-2',
+        item_code: 'E02',
+        item_text: 'ระยะห่างกล่องพักสาย',
+        item_type: 'number',
+        is_critical: false,
+        status: 'passed',
+        numeric_value: 120,
+        unit: 'ซม.'
+      }
+    ]
+  };
+
+  it('enriches QC task_updates with the recorded QCInspection form data in Task Chat', () => {
+    const updates = [
+      {
+        id: 'upd-1',
+        plot_id: '39',
+        task_template_id: 'task-conduit',
+        user_name: 'ForemanA',
+        role: 'Foreman',
+        action: 'ส่งตรวจ 100%',
+        text_content: 'เดินท่อเสร็จแล้ว',
+        progress: 98,
+        created_at: '2026-11-17T01:00:00.000Z'
+      },
+      {
+        id: 'upd-2',
+        plot_id: '39',
+        task_template_id: 'task-conduit',
+        user_name: 'QC_SOMCHAI',
+        role: 'QC',
+        action: 'QC อนุมัติ',
+        text_content: 'ผ่านการตรวจ QC แบบฟอร์มใหม่ (งานร้อยสายไฟ v1 - ผ่าน 2/2 ข้อ) [ref:qc_insp_insp-plot-39]',
+        progress: 100,
+        created_at: '2026-11-17T03:01:00.000Z'
+      }
+    ];
+
+    const merged = mergeTaskUpdatesWithQCInspections(updates, [sampleInspection], 'งานเดินท่อร้อยสายไฟ');
+    expect(merged).toHaveLength(2);
+    expect(merged[1].qc_inspection).toBeDefined();
+    expect(merged[1].qc_inspection.form_title).toBe('งานร้อยสายไฟ');
+    expect(merged[1].qc_inspection.answers).toHaveLength(2);
+    expect(merged[1].image_url).toBe('https://example.com/qc-photo-1.jpg');
+  });
+
+  it('includes submitted/approved QCInspection in Live Feed with full answers', () => {
+    const feed = buildConstructionLiveFeed({
+      allUpdatesRecord: [],
+      taskTemplates: [{ id: 'task-conduit', task_name: 'งานเดินท่อร้อยสายไฟ' }],
+      qcInspections: [sampleInspection]
+    });
+
+    expect(feed).toHaveLength(1);
+    expect(feed[0].plot_id).toBe('39');
+    expect(feed[0].qc_inspection).toBeDefined();
+    expect(feed[0].qc_inspection?.answers).toHaveLength(2);
+    expect(feed[0].qc_inspection?.answers?.[0].item_text).toBe('การยึดกิ๊บจับท่อทุกระยะ 1.5 เมตร');
+  });
+});
+

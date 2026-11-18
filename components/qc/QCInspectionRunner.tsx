@@ -473,10 +473,8 @@ export default function QCInspectionRunner({
     setIsSubmitting(false);
 
     if (subRes.success) {
-      const nextStatus = subRes.evaluation.overallResult === 'conditional' ? 'pending_pe' : 'submitted';
-      setStatusMessage({ text: 'ส่งผลการตรวจเรียบร้อยแล้ว รอดำเนินการรับรอง', type: 'success' });
-      setCurrentInspection(prev => ({
-        ...(prev || {
+      const submittedInspectionObj: QCInspection = {
+        ...(currentInspection || {
           project_name: projectName,
           plot_id: plotId,
           task_template_id: taskTemplateId,
@@ -498,14 +496,54 @@ export default function QCInspectionRunner({
           na_items: subRes.evaluation.naItems
         }),
         id: activeInspectionId,
-        document_status: nextStatus,
+        document_status: subRes.evaluation.overallResult === 'conditional' ? 'pending_pe' : 'submitted',
         inspection_result: subRes.evaluation.overallResult,
         passed_items: subRes.evaluation.passedItems,
         failed_items: subRes.evaluation.failedItems,
         conditional_items: subRes.evaluation.conditionalItems,
         na_items: subRes.evaluation.naItems,
         photo_urls: photoUrls
-      }));
+      };
+
+      // หากผลรวมคือผ่านปกติ (passed) หรือไม่ผ่าน (failed) และผู้ส่งคือ QC/Admin ให้รับรองผลพร้อมบันทึกเข้าห้องแชทและ Live Feed ทันทีในคลิกเดียว
+      if ((isQC || isAdmin) && (subRes.evaluation.overallResult === 'passed' || subRes.evaluation.overallResult === 'failed')) {
+        const autoDecision = subRes.evaluation.overallResult === 'passed' ? 'approve' : 'reject';
+        setIsApproving(true);
+        const appRes = await approveInspection({
+          inspection: submittedInspectionObj,
+          answers,
+          actorUsername: loggedInUser.username,
+          actorRole: currentUserRole,
+          decision: autoDecision
+        });
+        setIsApproving(false);
+
+        if (appRes.success) {
+          setStatusMessage({
+            text: autoDecision === 'approve'
+              ? 'ส่งผลตรวจและอนุมัติผ่านงาน QC เรียบร้อยแล้ว (Progress 100%)'
+              : 'ส่งผลตรวจและแจ้งแก้ไขงานไปยังผู้เกี่ยวข้องแล้ว (Progress 95%)',
+            type: 'success'
+          });
+          setCurrentInspection({
+            ...submittedInspectionObj,
+            document_status: autoDecision === 'approve' ? 'approved' : 'rejected',
+            inspection_result: autoDecision === 'approve' ? 'passed' : 'failed',
+            approved_by: loggedInUser.username,
+            approved_at: new Date().toISOString()
+          });
+          onInspectionUpdated();
+          return;
+        }
+      }
+
+      setStatusMessage({
+        text: subRes.evaluation.overallResult === 'conditional'
+          ? 'ส่งผลการตรวจแบบมีเงื่อนไขเรียบร้อยแล้ว รอวิศวกรโครงการ (PE) พิจารณาอนุมัติ'
+          : 'ส่งผลการตรวจเรียบร้อยแล้ว รอดำเนินการรับรอง',
+        type: 'success'
+      });
+      setCurrentInspection(submittedInspectionObj);
       onInspectionUpdated();
     } else {
       setStatusMessage({ text: subRes.error || 'ไม่สามารถส่งผลตรวจได้เนื่องจากข้อมูลยังไม่ครบถ้วน', type: 'error' });

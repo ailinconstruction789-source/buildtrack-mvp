@@ -28,6 +28,8 @@ import {
   backfillUnassignedSnapshotsForPlot,
 } from '@/lib/handoverForeman';
 import RoadblockReasonCallout from '@/components/RoadblockReasonCallout';
+import QCInspectionInlineCard from '@/components/qc/QCInspectionInlineCard';
+import QCInspectionReportModal from '@/components/qc/QCInspectionReportModal';
 
 // Enable only with the reviewed actor grants, presence RPC and role mappings.
 // The existing account feature flag alone must not cut over the legacy shell.
@@ -637,12 +639,46 @@ export default function ConstructionApp() {
   // 🌟 Infinite Scroll State สำหรับ Live Feed 🌟
   const [visibleFeedCount, setVisibleFeedCount] = useState(50);
   const [feedCategoryFilter, setFeedCategoryFilter] = useState<'all' | 'construction' | 'handover'>('all');
+  const [liveFeedQCInspections, setLiveFeedQCInspections] = useState<any[]>([]);
+  const [liveFeedReportInspection, setLiveFeedReportInspection] = useState<any>(null);
 
-  // 📜 รวมกิจกรรมไซต์งานทั้งหมด (งานก่อสร้างทั่วไป + งานตรวจรับมอบบ้าน Handover)
+  useEffect(() => {
+    if (view !== 'global-feed') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const qcTable: any = supabase.from('qc_inspections');
+        if (typeof qcTable?.select !== 'function') return;
+        const { data } = await qcTable
+          .select('*, answers:qc_inspection_answers(*), annotations:qc_drawing_annotations(*)')
+          .neq('document_status', 'draft')
+          .order('updated_at', { ascending: false })
+          .limit(300);
+        if (!cancelled && Array.isArray(data)) {
+          setLiveFeedQCInspections(data);
+        }
+      } catch {
+        // Ignore if table or network unavailable in test environment
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [view, allUpdatesRecord?.length]);
+
+  // 📜 รวมกิจกรรมไซต์งานทั้งหมด (งานก่อสร้างทั่วไป + งานตรวจรับมอบบ้าน Handover + ใบตรวจ QC ฟอร์มใหม่)
   const liveFeedItems = useMemo(() => {
     if (view !== 'global-feed') return [];
-    return buildConstructionLiveFeed({ allUpdatesRecord, defectUpdates, defects, plots, taskTemplates, contractors });
-  }, [view, allUpdatesRecord, defectUpdates, defects, plots, taskTemplates, contractors]);
+    return buildConstructionLiveFeed({
+      allUpdatesRecord,
+      defectUpdates,
+      defects,
+      plots,
+      taskTemplates,
+      contractors,
+      qcInspections: liveFeedQCInspections
+    });
+  }, [view, allUpdatesRecord, defectUpdates, defects, plots, taskTemplates, contractors, liveFeedQCInspections]);
 
   const filteredLiveFeedItems = useMemo(() => {
     if (feedCategoryFilter === 'all') return liveFeedItems;
@@ -4141,6 +4177,15 @@ export default function ConstructionApp() {
                                   </p>
                                 )}
 
+                                {/* 📋 การ์ดแบบฟอร์มตรวจ QC (แสดงรายละเอียดตามที่ QC บันทึกจริงใน Live Feed) */}
+                                {update.qc_inspection && (
+                                  <QCInspectionInlineCard
+                                    inspection={update.qc_inspection}
+                                    onOpenFullReport={(insp) => setLiveFeedReportInspection(insp)}
+                                    onPreviewPhoto={(url) => setFullImageUrl(url)}
+                                  />
+                                )}
+
                                 {/* รูปภาพผลงาน (ถ้ามีรูปภาพ จะรองรับการกดคลิกซูมดูรูปใหญ่ได้ทันที) */}
                                 {update.image_url && (
                                   <div className={`grid gap-2 sm:gap-3 ${update.image_url.split(',').filter((u: string) => u.trim() !== '').length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
@@ -4266,6 +4311,13 @@ export default function ConstructionApp() {
                       </>
                     )}
                   </div>
+                  {liveFeedReportInspection && (
+                    <QCInspectionReportModal
+                      isOpen={Boolean(liveFeedReportInspection)}
+                      onClose={() => setLiveFeedReportInspection(null)}
+                      inspection={liveFeedReportInspection}
+                    />
+                  )}
                 </div>
               )}
               {/* 🕒 View: Daily Site Activities & Foreman Time Audit */}
@@ -5258,6 +5310,7 @@ export default function ConstructionApp() {
                     setView('house-detail');
                   }}
                   initialProjectName="all"
+                  projects={projects}
                 />
               )}
 

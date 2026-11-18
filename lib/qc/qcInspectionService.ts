@@ -436,7 +436,7 @@ export async function submitInspection(params: {
             user_name: actorUsername,
             role: actorRole || 'QC',
             action: 'QC ส่งตรวจแบบมีเงื่อนไข (รอ PE อนุมัติ)',
-            text_content: `ตรวจพบรายการผ่านแบบมีเงื่อนไข (${evaluation.conditionalItems} ข้อ) ส่งต่อให้วิศวกรโครงการ (PE) พิจารณาอนุมัติ`,
+            text_content: `ตรวจพบรายการผ่านแบบมีเงื่อนไข (${evaluation.conditionalItems} ข้อ) ส่งต่อให้วิศวกรโครงการ (PE) พิจารณาอนุมัติ${inspectionId ? ` [ref:qc_insp_${inspectionId}]` : ''}`,
             progress: 100,
             is_completed: false,
             image_url: (inspData.photo_urls || []).join(',')
@@ -490,10 +490,11 @@ export async function approveInspection(params: {
     // 2. ซิงค์ไปยัง task_updates เพื่อให้ trigger และ views ของระบบเดิมทำงานต่อได้สมบูรณ์
     const finalP = isApproved ? 100 : 95;
     const actionLabel = isApproved ? 'QC อนุมัติ' : 'QC แจ้งแก้ไข';
-    const summaryText = remarks || (isApproved 
+    const baseSummaryText = remarks || (isApproved 
       ? `ผ่านการตรวจ QC แบบฟอร์มใหม่ (${inspection.form_title} v${inspection.form_version} - ผ่าน ${inspection.passed_items}/${inspection.total_items} ข้อ)`
       : `ไม่ผ่านการตรวจ QC แบบฟอร์มใหม่ (${inspection.form_title} v${inspection.form_version} - ไม่ผ่าน ${inspection.failed_items} ข้อ)`
     );
+    const summaryText = inspection.id ? `${baseSummaryText} [ref:qc_insp_${inspection.id}]` : baseSummaryText;
 
     const { error: updErr } = await supabase.from('task_updates').insert([{
       plot_id: inspection.plot_id,
@@ -745,10 +746,11 @@ export async function reviewPEInspection(params: {
     // 2. ซิงค์ไปยัง task_updates
     const finalProgress = isApproved ? 100 : 95;
     const actionLabel = isApproved ? 'PE อนุมัติผ่านมีเงื่อนไข' : 'PE สั่งแก้ไขงาน';
-    const summaryText = notes || (isApproved 
+    const baseSummaryText = notes || (isApproved 
       ? `ผ่านการตรวจ QC แบบมีเงื่อนไข (อนุมัติโดยวิศวกรโครงการ ${peUsername} - มีรายการส่งต่องานถัดไป)`
       : `ไม่ผ่านการตรวจ QC โดยวิศวกรโครงการ (${peUsername} แจ้งแก้ไขงาน)`
     );
+    const summaryText = inspection.id ? `${baseSummaryText} [ref:qc_insp_${inspection.id}]` : baseSummaryText;
 
     const { error: updErr } = await supabase.from('task_updates').insert([{
       plot_id: inspection.plot_id,

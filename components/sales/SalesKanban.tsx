@@ -1232,32 +1232,43 @@ export default function SalesKanban({
         await checkedResult(supabase.from('leads').update(leadUpdatePayload).eq('id', leadId));
       }
 
-      if (panelState.lead?.deal_type === 'rent' && newStatus === 'Cancelled') {
-        try {
-          await supabase.from('rental_contracts')
-            .update({ status: 'Cancelled', cancellation_reason: editCustomerForm.cancelReason || 'ยกเลิกการจองเช่า' })
-            .eq('lead_id', leadId)
-            .in('status', ['Active', 'PendingContract']);
-        } catch (rcErr) {
-          console.warn('Could not cancel rental contracts:', rcErr);
+      if (newStatus === 'Cancelled') {
+        if (panelState.lead?.deal_type === 'rent') {
+          try {
+            await supabase.from('rental_contracts')
+              .update({ status: 'Cancelled', cancellation_reason: editCustomerForm.cancelReason || 'ยกเลิกการจองเช่า' })
+              .eq('lead_id', leadId)
+              .in('status', ['Active', 'PendingContract']);
+          } catch (rcErr) {
+            console.warn('Could not cancel rental contracts:', rcErr);
+          }
         }
         const plotIdentifier = panelState.plotId || panelState.lead?.plot;
         if (plotIdentifier) {
           try {
-            await supabase.from('plots').update({
-              sale_status: 'available',
-              has_customer: false,
-              current_tenant_name: null,
-              current_tenant_phone: null,
-              rental_program: null,
-              monthly_rent: null,
-              security_deposit: null,
-              lease_start_date: null,
-              lease_end_date: null,
-              highlight_note: null
-            }).eq('id', plotIdentifier);
-          } catch (plotErr) {
-            console.warn('Could not release plot on cancellation:', plotErr);
+            const rpcRes = await supabase.rpc('cancel_plot_sale_and_release', {
+              p_plot_id: plotIdentifier,
+              p_sale_id: saleId || null,
+              p_reason: editCustomerForm.cancelReason || null,
+            });
+            if (rpcRes.error) throw rpcRes.error;
+          } catch {
+            try {
+              await supabase.from('plots').update({
+                sale_status: 'available',
+                has_customer: false,
+                current_tenant_name: null,
+                current_tenant_phone: null,
+                rental_program: null,
+                monthly_rent: null,
+                security_deposit: null,
+                lease_start_date: null,
+                lease_end_date: null,
+                highlight_note: null
+              }).eq('id', plotIdentifier);
+            } catch (plotErr) {
+              console.warn('Could not release plot on cancellation:', plotErr);
+            }
           }
         }
       }

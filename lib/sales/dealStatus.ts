@@ -33,7 +33,7 @@ export function salesDealContractStatus(stage: string): string {
   return stage === 'booked' ? 'Reserved' : ['transferred', 'handover'].includes(stage) ? 'Transferred' : stage === 'cancelled' ? 'Cancelled' : 'Contracted';
 }
 export function salesDealTransitionError(initial: string, target: string, method: string, evidence: {
-  bank: string; reason: string; date: string; confirmed: boolean; saleId: string | null;
+  bank: string; reason: string; date: string; confirmed: boolean; saleId: string | null; plotId?: string | null; hasPlot?: boolean;
 }): string | null {
   if (method === 'cash' && (initial.startsWith('loan_') || target.startsWith('loan_'))) return 'สถานะสินเชื่อไม่ตรงกับวิธีชำระเงินสด กรุณาตรวจข้อมูลก่อนบันทึก';
   if (initial === target) return null;
@@ -41,7 +41,7 @@ export function salesDealTransitionError(initial: string, target: string, method
   if (target === 'loan_submitted' && (!evidence.bank.trim() || evidence.bank === CASH_BANK_OPTION)) return 'กรุณาเลือกธนาคารก่อนยื่นสินเชื่อ';
   if (['loan_rejected', 'cancelled'].includes(target) && !evidence.reason.trim()) return 'กรุณาระบุเหตุผล';
   if (['transferred', 'handover', 'cancelled'].includes(target)) {
-    if (!evidence.saleId) return 'ยังไม่มีรายการขายที่เชื่อมกับ Lead กรุณาตรวจการเชื่อมข้อมูลก่อนโอน ส่งมอบ หรือยกเลิก';
+    if (!evidence.saleId && !evidence.plotId && !evidence.hasPlot) return 'ยังไม่มีรายการขายและยังไม่ระบุแปลงที่ดินที่เชื่อมกับ Lead กรุณาระบุแปลงก่อนโอน ส่งมอบ หรือยกเลิก';
     const stamp = new Date(evidence.date + 'T12:00:00+07:00');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(evidence.date) || !Number.isFinite(stamp.getTime())
       || new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit' }).format(stamp) !== evidence.date) return 'กรุณาระบุวันที่ทำรายการที่ถูกต้อง';

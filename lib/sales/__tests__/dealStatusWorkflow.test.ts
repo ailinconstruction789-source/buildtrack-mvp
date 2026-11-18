@@ -28,6 +28,8 @@ describe('native shared post-booking workflow rules', () => {
   });
   it('requires linked sale and confirmation for terminal transitions', () => {
     expect(salesDealTransitionError('transferred', 'handover', 'cash', { ...evidence, saleId: null })).toContain('เชื่อม');
+    expect(salesDealTransitionError('transferred', 'handover', 'cash', { ...evidence, saleId: null, plotId: '15' })).toBeNull();
+    expect(salesDealTransitionError('transferred', 'handover', 'cash', { ...evidence, saleId: null, hasPlot: true })).toBeNull();
     expect(salesDealTransitionError('transferred', 'handover', 'cash', { ...evidence, confirmed: false })).toContain('ยืนยัน');
     expect(salesDealTransitionError('transferred', 'handover', 'cash', evidence)).toBeNull();
     expect(salesDealTransitionError('transferred', 'cancelled', 'cash', evidence)).toContain('ขั้นตอน');

@@ -15,10 +15,37 @@ interface BuildTrackDataRow extends PlotLeadMatchInput {
   overall_progress?: number | string | null;
 }
 
-async function requireSuccessfulRead<T extends { error?: unknown }>(query: PromiseLike<T>): Promise<T> {
-  const result = await query;
-  if (result.error) throw result.error;
-  return result;
+function isStatementTimeoutError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const err = error as { code?: unknown; message?: unknown; details?: unknown };
+  return err.code === '57014'
+    || /statement timeout|canceling statement/i.test(String(err.message || ''))
+    || /statement timeout|canceling statement/i.test(String(err.details || ''));
+}
+
+function isMissingRelationError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const err = error as { code?: unknown; message?: unknown };
+  return err.code === 'PGRST200'
+    || /could not find a relationship/i.test(String(err.message || ''));
+}
+
+async function requireSuccessfulRead<T extends { error?: unknown }>(
+  queryOrFactory: PromiseLike<T> | (() => PromiseLike<T>),
+  retries = 1
+): Promise<T> {
+  const isFactory = typeof queryOrFactory === 'function';
+  let attempt = 0;
+  while (true) {
+    const result = await (isFactory ? queryOrFactory() : queryOrFactory);
+    if (!result.error) return result;
+    if (isFactory && attempt < retries && isStatementTimeoutError(result.error)) {
+      attempt++;
+      await new Promise(resolve => setTimeout(resolve, 350 * attempt));
+      continue;
+    }
+    throw result.error;
+  }
 }
 
 export function useBuildTrackData(loggedInUser: any, selectedProjectName?: string | null, salesWorkspaceOnly = false, constructionOverviewOnly = false) {
@@ -30,6 +57,7 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
   const loadProfileKey = JSON.stringify([dataIdentity, salesWorkspaceOnly, constructionOverviewOnly]);
   const mountedRef = useRef(false);
   const requestVersionRef = useRef(0);
+  const missingPlotRelationTablesRef = useRef<Set<string>>(new Set());
   const plotDetailsRef = useRef(new Map<string, {
     identity: string | null;
     loadedAt: number | null;
@@ -80,56 +108,108 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
   const [plotOverallStatuses, setPlotOverallStatuses] = useState<any[]>([]);
   const [qcSePerformance, setQcSePerformance] = useState<any[]>([]);
 
-  const fetchWithoutLimit = useCallback(async (table: string, projectName?: string | null, orderBy: string = 'id', ascending: boolean = true, selectQuery: string = '*', secondaryOrderBy: string | readonly string[] | null = 'id', throwOnError = false) => {
-    const concurrency = table === 'plot_task_assignments' || table === 'plot_task_schedules' ? 3 : 1;
+  const fetchWithoutLimit = useCallback(async (
+    table: string,
+    projectName?: string | null,
+    orderBy: string = 'id',
+    ascending: boolean = true,
+    selectQuery: string = '*',
+    secondaryOrderBy: string | readonly string[] | null = 'id',
+    throwOnError = false,
+    resolveProjectPlotIds?: () => Promise<string[] | null>
+  ) => {
+    const concurrency = table === 'plot_task_assignments' || table === 'plot_task_schedules' ? 2 : 1;
     const secondaryColumns = typeof secondaryOrderBy === 'string' ? [secondaryOrderBy] : (secondaryOrderBy || []);
+    const isPlotScopedChildTable = table === 'plot_task_assignments' || table === 'plot_task_schedules';
+    let cachedProjectPlotIds: string[] | null | undefined;
+    const getProjectPlotIds = async (): Promise<string[] | null> => {
+      if (cachedProjectPlotIds !== undefined) return cachedProjectPlotIds;
+      cachedProjectPlotIds = resolveProjectPlotIds ? await resolveProjectPlotIds() : null;
+      return cachedProjectPlotIds;
+    };
+
+    const executeWithTimeoutRetry = async <T extends { data?: unknown; error?: unknown; count?: number | null }>(build: () => PromiseLike<T>): Promise<T> => {
+      let attempt = 0;
+      while (true) {
+        const res = await build();
+        if (!res.error || attempt >= 1 || !isStatementTimeoutError(res.error)) return res;
+        attempt++;
+        await new Promise(resolve => setTimeout(resolve, 350 * attempt));
+      }
+    };
+
     return fetchPaginatedRows<BuildTrackDataRow>(async (from, to, requestCount) => {
       const selectOptions = requestCount ? { count: 'exact' as const } : undefined;
-      let query;
-      // Use PostgREST embedded filtering if we need to filter by project_name
-      if (projectName && projectName !== 'all' && (table === 'plot_task_assignments' || table === 'plot_task_schedules')) {
-        query = supabase.from(table)
-          .select(`${selectQuery}, plots!inner(project_name)`, selectOptions)
-          .eq('plots.project_name', projectName)
-          .order(orderBy, { ascending });
-      } else if (projectName && projectName !== 'all' && (table === 'plots' || table === 'vw_plot_progress' || table === 'vw_plot_overall_status')) {
-        query = supabase.from(table)
-          .select(selectQuery, selectOptions)
-          .eq('project_name', projectName)
-          .order(orderBy, { ascending });
-      } else {
-        query = supabase.from(table).select(selectQuery, selectOptions).order(orderBy, { ascending });
-      }
-      
-      // Ensure stable pagination by adding a secondary sort (if provided and different from primary)
-      for (const column of secondaryColumns) {
-        if (column !== orderBy) query = query.order(column, { ascending: true });
-      }
-      query = query.range(from, to);
-      
-      const { data, error, count } = await query;
-      if (error) {
-        // Fallback to fetch all if the inner join fails (e.g. no explicit foreign key defined in PostgREST cache)
-        if (projectName && projectName !== 'all') {
-           console.warn(`Optimized fetch failed for ${table}, falling back to full fetch. Please ensure foreign keys are defined or run SQL migrations.`);
-           let fallbackQuery = supabase.from(table).select(selectQuery, selectOptions).order(orderBy, { ascending });
-           for (const column of secondaryColumns) {
-             if (column !== orderBy) fallbackQuery = fallbackQuery.order(column, { ascending: true });
-           }
-           fallbackQuery = fallbackQuery.range(from, to);
-           
-           const fallbackResult = await fallbackQuery;
-           if (fallbackResult.error) {
-             if (throwOnError) throw fallbackResult.error;
-             console.error(`Fallback error in fetchWithoutLimit for table ${table}:`, fallbackResult.error);
-             return { data: null };
-           }
-           return { data: fallbackResult.data as unknown as BuildTrackDataRow[] | null, count: fallbackResult.count };
-        } else {
-           if (throwOnError) throw error;
-           console.warn(`Warning in fetchWithoutLimit for table ${table}:`, error);
-           return { data: null };
+      const applyOrderAndRange = (q: any) => {
+        let next = q.order(orderBy, { ascending });
+        for (const column of secondaryColumns) {
+          if (column !== orderBy) next = next.order(column, { ascending: true });
         }
+        return next.range(from, to);
+      };
+
+      const runFallback = async () => {
+        if (projectName && projectName !== 'all' && isPlotScopedChildTable) {
+          const plotIds = await getProjectPlotIds();
+          if (plotIds && plotIds.length === 0) {
+            return { data: [] as BuildTrackDataRow[], count: 0 };
+          }
+          if (plotIds && plotIds.length > 0 && plotIds.length <= 200) {
+            const inResult = await executeWithTimeoutRetry(() =>
+              applyOrderAndRange(supabase.from(table).select(selectQuery, selectOptions).in('plot_id', plotIds))
+            );
+            if (!inResult.error) {
+              return { data: inResult.data as unknown as BuildTrackDataRow[] | null, count: inResult.count };
+            }
+          }
+        }
+        const fallbackResult = await executeWithTimeoutRetry(() =>
+          applyOrderAndRange(supabase.from(table).select(selectQuery, selectOptions))
+        );
+        if (fallbackResult.error) {
+          if (throwOnError) throw fallbackResult.error;
+          console.error(`Fallback error in fetchWithoutLimit for table ${table}:`, fallbackResult.error);
+          return { data: null };
+        }
+        return { data: fallbackResult.data as unknown as BuildTrackDataRow[] | null, count: fallbackResult.count };
+      };
+
+      // Skip guaranteed-to-fail PostgREST inner join if schema cache lacks the FK relationship
+      if (projectName && projectName !== 'all' && isPlotScopedChildTable && missingPlotRelationTablesRef.current.has(table)) {
+        return runFallback();
+      }
+
+      const buildPrimaryQuery = () => {
+        if (projectName && projectName !== 'all' && isPlotScopedChildTable) {
+          return applyOrderAndRange(
+            supabase.from(table)
+              .select(`${selectQuery}, plots!inner(project_name)`, selectOptions)
+              .eq('plots.project_name', projectName)
+          );
+        }
+        if (projectName && projectName !== 'all' && (table === 'plots' || table === 'vw_plot_progress' || table === 'vw_plot_overall_status')) {
+          return applyOrderAndRange(
+            supabase.from(table)
+              .select(selectQuery, selectOptions)
+              .eq('project_name', projectName)
+          );
+        }
+        return applyOrderAndRange(supabase.from(table).select(selectQuery, selectOptions));
+      };
+
+      const { data, error, count } = await executeWithTimeoutRetry(buildPrimaryQuery);
+      if (error) {
+        if (projectName && projectName !== 'all') {
+          if (isPlotScopedChildTable && isMissingRelationError(error)) {
+            missingPlotRelationTablesRef.current.add(table);
+          } else {
+            console.warn(`Optimized fetch failed for ${table}, falling back to filtered/full fetch.`);
+          }
+          return runFallback();
+        }
+        if (throwOnError) throw error;
+        console.warn(`Warning in fetchWithoutLimit for table ${table}:`, error);
+        return { data: null };
       }
       // The SDK cannot infer row fields from a runtime table/select string.
       return { data: data as unknown as BuildTrackDataRow[] | null, count };
@@ -288,47 +368,77 @@ export function useBuildTrackData(loggedInUser: any, selectedProjectName?: strin
 
       const salesStartup = salesWorkspaceOnly
         ? loadSalesStartupData({ fresh: !options.reuseReferenceData }) : null;
+
+      // Start reference cache read in parallel (reused across project switches)
+      const referencePromise = referenceCache.promise;
+      referencePromise.catch(() => {});
+      const plotsPromise = salesStartup
+        ? salesStartup.then(data => data.plots as BuildTrackDataRow[])
+        : fetchWithoutLimit('plots', null, 'created_at', true, '*, house_types(type_name, floor_count, is_infrastructure)', 'id', true);
+      const resolveProjectPlotIds = projectToLoad && projectToLoad !== 'all'
+        ? async () => {
+            const loadedPlots = await plotsPromise;
+            return (loadedPlots || [])
+              .filter((p: any) => p.project_name === projectToLoad)
+              .map((p: any) => String(p.id));
+          }
+        : undefined;
+
+      // Wave 1: Core table reads (bounded concurrency prevents Postgres statement_timeout bursts)
       const [
-        [{ data: projs }, { data: types }, tasks, { data: contData }],
         plotsData,
         { data: notifData },
-        plotProgressData,
-        { data: projectProgressData },
         assignData,
         schedulesData,
+        leadsData
+      ] = await Promise.all([
+        plotsPromise,
+        requireSuccessfulRead(() => supabase.from('notifications').select('*').or(`target_user.eq.${username},target_role.eq.${role}`).order('created_at', { ascending: false }).limit(200)),
+        salesWorkspaceOnly || constructionOverviewOnly ? Promise.resolve([]) : fetchWithoutLimit('plot_task_assignments', projectToLoad, 'id', true, '*', 'id', true, resolveProjectPlotIds),
+        salesWorkspaceOnly || constructionOverviewOnly ? Promise.resolve([]) : fetchWithoutLimit('plot_task_schedules', projectToLoad, 'id', true, '*', 'id', true, resolveProjectPlotIds),
+        salesStartup ? salesStartup.then(data => orderPlotMatchingLeads(data.leads) as BuildTrackDataRow[]) : fetchWithoutLimit('leads', null, 'created_at', false, 'id, customer_name, phone, project_name, interested_plot_id, interested_plot_name, status, crm_status, booking_date, transferred_date, agent_name, notes', 'id', true)
+      ]);
+      if (!isCurrentRequest()) return;
+
+      // Wave 2: Aggregated SQL views (isolated from Wave 1 & Wave 3 to prevent CPU saturation)
+      const [
+        plotProgressData,
+        { data: projectProgressData },
+        { data: inspectionQueueData },
+        { data: plotStatusesData },
+        plotOverallStatusesData
+      ] = await Promise.all([
+        fetchWithoutLimit('vw_plot_progress', null, 'plot_id', true, '*', null, true),
+        requireSuccessfulRead(() => supabase.from('vw_project_progress').select('*')),
+        salesWorkspaceOnly ? Promise.resolve({ data: [] }) : requireSuccessfulRead(() => supabase.from('vw_inspection_queue').select('*')),
+        salesWorkspaceOnly ? Promise.resolve({ data: [] }) : requireSuccessfulRead(() => supabase.from('vw_plot_status_dashboard').select('*')),
+        salesWorkspaceOnly ? Promise.resolve([]) : fetchWithoutLimit('vw_plot_overall_status', null, 'plot_id', true, '*', null, true)
+      ]);
+      if (!isCurrentRequest()) return;
+
+      // Wave 3: History, defects, materials & QC heatmap views (heaviest task_updates scans)
+      const [
         recentUpdates,
         defectsData,
         defectUpdatesData,
         { data: materialReqData },
         { data: materialReceiptData },
-        { data: inspectionQueueData },
-        { data: plotStatusesData },
-        plotOverallStatusesData,
-        qcSePerformanceData,
-        leadsData
+        qcSePerformanceData
       ] = await Promise.all([
-        referenceCache.promise,
-        salesStartup ? salesStartup.then(data => data.plots as BuildTrackDataRow[]) : fetchWithoutLimit('plots', null, 'created_at', true, '*, house_types(type_name, floor_count, is_infrastructure)', 'id', true),
-        requireSuccessfulRead(supabase.from('notifications').select('*').or(`target_user.eq.${username},target_role.eq.${role}`).order('created_at', { ascending: false })),
-        fetchWithoutLimit('vw_plot_progress', null, 'plot_id', true, '*', null, true),
-        requireSuccessfulRead(supabase.from('vw_project_progress').select('*')),
-        salesWorkspaceOnly || constructionOverviewOnly ? [] : fetchWithoutLimit('plot_task_assignments', projectToLoad, 'id', true, '*', 'id', true),
-        salesWorkspaceOnly || constructionOverviewOnly ? [] : fetchWithoutLimit('plot_task_schedules', projectToLoad, 'id', true, '*', 'id', true),
-        salesWorkspaceOnly ? [] : requireSuccessfulRead(supabase.from('task_updates').select('*').order('created_at', { ascending: false }).limit(1000)).then(res => res.data || []),
-        salesWorkspaceOnly ? [] : requireSuccessfulRead(supabase.from('defects').select('*').order('created_at', { ascending: false }).limit(500)).then(res => res.data || []),
-        salesWorkspaceOnly ? [] : requireSuccessfulRead(supabase.from('defect_updates').select('*').order('created_at', { ascending: false }).limit(500)).then(res => res.data || []),
-        salesWorkspaceOnly ? { data: [] } : requireSuccessfulRead(supabase.from('vw_task_material_requests').select('*')),
-        salesWorkspaceOnly ? { data: [] } : requireSuccessfulRead(supabase.from('task_material_receipts').select('*').order('created_at', { ascending: true })),
-        salesWorkspaceOnly ? { data: [] } : requireSuccessfulRead(supabase.from('vw_inspection_queue').select('*')),
-        salesWorkspaceOnly ? { data: [] } : requireSuccessfulRead(supabase.from('vw_plot_status_dashboard').select('*')),
-        salesWorkspaceOnly ? [] : fetchWithoutLimit('vw_plot_overall_status', null, 'plot_id', true, '*', null, true),
-        salesWorkspaceOnly || constructionOverviewOnly ? null : fetchWithoutLimit('vw_qc_se_performance', null, 'date', true, '*', ['role', 'action', 'day_of_week', 'day_of_month', 'hour_of_day'], true)
+        salesWorkspaceOnly ? Promise.resolve([]) : requireSuccessfulRead(() => supabase.from('task_updates').select('*').order('created_at', { ascending: false }).limit(1000)).then(res => res.data || []),
+        salesWorkspaceOnly ? Promise.resolve([]) : requireSuccessfulRead(() => supabase.from('defects').select('*').order('created_at', { ascending: false }).limit(500)).then(res => res.data || []),
+        salesWorkspaceOnly ? Promise.resolve([]) : requireSuccessfulRead(() => supabase.from('defect_updates').select('*').order('created_at', { ascending: false }).limit(500)).then(res => res.data || []),
+        salesWorkspaceOnly ? Promise.resolve({ data: [] }) : requireSuccessfulRead(() => supabase.from('vw_task_material_requests').select('*')),
+        salesWorkspaceOnly ? Promise.resolve({ data: [] }) : requireSuccessfulRead(() => supabase.from('task_material_receipts').select('*').order('created_at', { ascending: true })),
+        salesWorkspaceOnly || constructionOverviewOnly ? Promise.resolve(null) : fetchWithoutLimit('vw_qc_se_performance', null, 'date', true, '*', ['role', 'action', 'day_of_week', 'day_of_month', 'hour_of_day'], true)
           .catch(error => {
-            console.warn('QC performance view unavailable (vw_qc_se_performance):', error?.message || error?.details || 'View not found or permission not granted');
-            return [];
-          }),
-        salesStartup ? salesStartup.then(data => orderPlotMatchingLeads(data.leads) as BuildTrackDataRow[]) : fetchWithoutLimit('leads', null, 'created_at', false, 'id, customer_name, phone, project_name, interested_plot_id, interested_plot_name, status, crm_status, booking_date, transferred_date, agent_name, notes', 'id', true)
+            console.error('QC performance view unavailable (vw_qc_se_performance):', error?.message || error?.details || 'View not found or permission not granted');
+            return null;
+          })
       ]);
+      if (!isCurrentRequest()) return;
+
+      const [{ data: projs }, { data: types }, tasks, { data: contData }] = await referencePromise;
       if (!isCurrentRequest()) return;
       if (!options.reuseReferenceData && !salesWorkspaceOnly) setSalesDataRevision(revision => revision + 1);
 

@@ -9,6 +9,8 @@ import { appendConstructionPreviewFiles } from '@/lib/constructionPreviewFiles';
 import { resolveTaskInspectionConfig } from '@/lib/qc/qcConfigService';
 import QCInspectionRunner from '@/components/qc/QCInspectionRunner';
 import QCInspectionReportModal from '@/components/qc/QCInspectionReportModal';
+import QCInspectionInlineCard from '@/components/qc/QCInspectionInlineCard';
+import { mergeTaskUpdatesWithQCInspections } from '@/lib/constructionLiveFeed';
 import { FileText, RefreshCw } from 'lucide-react';
 import {
   formatRoadblockActionLabel,
@@ -89,6 +91,7 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
   const [qcLoading, setQcLoading] = useState(false);
   const [showQCRunner, setShowQCRunner] = useState(false);
   const [showQCReport, setShowQCReport] = useState(false);
+  const [selectedReportInspection, setSelectedReportInspection] = useState<any>(null);
   const isQCResolutionReady = qcResolvedKey === selectionKey && !qcLoading;
 
   const loadQCResolution = React.useCallback(async () => {
@@ -215,9 +218,16 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                 </div>
                                
                                <div className="flex items-center gap-4">
-                                 {qcResolution?.latestInspection && !isMobileLayout && (
-                                     <button onClick={() => setShowQCReport(true)} className="bg-purple-600/30 hover:bg-purple-600/50 text-white font-bold py-2 px-3 rounded-xl flex items-center gap-1.5 transition-colors text-xs border border-purple-400/30">
-                                       <FileText size={15}/> รายงาน QC (รอบ {qcResolution.latestInspection.round_number})
+                                 {qcResolution?.latestInspection && qcResolution.latestInspection.document_status !== 'draft' && (
+                                     <button
+                                       onClick={() => {
+                                         setSelectedReportInspection(qcResolution.latestInspection);
+                                         setShowQCReport(true);
+                                       }}
+                                       className={`bg-purple-600/30 hover:bg-purple-600/50 text-white font-bold flex items-center gap-1.5 transition-colors border border-purple-400/30 ${isMobileLayout ? 'py-1.5 px-2.5 rounded-lg text-[10px]' : 'py-2 px-3 rounded-xl text-xs'}`}
+                                     >
+                                       <FileText size={isMobileLayout ? 13 : 15}/>
+                                       <span>รายงาน QC (รอบ {qcResolution.latestInspection.round_number})</span>
                                      </button>
                                   )}
                                   {historyReady && isTaskCompleted && !isMobileLayout && (
@@ -273,9 +283,13 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                            )}
 
                            <main className={`flex-1 overflow-y-auto ${isMobileLayout ? 'p-3 pb-32 space-y-3' : 'p-4 sm:px-8 sm:pt-8 sm:pb-[280px] space-y-4 sm:space-y-6'} bg-slate-50/50`}>
-                                 {(hasCurrentHistory ? updates : []).map((update: any) => {
+                                 {mergeTaskUpdatesWithQCInspections(
+                                   hasCurrentHistory ? updates : [],
+                                   qcResolution?.allInspections || (qcResolution?.latestInspection ? [qcResolution.latestInspection] : []),
+                                   selectedTask?.task_name
+                                 ).map((update: any) => {
                                    const authorName = (update.user_name || update.created_by || 'ช่าง').trim();
-                                   const isQC = update.role === 'QC' || authorName === 'QC' || (typeof update.action === 'string' && update.action.includes('QC'));
+                                   const isQC = update.role === 'QC' || authorName === 'QC' || (typeof update.action === 'string' && update.action.includes('QC')) || Boolean(update.qc_inspection);
                                    const isQCPass = isQC && ((typeof update.action === 'string' && (update.action.includes('อนุมัติ') || update.action.includes('ผ่าน'))) || update.progress === 100);
                                    const isQCFail = isQC && ((typeof update.action === 'string' && (update.action.includes('ไม่อนุมัติ') || update.action.includes('ไม่ผ่าน') || update.action.includes('แจ้งแก้ไข'))) || update.progress === 95);
                                    const isWorkerAbsent = update.is_worker_present === false || update.action === 'ไม่มีช่างเข้างาน';
@@ -294,7 +308,7 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                    <div className={`flex-1 bg-white ${isMobileLayout ? 'p-3 rounded-2xl' : 'p-5 sm:p-6 rounded-[1.5rem] sm:rounded-[2rem]'} border ${isQCPass ? 'border-emerald-200 bg-emerald-50/20' : isQCFail ? 'border-rose-200 bg-rose-50/20' : isWorkerAbsent ? 'border-rose-300 bg-rose-50/20' : 'border-black/5'} shadow-sm relative pr-8`}>
                                        
                                        {/* 🗑️ ปุ่มลบรายงาน (สิทธิ์: เฉพาะ Admin เท่านั้น) และงานนั้นต้องยังไม่จบ 100% */}
-                                       {historyReady && isAdmin && !isTaskCompleted && (
+                                       {historyReady && isAdmin && !isTaskCompleted && !update.is_synthetic_qc && (
                                           <button
                                              onClick={() => handleDeleteUpdate(update.id, selectedTask.id, selectedPlot.id)}
                                              className="absolute top-3 right-3 text-slate-400 hover:text-rose-500 p-1.5 hover:bg-rose-50 rounded-xl transition-all hover:scale-105"
@@ -336,6 +350,17 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                          />
                                        ) : (
                                          <p className={`text-[#1d1d1f] ${isMobileLayout ? 'text-xs mb-2' : 'text-sm sm:text-base mb-4'} font-medium leading-relaxed`}>{cleanText}</p>
+                                       )}
+                                       {update.qc_inspection && (
+                                         <QCInspectionInlineCard
+                                           inspection={update.qc_inspection}
+                                           compact={isMobileLayout}
+                                           onOpenFullReport={(insp) => {
+                                             setSelectedReportInspection(insp);
+                                             setShowQCReport(true);
+                                           }}
+                                           onPreviewPhoto={(url) => setFullImageUrl(url)}
+                                         />
                                        )}
                                        {update.image_url && (() => {
                                           const imgList = update.image_url.split(',').filter((u: string) => u.trim() !== '');
@@ -390,7 +415,24 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                )}
 
                                {isTaskCompleted ? (
-                                  <div className={`bg-green-100 text-green-700 py-3 sm:py-4 px-4 sm:px-6 rounded-xl sm:rounded-[1.5rem] font-bold text-center uppercase tracking-widest border border-green-200 flex items-center justify-center gap-2 ${isMobileLayout ? 'text-[10px]' : 'text-xs sm:text-sm'}`}><CheckCircle size={isMobileLayout ? 16 : 20}/> ตรวจสอบและอนุมัติเสร็จสิ้น</div>
+                                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                                    <div className={`flex-1 bg-green-100 text-green-700 py-3 sm:py-4 px-4 sm:px-6 rounded-xl sm:rounded-[1.5rem] font-bold text-center uppercase tracking-widest border border-green-200 flex items-center justify-center gap-2 ${isMobileLayout ? 'text-[10px]' : 'text-xs sm:text-sm'}`}>
+                                      <CheckCircle size={isMobileLayout ? 16 : 20}/> ตรวจสอบและอนุมัติเสร็จสิ้น
+                                    </div>
+                                    {qcResolution?.latestInspection && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setSelectedReportInspection(qcResolution.latestInspection);
+                                          setShowQCReport(true);
+                                        }}
+                                        className={`bg-purple-600 hover:bg-purple-700 text-white py-3 sm:py-4 px-4 sm:px-6 rounded-xl sm:rounded-[1.5rem] font-bold flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer shrink-0 ${isMobileLayout ? 'text-[10px]' : 'text-xs sm:text-sm'}`}
+                                      >
+                                        <FileText size={isMobileLayout ? 15 : 18} />
+                                        <span>ดูแบบฟอร์มผลตรวจ QC (รอบที่ {qcResolution.latestInspection.round_number})</span>
+                                      </button>
+                                    )}
+                                  </div>
                                ) : isLockedForForeman ? (
                                   <div className={`bg-rose-50 text-rose-600 py-3 sm:py-4 px-4 sm:px-6 rounded-xl sm:rounded-[1.5rem] font-bold text-center border border-rose-200 flex flex-col items-center justify-center gap-1`}><span className={`flex items-center gap-1.5 uppercase tracking-widest ${isMobileLayout ? 'text-[10px]' : 'text-xs sm:text-sm'}`}><AlertTriangle size={isMobileLayout ? 16 : 20}/> ยังไม่สามารถส่งงานได้</span><span className={`font-bold opacity-80 ${isMobileLayout ? 'text-[8px]' : 'text-[10px] sm:text-xs'}`}>กรุณารอผู้จัดจ้างระบุชื่อช่างก่อนครับ</span></div>
                                ) : isSiteEngineer ? (
@@ -669,11 +711,14 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                )}
 
                {/* 🌟 QC INSPECTION REPORT MODAL 🌟 */}
-               {showQCReport && qcResolution?.latestInspection && (
+               {showQCReport && (selectedReportInspection || qcResolution?.latestInspection) && (
                  <QCInspectionReportModal
                    isOpen={showQCReport}
-                   onClose={() => setShowQCReport(false)}
-                   inspection={qcResolution.latestInspection}
+                   onClose={() => {
+                     setShowQCReport(false);
+                     setSelectedReportInspection(null);
+                   }}
+                   inspection={selectedReportInspection || qcResolution.latestInspection}
                    houseTypeName={selectedPlot?.house_type_name || ''}
                  />
                )}

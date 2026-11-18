@@ -279,5 +279,6 @@ export interface QCTaskConfigResolution {
   garageOrientation?: QCGarageOrientation;
   selectedPages?: number[];
   latestInspection?: QCInspection | null;
+  allInspections?: QCInspection[];
   totalRounds?: number;
 }

@@ -36,7 +36,7 @@ export interface SalesDealEditorModel {
   reason: string; setReason: Dispatch<SetStateAction<string>>;
   eventDate: string; setEventDate: Dispatch<SetStateAction<string>>;
   choices: string[]; busy: boolean; loading: boolean; locked: boolean; editable: boolean; canSave: boolean;
-  error: string; resolved: { leadId: string | null; saleId: string | null } | null;
+  error: string; resolved: { leadId: string | null; saleId: string | null; plotId?: string | null } | null;
   save: (options?: { confirmedBySubmit?: boolean }) => Promise<void>;
   conflictNotice?: string | null;
   resolveConflict?: () => void;
@@ -107,7 +107,7 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
   const [conflictNotice, setConflictNotice] = useState<string | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [protectedSale, setProtectedSale] = useState<{ id: string; stage: string; details: Draft; method: unknown; history?: CustomerHistoryDate[]; editingAvailable?: boolean } | null>(null);
-  const [resolved, setResolved] = useState<{ leadId: string | null; saleId: string | null } | null>(null);
+  const [resolved, setResolved] = useState<{ leadId: string | null; saleId: string | null; plotId?: string | null } | null>(null);
   const progress = useRef<{
     lead: boolean;
     sale: boolean;
@@ -157,6 +157,11 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
     : (typeof lead.id === 'string' && lead.id && !String(lead.id).startsWith('registry-') ? lead.id : null);
   const suppliedSaleId = typeof lead.saleId === 'string' && lead.saleId ? lead.saleId : null;
   const projectName = str(lead.project_name || lead.projectName || lead.interest);
+  const modalPlotId = str(
+    lead.plot || lead.plotId || lead.plot_id ||
+    (Array.isArray(lead.interests) ? (lead.interests[0] as Row)?.plotId : null) ||
+    lead.interested_plot_name || lead.interested_plot_id
+  );
   const actorId = str(currentUser?.id);
   const terminal = !['booked', 'transferred', 'loan'].includes(getLeadStage(lead)) || initial === 'handover';
   const editable = canEditSalesRole(currentUser?.role) && !terminal && Boolean(leadId || suppliedSaleId);
@@ -343,7 +348,8 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
             setConflictNotice(null);
           }
         }
-        setResolved({ leadId, saleId: currentSale ? str(currentSale.id) : null });
+        const resolvedPlot = currentSale?.plot_id || currentLead?.interested_plot_id || currentLead?.interested_plot_name || modalPlotId || null;
+        setResolved({ leadId, saleId: currentSale ? str(currentSale.id) : null, plotId: resolvedPlot ? str(resolvedPlot) : null });
       } catch (failure) {
         if (!cancelled && currentReq === requestSeq.current) setError(failure instanceof Error ? failure.message : (failure as { message?: string })?.message || 'โหลดข้อมูลล่าสุดไม่สำเร็จ');
       } finally { if (!cancelled && currentReq === requestSeq.current) setLoading(false); }
@@ -364,7 +370,16 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
     const submittedConfirmation = confirmed || options?.confirmedBySubmit === true;
     const appraisal = str(draft.landOfficePrice).trim() ? Number(String(draft.landOfficePrice).replace(/,/g, '')) : null;
     if (appraisal !== null && (!Number.isFinite(appraisal) || appraisal < 0)) { setError('กรุณาระบุราคาประเมินเป็นตัวเลขที่ไม่ติดลบ'); return; }
-    const transitionError = salesDealTransitionError(initial, target, draft.method, { bank: str(draft.bank), reason, date: eventDate, confirmed: submittedConfirmation, saleId: resolved.saleId });
+    const currentTargetPlotId = resolved.plotId || modalPlotId || null;
+    const transitionError = salesDealTransitionError(initial, target, draft.method, {
+      bank: str(draft.bank),
+      reason,
+      date: eventDate,
+      confirmed: submittedConfirmation,
+      saleId: resolved.saleId,
+      plotId: currentTargetPlotId,
+      hasPlot: Boolean(currentTargetPlotId),
+    });
     if (transitionError) { setError(transitionError); return; }
     inFlight.current = true; setBusy(true); setError('');
     const submitted = progress.current.payload || { target, note: note.trim(), draft: { ...draft }, reason: reason.trim(), eventDate, confirmed: submittedConfirmation, cancelCategory, occurredAt: new Date().toISOString() };
@@ -427,12 +442,16 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         throw new Error(`วิธีชำระเงินหรือสถานะในระบบไม่ตรงกับขั้นตอนที่เลือก (${effectiveMethod === 'cash' ? 'เงินสด' : 'กู้ธนาคาร'})`);
       }
 
+      const targetPlotId = currentSale?.plot_id || currentLead?.interested_plot_id || (lead as any)?.plot || (lead as any)?.plotId || (lead as any)?.interested_plot_name || resolved.plotId || modalPlotId;
+
       const effectiveTransitionError = salesDealTransitionError(currentServerStage, submitted.target, effectiveMethod, {
         bank: str(effectiveBank),
         reason: submitted.reason,
         date: submitted.eventDate,
         confirmed: submitted.confirmed,
-        saleId: resolved.saleId
+        saleId: resolved.saleId,
+        plotId: targetPlotId,
+        hasPlot: Boolean(targetPlotId),
       });
       if (effectiveTransitionError) {
         throw new Error(effectiveTransitionError);
@@ -440,7 +459,28 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
 
       const targetContractStatus = salesDealContractStatus(submitted.target);
       const saleNeedsStatusSync = Boolean(currentSale && currentSale.contract_status !== targetContractStatus);
-      if (resolved.saleId && !progress.current.sale) {
+
+      let activeSaleId = resolved.saleId;
+      if (!activeSaleId && resolved.leadId && targetPlotId) {
+        const { data: ensureRes, error: ensureErr } = await supabase.rpc('ensure_lead_sale_record', {
+          p_lead_id: resolved.leadId,
+          p_plot_id: targetPlotId,
+          p_sale_price: effectivePrice || null,
+          p_land_office_price: effectiveLandOfficePrice || null,
+          p_bank_name: effectiveBank || null,
+          p_payment_method: effectiveMethod || 'mortgage',
+          p_stage: submitted.target,
+          p_event_date: ['transferred', 'handover', 'cancelled'].includes(submitted.target) ? new Date(submitted.eventDate + 'T12:00:00+07:00').toISOString() : new Date().toISOString()
+        });
+        if (ensureErr) throw ensureErr;
+        if (ensureRes && typeof ensureRes === 'object' && (ensureRes as any).sale_id) {
+          activeSaleId = (ensureRes as any).sale_id;
+          resolved.saleId = activeSaleId;
+          progress.current.sale = true;
+        }
+      }
+
+      if (activeSaleId && !progress.current.sale) {
         const patch: Row = {};
         if (stageChanged || saleNeedsStatusSync) Object.assign(patch, { crm_stage: submitted.target, contract_status: targetContractStatus });
         if (dirtyFieldsRef.current.has('method') && submitted.draft.method !== originalBaseline.current?.method) patch.payment_method = submitted.draft.method;
@@ -453,7 +493,7 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         if (dirtyFieldsRef.current.has('landOfficePrice') && submitted.draft.landOfficePrice !== originalBaseline.current?.landOfficePrice) patch.land_office_price = submitted.draft.landOfficePrice?.trim() ? Number(submitted.draft.landOfficePrice.replace(/,/g, '')) : null;
         if (dirtyFieldsRef.current.has('bank') && submitted.draft.bank !== originalBaseline.current?.bank) patch.bank_name = submitted.draft.bank.trim() || null;
         if (Object.keys(patch).length) {
-          let query = supabase.from('sales').update(patch).eq('id', resolved.saleId);
+          let query = supabase.from('sales').update(patch).eq('id', activeSaleId);
           for (const key of ['crm_stage', 'contract_status', 'updated_at'] as const) query = currentSale?.[key] == null ? query.is(key, null) : query.eq(key, currentSale[key]);
           if (currentSale?.payment_method != null) query = query.eq('payment_method', currentSale.payment_method);
           if (isLegacySale || currentSale?.booking_route === 'legacy_import') {
@@ -535,7 +575,6 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         }
       }
 
-      const targetPlotId = currentSale?.plot_id || currentLead?.interested_plot_id || (lead as any)?.plot || (lead as any)?.plotId;
       if (targetPlotId && (stageChanged || leadNeedsStatusSync || saleNeedsStatusSync || submitted.target === 'transferred')) {
         if (submitted.target === 'transferred') {
           try {
@@ -543,8 +582,17 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
           } catch {}
         } else if (submitted.target === 'cancelled') {
           try {
-            await supabase.from('plots').update({ sale_status: 'available', has_customer: false }).eq('id', targetPlotId);
-          } catch {}
+            const rpcRes = await supabase.rpc('cancel_plot_sale_and_release', {
+              p_plot_id: targetPlotId,
+              p_sale_id: resolved.saleId || null,
+              p_reason: submitted.reason || null,
+            });
+            if (rpcRes.error) throw rpcRes.error;
+          } catch {
+            try {
+              await supabase.from('plots').update({ sale_status: 'available', has_customer: false, highlight_note: null }).eq('id', targetPlotId);
+            } catch {}
+          }
         }
       }
       if (typeof window !== 'undefined') {
@@ -693,7 +741,16 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
           )}
           <label className="block text-sm font-semibold">วันที่ทำรายการ<input aria-label="วันที่ทำรายการ" type="date" value={eventDate} disabled={locked} onChange={e => { setEventDate(e.target.value); setConfirmed(false); }} className="block w-full border rounded-xl p-2 mt-1" /></label>
           <label className="flex gap-2 text-sm"><input type="checkbox" aria-label="ยืนยันรายการ" checked={confirmed} disabled={locked} onChange={e => setConfirmed(e.target.checked)} />ยืนยัน{stages.find(stage => stage.id === target)?.label} สำหรับลูกค้าและแปลงนี้</label>
-          {!resolved?.saleId && <p className="text-sm text-red-700">ยังไม่มีรายการขายที่เชื่อมกับ Lead ต้องตรวจการเชื่อมข้อมูลก่อนบันทึกขั้นตอนนี้</p>}
+          {!resolved?.saleId && (resolved?.plotId || modalPlotId) && (
+            <p className="text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-medium">
+              ✨ ระบบจะเชื่อมโยงรายการขายสำหรับแปลง {resolved?.plotId || modalPlotId} ให้อัตโนมัติเมื่อกดบันทึก
+            </p>
+          )}
+          {!resolved?.saleId && !(resolved?.plotId || modalPlotId) && (
+            <p className="text-sm text-red-700 font-medium">
+              ยังไม่มีรายการขายและยังไม่ระบุแปลงที่ดิน กรุณาระบุแปลงก่อนบันทึกขั้นตอนนี้
+            </p>
+          )}
         </div>}
         <p className="text-xs text-slate-500">แสดงเฉพาะขั้นถัดไปที่ทำได้ เงินสดข้ามสินเชื่อ หลังโอนทำได้เฉพาะส่งมอบ ไม่บันทึกการจองใหม่</p>
       </> : <p className="text-sm text-slate-600">รายการนี้ดูรายละเอียดได้ตามสิทธิ์เดิม รายการส่งมอบแล้วหรือยกเลิกแล้วไม่เปิดแก้ขั้นตอนจากฟอร์มนี้</p>}

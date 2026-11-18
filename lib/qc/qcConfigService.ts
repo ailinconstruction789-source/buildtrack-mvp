@@ -404,6 +404,7 @@ export async function resolveTaskInspectionConfig(params: {
           referenceDrawing: drawingResult.refDrawing,
           viewport: drawingResult.resolvedViewport,
           latestInspection: latest,
+          allInspections: latestInspections || [],
           totalRounds: latestInspections?.length || 1
         };
       }

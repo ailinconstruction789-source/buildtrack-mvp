@@ -9,28 +9,40 @@ import {
   Square, ShieldCheck, Printer
 } from 'lucide-react';
 import SalesOverlay from './SalesOverlay';
+import { fetchSalesWithoutLimit } from '@/lib/sales/fetchWithoutLimit';
+import { extractExpectedTransferDate } from '@/lib/sales/customerDealDetails';
+import { customerExpectedTransferDay, customerBusinessDay } from '@/lib/sales/customerBusinessDate';
 
 interface TransferTrackingMatrixViewProps {
   onBack?: () => void;
   onViewPlot?: (plot: any) => void;
   initialProjectName?: string;
+  projects?: any[];
 }
 
 export default function TransferTrackingMatrixView({
   onBack,
   onViewPlot,
-  initialProjectName
+  initialProjectName,
+  projects: propProjects
 }: TransferTrackingMatrixViewProps) {
   const [loading, setLoading] = useState(true);
-  const [projects, setProjects] = useState<any[]>([]);
+  const [projects, setProjects] = useState<any[]>(propProjects || []);
   const [selectedProject, setSelectedProject] = useState<string>(initialProjectName || 'all');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'waiting' | 'transferred' | 'rental'>('all');
-  const [includeUnscheduled, setIncludeUnscheduled] = useState(true);
 
-  // Date Range: Month to Month (defaults to October 2026 / current date)
-  const currentYear = 2026;
-  const currentMonth = 10; // ตุลาคม
+  // Date Range: Month to Month (defaults to current Thailand month/year)
+  const { currentYear, currentMonth } = useMemo(() => {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Bangkok',
+      year: 'numeric',
+      month: '2-digit',
+    }).formatToParts(new Date());
+    const year = Number(parts.find(p => p.type === 'year')?.value) || new Date().getFullYear();
+    const month = Number(parts.find(p => p.type === 'month')?.value) || (new Date().getMonth() + 1);
+    return { currentYear: year, currentMonth: month };
+  }, []);
 
   const [fromMonth, setFromMonth] = useState<number>(currentMonth);
   const [fromYear, setFromYear] = useState<number>(currentYear);
@@ -47,6 +59,7 @@ export default function TransferTrackingMatrixView({
   const [defects, setDefects] = useState<any[]>([]);
   const [promotions, setPromotions] = useState<any[]>([]);
   const [plotOverallProgress, setPlotOverallProgress] = useState<any[]>([]);
+  const [rentalContracts, setRentalContracts] = useState<any[]>([]);
 
   // Preview Image Lightbox
   const [previewImage, setPreviewImage] = useState<string | null>(null);
@@ -69,14 +82,34 @@ export default function TransferTrackingMatrixView({
   ];
 
   // Available Years
-  const YEARS = [2025, 2026, 2027, 2028];
+  const YEARS = Array.from(new Set([2025, 2026, 2027, 2028, currentYear, currentYear + 1])).sort((a, b) => a - b);
 
   // Fetch initial project list
   useEffect(() => {
     const fetchProjects = async () => {
       try {
-        const { data } = await supabase.from('projects').select('id, name, is_closed').order('name');
-        if (data) setProjects(data);
+        const { data } = await supabase.from('projects').select('name, is_closed').order('name');
+        let list: { name: string; is_closed?: boolean }[] = [];
+        if (data && data.length > 0) {
+          list = [...data];
+        }
+
+        // Also ensure all project names present in plots are included
+        const { data: plotProjects } = await supabase.from('plots').select('project_name');
+        if (plotProjects) {
+          const existingNames = new Set(list.map(p => p.name));
+          plotProjects.forEach((pl: any) => {
+            if (pl.project_name && !existingNames.has(pl.project_name)) {
+              existingNames.add(pl.project_name);
+              list.push({ name: pl.project_name, is_closed: false });
+            }
+          });
+        }
+
+        list.sort((a, b) => a.name.localeCompare(b.name, 'th'));
+        if (list.length > 0) {
+          setProjects(list);
+        }
       } catch (err) {
         console.error('Error fetching projects:', err);
       }
@@ -84,9 +117,17 @@ export default function TransferTrackingMatrixView({
     fetchProjects();
   }, []);
 
-  // Helper: Extract expected transfer date from notes (e.g. "คาดโอน 17 ต.ค. 69")
+  // Helper: Extract expected transfer date from notes (e.g. "คาดโอน 17 ต.ค. 69" or "[วันคาดว่าจะโอน: 2026-10-17]")
   const extractExpectedDate = (text?: string | null): string | null => {
     if (!text) return null;
+    const parsedCrm = extractExpectedTransferDate(text);
+    if (parsedCrm) return parsedCrm;
+
+    const isoMatch = text.match(/(?:\[วันคาดว่าจะโอน:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})\]|(?:วัน)?คาด(?:ว่าจะ|การณ์)?โอน[:\s]*(\d{4})-(\d{2})-(\d{2}))/);
+    if (isoMatch) {
+      return isoMatch[1] || `${isoMatch[2]}-${isoMatch[3]}-${isoMatch[4]}`;
+    }
+
     const months: Record<string, string> = {
       'ม.ค.': '01', 'ก.พ.': '02', 'มี.ค.': '03', 'เม.ย.': '04', 'พ.ค.': '05', 'มิ.ย.': '06',
       'ก.ค.': '07', 'ส.ค.': '08', 'ก.ย.': '09', 'ต.ค.': '10', 'พ.ย.': '11', 'ธ.ค.': '12'
@@ -143,25 +184,37 @@ export default function TransferTrackingMatrixView({
 
       const { data: pData } = await plotQuery;
 
-      // 4. Fetch Sales
-      const { data: sData } = await supabase
-        .from('sales')
-        .select('*');
-      const allSales = sData || [];
+      // 4. Fetch Sales without PostgREST 1000-row cutoff
+      let allSales: any[] = [];
+      try {
+        allSales = await fetchSalesWithoutLimit('sales', { select: '*, plots(*)', orderBy: 'created_at', ascending: false });
+      } catch (err) {
+        console.warn('Fallback sales query:', err);
+        const { data: sData } = await supabase.from('sales').select('*');
+        allSales = sData || [];
+      }
       setSales(allSales);
 
-      // 5. Fetch Leads
-      const { data: lData } = await supabase
-        .from('leads')
-        .select('*');
-      const allLeads = lData || [];
+      // 5. Fetch Leads without PostgREST 1000-row cutoff
+      let allLeads: any[] = [];
+      try {
+        if (selectedProject && selectedProject !== 'all') {
+          allLeads = await fetchSalesWithoutLimit('leads', { filterCol: 'project_name', filterVal: selectedProject, select: '*', orderBy: 'created_at', ascending: false });
+        } else {
+          allLeads = await fetchSalesWithoutLimit('leads', { select: '*', orderBy: 'created_at', ascending: false });
+        }
+      } catch (err) {
+        console.warn('Fallback leads query:', err);
+        const { data: lData } = await supabase.from('leads').select('*');
+        allLeads = lData || [];
+      }
       setLeads(allLeads);
 
-      // 🎯 STRICT FILTER: Exactly matching "รายละเอียดบ้านที่รอโอน" (Waiting for Transfer) - Exactly 17 plots
-      // Only include plots that:
+      // 🎯 QUALIFIED PLOTS: Transfer Tracking Matrix
+      // Include plots that:
       // - Belong to active projects (not is_closed)
       // - Are not infrastructure
-      // - Have an active booking/sale (not cancelled), OR are an active rental (current_tenant_name), OR have customer reserved
+      // - Have an active customer booking/sale (waiting or transferred), OR are an active rental, OR have transfer target date
       const qualifiedPlots = (pData || []).filter(p => {
         // Exclude closed projects
         if (closedProjects.has(p.project_name)) return false;
@@ -177,15 +230,20 @@ export default function TransferTrackingMatrixView({
           (p.highlight_note && /เช่า:|จองเช่า:/i.test(p.highlight_note))
         );
 
-        // 2. Active Customer booking waiting for transfer (บ้านรอโอนขาย)
-        const plotSales = allSales.filter(sl => sl.plot_id === p.id && sl.contract_status !== 'Cancelled');
-        const isNotTransferred = (p.sale_status || '').toLowerCase() !== 'transferred';
-        const hasCustomerBooking = Boolean(p.has_customer && isNotTransferred);
-        const isReservedStatus = ['booked', 'contracted', 'reserved', 'transfer_pending'].includes((p.sale_status || '').toLowerCase());
-        const hasWaitingSale = plotSales.some(sl => !['transferred', 'handover'].includes((sl.stage || sl.contract_status || '').toLowerCase()));
+        // 2. Active Customer booking / sale / transferred (บ้านรอโอนขาย หรือ โอนแล้ว)
+        const plotSales = allSales.filter(sl => {
+          if (sl.contract_status === 'Cancelled') return false;
+          const saleProj = sl.project_name || sl.plots?.project_name;
+          if (saleProj && saleProj !== p.project_name) return false;
+          return sl.plot_id === p.id || (saleProj === p.project_name && String(sl.plot_id) === String(p.plot_name));
+        });
+        const hasCustomer = Boolean(p.has_customer);
+        const isReservedOrTransferred = ['booked', 'contracted', 'reserved', 'transfer_pending', 'transferred'].includes((p.sale_status || '').toLowerCase());
+        const hasSalesRecord = plotSales.length > 0;
+        const hasHighlightActivity = Boolean(p.highlight_note && /(ลูกค้า:|จอง:|โอน|เช่า:)/i.test(p.highlight_note));
+        const hasTargetDate = Boolean(extractExpectedDate(p.highlight_note) || plotSales.some(sl => sl.expected_transfer_date || sl.transferred_at));
 
-        // Exactly 17 plots: 12 waiting transfer sales + 5 rentals
-        return isRental || hasCustomerBooking || isReservedStatus || hasWaitingSale;
+        return isRental || hasCustomer || isReservedOrTransferred || hasSalesRecord || hasHighlightActivity || hasTargetDate;
       });
 
       setPlots(qualifiedPlots);
@@ -196,6 +254,7 @@ export default function TransferTrackingMatrixView({
         setDefects([]);
         setPromotions([]);
         setPlotOverallProgress([]);
+        setRentalContracts([]);
         setLoading(false);
         return;
       }
@@ -258,6 +317,21 @@ export default function TransferTrackingMatrixView({
         }
       }
       setPlotOverallProgress(allOverall);
+
+      // 10. Fetch Rental Contracts (for lease_start_date and contract status)
+      let allRentalContracts: any[] = [];
+      try {
+        for (const chunk of chunks) {
+          const { data: rcData } = await supabase
+            .from('rental_contracts')
+            .select('id, plot_id, plot_name, project_name, tenant_name, status, lease_start_date, lease_end_date, created_at')
+            .in('plot_id', chunk);
+          if (rcData) allRentalContracts = [...allRentalContracts, ...rcData];
+        }
+      } catch (rcErr) {
+        console.warn('Could not fetch rental_contracts:', rcErr);
+      }
+      setRentalContracts(allRentalContracts);
 
     } catch (err) {
       console.error('Error fetching matrix data:', err);
@@ -486,13 +560,60 @@ export default function TransferTrackingMatrixView({
     };
 
     return plots.map(plot => {
-      const sale = sales.find(s => s.plot_id === plot.id && s.contract_status !== 'Cancelled') ||
-                   sales.find(s => s.plot_id === plot.id);
-      const lead = sale ? leads.find(l => l.id === sale.lead_id) : 
-                   leads.find(l => l.interested_plot_id === plot.id || (l.interested_plot_name === plot.plot_name && l.project_name === plot.project_name));
+      const plotIdVariants = new Set([
+        String(plot.id),
+        `${plot.project_name}-${plot.plot_name}`,
+      ].filter(Boolean));
+
+      // Match sale: MUST strictly match both plot AND project_name
+      const matchedSales = sales.filter(s => {
+        const saleProj = s.project_name || s.plots?.project_name;
+        // Strict guard: if sale specifies a project, it MUST match plot's project
+        if (saleProj && saleProj !== plot.project_name) return false;
+
+        // Exact plot ID match
+        if (s.plot_id === plot.id || s.plots?.id === plot.id) return true;
+
+        // If projects match, check plot name/composite ID
+        if (saleProj === plot.project_name) {
+          if (String(s.plot_id) === String(plot.plot_name)) return true;
+          if (String(s.plot_name) === String(plot.plot_name)) return true;
+          if (String(s.plots?.plot_name) === String(plot.plot_name)) return true;
+          if (String(s.plot_id) === `${plot.project_name}-${plot.plot_name}`) return true;
+        }
+
+        return false;
+      });
+      const sale = matchedSales.find(s => s.contract_status !== 'Cancelled') || matchedSales[0];
+
+      // Match lead: MUST strictly match project_name
+      const custFromPlot = extractCustomerName(plot.highlight_note);
+      const lead = sale?.lead_id
+        ? leads.find(l => l.id === sale.lead_id && (!l.project_name || l.project_name === plot.project_name))
+        : leads.find(l => {
+            // Strict guard: lead's project must match plot's project
+            if (l.project_name && l.project_name !== plot.project_name) return false;
+
+            if (l.interested_plot_id === plot.id) return true;
+            if (String(l.interested_plot_name) === String(plot.plot_name)) return true;
+            if (String(l.interested_plot_id) === `${plot.project_name}-${plot.plot_name}`) return true;
+            if (custFromPlot && l.customer_name && (l.customer_name.trim() === custFromPlot.trim())) return true;
+            return false;
+          });
+
+      // Rental contract resolution (บ้านเช่า)
+      const rentalContract = rentalContracts
+        .filter(rc => {
+          if (['Cancelled', 'MovedOut'].includes(rc.status || '')) return false;
+          if (rc.project_name && rc.project_name !== plot.project_name) return false;
+          return String(rc.plot_id) === String(plot.id) || (rc.plot_name && String(rc.plot_name) === String(plot.plot_name));
+        })
+        .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())[0];
+
+      const isRental = isRentalPlot(plot) || Boolean(rentalContract);
 
       // Customer name resolution
-      const customerName = lead?.customer_name || plot.current_tenant_name || extractCustomerName(plot.highlight_note) || '-';
+      const customerName = rentalContract?.tenant_name || lead?.customer_name || plot.current_tenant_name || extractCustomerName(plot.highlight_note) || '-';
 
       // Promotions (Termite treatment check)
       const plotPromos = promotions.filter(p => String(p.plot_id) === String(plot.id));
@@ -504,26 +625,81 @@ export default function TransferTrackingMatrixView({
       const termiteDate = termitePromo?.delivery_date ? formatDateDMY(termitePromo.delivery_date) : '-';
 
       // Transfer & Completion Dates
-      const expectedTransferDate = sale?.expected_transfer_date || lead?.expected_transfer_date || extractExpectedDate(plot.highlight_note) || extractExpectedDate(sale?.notes) || null;
-      const actualTransferDate = sale?.transferred_at || sale?.transfer_date || (plot.sale_status === 'Transferred' ? plot.updated_at : null);
-      const isTransferred = Boolean(actualTransferDate || plot.sale_status === 'Transferred');
+      const expectedTransferDate = 
+        customerExpectedTransferDay(sale || {}) ||
+        sale?.expected_transfer_date || 
+        sale?.expectedTransferDate ||
+        customerBusinessDay(lead?.expected_transfer_date) ||
+        customerBusinessDay(lead?.expectedTransferDate) ||
+        extractExpectedTransferDate(lead?.notes) ||
+        extractExpectedTransferDate(sale?.notes) ||
+        extractExpectedTransferDate(plot.highlight_note) ||
+        extractExpectedDate(lead?.notes) ||
+        extractExpectedDate(sale?.notes) || 
+        extractExpectedDate(plot.highlight_note) || 
+        null;
+
+      const isPlotTransferred = (plot.sale_status || '').toLowerCase() === 'transferred';
+      const isSaleTransferred = ['transferred', 'handover'].includes((sale?.contract_status || sale?.stage || sale?.crm_stage || '').toLowerCase());
+      const isLeadTransferred = (lead?.status || '').toLowerCase() === 'transferred';
+      const isNoteTransferred = Boolean(plot.highlight_note && /โอนแล้ว/i.test(plot.highlight_note));
+
+      const isTransferred = isRental ? false : (isPlotTransferred || isSaleTransferred || isLeadTransferred || isNoteTransferred);
+
+      const isRentalContracted = !isRental ? false : (
+        Boolean(rentalContract && ['active', 'renewed', 'convertedtobuy'].includes((rentalContract.status || 'active').toLowerCase())) ||
+        (plot.sale_status || '').toLowerCase() === 'rented' ||
+        Boolean(lead?.active_rental_contract_id) ||
+        ['active', 'rented', 'contracted'].includes((lead?.rental_status || '').toLowerCase()) ||
+        Boolean(plot.lease_start_date && plot.current_tenant_name) ||
+        Boolean(plot.highlight_note && /เช่า:/i.test(plot.highlight_note) && !/จองเช่า:/i.test(plot.highlight_note))
+      );
+
+      // วันเริ่มสัญญาเช่าสำหรับแปลงเช่า (lease_start_date)
+      const rentalLeaseStartDate = isRental
+        ? (
+            customerBusinessDay(rentalContract?.lease_start_date) ||
+            customerBusinessDay(plot.lease_start_date) ||
+            customerBusinessDay(lead?.rental_start_date) ||
+            expectedTransferDate ||
+            null
+          )
+        : null;
+
+      const actualTransferDate = 
+        customerBusinessDay(sale?.transferred_at) || 
+        customerBusinessDay(sale?.transfer_date) || 
+        customerBusinessDay(sale?.crm_transfer_date) || 
+        customerBusinessDay(lead?.transferred_date) || 
+        customerBusinessDay(lead?.transferred_at) || 
+        (isPlotTransferred && plot.paused_for_sale_at ? customerBusinessDay(plot.paused_for_sale_at) : null) || 
+        (isPlotTransferred && plot.handover_completed_at ? customerBusinessDay(plot.handover_completed_at) : null) ||
+        (isPlotTransferred && plot.registration_date ? customerBusinessDay(plot.registration_date) : null) ||
+        (isPlotTransferred && expectedTransferDate ? expectedTransferDate : null);
+
+      const parseYM = (dateStr?: string | null) => {
+        if (!dateStr) return null;
+        try {
+          const d = new Date(dateStr);
+          if (!isNaN(d.getTime())) {
+            return { year: d.getFullYear(), month: d.getMonth() + 1 };
+          }
+        } catch {}
+        return null;
+      };
+
+      const expectedYM = parseYM(expectedTransferDate);
+      const actualYM = parseYM(actualTransferDate);
+      const rentalYM = parseYM(rentalLeaseStartDate);
+      const otherYM = parseYM(plot.handover_completed_at || plot.inspection_round1_date);
 
       // Date used for Month-to-Month filtering
-      const targetDateStr = actualTransferDate || expectedTransferDate || plot.handover_completed_at || plot.inspection_round1_date;
-      let targetYear: number | null = null;
-      let targetMonth: number | null = null;
-
-      if (targetDateStr) {
-        try {
-          const d = new Date(targetDateStr);
-          if (!isNaN(d.getTime())) {
-            targetYear = d.getFullYear();
-            targetMonth = d.getMonth() + 1;
-          }
-        } catch {
-          // ignore
-        }
-      }
+      const targetDateStr = isRental
+        ? rentalLeaseStartDate
+        : (actualTransferDate || expectedTransferDate || plot.handover_completed_at || plot.inspection_round1_date);
+      const targetYM = parseYM(targetDateStr);
+      const targetYear = targetYM?.year || null;
+      const targetMonth = targetYM?.month || null;
 
       // Construction progress (% ก่อสร้าง จริงจากระบบงานก่อสร้าง vw_plot_progress)
       const progress = overallMap.get(String(plot.id)) ?? (plot.progress ?? 0);
@@ -622,7 +798,7 @@ export default function TransferTrackingMatrixView({
 
       const manualCloseSales = Boolean(plot.handover_notes && plot.handover_notes.includes('[close_sales:done]'));
       const manualPendingSales = Boolean(plot.handover_notes && plot.handover_notes.includes('[close_sales:pending]'));
-      const autoCloseSales = Boolean(isTransferred && isHandoverDelivered && furnitureDone);
+      const autoCloseSales = Boolean((isRental ? isRentalContracted : isTransferred) && isHandoverDelivered && furnitureDone);
       const closeSales = manualCloseSales ? true : (manualPendingSales ? false : autoCloseSales);
 
       return {
@@ -631,11 +807,20 @@ export default function TransferTrackingMatrixView({
         projectName: plot.project_name || '-',
         houseModel: plot.house_types?.type_name || plot.house_model || '-',
         imageUrl: plot.overview_image_url || null,
-        isRental: isRentalPlot(plot),
-        hasCustomer: Boolean(plot.has_customer || sale || lead || customerName !== '-'),
+        isRental,
+        isRentalContracted,
+        hasCustomer: Boolean(plot.has_customer || sale || lead || rentalContract || customerName !== '-'),
         customerName,
         
         // Month Filter matching info
+        expectedYear: expectedYM?.year || null,
+        expectedMonth: expectedYM?.month || null,
+        actualYear: actualYM?.year || null,
+        actualMonth: actualYM?.month || null,
+        rentalYear: rentalYM?.year || null,
+        rentalMonth: rentalYM?.month || null,
+        otherYear: otherYM?.year || null,
+        otherMonth: otherYM?.month || null,
         targetYear,
         targetMonth,
         hasTransferDate: Boolean(targetDateStr),
@@ -649,7 +834,15 @@ export default function TransferTrackingMatrixView({
         inspectionDate: formatDateDMY(plot.inspection_round1_date),
         handoverDate: formatDateDMY(plot.handover_completed_at),
         isTransferred,
-        transferDate: actualTransferDate ? formatDateDMY(actualTransferDate) : (expectedTransferDate ? `คาด: ${formatDateDMY(expectedTransferDate)}` : '-'),
+        transferDate: isRental
+          ? (isRentalContracted
+              ? (rentalLeaseStartDate ? `ทำสัญญาแล้ว (${formatDateDMY(rentalLeaseStartDate)})` : 'ทำสัญญาแล้ว')
+              : (rentalLeaseStartDate ? `คาดเริ่มเช่า: ${formatDateDMY(rentalLeaseStartDate)}` : '-'))
+          : (isTransferred 
+              ? (actualTransferDate 
+                  ? `โอนแล้ว (${formatDateDMY(actualTransferDate)})` 
+                  : (expectedTransferDate ? `โอนแล้ว (${formatDateDMY(expectedTransferDate)})` : 'โอนแล้ว'))
+              : (expectedTransferDate ? `คาด: ${formatDateDMY(expectedTransferDate)}` : '-')),
 
         // Site Checklist (Green/Red)
         sanDone,
@@ -678,10 +871,10 @@ export default function TransferTrackingMatrixView({
         waterDate: formatDateDMY(plot.water_meter_installed_date || plot.water_meter_date),
       };
     });
-  }, [plots, sales, leads, taskAssignments, taskTemplates, defects, promotions, plotOverallProgress]);
+  }, [plots, sales, leads, rentalContracts, taskAssignments, taskTemplates, defects, promotions, plotOverallProgress]);
 
-  // Filter Rows based on Month-to-Month Range, Project, Search, Status
-  const filteredRows = useMemo(() => {
+  // 1. Scoped Rows: Filter Rows based on Project, Search, and Month Range
+  const scopedRows = useMemo(() => {
     return rows.filter(row => {
       // 1. Project Filter
       if (selectedProject !== 'all' && row.projectName !== selectedProject) return false;
@@ -695,37 +888,58 @@ export default function TransferTrackingMatrixView({
         if (!matchName && !matchProj && !matchCust) return false;
       }
 
-      // 3. Status Tab Filter
-      if (statusFilter === 'rental' && !row.isRental) return false;
-      if (statusFilter === 'transferred' && !row.isTransferred) return false;
-      if (statusFilter === 'waiting' && (row.isTransferred || row.isRental)) return false;
+      const expVal = row.expectedYear && row.expectedMonth ? row.expectedYear * 12 + row.expectedMonth : null;
+      const actVal = row.actualYear && row.actualMonth ? row.actualYear * 12 + row.actualMonth : null;
+      const rentalVal = row.rentalYear && row.rentalMonth ? row.rentalYear * 12 + row.rentalMonth : null;
 
-      // 4. Date Range: Month to Month
-      if (!filterAllMonths) {
-        if (!row.hasTransferDate) {
-          return includeUnscheduled;
-        }
-
-        if (row.targetYear && row.targetMonth) {
-          const rowVal = row.targetYear * 12 + row.targetMonth;
-          const fromVal = fromYear * 12 + fromMonth;
-          const toVal = toYear * 12 + toMonth;
-          
-          if (row.isTransferred) {
-            // โอนสำเร็จแล้ว: ต้องอยู่ในช่วงเดือนที่เลือก
-            if (rowVal < fromVal || rowVal > toVal) return false;
-          } else {
-            // บ้านรอโอน: แปลงที่นัดหมายก่อนหน้านี้ถือเป็น "ตกค้างจากเดือนก่อน" (Carried over) ยังคงอยู่ในเป้าหมายรอโอนของเดือนนี้
-            // ถ้ากำหนดวันนัดหมายในอนาคตเกินช่วงเดือนที่เลือก ให้ดูว่าติ๊ก includeUnscheduled ไว้หรือไม่
-            if (rowVal > toVal) {
-              return includeUnscheduled;
-            }
-          }
-        } else {
-          return includeUnscheduled;
-        }
+      // ตัดแปลงที่ไม่ได้ระบุวันเป้าหมายออกทั้งหมด (รอโอนต้องมีวันคาดโอน / โอนแล้วต้องมีวันโอนหรือวันคาดโอน / เช่าต้องมีวันเริ่มสัญญาเช่า)
+      if (row.isRental) {
+        if (rentalVal === null) return false;
+      } else if (row.isTransferred) {
+        if (expVal === null && actVal === null) return false;
+      } else {
+        if (expVal === null) return false;
       }
 
+      // 3. Date Range: Month to Month
+      if (!filterAllMonths) {
+        const fromVal = fromYear * 12 + fromMonth;
+        const toVal = toYear * 12 + toMonth;
+
+        if (row.isRental) {
+          return rentalVal !== null && rentalVal >= fromVal && rentalVal <= toVal;
+        }
+
+        if (row.isTransferred) {
+          const expMatch = expVal !== null && expVal >= fromVal && expVal <= toVal;
+          const actMatch = actVal !== null && actVal >= fromVal && actVal <= toVal;
+          return expMatch || actMatch;
+        }
+
+        // Waiting sale: Strict Month Matching by expected transfer date
+        return expVal !== null && expVal >= fromVal && expVal <= toVal;
+      }
+
+      return true;
+    });
+  }, [rows, selectedProject, searchTerm, filterAllMonths, fromMonth, fromYear, toMonth, toYear]);
+
+  // Tab counts
+  const tabCounts = useMemo(() => {
+    return {
+      all: scopedRows.length,
+      waiting: scopedRows.filter(r => !r.isTransferred && !r.isRental).length,
+      transferred: scopedRows.filter(r => r.isTransferred && !r.isRental).length,
+      rental: scopedRows.filter(r => r.isRental).length
+    };
+  }, [scopedRows]);
+
+  // 2. Filter Rows by Status Tab and Sort
+  const filteredRows = useMemo(() => {
+    return scopedRows.filter(row => {
+      if (statusFilter === 'rental' && !row.isRental) return false;
+      if (statusFilter === 'transferred' && (!row.isTransferred || row.isRental)) return false;
+      if (statusFilter === 'waiting' && (row.isTransferred || row.isRental)) return false;
       return true;
     }).sort((a, b) => {
       // Natural Sort by Project then Plot Name
@@ -733,13 +947,14 @@ export default function TransferTrackingMatrixView({
       if (pDiff !== 0) return pDiff;
       return a.plotName.localeCompare(b.plotName, 'th', { numeric: true, sensitivity: 'base' });
     });
-  }, [rows, selectedProject, searchTerm, statusFilter, filterAllMonths, fromMonth, fromYear, toMonth, toYear, includeUnscheduled]);
+  }, [scopedRows, statusFilter]);
 
   // Export to CSV matching Excel
   const exportToCSV = () => {
     const headers = [
+      'ลำดับ',
       'แปลง', 'โครงการ', 'แบบบ้าน', 'QC pass', '% ก่อสร้าง', 'ก่อสร้างสิ้นสุด', 'มีลูกค้า', 'ลูกค้า',
-      'วันนัดตรวจ', 'วันที่รับมอบ', 'โอน', 'วันที่โอน',
+      'วันนัดตรวจ', 'วันที่รับมอบ', 'โอน / สัญญา', 'วันที่โอน / สัญญา',
       'สุขภัณฑ์', 'ปั๊มน้ำ', 'ดินดำ', 'หญ้า', 'รั้ว', 'ทรายล้าง', 'เคลือบทรายล้าง',
       'ตรวจ 1', 'ตรวจ 2', 'ปิดจบก่อสร้าง', 'ปิดจบฝ่ายขาย', 'ปลวก', 'วันที่ฉีดน้ำยาปลวก',
       'ใบอนุญาตก่อสร้าง', 'วันที่ขออนุญาต', 'ทะเบียนบ้าน', 'วันที่ทะเบียนบ้าน',
@@ -748,8 +963,9 @@ export default function TransferTrackingMatrixView({
 
     const csvRows = [headers.join(',')];
 
-    filteredRows.forEach(r => {
+    filteredRows.forEach((r, idx) => {
       const rowData = [
+        idx + 1,
         `"${r.plotName}"`,
         `"${r.projectName}"`,
         `"${r.houseModel}"`,
@@ -760,7 +976,7 @@ export default function TransferTrackingMatrixView({
         `"${r.customerName}"`,
         `"${r.inspectionDate}"`,
         `"${r.handoverDate}"`,
-        r.isTransferred ? 'โอนแล้ว' : 'รอโอน',
+        r.isRental ? (r.isRentalContracted ? 'ทำสัญญาแล้ว' : 'รอทำสัญญา') : (r.isTransferred ? 'โอนแล้ว' : 'รอโอน'),
         `"${r.transferDate}"`,
         r.sanDone ? 'Done' : 'Pending',
         r.pumpDone ? 'Done' : 'Pending',
@@ -936,19 +1152,6 @@ export default function TransferTrackingMatrixView({
               />
               <span>ดูทุกเดือน (All)</span>
             </label>
-
-            {/* Include Unscheduled Checkbox */}
-            {!filterAllMonths && (
-              <label className="flex items-center gap-2 text-xs font-bold text-emerald-100 cursor-pointer bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-xl border border-white/10 transition-colors">
-                <input
-                  type="checkbox"
-                  checked={includeUnscheduled}
-                  onChange={(e) => setIncludeUnscheduled(e.target.checked)}
-                  className="rounded accent-emerald-500 cursor-pointer"
-                />
-                <span>รวมแปลงรอโอนยังไม่ระบุวัน</span>
-              </label>
-            )}
           </div>
 
           {/* Quick Counter */}
@@ -969,7 +1172,7 @@ export default function TransferTrackingMatrixView({
                 statusFilter === 'all' ? 'bg-white text-emerald-950 shadow-xs' : 'text-emerald-200 hover:text-white'
               }`}
             >
-              📌 ทั้งหมด ({rows.length})
+              📌 ทั้งหมด ({tabCounts.all})
             </button>
             <button
               onClick={() => setStatusFilter('waiting')}
@@ -977,7 +1180,7 @@ export default function TransferTrackingMatrixView({
                 statusFilter === 'waiting' ? 'bg-emerald-500 text-white shadow-xs' : 'text-emerald-200 hover:text-white'
               }`}
             >
-              🔑 รอโอนกรรมสิทธิ์ ({rows.filter(r => !r.isTransferred && !r.isRental).length})
+              🔑 รอโอนกรรมสิทธิ์ ({tabCounts.waiting})
             </button>
             <button
               onClick={() => setStatusFilter('transferred')}
@@ -985,7 +1188,7 @@ export default function TransferTrackingMatrixView({
                 statusFilter === 'transferred' ? 'bg-emerald-500 text-white shadow-xs' : 'text-emerald-200 hover:text-white'
               }`}
             >
-              🟢 โอนสำเร็จแล้ว ({rows.filter(r => r.isTransferred).length})
+              🟢 โอนสำเร็จแล้ว ({tabCounts.transferred})
             </button>
             <button
               onClick={() => setStatusFilter('rental')}
@@ -993,7 +1196,7 @@ export default function TransferTrackingMatrixView({
                 statusFilter === 'rental' ? 'bg-teal-500 text-white shadow-xs' : 'text-emerald-200 hover:text-white'
               }`}
             >
-              🏷️ บ้านเช่า ({rows.filter(r => r.isRental).length})
+              🏷️ บ้านเช่า ({tabCounts.rental})
             </button>
           </div>
 
@@ -1008,7 +1211,7 @@ export default function TransferTrackingMatrixView({
               >
                 <option value="all" className="text-slate-900 bg-white font-bold">ทุกโครงการ (All Projects)</option>
                 {projects.filter(p => !p.is_closed).map(p => (
-                  <option key={p.id} value={p.name} className="text-slate-900 bg-white font-bold">
+                  <option key={p.name} value={p.name} className="text-slate-900 bg-white font-bold">
                     {p.name}
                   </option>
                 ))}
@@ -1058,8 +1261,12 @@ export default function TransferTrackingMatrixView({
             {/* Header (Excel Dark Forest Green) */}
             <thead className="sticky top-0 z-30 bg-[#16532d] text-white font-black uppercase tracking-wider text-[11px] shadow-sm">
               <tr>
-                {/* 📌 Sticky Left Column: Plot Info & Image */}
-                <th className="sticky left-0 z-40 bg-[#14532d] py-3.5 px-3 min-w-[200px] text-left border-r border-emerald-700 shadow-[4px_0_12px_rgba(0,0,0,0.15)]">
+                {/* 📌 Sticky Left Column 1: ลำดับ */}
+                <th className="sticky left-0 z-40 bg-[#14532d] py-3.5 px-2 w-[54px] min-w-[54px] max-w-[54px] text-center border-r border-emerald-700 shadow-[2px_0_6px_rgba(0,0,0,0.08)]">
+                  ลำดับ
+                </th>
+                {/* 📌 Sticky Left Column 2: Plot Info & Image */}
+                <th className="sticky left-[54px] z-40 bg-[#14532d] py-3.5 px-3 min-w-[200px] text-left border-r border-emerald-700 shadow-[4px_0_12px_rgba(0,0,0,0.15)]">
                   แปลง (Plot & Picture)
                 </th>
                 <th className="py-3 px-2 min-w-[70px] border-r border-emerald-700/80">QC pass</th>
@@ -1069,8 +1276,8 @@ export default function TransferTrackingMatrixView({
                 <th className="py-3 px-2 min-w-[75px] border-r border-emerald-700/80">มีลูกค้า</th>
                 <th className="py-3 px-2 min-w-[95px] border-r border-emerald-700/80">วันนัดตรวจ</th>
                 <th className="py-3 px-2 min-w-[95px] border-r border-emerald-700/80">วันที่รับมอบ</th>
-                <th className="py-3 px-2 min-w-[80px] border-r border-emerald-700/80">โอน</th>
-                <th className="py-3 px-2 min-w-[100px] border-r border-emerald-700/80">วันที่โอน</th>
+                <th className="py-3 px-2 min-w-[95px] border-r border-emerald-700/80">โอน / สัญญา</th>
+                <th className="py-3 px-2 min-w-[115px] border-r border-emerald-700/80">วันที่โอน / สัญญา</th>
 
                 {/* 🛠️ Field Work Checklist */}
                 <th className="py-3 px-2 min-w-[75px] border-r border-emerald-700/80">สุขภัณฑ์</th>
@@ -1103,7 +1310,7 @@ export default function TransferTrackingMatrixView({
             <tbody className="divide-y divide-slate-200 font-semibold text-slate-800">
               {filteredRows.length === 0 ? (
                 <tr>
-                  <td colSpan={31} className="py-16 text-center text-slate-400">
+                  <td colSpan={32} className="py-16 text-center text-slate-400">
                     <FileSpreadsheet size={40} className="mx-auto text-slate-300 mb-2" />
                     <p className="font-bold text-base text-slate-600">ไม่พบแปลงรอโอนในเดือนที่เลือก</p>
                     <p className="text-xs text-slate-400 mt-1">ลองเปลี่ยนช่วงเดือน หรือติ๊ก &quot;ดูทุกเดือน (All)&quot; เพื่อแสดงข้อมูลบ้านรอโอนทั้งหมด</p>
@@ -1116,8 +1323,13 @@ export default function TransferTrackingMatrixView({
                   return (
                     <tr key={r.id} className={`group transition-colors ${isEven ? 'bg-white' : 'bg-slate-50'} hover:bg-emerald-50/60`}>
                       
-                      {/* 📌 Sticky Left Column: Thumbnail + Plot Name (100% Solid Opaque Background) */}
-                      <td className={`sticky left-0 z-20 py-2.5 px-3 border-r border-slate-200 text-left shadow-[4px_0_12px_rgba(0,0,0,0.08)] transition-colors ${isEven ? 'bg-white' : 'bg-slate-50'} group-hover:bg-[#ecfdf5]`}>
+                      {/* 📌 Sticky Left Column 1: ลำดับ */}
+                      <td className={`sticky left-0 z-20 py-2.5 px-2 border-r border-slate-200 text-center w-[54px] min-w-[54px] max-w-[54px] font-black text-xs text-slate-500 shadow-[2px_0_6px_rgba(0,0,0,0.05)] transition-colors ${isEven ? 'bg-white' : 'bg-slate-50'} group-hover:bg-[#ecfdf5]`}>
+                        {idx + 1}
+                      </td>
+
+                      {/* 📌 Sticky Left Column 2: Thumbnail + Plot Name (100% Solid Opaque Background) */}
+                      <td className={`sticky left-[54px] z-20 py-2.5 px-3 border-r border-slate-200 text-left shadow-[4px_0_12px_rgba(0,0,0,0.08)] transition-colors ${isEven ? 'bg-white' : 'bg-slate-50'} group-hover:bg-[#ecfdf5]`}>
                         <div className="flex items-center gap-2.5">
                           {/* Thumbnail */}
                           {r.imageUrl ? (
@@ -1222,14 +1434,30 @@ export default function TransferTrackingMatrixView({
                         {r.handoverDate}
                       </td>
 
-                      {/* โอน */}
-                      <td className="py-2.5 px-2 border-r border-slate-200">
-                        {r.isTransferred ? (
-                          <span className="bg-emerald-100 text-emerald-800 font-black px-2 py-0.5 rounded border border-emerald-300 text-[10px]">
+                      {/* โอน / สัญญาเช่า (Read-only อ้างอิงจากระบบขาย/เช่าจริง) */}
+                      <td 
+                        title={r.isRental
+                          ? 'สถานะสัญญาเช่าอ้างอิงจากข้อมูลสัญญาเช่าจริงในระบบ'
+                          : 'สถานะการโอนอ้างอิงจากข้อมูลการขายจริงในระบบ'
+                        }
+                        className="py-2.5 px-2 border-r border-slate-200 select-none"
+                      >
+                        {r.isRental ? (
+                          r.isRentalContracted ? (
+                            <span className="bg-teal-100 text-teal-800 font-black px-2 py-0.5 rounded border border-teal-300 text-[10px] shadow-2xs whitespace-nowrap">
+                              ทำสัญญาแล้ว
+                            </span>
+                          ) : (
+                            <span className="bg-sky-100 text-sky-800 font-black px-2 py-0.5 rounded border border-sky-300 text-[10px] shadow-2xs whitespace-nowrap">
+                              รอทำสัญญา
+                            </span>
+                          )
+                        ) : r.isTransferred ? (
+                          <span className="bg-emerald-100 text-emerald-800 font-black px-2 py-0.5 rounded border border-emerald-300 text-[10px] shadow-2xs whitespace-nowrap">
                             โอนแล้ว
                           </span>
                         ) : (
-                          <span className="bg-amber-100 text-amber-800 font-black px-2 py-0.5 rounded border border-amber-300 text-[10px]">
+                          <span className="bg-amber-100 text-amber-800 font-black px-2 py-0.5 rounded border border-amber-300 text-[10px] shadow-2xs whitespace-nowrap">
                             รอโอน
                           </span>
                         )}

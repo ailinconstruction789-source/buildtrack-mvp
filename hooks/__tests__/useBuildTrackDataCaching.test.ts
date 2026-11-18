@@ -75,6 +75,7 @@ beforeEach(() => {
     const error = errors[table] || null;
     let projectFilter: string | undefined;
     let plotFilter: string | undefined;
+    let plotInFilter: string[] | undefined;
     let start = 0;
     let end = 999;
     let requestCount = false;
@@ -89,6 +90,10 @@ beforeEach(() => {
         if (column === 'plot_id') plotFilter = value;
         return this;
       }),
+      in: vi.fn(function (this: unknown, column: string, values: string[]) {
+        if (column === 'plot_id') plotInFilter = values;
+        return this;
+      }),
       range: vi.fn(function (this: unknown, from: number, to: number) {
         start = from; end = to; return this;
       }),
@@ -97,6 +102,7 @@ beforeEach(() => {
           ? rows.filter(row => tables.plots.some(plot => plot.id === row.plot_id && plot.project_name === projectFilter))
           : rows;
         if (plotFilter !== undefined) filtered = filtered.filter(row => row.plot_id === plotFilter);
+        if (plotInFilter !== undefined) filtered = filtered.filter(row => plotInFilter!.includes(String(row.plot_id)));
         return (delayed || Promise.resolve({ data: filtered.slice(start, end + 1), error, count: requestCount ? filtered.length : null })).then(resolve, reject);
       },
     };
@@ -724,5 +730,32 @@ describe('BuildTrack reference-data reuse during project navigation', () => {
     rerender({ account: null, project: 'Project A' });
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
     expect(mocks.from.mock.calls.filter(([name]) => name !== 'users')).toHaveLength(0);
+  });
+
+  it('retries once on transient statement timeout errors and completes loading', async () => {
+    tables.task_updates = [{ id: 10, plot_id: 'P1', task_template_id: 1, progress: 50, created_at: '2026-10-07' }];
+    pending.set('task_updates', [
+      Promise.resolve({ data: [], error: { message: 'canceling statement due to statement timeout' } }),
+      Promise.resolve({ data: tables.task_updates, error: null }),
+    ]);
+    const { result } = useFixture();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(fromCount('task_updates')).toBe(2);
+    expect(result.current.allUpdatesRecord).toEqual(tables.task_updates);
+  });
+
+  it('remembers missing plots relationship and filters assignments by project plot_id without repeating failed inner joins', async () => {
+    pending.set('plot_task_assignments', [
+      Promise.resolve({ data: [], error: { message: "Could not find a relationship between 'plot_task_assignments' and 'plots' in the schema cache" } }),
+    ]);
+    const { result, rerender } = useFixture();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.assignments).toEqual([{ id: 1, plot_id: 'P1', task_template_id: 1, current_progress: 10, actual_start_date: '2026-10-01' }]);
+    expect(fromCount('plot_task_assignments')).toBe(2);
+
+    rerender({ account: user, project: 'Project B' });
+    await waitFor(() => expect(result.current.assignments.some(row => row.plot_id === 'P2')).toBe(true));
+    // Second load skips the failing inner join and uses .in('plot_id', ...) directly (only +1 call)
+    expect(fromCount('plot_task_assignments')).toBe(3);
   });
 });
