@@ -367,11 +367,52 @@ export default function CentralLeadBookingModal({
                 setFreebieDiscount(String(cashVal));
                 setSelectedFreebies([]);
               } else {
-                setSelectedFreebies(promosData.map((p: any) => ({
-                  category: p.category || 'ทั่วไป',
-                  item_name: p.item_name,
-                  quantity: p.quantity || 1
-                })));
+                setSelectedFreebies(promosData.map((p: any) => {
+                  const rawCat = (p.category || 'ทั่วไป').trim();
+                  const rawName = (p.item_name || '').trim();
+                  let mappedCat = rawCat;
+                  let mappedName = rawName;
+
+                  if (rawName === 'แอร์ 18,000 BTU') {
+                    mappedCat = 'เครื่องใช้ไฟฟ้า';
+                    mappedName = 'แอร์ 18,000 BTU (ห้องโถง)';
+                  } else if (rawName === 'แอร์ 12,000 BTU') {
+                    mappedCat = 'เครื่องใช้ไฟฟ้า';
+                    mappedName = 'แอร์ 12,000 BTU (ห้องนอน)';
+                  } else if (rawName === 'ตู้เย็น ขนาด 14.1 คิว / 6.9 คิว') {
+                    mappedCat = 'เครื่องใช้ไฟฟ้า';
+                    mappedName = 'ตู้เย็น 2 ประตู (14.1 คิว)';
+                  } else if (rawName === 'ผ้าม่านกัน UV ทั้งหลัง') {
+                    mappedCat = 'เฟอร์นิเจอร์ & ห้องโถง';
+                    mappedName = 'ผ้าม่านกัน UV ทั้งหลัง';
+                  } else if (['ชุดโซฟาห้องโถง + โต๊ะกลาง', 'ไซด์บอร์ดวาง TV', 'ชุดโต๊ะอาหาร 4-6 ที่นั่ง'].includes(rawName)) {
+                    mappedCat = 'เฟอร์นิเจอร์ & ห้องโถง';
+                  } else if (rawName === 'เตียง 6 ฟุต + ฟูกที่นอน') {
+                    mappedCat = 'ชุดห้องนอน';
+                    mappedName = 'เตียง 6 ฟุต + ฟูกที่นอน (ห้องมาสเตอร์)';
+                  } else if (rawName === 'ตู้เสื้อผ้า' && rawCat === 'ห้องนอนมาสเตอร์') {
+                    mappedCat = 'ชุดห้องนอน';
+                    mappedName = 'ตู้เสื้อผ้า (ห้องมาสเตอร์)';
+                  } else if (rawName === 'โต๊ะเครื่องแป้ง' && rawCat === 'ห้องนอนมาสเตอร์') {
+                    mappedCat = 'ชุดห้องนอน';
+                    mappedName = 'โต๊ะเครื่องแป้ง (ห้องมาสเตอร์)';
+                  } else if (rawName === 'เตียง 5 ฟุต + ฟูกที่นอน') {
+                    mappedCat = 'ชุดห้องนอน';
+                    mappedName = 'เตียง 5 ฟุต + ฟูกที่นอน (ห้องนอน 2)';
+                  } else if (rawName === 'ปั๊มน้ำ + ถังเก็บน้ำ') {
+                    mappedCat = 'งานระบบ & ภายนอกบ้าน';
+                    mappedName = 'ปั๊มน้ำอัตโนมัติ + ถังเก็บน้ำ';
+                  } else if (rawName === 'จัดสวน + ปูหญ้าสนาม') {
+                    mappedCat = 'งานระบบ & ภายนอกบ้าน';
+                    mappedName = 'จัดสวนปูหญ้าสนามรอบบ้าน';
+                  }
+
+                  return {
+                    category: mappedCat,
+                    item_name: mappedName,
+                    quantity: p.quantity || 1
+                  };
+                }));
                 setPromoMode('freebies');
               }
             } else {
@@ -579,6 +620,7 @@ export default function CentralLeadBookingModal({
             project_name: projectName,
             interested_plot_name: plotId,
             interested_plot_id: resolvedPlotId,
+            actual_visit_date: (effectiveCustomer as any)?.actual_visit_date || now.toISOString(),
             booking_date: now.toISOString(),
             booking_amount: depositNum,
             notes: combinedNotes,
@@ -605,6 +647,7 @@ export default function CentralLeadBookingModal({
             auto_status: `จองแปลง ${plotId} (${projectName})`,
             interested_plot_name: plotId,
             interested_plot_id: resolvedPlotId,
+            actual_visit_date: (effectiveCustomer as any)?.actual_visit_date || now.toISOString(),
             booking_date: now.toISOString(),
             booking_amount: depositNum,
             agent_name: agentName || 'ทีมขาย',

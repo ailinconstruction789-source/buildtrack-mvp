@@ -215,5 +215,93 @@ describe('HousePromotionsView - Curtain & Cash Discount Features', () => {
         ]));
       });
     });
+
+    it('inserts newly selected checklist freebies without an undefined id key', async () => {
+      dbMocks.in.mockResolvedValue({ data: [], error: null });
+
+      render(
+        <HousePromotionsView
+          plots={[mockPlot]}
+          selectedPlot={mockPlot}
+          projects={[{ name: 'The Valley' }]}
+          currentUserRole="Admin"
+        />
+      );
+
+      fireEvent.click(await screen.findByText(/รายหลัง/));
+      fireEvent.click(await screen.findByText(/1\. ติ๊กเลือกของแถม/));
+
+      const curtainCards = await screen.findAllByText('ผ้าม่านกัน UV ทั้งหลัง');
+      fireEvent.click(curtainCards[curtainCards.length - 1]);
+
+      fireEvent.click(screen.getByText('บันทึกรายการของแถมแปลงนี้'));
+
+      await waitFor(() => {
+        expect(dbMocks.insert).toHaveBeenCalledTimes(1);
+        const insertedRows = dbMocks.insert.mock.calls[0][0];
+        expect(insertedRows).toHaveLength(1);
+        expect(insertedRows[0]).toMatchObject({
+          plot_id: 'AL6-01',
+          category: 'ทั้งหลัง',
+          item_name: 'ผ้าม่านกัน UV ทั้งหลัง',
+          quantity: 1,
+          status: 'pending'
+        });
+        expect('id' in insertedRows[0]).toBe(false);
+      });
+    });
+
+    it('recognizes and allows editing/removing freebies originally saved from CentralLeadBookingModal', async () => {
+      const bookingPromotions = [
+        {
+          id: 'bp-1',
+          plot_id: 'AL6-01',
+          category: 'เครื่องใช้ไฟฟ้า',
+          item_name: 'แอร์ 18,000 BTU (ห้องโถง)',
+          quantity: 1,
+          status: 'pending'
+        },
+        {
+          id: 'bp-2',
+          plot_id: 'AL6-01',
+          category: 'ชุดห้องนอน',
+          item_name: 'เตียง 6 ฟุต + ฟูกที่นอน (ห้องมาสเตอร์)',
+          quantity: 1,
+          status: 'pending'
+        }
+      ];
+      dbMocks.in.mockResolvedValue({ data: bookingPromotions, error: null });
+
+      render(
+        <HousePromotionsView
+          plots={[mockPlot]}
+          selectedPlot={mockPlot}
+          projects={[{ name: 'The Valley' }]}
+          currentUserRole="Sales"
+        />
+      );
+
+      fireEvent.click(await screen.findByText(/รายหลัง/));
+      fireEvent.click(await screen.findByText(/1\. ติ๊กเลือกของแถม \(2\)/));
+
+      // Uncheck 'แอร์ 18,000 BTU' and keep 'เตียง 6 ฟุต + ฟูกที่นอน'
+      const acCards = await screen.findAllByText('แอร์ 18,000 BTU');
+      fireEvent.click(acCards[acCards.length - 1]);
+
+      fireEvent.click(screen.getByText('บันทึกรายการของแถมแปลงนี้'));
+
+      await waitFor(() => {
+        expect(dbMocks.delete).toHaveBeenCalled();
+        expect(dbMocks.in).toHaveBeenCalledWith('id', ['bp-1']);
+        expect(dbMocks.upsert).toHaveBeenCalledWith([
+          expect.objectContaining({
+            id: 'bp-2',
+            plot_id: 'AL6-01',
+            category: 'ห้องนอนมาสเตอร์',
+            item_name: 'เตียง 6 ฟุต + ฟูกที่นอน'
+          })
+        ]);
+      });
+    });
   });
 });

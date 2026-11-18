@@ -8,8 +8,9 @@ vi.mock('@/lib/supabase', () => ({ supabase: { from: fixture.from, auth: { getSe
 vi.mock('@/lib/auth/trustedActor', () => ({ readTrustedActor: fixture.actor }));
 
 import {
-  createDemoLayout, createDemoProject, DEMO_LAYERS, listDemoProjects,
-  parseDemoLayout, parseDemoProject, saveDemoProject, validateDemoProjectName,
+  calculateDemoProjectMetrics, createDemoLayout, createDemoProject, createPdfMasterPlanLayout, DEMO_LAYERS,
+  listDemoProjects, measureDemoGridDistance, parseDemoLayout, parseDemoProject, PDF_LAND_UTILIZATION,
+  PDF_MASTERPLAN_PLOTS, saveDemoProject, validateDemoProjectName,
 } from '../demoProjects';
 
 const userId = 'a0250000-0000-4000-8000-000000000001';
@@ -78,6 +79,35 @@ describe('demo map data', () => {
     for (const name of ['', '   ', 'demo\nA', 'a'.repeat(101), null]) {
       expect(() => validateDemoProjectName(name)).toThrow();
     }
+  });
+  it('generates valid 80-plot PDF master plan layout (sidewalk-first without poles/water pipes by default) and computes surveyed engineering distances', () => {
+    expect(PDF_MASTERPLAN_PLOTS).toHaveLength(80);
+    const pdfLayout = createPdfMasterPlanLayout();
+    expect(parseDemoLayout(pdfLayout)).toEqual(pdfLayout);
+
+    const metrics = calculateDemoProjectMetrics(pdfLayout);
+    expect(metrics.isPdfMasterPlan).toBe(true);
+    expect(metrics.plotCount).toBe(80);
+    expect(metrics.pdfPlotCount).toBe(80);
+    expect(metrics.totalPlotAreaSqWa).toBe(PDF_LAND_UTILIZATION.saleableAreaSqWa);
+    expect(metrics.totalPlotAreaSqM).toBe(19789.2);
+    expect(metrics.totalPlotFrontageM).toBeGreaterThan(1000);
+    expect(metrics.roadLengthM).toBeGreaterThan(500);
+    expect(metrics.walkwayLengthM).toBeGreaterThan(500);
+    expect(metrics.poleCount).toBe(0);
+    expect(metrics.waterPipeLengthM).toBe(0);
+    expect(metrics.fenceLengthM).toBe(PDF_LAND_UTILIZATION.perimeterFenceSurveyM);
+
+    const withUtilities = calculateDemoProjectMetrics(createPdfMasterPlanLayout({ includeUtilities: true }));
+    expect(withUtilities.drainageLengthM).toBeGreaterThan(500);
+    expect(withUtilities.waterMeterTapCount).toBe(80);
+    expect(withUtilities.poleCount).toBeGreaterThan(20);
+
+    const measure = measureDemoGridDistance({ x: 1, y: 9, label: 'Gate' }, { x: 2, y: 1, label: 'Plot 38' });
+    expect(measure.dxCells).toBe(1);
+    expect(measure.dyCells).toBe(8);
+    expect(measure.routeDistanceM).toBe(112.5);
+    expect(measure.straightDistanceM).toBeGreaterThan(100);
   });
 });
 

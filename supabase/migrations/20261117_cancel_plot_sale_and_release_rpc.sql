@@ -175,7 +175,14 @@ BEGIN
   -- 2.6 ปรับสถานะลูกค้าใน public.leads (ถ้ามีที่ยังค้างเป็นจองอยู่)
   UPDATE public.leads
   SET status = 'Cancelled',
-      crm_status = 'Cancelled — ยกเลิกจอง',
+      crm_status = CASE
+        WHEN deal_type = 'rent' OR rental_status IS NOT NULL THEN 'Cancelled — ยกเลิกการจองเช่า'
+        ELSE 'Cancelled — ยกเลิกจอง'
+      END,
+      rental_status = CASE
+        WHEN deal_type = 'rent' OR rental_status IS NOT NULL THEN 'Cancelled'
+        ELSE rental_status
+      END,
       lost_reason = COALESCE(p_reason, lost_reason, 'ยกเลิกการจอง')
   WHERE (interested_plot_id = v_target_plot_id OR interested_plot_name = v_target_plot_id)
     AND status NOT IN ('Cancelled', 'Lost', 'Transferred');
@@ -185,7 +192,12 @@ BEGIN
   IF to_regclass('public.rental_contracts') IS NOT NULL THEN
     UPDATE public.rental_contracts
     SET status = 'Cancelled',
-        cancellation_reason = COALESCE(p_reason, cancellation_reason, 'ยกเลิกการจองเช่า')
+        notes = CASE
+          WHEN notes IS NOT NULL AND btrim(notes) <> ''
+            THEN notes || E'\n' || '[ยกเลิกการจองเช่า]: ' || COALESCE(p_reason, 'ยกเลิกการจองเช่า')
+          ELSE '[ยกเลิกการจองเช่า]: ' || COALESCE(p_reason, 'ยกเลิกการจองเช่า')
+        END,
+        updated_at = clock_timestamp()
     WHERE plot_id = v_target_plot_id
       AND status IN ('Active', 'PendingContract');
     GET DIAGNOSTICS v_rentals_count = ROW_COUNT;

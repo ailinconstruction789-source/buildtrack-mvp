@@ -28,7 +28,7 @@ import { useSalesStaffOptions } from '@/hooks/useSalesStaffOptions';
 import SalesOverlay from './SalesOverlay';
 import { canStartSalesDeal, getLeadStage } from '@/lib/sales/leadStage';
 import { loadSalesStatusHistory, mergeSalesTimeline, type SalesStatusHistoryRow } from '@/lib/sales/salesStatusHistory';
-import { subscribeToSalesSync } from '@/lib/sales/salesSyncBroadcast';
+import { broadcastSalesSync, subscribeToSalesSync } from '@/lib/sales/salesSyncBroadcast';
 
 async function checkedResult<T extends { error?: { message?: string } | null }>(query: PromiseLike<T>): Promise<T> {
   const result = await query;
@@ -1176,25 +1176,27 @@ export default function SalesKanban({
     e.preventDefault();
     setIsSubmitting(true);
     try {
-      const leadId = panelState.lead.id;
-      const saleId = panelState.lead.saleId || panelState.lead.id;
+      const leadId = panelState.lead.leadId || (panelState.lead.sourceKind === 'lead' || !panelState.lead.saleId ? panelState.lead.id : null);
+      const saleId = panelState.lead.saleId || (panelState.lead.sourceKind === 'lead' ? null : (panelState.lead.leadId ? panelState.lead.id : null));
       const oldStatus = panelState.lead.status;
       const newStatus = editCustomerForm.status;
       const isNewBooking = oldStatus === 'Visit' && newStatus !== 'Visit';
+      const isRentDeal = isRentalCustomer(panelState.lead);
       const txDateStr = editCustomerForm.transactionDate;
       const txDate = txDateStr ? new Date(`${txDateStr}T12:00:00Z`).toISOString() : new Date().toISOString();
       const parsedSalePrice = editCustomerForm.salePrice ? Number(editCustomerForm.salePrice.replace(/[^0-9.-]+/g,"")) : null;
       const parsedLandOfficePrice = editCustomerForm.landOfficePrice ? Number(editCustomerForm.landOfficePrice.replace(/[^0-9.-]+/g,"")) : null;
+      const cancelReasonText = editCustomerForm.cancelReason?.trim() || (isRentDeal ? 'ยกเลิกการจองเช่า' : 'ยกเลิกการจอง');
       
       const salePayload: any = {
         contract_status: newStatus === 'Transferred' || newStatus === 'Handover' ? 'Transferred' : (newStatus === 'Contracted' || newStatus === 'DownPayment' || newStatus === 'DocumentPrep' || newStatus === 'LoanProcessing' || newStatus === 'Approved' ? 'Contracted' : newStatus === 'Cancelled' ? 'Cancelled' : 'Reserved'),
         crm_stage: kanbanStatusToStage(newStatus),
-        cancellation_reason: newStatus === 'Cancelled' ? editCustomerForm.cancelReason : null,
+        cancellation_reason: newStatus === 'Cancelled' ? cancelReasonText : null,
         sale_price: parsedSalePrice,
         land_office_price: parsedLandOfficePrice,
         bank_name: editCustomerForm.bank || null,
         ...(newStatus === 'Transferred' || newStatus === 'Handover' ? { transferred_at: txDate } : {}),
-        ...(newStatus === 'Cancelled' ? { cancelled_at: txDate } : {})
+        ...(newStatus === 'Cancelled' ? { cancelled_at: txDate, cancellation_category: 'booking_cancelled' } : {})
       };
 
       // 1. Update sales record if saleId exists
@@ -1203,11 +1205,13 @@ export default function SalesKanban({
       }
 
       // 2. Also check if there is an existing sale by lead_id
-      const { data: existingSale } = await checkedResult(supabase.from('sales').select('id').eq('lead_id', leadId).maybeSingle());
-      if (existingSale && existingSale.id !== saleId) {
-        await checkedResult(supabase.from('sales').update(salePayload).eq('id', existingSale.id));
-      } else if (isNewBooking && !saleId) {
-        await checkedResult(supabase.from('sales').insert([{ plot_id: panelState.plotId, ...salePayload }]));
+      if (leadId) {
+        const { data: existingSale } = await checkedResult(supabase.from('sales').select('id').eq('lead_id', leadId).maybeSingle());
+        if (existingSale && existingSale.id !== saleId) {
+          await checkedResult(supabase.from('sales').update(salePayload).eq('id', existingSale.id));
+        } else if (isNewBooking && !saleId && !isRentDeal) {
+          await checkedResult(supabase.from('sales').insert([{ plot_id: panelState.plotId, ...salePayload }]));
+        }
       }
 
       // 3. Update leads table
@@ -1223,9 +1227,10 @@ export default function SalesKanban({
           leadUpdatePayload.agent_name = editCustomerForm.agentName.trim();
         }
         if (newStatus === 'Cancelled') {
-          leadUpdatePayload.cancellation_reason = editCustomerForm.cancelReason || null;
-          leadUpdatePayload.cancelled_at = txDate;
-          if (panelState.lead?.deal_type === 'rent') {
+          leadUpdatePayload.lost_reason = cancelReasonText;
+          leadUpdatePayload.lost_reason_detail = txDateStr ? `วันที่ยกเลิก: ${txDateStr}` : null;
+          leadUpdatePayload.crm_status = isRentDeal ? 'Cancelled — ยกเลิกการจองเช่า' : 'Cancelled — ยกเลิกจอง';
+          if (isRentDeal) {
             leadUpdatePayload.rental_status = 'Cancelled';
           }
         }
@@ -1233,42 +1238,68 @@ export default function SalesKanban({
       }
 
       if (newStatus === 'Cancelled') {
-        if (panelState.lead?.deal_type === 'rent') {
+        if (isRentDeal && leadId) {
           try {
+            const cancelNote = `[${txDateStr || new Date().toISOString().split('T')[0]} ยกเลิกการจองเช่า] เหตุผล: ${cancelReasonText}`;
             await supabase.from('rental_contracts')
-              .update({ status: 'Cancelled', cancellation_reason: editCustomerForm.cancelReason || 'ยกเลิกการจองเช่า' })
+              .update({
+                status: 'Cancelled',
+                notes: cancelNote,
+                updated_at: new Date().toISOString()
+              })
               .eq('lead_id', leadId)
               .in('status', ['Active', 'PendingContract']);
           } catch (rcErr) {
             console.warn('Could not cancel rental contracts:', rcErr);
           }
         }
-        const plotIdentifier = panelState.plotId || panelState.lead?.plot;
-        if (plotIdentifier) {
-          try {
-            const rpcRes = await supabase.rpc('cancel_plot_sale_and_release', {
-              p_plot_id: plotIdentifier,
-              p_sale_id: saleId || null,
-              p_reason: editCustomerForm.cancelReason || null,
-            });
-            if (rpcRes.error) throw rpcRes.error;
-          } catch {
+        const rawPlotIdentifier = panelState.lead?.plot || panelState.plotId;
+        if (rawPlotIdentifier) {
+          const projName = internalProject?.name || project?.name || 'ไอลิน6';
+          const matchedPlot = projectPlotsData.find(p =>
+            p.id === rawPlotIdentifier ||
+            p.plot_name === rawPlotIdentifier ||
+            p.id === `${projName}-${rawPlotIdentifier}`
+          );
+          const resolvedPlotId = matchedPlot?.id || (
+            projectPlotsData.some(p => String(p.id).startsWith(`${projName}-`)) && !String(rawPlotIdentifier).startsWith(`${projName}-`)
+              ? `${projName}-${rawPlotIdentifier}`
+              : rawPlotIdentifier
+          );
+          const releasedSaleStatus = matchedPlot?.sale_status === 'active' ? 'active' : 'ready_for_sale';
+
+          if (!isRentDeal || saleId) {
             try {
-              await supabase.from('plots').update({
-                sale_status: 'available',
-                has_customer: false,
-                current_tenant_name: null,
-                current_tenant_phone: null,
-                rental_program: null,
-                monthly_rent: null,
-                security_deposit: null,
-                lease_start_date: null,
-                lease_end_date: null,
-                highlight_note: null
-              }).eq('id', plotIdentifier);
-            } catch (plotErr) {
-              console.warn('Could not release plot on cancellation:', plotErr);
+              const rpcRes = await supabase.rpc('cancel_plot_sale_and_release', {
+                p_plot_id: resolvedPlotId,
+                p_sale_id: saleId || null,
+                p_reason: cancelReasonText,
+              });
+              if (rpcRes.error) throw rpcRes.error;
+            } catch {
+              // Fallback to direct plot update below
             }
+          }
+
+          try {
+            let plotQuery = supabase.from('plots').update({
+              sale_status: releasedSaleStatus,
+              has_customer: false,
+              current_tenant_name: null,
+              current_tenant_phone: null,
+              rental_program: null,
+              monthly_rent: null,
+              security_deposit: null,
+              lease_start_date: null,
+              lease_end_date: null,
+              highlight_note: null
+            }).eq('id', resolvedPlotId);
+            if (projName && matchedPlot?.project_name) {
+              plotQuery = plotQuery.eq('project_name', projName);
+            }
+            await plotQuery;
+          } catch (plotErr) {
+            console.warn('Could not release plot on cancellation:', plotErr);
           }
         }
       }
@@ -1292,8 +1323,8 @@ export default function SalesKanban({
         const finalNote = noteParts.join(' | ');
 
         await checkedResult(supabase.from('status_history').insert([{
-          entity_type: 'lead',
-          entity_id: leadId,
+          entity_type: leadId ? 'lead' : 'sale',
+          entity_id: leadId || saleId,
           old_status: oldStatus,
           new_status: newStatus,
           changed_by: (user?.username || 'Unknown') + (finalNote ? ` (${finalNote})` : ''),
@@ -1301,6 +1332,9 @@ export default function SalesKanban({
         }]));
       }
 
+      if (typeof window !== 'undefined') {
+        broadcastSalesSync({ type: 'customer_updated', timestamp: Date.now() });
+      }
       await fetchData();
       setPanelState({ type: 'default', plotId: '', lead: null });
     } catch (err) {

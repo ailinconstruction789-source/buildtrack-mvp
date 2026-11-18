@@ -128,4 +128,16 @@ describe('Admin Demo projects', () => {
     expect(onBack).toHaveBeenCalledTimes(1);
     confirmSpy.mockRestore();
   });
+
+  it('generates the 80-plot PDF master plan, renders the true CAD Vector Map, and calculates engineering distances', async () => {
+    render(<AdminDemoProjects isAdmin onBack={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Demo ถนน A/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Generate ผัง 80 แปลงจาก PDF/ }));
+    expect(await screen.findByText('แสดงชั้นข้อมูล (80 แปลงบ้าน)')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: /ผัง CAD Vector 80 แปลง ตามแบบ PDF 1:750/ })).toBeInTheDocument();
+    expect(screen.getByText(/4,947.3 ตร.ว./)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /วัดระยะทางบนผัง/ }));
+    expect(screen.getByText(/เครื่องมือวัดระยะทางจากสเกล PDF/)).toBeInTheDocument();
+  });
 });

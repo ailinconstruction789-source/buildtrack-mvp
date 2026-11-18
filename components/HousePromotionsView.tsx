@@ -71,6 +71,79 @@ const ALL_MASTER_ITEMS = ROOM_GROUPS.flatMap(g =>
   }))
 );
 
+// 🔄 Helper to normalize promotion category & item_name between Booking Modal and Promotions View
+export const normalizePromoToCanonical = (
+  rawCategory?: string | null,
+  rawItemName?: string | null
+): { category: string; item_name: string } => {
+  const cat = (rawCategory || '').trim();
+  const name = (rawItemName || '').trim();
+
+  if (name === 'ผ้าม่านกัน UV ทั้งหลัง' || name.includes('ผ้าม่านกัน UV')) {
+    return { category: 'ทั้งหลัง', item_name: 'ผ้าม่านกัน UV ทั้งหลัง' };
+  }
+  if (name === 'ชุดโซฟาห้องโถง + โต๊ะกลาง') {
+    return { category: 'ห้องโถง / Living Room', item_name: 'ชุดโซฟาห้องโถง + โต๊ะกลาง' };
+  }
+  if (name === 'ไซด์บอร์ดวาง TV') {
+    return { category: 'ห้องโถง / Living Room', item_name: 'ไซด์บอร์ดวาง TV' };
+  }
+  if (name === 'ชุดโต๊ะอาหาร 4-6 ที่นั่ง') {
+    return { category: 'ห้องโถง / Living Room', item_name: 'ชุดโต๊ะอาหาร 4-6 ที่นั่ง' };
+  }
+  if (name === 'เตียง 6 ฟุต + ฟูกที่นอน (ห้องมาสเตอร์)' || name === 'เตียง 6 ฟุต + ฟูกที่นอน') {
+    return { category: 'ห้องนอนมาสเตอร์', item_name: 'เตียง 6 ฟุต + ฟูกที่นอน' };
+  }
+  if (name === 'ตู้เสื้อผ้า (ห้องมาสเตอร์)' || (name === 'ตู้เสื้อผ้า' && (cat === 'ชุดห้องนอน' || cat === 'ห้องนอนมาสเตอร์'))) {
+    return { category: 'ห้องนอนมาสเตอร์', item_name: 'ตู้เสื้อผ้า' };
+  }
+  if (name === 'โต๊ะเครื่องแป้ง (ห้องมาสเตอร์)' || (name === 'โต๊ะเครื่องแป้ง' && (cat === 'ชุดห้องนอน' || cat === 'ห้องนอนมาสเตอร์'))) {
+    return { category: 'ห้องนอนมาสเตอร์', item_name: 'โต๊ะเครื่องแป้ง' };
+  }
+  if (name === 'เตียง 5 ฟุต + ฟูกที่นอน (ห้องนอน 2)' || name === 'เตียง 5 ฟุต + ฟูกที่นอน') {
+    return { category: 'ห้องนอน 2', item_name: 'เตียง 5 ฟุต + ฟูกที่นอน' };
+  }
+  if (name === 'ตู้เสื้อผ้า (ห้องนอน 2)' || (name === 'ตู้เสื้อผ้า' && cat === 'ห้องนอน 2')) {
+    return { category: 'ห้องนอน 2', item_name: 'ตู้เสื้อผ้า' };
+  }
+  if (name === 'โต๊ะเครื่องแป้ง (ห้องนอน 2)' || (name === 'โต๊ะเครื่องแป้ง' && cat === 'ห้องนอน 2')) {
+    return { category: 'ห้องนอน 2', item_name: 'โต๊ะเครื่องแป้ง' };
+  }
+  if (name === 'แอร์ 18,000 BTU (ห้องโถง)' || name === 'แอร์ 18,000 BTU') {
+    return { category: 'เครื่องใช้ไฟฟ้า', item_name: 'แอร์ 18,000 BTU' };
+  }
+  if (name === 'แอร์ 12,000 BTU (ห้องนอน)' || name === 'แอร์ 12,000 BTU') {
+    return { category: 'เครื่องใช้ไฟฟ้า', item_name: 'แอร์ 12,000 BTU' };
+  }
+  if (name === 'Smart TV ขนาด 55 นิ้ว') {
+    return { category: 'เครื่องใช้ไฟฟ้า', item_name: 'Smart TV ขนาด 55 นิ้ว' };
+  }
+  if (name === 'ตู้เย็น 2 ประตู (14.1 คิว)' || name === 'ตู้เย็น ขนาด 14.1 คิว / 6.9 คิว') {
+    return { category: 'เครื่องใช้ไฟฟ้า', item_name: 'ตู้เย็น ขนาด 14.1 คิว / 6.9 คิว' };
+  }
+  if (name === 'จัดสวนปูหญ้าสนามรอบบ้าน' || name === 'จัดสวน + ปูหญ้าสนาม') {
+    return { category: 'ภายนอกบ้าน & ของแถมพิเศษ', item_name: 'จัดสวน + ปูหญ้าสนาม' };
+  }
+  if (name === 'ปั๊มน้ำอัตโนมัติ + ถังเก็บน้ำ' || name === 'ปั๊มน้ำ + ถังเก็บน้ำ') {
+    return { category: 'ภายนอกบ้าน & ของแถมพิเศษ', item_name: 'ปั๊มน้ำ + ถังเก็บน้ำ' };
+  }
+
+  if (ROOM_GROUPS.some(g => g.room === cat)) {
+    return { category: cat, item_name: name };
+  }
+  if (cat === 'เฟอร์นิเจอร์ & ห้องโถง' || cat === 'ทั่วไป') {
+    return { category: 'ห้องโถง / Living Room', item_name: name };
+  }
+  if (cat === 'ชุดห้องนอน') {
+    return { category: 'ห้องนอนมาสเตอร์', item_name: name };
+  }
+  if (cat === 'งานระบบ & ภายนอกบ้าน' || cat === 'โปรโมชั่นค่าใช้จ่ายวันโอน') {
+    return { category: 'ภายนอกบ้าน & ของแถมพิเศษ', item_name: name };
+  }
+
+  return { category: 'ภายนอกบ้าน & ของแถมพิเศษ', item_name: name };
+};
+
 // 💵 Helper functions for Cash Discount in lieu of Freebies
 export const isCashDiscountPromo = (p: any): boolean => {
   if (!p) return false;
@@ -304,11 +377,12 @@ export default function HousePromotionsView({
     });
 
     currentItems.filter(item => !isCashDiscountPromo(item)).forEach(item => {
-      const key = `${item.category}___${item.item_name}`;
+      const norm = normalizePromoToCanonical(item.category, item.item_name);
+      const key = `${norm.category}___${norm.item_name}`;
       initialChecklist[key] = {
         included: true,
         quantity: item.quantity || 1,
-        category: item.category || 'ทั่วไป',
+        category: norm.category,
         remarks: item.remarks || ''
       };
     });
@@ -320,12 +394,14 @@ export default function HousePromotionsView({
   const openMatrixCellModal = (plotId: string, masterItem: any) => {
     const existingItems = allProjectPromotions[plotId] || [];
     const itemRoomCategory = masterItem.category || masterItem.room;
-    const existing = existingItems.find(p => 
-      !isCashDiscountPromo(p) && (
-        p.item_name === masterItem.item_name ||
+    const existing = existingItems.find(p => {
+      if (isCashDiscountPromo(p)) return false;
+      const norm = normalizePromoToCanonical(p.category, p.item_name);
+      return (
+        (norm.item_name === masterItem.item_name && norm.category === itemRoomCategory) ||
         p.item_name?.trim() === masterItem.item_name?.trim()
-      )
-    );
+      );
+    });
 
     setMatrixModal({
       isOpen: true,
@@ -489,40 +565,65 @@ export default function HousePromotionsView({
     setIsSubmitting(true);
 
     try {
-      const selectedItems = Object.entries(checklistState)
+      const nowIso = new Date().toISOString();
+      const itemsToUpdate: any[] = [];
+      const itemsToInsert: any[] = [];
+
+      Object.entries(checklistState)
         .filter(([_, val]) => val.included)
-        .map(([key, val]) => {
+        .forEach(([key, val]) => {
           const itemName = key.includes('___') ? key.split('___')[1] : key;
           const category = key.includes('___') ? key.split('___')[0] : val.category;
-          const existing = promotions.find(p => p.item_name === itemName && p.category === category);
-          return {
-            id: existing ? existing.id : undefined,
+          const existing = promotions.find(p => {
+            if (!p.id || String(p.id).startsWith('temp-') || isCashDiscountPromo(p)) return false;
+            const norm = normalizePromoToCanonical(p.category, p.item_name);
+            return (norm.item_name === itemName && norm.category === category) || (p.item_name === itemName && p.category === category);
+          });
+          const basePayload = {
             plot_id: currentPlot.id,
             category: category,
             item_name: itemName,
-            quantity: val.quantity,
+            quantity: val.quantity || 1,
             status: existing ? existing.status : 'pending',
             delivery_date: existing ? existing.delivery_date : null,
             remarks: existing ? existing.remarks : val.remarks || null,
-            updated_at: new Date().toISOString()
+            updated_at: nowIso
           };
+
+          if (existing?.id) {
+            itemsToUpdate.push({
+              id: existing.id,
+              ...basePayload
+            });
+          } else {
+            itemsToInsert.push(basePayload);
+          }
         });
 
       const unselectedItemIds = promotions
         .filter(p => {
+          if (!p.id || String(p.id).startsWith('temp-')) return false;
           if (isCashDiscountPromo(p)) return true;
-          const key = `${p.category}___${p.item_name}`;
-          return !checklistState[key]?.included;
+          const norm = normalizePromoToCanonical(p.category, p.item_name);
+          const normKey = `${norm.category}___${norm.item_name}`;
+          const rawKey = `${p.category}___${p.item_name}`;
+          return !checklistState[normKey]?.included && !checklistState[rawKey]?.included;
         })
         .map(p => p.id);
 
       if (unselectedItemIds.length > 0) {
-        await supabase.from('plot_promotions').delete().in('id', unselectedItemIds);
+        const { error: delErr } = await supabase.from('plot_promotions').delete().in('id', unselectedItemIds);
+        if (delErr) throw delErr;
       }
 
-      if (selectedItems.length > 0) {
-        const { error } = await supabase.from('plot_promotions').upsert(selectedItems);
-        if (error) console.warn('Checklist upsert notice:', error.message);
+      if (itemsToUpdate.length > 0) {
+        const { error: updErr } = await supabase.from('plot_promotions').upsert(itemsToUpdate);
+        if (updErr) throw updErr;
+      }
+
+      if (itemsToInsert.length > 0) {
+        const { error: insErr } = await supabase.from('plot_promotions').insert(itemsToInsert);
+        if (insErr) throw insErr;
       }
 
       await fetchAllProjectPromotions();
@@ -530,8 +631,7 @@ export default function HousePromotionsView({
       showAlert('บันทึกสำเร็จ', `บันทึกรายการของแถมที่แปลง ${currentPlot.id} ได้รับเรียบร้อยแล้วครับ!`, 'success');
     } catch (e: any) {
       console.error('Save checklist error:', e);
-      showAlert('บันทึกเรียบร้อย', `อัปเดตรายการของแถมแปลง ${currentPlot.id} เรียบร้อยแล้วครับ!`, 'success');
-      setSingleActiveStep('tracker');
+      showAlert('เกิดข้อผิดพลาด', e?.message || `ไม่สามารถบันทึกรายการของแถมแปลง ${currentPlot.id} ได้`, 'danger');
     } finally {
       setIsSubmitting(false);
     }
@@ -765,18 +865,19 @@ export default function HousePromotionsView({
   const progressPercent = totalCount > 0 ? Math.round(((installedCount + (deliveredCount * 0.5)) / totalCount) * 100) : 0;
 
   // Single plot grouped items by Room Category for Tracker view
+  const filteredFreebiePromotions = freebiePromotions.filter(p => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    return (p.item_name || '').toLowerCase().includes(q) || (p.category || '').toLowerCase().includes(q);
+  });
+
   const promotionsByRoom = ROOM_GROUPS.map(group => ({
     ...group,
-    items: freebiePromotions.filter(p => (
-      p.category === group.room ||
-      (group.room === 'ทั้งหลัง' && (p.item_name?.includes('ผ้าม่าน') || p.category === 'ทั้งหลัง')) ||
-      (group.room.includes('Living Room') && (p.category === 'เฟอร์นิเจอร์ & ห้องโถง' || p.category === 'ทั่วไป') && !p.item_name?.includes('ผ้าม่าน'))
-    ) && (selectedRoomFilter === 'ทั้งหมด' || p.category === selectedRoomFilter))
-  })).concat({
-    room: 'หมวดหมู่อื่นๆ',
-    icon: '🎁',
-    items: freebiePromotions.filter(p => !ROOM_GROUPS.some(g => g.room === p.category) && (selectedRoomFilter === 'ทั้งหมด' || p.category === selectedRoomFilter))
-  }).filter(g => g.items.length > 0);
+    items: filteredFreebiePromotions.filter(p => {
+      const norm = normalizePromoToCanonical(p.category, p.item_name);
+      return norm.category === group.room && (selectedRoomFilter === 'ทั้งหมด' || norm.category === selectedRoomFilter || p.category === selectedRoomFilter);
+    })
+  })).filter(g => g.items.length > 0);
 
   return (
     <div className="bg-[#f5f5f7] w-full border-t border-black/5 flex flex-col min-h-[600px] p-3 sm:p-6 space-y-4">
@@ -1063,13 +1164,16 @@ export default function HousePromotionsView({
 
                           {/* Matrix Item Cells */}
                           {ALL_MASTER_ITEMS.map((masterItem, iIdx) => {
-                            // Exact match by item_name or category
-                            const foundItem = plotPromos.find(p => 
-                              !isCashDiscountPromo(p) && (
+                            // Match by canonical category & item_name or raw item_name
+                            const foundItem = plotPromos.find(p => {
+                              if (isCashDiscountPromo(p)) return false;
+                              const norm = normalizePromoToCanonical(p.category, p.item_name);
+                              return (
+                                (norm.item_name === masterItem.item_name && norm.category === (masterItem.category || masterItem.room)) ||
                                 p.item_name === masterItem.item_name ||
-                                (p.item_name?.trim() === masterItem.item_name?.trim())
-                              )
-                            );
+                                p.item_name?.trim() === masterItem.item_name?.trim()
+                              );
+                            });
                             const isIncluded = !!foundItem;
                             const status = foundItem?.status || 'pending';
 
@@ -1401,14 +1505,28 @@ export default function HousePromotionsView({
 
               {/* Room Categories Checklist */}
               <div className="space-y-6">
-                {ROOM_GROUPS.map((group, gIdx) => (
+                {ROOM_GROUPS.map((group, gIdx) => {
+                  const customGroupItems = Object.entries(checklistState)
+                    .filter(([key, val]) => {
+                      const cat = key.includes('___') ? key.split('___')[0] : val.category;
+                      const name = key.includes('___') ? key.split('___')[1] : key;
+                      return cat === group.room && !group.items.some(i => i.item_name === name);
+                    })
+                    .map(([key, val]) => ({
+                      category: group.room,
+                      item_name: key.includes('___') ? key.split('___')[1] : key,
+                      quantity: val.quantity || 1
+                    }));
+                  const roomItems = [...group.items, ...customGroupItems];
+
+                  return (
                   <div key={gIdx} className="bg-slate-50 rounded-2xl p-4 sm:p-5 border-2 border-slate-200 space-y-3">
                     <div className="flex justify-between items-center border-b-2 border-slate-200 pb-3">
                       <div className="flex items-center gap-2">
                         <span className="text-2xl">{group.icon}</span>
                         <h4 className="font-black text-base text-slate-800">{group.room}</h4>
                         <span className="text-xs font-bold text-slate-400">
-                          (เลือกแล้ว {group.items.filter(i => checklistState[`${group.room}___${i.item_name}`]?.included).length}/{group.items.length} รายการ)
+                          (เลือกแล้ว {roomItems.filter(i => checklistState[`${group.room}___${i.item_name}`]?.included).length}/{roomItems.length} รายการ)
                         </span>
                       </div>
 
@@ -1421,7 +1539,7 @@ export default function HousePromotionsView({
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
-                      {group.items.map((item, iIdx) => {
+                      {roomItems.map((item, iIdx) => {
                         const key = `${group.room}___${item.item_name}`;
                         const state = checklistState[key] || { included: false, quantity: item.quantity, category: group.room };
                         const isIncluded = state.included;
@@ -1480,7 +1598,8 @@ export default function HousePromotionsView({
                       })}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
 
               <div className="flex justify-end pt-4 border-t border-slate-100">
@@ -1520,11 +1639,20 @@ export default function HousePromotionsView({
                     onChange={(e) => setSelectedRoomFilter(e.target.value)}
                     className="bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-[#d4af37] cursor-pointer w-full sm:w-auto"
                   >
-                    <option value="ทั้งหมด">แสดงทุกห้อง ({promotions.length})</option>
+                    <option value="ทั้งหมด">แสดงทุกห้อง ({freebiePromotions.length})</option>
                     {ROOM_GROUPS.map(g => (
                       <option key={g.room} value={g.room}>{g.icon} {g.room}</option>
                     ))}
                   </select>
+
+                  <button
+                    type="button"
+                    onClick={() => openAddModal()}
+                    className="text-xs font-black text-white bg-slate-900 hover:bg-slate-800 px-3.5 py-2 rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
+                  >
+                    <PlusCircle size={14} className="text-[#d4af37]" />
+                    <span>เพิ่มของแถม</span>
+                  </button>
                 </div>
               </div>
 
@@ -1622,7 +1750,7 @@ export default function HousePromotionsView({
                                   อัปเดต: {item.updated_at ? new Date(item.updated_at).toLocaleDateString('th-TH') : '-'}
                                 </span>
 
-                                {['Admin', 'Sales', 'Owner'].includes(currentUserRole) && (
+                                {(!currentUserRole || ['admin', 'sales', 'owner'].includes(String(currentUserRole).toLowerCase())) && (
                                   <div className="flex items-center gap-1">
                                     <button
                                       onClick={() => openEditModal(item)}

@@ -734,6 +734,41 @@ export default function MySalesWorkspace({
     };
   }, [baseFilteredLeads, selectedYear, getStageCategory, getItemYear, isDue, isUpcoming]);
 
+  // Available (vacant) plots for the selected project in the "Add New Lead" modal
+  const availablePlotsForNewLead = useMemo(() => {
+    const targetProj = newProject || projectNames[0] || '';
+    if (!targetProj) return [];
+
+    const occupiedPlotKeys = new Set<string>();
+    leads.forEach(l => {
+      if ((l.project_name || '') !== targetProj) return;
+      const stage = getStageCategory(l);
+      if (['booked', 'transferred', 'rented'].includes(stage)) {
+        if (l.interested_plot_id) occupiedPlotKeys.add(String(l.interested_plot_id).trim());
+        if (l.interested_plot_name) occupiedPlotKeys.add(String(l.interested_plot_name).trim());
+      }
+    });
+
+    return (dbPlots || [])
+      .filter((p: any) => {
+        const pProj = p.project_name || p.project || '';
+        if (pProj !== targetProj) return false;
+        if (p.has_customer) return false;
+        if (p.current_tenant_name || p.rental_program) return false;
+        const saleSt = String(p.sale_status || '').toLowerCase();
+        if (['transferred', 'sold', 'reserved', 'booked', 'rented', 'contracted'].includes(saleSt)) return false;
+        const pId = String(p.id || '').trim();
+        const pName = String(p.plot_name || '').trim();
+        if ((pId && occupiedPlotKeys.has(pId)) || (pName && occupiedPlotKeys.has(pName))) return false;
+        return true;
+      })
+      .sort((a: any, b: any) => {
+        const labelA = String(a.plot_name || a.id || '');
+        const labelB = String(b.plot_name || b.id || '');
+        return labelA.localeCompare(labelB, 'th', { numeric: true });
+      });
+  }, [dbPlots, leads, newProject, projectNames, getStageCategory]);
+
   // Create New Lead Handler
   const handleCreateLead = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -753,17 +788,25 @@ export default function MySalesWorkspace({
       const initialNote = `[${timeStr} 👤 บันทึก Lead ใหม่ โดย ${myDisplayName}]\n` + backdateLabel +
         (newNotes.trim() ? `• รายละเอียด: ${newNotes.trim()}` : '• สร้าง Lead ใหม่เข้าระบบ');
 
+      const targetProjectName = newProject || (projectNames[0] || 'ไอลิน สันทราย 2');
+      const matchedVacantPlot = newPlotName.trim()
+        ? availablePlotsForNewLead.find((p: any) => (p.plot_name || p.id) === newPlotName.trim() || p.id === newPlotName.trim())
+        : null;
+      const isWalkInChannel = newChannel === 'Walk in';
+
       const { data, error } = await supabase
         .from('leads')
         .insert([{
           customer_name: newCustomerName.trim(),
           phone: newPhone.trim() || null,
-          project_name: newProject || (projectNames[0] || 'ไอลิน สันทราย 2'),
+          project_name: targetProjectName,
           interested_plot_name: newPlotName.trim() || null,
+          ...(matchedVacantPlot?.id ? { interested_plot_id: matchedVacantPlot.id } : {}),
           channel: newChannel,
           source: newChannel,
           status: 'New',
-          crm_status: 'Follow-up — อยู่ระหว่างติดตาม',
+          crm_status: isWalkInChannel ? 'Appointment — นัดหมายเข้าชมโครงการ' : 'Follow-up — อยู่ระหว่างติดตาม',
+          ...(isWalkInChannel ? { appointment_date: leadTimestamp } : {}),
           agent_name: myDisplayName,
           created_by_agent: myDisplayName,
           notes: initialNote,
@@ -1997,7 +2040,10 @@ export default function MySalesWorkspace({
                   <label className="block text-xs font-bold text-slate-700 mb-1">โครงการที่สนใจ</label>
                   <select
                     value={newProject}
-                    onChange={e => setNewProject(e.target.value)}
+                    onChange={e => {
+                      setNewProject(e.target.value);
+                      setNewPlotName('');
+                    }}
                     className="w-full text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 focus:bg-white focus:ring-2 focus:ring-amber-500"
                   >
                     {projectNames.map(p => (
@@ -2007,14 +2053,28 @@ export default function MySalesWorkspace({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">แปลงที่เล็งไว้ (ถ้ามี)</label>
-                  <input
-                    type="text"
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    แปลงที่เล็งไว้ (ถ้ามี)
+                    <span className="ml-1 text-[10px] font-semibold text-emerald-700">
+                      (ว่าง {availablePlotsForNewLead.length} แปลง)
+                    </span>
+                  </label>
+                  <select
                     value={newPlotName}
                     onChange={e => setNewPlotName(e.target.value)}
-                    placeholder="เช่น A01 หรือ 4"
                     className="w-full text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 focus:bg-white focus:ring-2 focus:ring-amber-500"
-                  />
+                  >
+                    <option value="">-- ยังไม่ระบุแปลง --</option>
+                    {availablePlotsForNewLead.map((p: any) => {
+                      const plotLabel = p.plot_name || p.id;
+                      const houseType = p.house_types?.type_name ? ` • ${p.house_types.type_name}` : '';
+                      return (
+                        <option key={p.id} value={plotLabel}>
+                          แปลง {plotLabel} (ว่าง{houseType})
+                        </option>
+                      );
+                    })}
+                  </select>
                 </div>
               </div>
 

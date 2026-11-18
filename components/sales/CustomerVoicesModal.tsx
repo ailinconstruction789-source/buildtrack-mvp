@@ -133,12 +133,13 @@ export default function CustomerVoicesModal({
     setLoading(true);
 
     try {
+      const nowIso = new Date().toISOString();
       const payload = {
         ...form,
         lead_id: lead?.id || null,
-        survey_date: new Date().toISOString(),
+        survey_date: nowIso,
         score_average: calculatedAvg,
-        updated_at: new Date().toISOString()
+        updated_at: nowIso
       };
 
       if (form.id) {
@@ -147,6 +148,30 @@ export default function CustomerVoicesModal({
       } else {
         const { error } = await supabase.from('customer_voices').insert([payload]);
         if (error) throw error;
+      }
+
+      if (lead?.id) {
+        try {
+          const existingNotes = String(lead?.notes || '');
+          const surveyTag = '[ทำแบบสอบถาม Customer Voices แล้ว]';
+          const nextNotes = existingNotes.includes(surveyTag)
+            ? existingNotes
+            : existingNotes
+            ? `${surveyTag}\n${existingNotes}`
+            : surveyTag;
+          const leadVisitPatch: Record<string, any> = {
+            actual_visit_date: lead?.actual_visit_date || nowIso,
+            notes: nextNotes,
+            updated_at: nowIso
+          };
+          if (!lead.status || lead.status === 'New') {
+            leadVisitPatch.status = 'Visit';
+            leadVisitPatch.auto_status = 'เข้าชมแล้ว';
+          }
+          await supabase.from('leads').update(leadVisitPatch).eq('id', lead.id);
+        } catch (visitErr) {
+          console.warn('Could not auto-update actual_visit_date on survey save:', visitErr);
+        }
       }
 
       if (onSaved) onSaved();

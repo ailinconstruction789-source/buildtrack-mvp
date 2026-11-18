@@ -16,11 +16,20 @@ vi.mock('@/lib/sales/sampleHouseHelper', () => ({
   toggleSampleHouse: vi.fn(), fetchTodayInspectionStatus: async () => null,
 }));
 vi.mock('@/lib/supabase', () => ({ supabase: {
-  from: () => {
+  from: (table: string) => {
     const response = Promise.resolve({ data: [], error: null });
-    const query = { select: () => query, eq: () => query, order: () => query, in: () => query,
+    const query: any = { select: () => query, eq: () => query, order: () => query, in: () => query,
       maybeSingle: async () => ({ data: null, error: null }), then: response.then.bind(response),
-      update: (...args: any[]) => { mocks.mutation(...args); return { eq: async () => ({ error: { message: 'write denied' } }) }; },
+      insert: (...args: any[]) => { mocks.mutation(table, 'insert', ...args); return Promise.resolve({ data: [], error: null }); },
+      update: (...args: any[]) => {
+        mocks.mutation(table, 'update', ...args);
+        const updChain: any = {
+          eq: () => updChain,
+          in: () => updChain,
+          then: (resolve: any, reject: any) => Promise.resolve({ data: [], error: null }).then(resolve, reject),
+        };
+        return updChain;
+      },
     };
     return query;
   },
@@ -121,5 +130,56 @@ describe('post-booking map categories', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Edit Profile/ }));
     expect(screen.getByTestId('shared-customer-editor')).toHaveAttribute('data-sale-id', 'sale-1');
     expect(mocks.mutation).not.toHaveBeenCalled();
+  });
+
+  it('cancels a rental booking using valid leads columns (lost_reason, rental_status) without sending cancellation_reason to leads', async () => {
+    const rentalLead = {
+      id: 'lead-rent-1',
+      customer_name: 'ผู้เช่าทดสอบ',
+      status: 'Reserved',
+      deal_type: 'rent',
+      rental_status: 'PendingContract',
+      rental_program: 'program_a',
+      rental_monthly_rent: 29000,
+      phone: '0812345678',
+      interested_plot_id: 'plot-1',
+      interested_plot_name: 'A1',
+      crm_status: 'จองเช่า — รอทำสัญญา (Rent (เช่า))',
+    };
+    mocks.read.mockImplementation(async (table: string) =>
+      table === 'plots' ? [{ ...plot, id: 'Project A-42', plot_name: '42', sale_status: 'ready_for_sale', current_tenant_name: 'ผู้เช่าทดสอบ', rental_program: 'program_a' }]
+      : table === 'leads' ? [{ ...rentalLead, interested_plot_id: 'Project A-42', interested_plot_name: '42' }]
+      : []
+    );
+    render(<SalesKanban project={{ name: 'Project A' }} user={{ id: 'U1', username: 'NOOK', role: 'Sales' }} initialTab="map" />);
+    await waitFor(() => expect(mocks.read).toHaveBeenCalledWith('leads', expect.anything()));
+    fireEvent.click(await screen.findByRole('button', { name: 'Open occupied plot' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: /ยกเลิกจอง/ }));
+    const reasonBox = await screen.findByRole('textbox', { name: 'เหตุผล' });
+    fireEvent.change(reasonBox, { target: { value: 'นักลงทุนซื้อพร้อมผู้เช่า' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'บันทึกการเปลี่ยนแปลง' }));
+
+    await waitFor(() => {
+      const leadUpdateCall = mocks.mutation.mock.calls.find((c: any[]) => c[0] === 'leads' && c[1] === 'update');
+      expect(leadUpdateCall).toBeDefined();
+      const payload = leadUpdateCall![2];
+      expect(payload.status).toBe('Cancelled');
+      expect(payload.lost_reason).toBe('นักลงทุนซื้อพร้อมผู้เช่า');
+      expect(payload.rental_status).toBe('Cancelled');
+      expect(payload.crm_status).toBe('Cancelled — ยกเลิกการจองเช่า');
+      expect(payload).not.toHaveProperty('cancellation_reason');
+      expect(payload).not.toHaveProperty('cancelled_at');
+    });
+
+    const plotUpdateCall = mocks.mutation.mock.calls.find((c: any[]) => c[0] === 'plots' && c[1] === 'update');
+    expect(plotUpdateCall).toBeDefined();
+    expect(plotUpdateCall![2]).toMatchObject({
+      has_customer: false,
+      current_tenant_name: null,
+      rental_program: null,
+      highlight_note: null,
+    });
   });
 });

@@ -683,6 +683,7 @@ export default function RentalContractModal({
             rental_start_date: startDate.trim() || null,
             rental_end_date: startDate.trim() ? calcResults.endDate : null,
             rental_status: 'PendingContract',
+            actual_visit_date: effectiveLead?.actual_visit_date || bookingIso,
             booking_date: bookingIso,
             booking_amount: bookingAmountNum,
             notes: effectiveLead?.notes ? `${effectiveLead.notes}\n${bookingNote}` : bookingNote

@@ -435,7 +435,8 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       : data.plots;
 
     // Build unified visits, lead dates, and appraisal amounts from CRM V2 evidence
-    const visitMap = new Map<string, { key: string; customerId?: string; visitDate: string; projectName: string | null }>();
+    const visitMap = new Map<string, { key: string; customerId?: string; visitDate: string; projectName: string | null; agentName?: string | null; hasSurvey?: boolean }>();
+    const leadMap = new Map<string, { key: string; customerId?: string; leadDate: string; projectName: string | null; agentName: string }>();
     const leadDates = new Map<string, string>();
     const tdPriceMap = new Map<string, number>();
 
@@ -443,7 +444,11 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       const projName = ev.projectName;
       (ev.legacyVisits || []).forEach((v: any) => {
         const k = `legacy:${v.key}`;
-        if (!visitMap.has(k)) visitMap.set(k, { key: k, customerId: v.customerId, visitDate: v.visitDate, projectName: projName });
+        if (!visitMap.has(k)) visitMap.set(k, { key: k, customerId: v.customerId, visitDate: v.visitDate, projectName: projName, hasSurvey: false });
+        if (v.leadDate || v.visitDate) {
+          const lk = v.customerId ? `cust:${v.customerId}` : k;
+          if (!leadMap.has(lk)) leadMap.set(lk, { key: lk, customerId: v.customerId, leadDate: v.leadDate || v.visitDate, projectName: projName, agentName: 'ไม่ระบุ' });
+        }
         if (v.customerId && v.leadDate) {
           const prior = leadDates.get(v.customerId);
           if (!prior || v.leadDate < prior) leadDates.set(v.customerId, v.leadDate);
@@ -451,7 +456,11 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       });
       (ev.completedVisits || []).forEach((v: any) => {
         const k = `live:${v.key}`;
-        if (!visitMap.has(k)) visitMap.set(k, { key: k, customerId: v.customerId, visitDate: v.visitDate, projectName: projName });
+        if (!visitMap.has(k)) visitMap.set(k, { key: k, customerId: v.customerId, visitDate: v.visitDate, projectName: projName, hasSurvey: true });
+        if (v.visitDate) {
+          const lk = v.customerId ? `cust:${v.customerId}` : k;
+          if (!leadMap.has(lk)) leadMap.set(lk, { key: lk, customerId: v.customerId, leadDate: v.visitDate, projectName: projName, agentName: 'ไม่ระบุ' });
+        }
         if (v.customerId && v.visitDate) {
           const prior = leadDates.get(v.customerId);
           if (!prior || v.visitDate < prior) leadDates.set(v.customerId, v.visitDate);
@@ -459,7 +468,11 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       });
       (ev.unassignedLegacyVisits || []).forEach((v: any) => {
         const k = `unassigned:${v.key}`;
-        if (!visitMap.has(k)) visitMap.set(k, { key: k, customerId: v.customerId, visitDate: v.visitDate, projectName: null });
+        if (!visitMap.has(k)) visitMap.set(k, { key: k, customerId: v.customerId, visitDate: v.visitDate, projectName: null, hasSurvey: false });
+        if (v.leadDate || v.visitDate) {
+          const lk = v.customerId ? `cust:${v.customerId}` : k;
+          if (!leadMap.has(lk)) leadMap.set(lk, { key: lk, customerId: v.customerId, leadDate: v.leadDate || v.visitDate, projectName: null, agentName: 'ไม่ระบุ' });
+        }
         if (v.customerId && v.leadDate) {
           const prior = leadDates.get(v.customerId);
           if (!prior || v.leadDate < prior) leadDates.set(v.customerId, v.leadDate);
@@ -472,17 +485,57 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
 
     if (!data.canonical && (data.leads || []).length > 0) {
       (data.leads || []).forEach((l: any) => {
-        const visitD = l.actual_visit_date || l.contacted_date || l.lead_date;
+        const agentName = (l.agent_name || l.sales_owner || l.created_by_agent || 'ไม่ระบุ').trim() || 'ไม่ระบุ';
+        const hasSurvey = Boolean(
+          (Array.isArray(l.customer_voices) && l.customer_voices.length > 0) ||
+          l.has_survey ||
+          /ทำแบบสอบถาม|customer_voices/i.test(l.notes || '')
+        );
+        const statusLower = String(l.status || '').toLowerCase();
+        const isBookedOrTransferredLead = Boolean(
+          l.booking_date || l.transferred_date ||
+          ['booked', 'reserved', 'contracted', 'transferred', 'rented', 'handover'].includes(statusLower)
+        );
+        const rawCreatedDay = (l.created_at || l.lead_date || '').split('T')[0];
+        const isLegacyBeforeRule = Boolean(rawCreatedDay && rawCreatedDay < '2026-11-18' && statusLower !== 'new');
+
+        // Only count as a real Visit if actual_visit_date is recorded, status is Visit, booked/transferred, survey completed, or legacy pre-rule row
+        const visitD =
+          l.actual_visit_date ||
+          (statusLower === 'visit' || hasSurvey ? (l.contacted_date || l.lead_date) : null) ||
+          (isBookedOrTransferredLead ? (l.booking_date || l.lead_date) : null) ||
+          (isLegacyBeforeRule ? (l.contacted_date || l.lead_date) : null);
+
         if (visitD) {
           const cleanDate = visitD.split('T')[0];
-          const k = `lead-visit:${l.id}`;
-          if (!visitMap.has(k)) {
-            visitMap.set(k, { key: k, customerId: l.id, visitDate: cleanDate, projectName: l.project_name || null });
+          const existingVisit = Array.from(visitMap.values()).find(v => v.customerId && v.customerId === l.id);
+          if (existingVisit) {
+            existingVisit.agentName = existingVisit.agentName || agentName;
+            existingVisit.hasSurvey = Boolean(existingVisit.hasSurvey || hasSurvey);
+          } else {
+            const k = `lead-visit:${l.id}`;
+            visitMap.set(k, {
+              key: k,
+              customerId: l.id,
+              visitDate: cleanDate,
+              projectName: l.project_name || null,
+              agentName,
+              hasSurvey
+            });
           }
         }
-        const leadD = l.lead_date || l.actual_visit_date || l.contacted_date;
+
+        const leadD = l.lead_date || l.actual_visit_date || l.contacted_date || l.created_at;
         if (leadD) {
           const cleanDate = leadD.split('T')[0];
+          const lk = `cust:${l.id}`;
+          leadMap.set(lk, {
+            key: lk,
+            customerId: l.id,
+            leadDate: cleanDate,
+            projectName: l.project_name || null,
+            agentName
+          });
           if (!leadDates.has(l.id)) leadDates.set(l.id, cleanDate);
           if (l.customer_name) {
             const nameKey = `name:${l.customer_name.trim()}`;
@@ -496,7 +549,12 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
     const filteredVisits = activeProjectName 
       ? allVisits.filter(v => v.projectName === activeProjectName)
       : allVisits;
+    const allLeadItems = Array.from(leadMap.values());
+    const filteredLeadItems = activeProjectName
+      ? allLeadItems.filter(l => l.projectName === activeProjectName)
+      : allLeadItems;
     const hasRealVisits = data.canonical || allVisits.length > 0;
+    const hasRealLeads = data.canonical || allLeadItems.length > 0;
 
     // Build unified records from sales (RPC or fallback)
     let records: any[] = [];
@@ -692,20 +750,83 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
     const validRecords = filteredRecords.filter((r: any) => (r.createdDate || r.bookDate || r.cancelDate || '') <= targetDate.toISOString().split('T')[0]);
 
     // Annual and monthly KPIs
-    const viewsAcc = hasRealVisits
-      ? filteredVisits.filter((v: any) => v.visitDate && v.visitDate.startsWith(selectedYear) && v.visitDate <= targetDate.toISOString().split('T')[0]).length
-      : validRecords.filter((r: any) => r.createdDate && r.createdDate.startsWith(selectedYear) && r.createdDate <= targetDate.toISOString().split('T')[0]).length;
+    const targetDayCutoff = targetDate.toISOString().split('T')[0];
+
+    // Current Weekly Cycle: from most recent Wednesday up to targetDayCutoff (Wednesday = 3)
+    // If targetDate is Wednesday, cycle starts today. If Thu-Tue, cycle starts on the previous Wednesday.
+    const computeWeeklyRange = (dStr: string) => {
+      const parts = dStr.split('-').map(Number);
+      const curr = new Date(parts[0], parts[1] - 1, parts[2], 12, 0, 0);
+      const dayOfWeek = curr.getDay(); // 0: Sun, 1: Mon, 2: Tue, 3: Wed, 4: Thu, 5: Fri, 6: Sat
+      const diffToWed = (dayOfWeek - 3 + 7) % 7; // days since most recent Wednesday
+      const startWed = new Date(curr);
+      startWed.setDate(curr.getDate() - diffToWed);
+      
+      const formatYMD = (d: Date) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      };
+
+      const startStr = formatYMD(startWed);
+      const endStr = dStr;
+
+      const formatThaiShort = (d: Date) => {
+        const thaiMonthsShort = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+        return `${d.getDate()} ${thaiMonthsShort[d.getMonth()]}`;
+      };
+
+      const label = startStr === endStr
+        ? `${formatThaiShort(startWed)} (วันนี้)`
+        : `${formatThaiShort(startWed)} - ${formatThaiShort(curr)}`;
+
+      return { startStr, endStr, label };
+    };
+
+    const currentWeek = computeWeeklyRange(targetDayCutoff);
+
+    const leadsAcc = hasRealLeads
+      ? filteredLeadItems.filter((l: any) => l.leadDate && l.leadDate.startsWith(selectedYear) && l.leadDate <= targetDayCutoff).length
+      : validRecords.filter((r: any) => r.createdDate && r.createdDate.startsWith(selectedYear) && r.createdDate <= targetDayCutoff).length;
+
+    const viewsAccList = hasRealVisits
+      ? filteredVisits.filter((v: any) => v.visitDate && v.visitDate.startsWith(selectedYear) && v.visitDate <= targetDayCutoff)
+      : validRecords.filter((r: any) => r.createdDate && r.createdDate.startsWith(selectedYear) && r.createdDate <= targetDayCutoff);
+    const viewsAcc = viewsAccList.length;
+    const surveysAcc = hasRealVisits
+      ? viewsAccList.filter((v: any) => v.hasSurvey).length
+      : 0;
 
     // Gross bookings in selectedYear up to targetDate (includes active, transferred, and later cancelled bookings)
-    const bookedAcc = filteredRecords.filter((r: any) => r.bookDate && r.bookDate.startsWith(selectedYear) && r.bookDate <= targetDate.toISOString().split('T')[0]);
+    const bookedAcc = filteredRecords.filter((r: any) => r.bookDate && r.bookDate.startsWith(selectedYear) && r.bookDate <= targetDayCutoff);
     const bookedAccRent = bookedAcc.filter((r: any) => r.isRental).length;
     const bookedAccBuy = bookedAcc.length - bookedAccRent;
-    const cancelAcc = filteredRecords.filter((r: any) => r.cancelDate && r.cancelDate.startsWith(selectedYear) && r.cancelDate <= targetDate.toISOString().split('T')[0]);
-    const transferAcc = filteredRecords.filter((r: any) => r.transferDate && r.transferDate.startsWith(selectedYear) && r.transferDate <= targetDate.toISOString().split('T')[0]);
+    const cancelAcc = filteredRecords.filter((r: any) => r.cancelDate && r.cancelDate.startsWith(selectedYear) && r.cancelDate <= targetDayCutoff);
+    const transferAcc = filteredRecords.filter((r: any) => r.transferDate && r.transferDate.startsWith(selectedYear) && r.transferDate <= targetDayCutoff);
+
+    const leadsMonth = hasRealLeads
+      ? filteredLeadItems.filter((l: any) => l.leadDate && l.leadDate.startsWith(targetMonthPrefix) && l.leadDate <= targetDayCutoff)
+      : validRecords.filter((r: any) => r.createdDate?.startsWith(targetMonthPrefix));
 
     const viewsMonth = hasRealVisits
-      ? filteredVisits.filter((v: any) => v.visitDate && v.visitDate.startsWith(targetMonthPrefix) && v.visitDate <= targetDate.toISOString().split('T')[0])
+      ? filteredVisits.filter((v: any) => v.visitDate && v.visitDate.startsWith(targetMonthPrefix) && v.visitDate <= targetDayCutoff)
       : validRecords.filter((r: any) => r.createdDate?.startsWith(targetMonthPrefix));
+    const surveysMonth = hasRealVisits
+      ? viewsMonth.filter((v: any) => v.hasSurvey).length
+      : 0;
+
+    // Weekly Lead and Visit numbers (Cycle: Wednesday to target day)
+    const leadsWeek = hasRealLeads
+      ? filteredLeadItems.filter((l: any) => l.leadDate && l.leadDate >= currentWeek.startStr && l.leadDate <= currentWeek.endStr)
+      : validRecords.filter((r: any) => r.createdDate && r.createdDate >= currentWeek.startStr && r.createdDate <= currentWeek.endStr);
+
+    const viewsWeek = hasRealVisits
+      ? filteredVisits.filter((v: any) => v.visitDate && v.visitDate >= currentWeek.startStr && v.visitDate <= currentWeek.endStr)
+      : validRecords.filter((r: any) => r.createdDate && r.createdDate >= currentWeek.startStr && r.createdDate <= currentWeek.endStr);
+    const surveysWeek = hasRealVisits
+      ? viewsWeek.filter((v: any) => v.hasSurvey).length
+      : 0;
     // Gross bookings in targetMonth up to targetDate (includes active, transferred, and later cancelled bookings)
     const bookedMonth = filteredRecords.filter((r: any) => r.bookDate?.startsWith(targetMonthPrefix) && r.bookDate <= targetDate.toISOString().split('T')[0]);
     const bookedMonthRent = bookedMonth.filter((r: any) => r.isRental).length;
@@ -1044,6 +1165,16 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
 
     const lineChartTransfers = buildLineData('transferDate');
     const lineChartBookings = buildLineData('bookDate');
+    const lineChartLeads = months.map((m, idx) => {
+      const obj: any = { month: m };
+      years.forEach(y => {
+        const prefix = `${y}-${String(idx + 1).padStart(2, '0')}`;
+        obj[`y${y}`] = hasRealLeads
+          ? filteredLeadItems.filter((l: any) => l.leadDate?.startsWith(prefix)).length
+          : filteredRecords.filter((r: any) => r.createdDate?.startsWith(prefix)).length;
+      });
+      return obj;
+    });
     const lineChartViews = months.map((m, idx) => {
       const obj: any = { month: m };
       years.forEach(y => {
@@ -1057,6 +1188,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
 
     let accTransfers = 0;
     let accBookings = 0;
+    let accLeads = 0;
     let accViews = 0;
 
     const currentActualYear = new Date().getFullYear().toString();
@@ -1074,18 +1206,103 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       return { month: item.month, cumulative: isFuture ? null : accBookings };
     });
 
+    const cumulativeChartLeads = lineChartLeads.map((item, idx) => {
+      accLeads += (item[`y${cumulativeYear}`] || 0);
+      const isFuture = cumulativeYear === currentActualYear && idx > currentActualMonth;
+      return { month: item.month, cumulative: isFuture ? null : accLeads };
+    });
+
     const cumulativeChartViews = lineChartViews.map((item, idx) => {
       accViews += (item[`y${cumulativeYear}`] || 0);
       const isFuture = cumulativeYear === currentActualYear && idx > currentActualMonth;
       return { month: item.month, cumulative: isFuture ? null : accViews };
     });
 
+    // Build Sales Agent Performance summary (Monthly & Annual)
+    const agentPerfMap = new Map<string, {
+      agentName: string;
+      monthLeads: number;
+      monthVisits: number;
+      monthSurveys: number;
+      monthBooked: number;
+      monthTransferred: number;
+      yearLeads: number;
+      yearVisits: number;
+      yearSurveys: number;
+      yearBooked: number;
+      yearTransferred: number;
+    }>();
+
+    const ensureAgent = (rawName?: string | null) => {
+      const clean = (rawName || '').trim();
+      const name = (!clean || clean === '-' || clean.toLowerCase() === 'unknown') ? 'ไม่ระบุเซลล์' : clean;
+      if (!agentPerfMap.has(name)) {
+        agentPerfMap.set(name, {
+          agentName: name,
+          monthLeads: 0,
+          monthVisits: 0,
+          monthSurveys: 0,
+          monthBooked: 0,
+          monthTransferred: 0,
+          yearLeads: 0,
+          yearVisits: 0,
+          yearSurveys: 0,
+          yearBooked: 0,
+          yearTransferred: 0
+        });
+      }
+      return agentPerfMap.get(name)!;
+    };
+
+    filteredLeadItems.forEach((l: any) => {
+      if (!l.leadDate || l.leadDate > targetDayCutoff) return;
+      const entry = ensureAgent(l.agentName);
+      if (l.leadDate.startsWith(selectedYear)) entry.yearLeads++;
+      if (l.leadDate.startsWith(targetMonthPrefix)) entry.monthLeads++;
+    });
+
+    filteredVisits.forEach((v: any) => {
+      if (!v.visitDate || v.visitDate > targetDayCutoff) return;
+      const entry = ensureAgent(v.agentName);
+      if (v.visitDate.startsWith(selectedYear)) {
+        entry.yearVisits++;
+        if (v.hasSurvey) entry.yearSurveys++;
+      }
+      if (v.visitDate.startsWith(targetMonthPrefix)) {
+        entry.monthVisits++;
+        if (v.hasSurvey) entry.monthSurveys++;
+      }
+    });
+
+    bookedAcc.forEach((r: any) => {
+      const entry = ensureAgent(r.agent_name);
+      entry.yearBooked++;
+    });
+    bookedMonth.forEach((r: any) => {
+      const entry = ensureAgent(r.agent_name);
+      entry.monthBooked++;
+    });
+    transferAcc.forEach((r: any) => {
+      const entry = ensureAgent(r.agent_name);
+      entry.yearTransferred++;
+    });
+    transferMonth.forEach((r: any) => {
+      const entry = ensureAgent(r.agent_name);
+      entry.monthTransferred++;
+    });
+
+    const agentPerformanceList = Array.from(agentPerfMap.values())
+      .filter(a => a.yearLeads > 0 || a.yearVisits > 0 || a.yearBooked > 0 || a.yearTransferred > 0)
+      .sort((a, b) => (b.monthBooked - a.monthBooked) || (b.monthVisits - a.monthVisits) || (b.monthLeads - a.monthLeads) || (b.yearBooked - a.yearBooked) || (b.yearLeads - a.yearLeads));
+
     return {
       unknownHistory,
-      viewsAcc, bookedAcc, cancelAcc, transferAcc,
+      leadsAcc, viewsAcc, surveysAcc, bookedAcc, cancelAcc, transferAcc,
       bookedAccBuy, bookedAccRent,
-      viewsMonth, bookedMonth, transferMonth, cancelMonth,
+      leadsMonth, viewsMonth, surveysMonth, bookedMonth, transferMonth, cancelMonth,
       bookedMonthBuy, bookedMonthRent,
+      currentWeek, leadsWeek, viewsWeek, surveysWeek,
+      agentPerformanceList,
       expectingTransfer: expectingThisMonthPlots,
       carriedOverTransfers: carriedOverPlots,
       allWaitingPlots,
@@ -1116,9 +1333,11 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       projChartData,
       lineChartTransfers,
       lineChartBookings,
+      lineChartLeads,
       lineChartViews,
       cumulativeChartTransfers,
       cumulativeChartBookings,
+      cumulativeChartLeads,
       cumulativeChartViews,
       rawValidRecords: validRecords
     };
@@ -1230,13 +1449,22 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
 
         {/* ROW 1: KPI SUMMARY CARDS */}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-          <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col gap-4">
-            <div className="flex justify-between items-center mb-1 pb-3 border-b border-gray-100">
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col gap-3.5">
+            <div className="flex justify-between items-center mb-0.5 pb-3 border-b border-gray-100">
                <span className="font-bold text-gray-800 text-base">ยอดสะสมประจำปี {selectedYear}</span>
             </div>
             <div className="flex justify-between items-center">
-              <span className="font-bold text-gray-600 text-sm">ยอดลูกค้าเข้าชมสะสม</span>
-              <span className="text-2xl font-black text-blue-900">{metrics.viewsAcc}</span>
+              <span className="font-bold text-gray-600 text-sm">ยอด Lead สะสม</span>
+              <span className="text-2xl font-black text-indigo-700">{metrics.leadsAcc}</span>
+            </div>
+            <div>
+              <div className="flex justify-between items-center">
+                <span className="font-bold text-gray-600 text-sm">ยอดลูกค้าเข้าชมสะสม</span>
+                <span className="text-2xl font-black text-blue-900">{metrics.viewsAcc}</span>
+              </div>
+              <div className="text-[11px] font-bold text-purple-700 text-right mt-0.5">
+                (ทำแบบสอบถาม {metrics.surveysAcc} คน)
+              </div>
             </div>
             <div>
               <div className="flex justify-between items-center">
@@ -1272,11 +1500,41 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
               </div>
             </div>
             <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-gray-600 text-sm font-medium">ยอดเข้าชม</span>
-                <span className="text-lg font-bold text-gray-900">{metrics.viewsMonth.length}</span>
+              <div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-600 text-sm font-medium">ยอด Lead ใหม่</span>
+                  <span className="text-lg font-bold text-indigo-700">{metrics.leadsMonth.length}</span>
+                </div>
+                <div className="mt-1 flex items-center justify-between bg-indigo-50/70 border border-indigo-100/80 rounded-lg px-2.5 py-1 text-xs">
+                  <span className="text-indigo-800 font-medium flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                    สัปดาห์นี้ <span className="text-indigo-500 text-[11px]">({metrics.currentWeek.label})</span>
+                  </span>
+                  <span className="font-extrabold text-indigo-700 text-sm">{metrics.leadsWeek.length}</span>
+                </div>
               </div>
-              <div className="flex justify-between items-center">
+
+              <div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-600 text-sm font-medium">ยอดเข้าชม</span>
+                  <span className="text-lg font-bold text-gray-900">{metrics.viewsMonth.length}</span>
+                </div>
+                <div className="text-[11px] font-bold text-purple-700 text-right mt-0.5">
+                  (ทำแบบสอบถาม {metrics.surveysMonth} คน)
+                </div>
+                <div className="mt-1 flex items-center justify-between bg-purple-50/70 border border-purple-100/80 rounded-lg px-2.5 py-1 text-xs">
+                  <span className="text-purple-900 font-medium flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-purple-500"></span>
+                    สัปดาห์นี้ <span className="text-purple-600 text-[11px]">({metrics.currentWeek.label})</span>
+                  </span>
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="font-extrabold text-purple-800 text-sm">{metrics.viewsWeek.length}</span>
+                    <span className="text-[10px] text-purple-600 font-medium">(แบบสอบถาม {metrics.surveysWeek})</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center pt-1 border-t border-gray-100">
                 <span className="text-gray-600 text-sm font-medium">ยอดจอง</span>
                 <span className="text-lg font-bold text-blue-600">{metrics.bookedMonth.length}</span>
               </div>
@@ -1729,26 +1987,112 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
             </div>
           </div>
           
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80">
-            <h3 className="text-center font-bold text-gray-700 mb-4">ยอดเข้าชม ปี 2023 - 2026 (ครั้ง)</h3>
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={metrics.lineChartViews} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                <XAxis dataKey="month" tick={{fontSize: 12, fill: '#64748b', fontWeight: 600}} axisLine={false} tickLine={false} dy={10} />
-                <YAxis allowDecimals={false} tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false} dx={-10} />
-                <RechartsTooltip 
-                  contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} 
-                  labelStyle={{ fontWeight: 'bold', color: '#1e293b', marginBottom: '8px' }}
-                />
-                <Legend wrapperStyle={{ paddingTop: '20px' }} />
-                <Line type="monotone" dataKey="y2023" name="ปี 2023" stroke="#e2e8f0" strokeWidth={2} strokeDasharray="5 5" dot={{r: 3, fill: '#f8fafc', stroke: '#e2e8f0', strokeWidth: 1}} activeDot={{r: 5, strokeWidth: 0}} />
-                <Line type="monotone" dataKey="y2024" name="ปี 2024" stroke="#e2e8f0" strokeWidth={2} strokeDasharray="5 5" dot={{r: 3, fill: '#f8fafc', stroke: '#e2e8f0', strokeWidth: 1}} activeDot={{r: 5, strokeWidth: 0}} />
-                <Area type="monotone" dataKey="y2025" name="ปี 2025 (ปีที่แล้ว)" fill="#f1f5f9" stroke="#cbd5e1" strokeWidth={2} dot={{r: 3, fill: '#cbd5e1', strokeWidth: 0}} activeDot={{r: 5, fill: '#94a3b8', strokeWidth: 0}} />
-                <Line type="monotone" dataKey="y2026" name="ปี 2026 (ปัจจุบัน)" stroke="#6366f1" strokeWidth={4} dot={{r: 5, fill: '#ffffff', stroke: '#6366f1', strokeWidth: 2}} activeDot={{r: 8, strokeWidth: 0}} />
-              </ComposedChart>
-            </ResponsiveContainer>
+          <div className={`grid grid-cols-1 ${!canonicalData ? 'md:grid-cols-2' : ''} gap-6`}>
+            {!canonicalData && (
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80">
+                <h3 className="text-center font-bold text-gray-700 mb-4">ยอด Lead รายเดือน ปี 2023 - 2026 (ราย)</h3>
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={metrics.lineChartLeads} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                    <XAxis dataKey="month" tick={{fontSize: 12, fill: '#64748b', fontWeight: 600}} axisLine={false} tickLine={false} dy={10} />
+                    <YAxis allowDecimals={false} tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false} dx={-10} />
+                    <RechartsTooltip 
+                      contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} 
+                      labelStyle={{ fontWeight: 'bold', color: '#1e293b', marginBottom: '8px' }}
+                    />
+                    <Legend wrapperStyle={{ paddingTop: '20px' }} />
+                    <Line type="monotone" dataKey="y2023" name="ปี 2023" stroke="#e2e8f0" strokeWidth={2} strokeDasharray="5 5" dot={{r: 3, fill: '#f8fafc', stroke: '#e2e8f0', strokeWidth: 1}} activeDot={{r: 5, strokeWidth: 0}} />
+                    <Line type="monotone" dataKey="y2024" name="ปี 2024" stroke="#e2e8f0" strokeWidth={2} strokeDasharray="5 5" dot={{r: 3, fill: '#f8fafc', stroke: '#e2e8f0', strokeWidth: 1}} activeDot={{r: 5, strokeWidth: 0}} />
+                    <Area type="monotone" dataKey="y2025" name="ปี 2025 (ปีที่แล้ว)" fill="#f1f5f9" stroke="#cbd5e1" strokeWidth={2} dot={{r: 3, fill: '#cbd5e1', strokeWidth: 0}} activeDot={{r: 5, fill: '#94a3b8', strokeWidth: 0}} />
+                    <Line type="monotone" dataKey="y2026" name="ปี 2026 (ปัจจุบัน)" stroke="#f59e0b" strokeWidth={4} dot={{r: 5, fill: '#ffffff', stroke: '#f59e0b', strokeWidth: 2}} activeDot={{r: 8, strokeWidth: 0}} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80">
+              <h3 className="text-center font-bold text-gray-700 mb-4">ยอดเข้าชม ปี 2023 - 2026 (ครั้ง)</h3>
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={metrics.lineChartViews} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis dataKey="month" tick={{fontSize: 12, fill: '#64748b', fontWeight: 600}} axisLine={false} tickLine={false} dy={10} />
+                  <YAxis allowDecimals={false} tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false} dx={-10} />
+                  <RechartsTooltip 
+                    contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} 
+                    labelStyle={{ fontWeight: 'bold', color: '#1e293b', marginBottom: '8px' }}
+                  />
+                  <Legend wrapperStyle={{ paddingTop: '20px' }} />
+                  <Line type="monotone" dataKey="y2023" name="ปี 2023" stroke="#e2e8f0" strokeWidth={2} strokeDasharray="5 5" dot={{r: 3, fill: '#f8fafc', stroke: '#e2e8f0', strokeWidth: 1}} activeDot={{r: 5, strokeWidth: 0}} />
+                  <Line type="monotone" dataKey="y2024" name="ปี 2024" stroke="#e2e8f0" strokeWidth={2} strokeDasharray="5 5" dot={{r: 3, fill: '#f8fafc', stroke: '#e2e8f0', strokeWidth: 1}} activeDot={{r: 5, strokeWidth: 0}} />
+                  <Area type="monotone" dataKey="y2025" name="ปี 2025 (ปีที่แล้ว)" fill="#f1f5f9" stroke="#cbd5e1" strokeWidth={2} dot={{r: 3, fill: '#cbd5e1', strokeWidth: 0}} activeDot={{r: 5, fill: '#94a3b8', strokeWidth: 0}} />
+                  <Line type="monotone" dataKey="y2026" name="ปี 2026 (ปัจจุบัน)" stroke="#6366f1" strokeWidth={4} dot={{r: 5, fill: '#ffffff', stroke: '#6366f1', strokeWidth: 2}} activeDot={{r: 8, strokeWidth: 0}} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </div>
+
+        {/* SALES AGENT PERFORMANCE TABLE (Monthly & Annual Lead -> Visit -> Survey -> Booking -> Transfer) */}
+        {!canonicalData && metrics.agentPerformanceList && metrics.agentPerformanceList.length > 0 && (
+          <div className="mt-8 pt-6 border-t border-gray-200">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div className="flex items-center gap-3">
+                <Users className="text-indigo-600 w-7 h-7 p-1.5 bg-indigo-100 rounded-lg" />
+                <div>
+                  <h2 className="text-xl font-bold text-gray-800">สรุปผลงานพนักงานขาย (รับ Lead • เข้าชม • แบบสอบถาม • จอง • โอน)</h2>
+                  <p className="text-xs text-gray-500">เปรียบเทียบยอดรับ Lead และการพาเข้าชมประจำเดือน {selectedMonth}/{selectedYear} และสะสมประจำปี {selectedYear}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-left">
+                  <thead>
+                    <tr className="bg-slate-900 text-white text-xs">
+                      <th rowSpan={2} className="p-3 font-bold border-r border-slate-700">พนักงานขาย (Sales Agent)</th>
+                      <th colSpan={4} className="p-2.5 text-center font-bold bg-indigo-900 border-r border-slate-700">
+                        ประจำเดือน {selectedMonth}/{selectedYear}
+                      </th>
+                      <th colSpan={4} className="p-2.5 text-center font-bold bg-slate-800">
+                        สะสมประจำปี {selectedYear}
+                      </th>
+                    </tr>
+                    <tr className="bg-slate-100 text-slate-700 text-xs border-b border-gray-200">
+                      <th className="p-2.5 text-right font-bold text-amber-700">รับ Lead</th>
+                      <th className="p-2.5 text-right font-bold text-purple-700">เข้าชม (แบบสอบถาม)</th>
+                      <th className="p-2.5 text-right font-bold text-blue-700">ยอดจอง</th>
+                      <th className="p-2.5 text-right font-bold text-emerald-700 border-r border-gray-200">ยอดโอน</th>
+                      <th className="p-2.5 text-right font-bold text-amber-700">รับ Lead สะสม</th>
+                      <th className="p-2.5 text-right font-bold text-purple-700">เข้าชมสะสม (แบบสอบถาม)</th>
+                      <th className="p-2.5 text-right font-bold text-blue-700">จองสะสม</th>
+                      <th className="p-2.5 text-right font-bold text-emerald-700">โอนสะสม</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {metrics.agentPerformanceList.map((ag: any) => (
+                      <tr key={ag.agentName} className="hover:bg-slate-50 transition-colors">
+                        <td className="p-3 font-bold text-slate-800 border-r border-gray-100">{ag.agentName}</td>
+                        <td className="p-2.5 text-right font-bold text-amber-700 bg-amber-50/30">{ag.monthLeads}</td>
+                        <td className="p-2.5 text-right font-bold text-purple-800 bg-purple-50/30">
+                          {ag.monthVisits} <span className="text-[11px] font-semibold text-purple-600">({ag.monthSurveys})</span>
+                        </td>
+                        <td className="p-2.5 text-right font-bold text-blue-700 bg-blue-50/30">{ag.monthBooked}</td>
+                        <td className="p-2.5 text-right font-bold text-emerald-700 bg-emerald-50/30 border-r border-gray-200">{ag.monthTransferred}</td>
+                        <td className="p-2.5 text-right font-semibold text-slate-700">{ag.yearLeads}</td>
+                        <td className="p-2.5 text-right font-semibold text-slate-700">
+                          {ag.yearVisits} <span className="text-[11px] text-purple-600">({ag.yearSurveys})</span>
+                        </td>
+                        <td className="p-2.5 text-right font-semibold text-blue-700">{ag.yearBooked}</td>
+                        <td className="p-2.5 text-right font-semibold text-emerald-700">{ag.yearTransferred}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* CUMULATIVE CHARTS */}
         <div className="mt-8 pt-6 border-t border-gray-200">
@@ -1812,22 +2156,44 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
             </div>
           </div>
           
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80">
-            <h3 className="text-center font-bold text-gray-700 mb-4">ยอดเข้าชมสะสม ปี {cumulativeYear} (ครั้ง)</h3>
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={metrics.cumulativeChartViews} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                <XAxis dataKey="month" tick={{fontSize: 12, fill: '#64748b', fontWeight: 600}} axisLine={false} tickLine={false} dy={10} />
-                <YAxis allowDecimals={false} tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false} dx={-10} />
-                <RechartsTooltip 
-                  contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} 
-                  labelStyle={{ fontWeight: 'bold', color: '#1e293b', marginBottom: '8px' }}
-                />
-                <Area type="monotone" dataKey="cumulative" name="ยอดเข้าชมสะสม" fill="#f3e8ff" stroke="#a855f7" strokeWidth={3} dot={{r: 4, fill: '#ffffff', stroke: '#a855f7', strokeWidth: 2}} activeDot={{r: 7, strokeWidth: 0}}>
-                  <LabelList dataKey="cumulative" position="top" offset={10} style={{ fill: '#9333ea', fontSize: 11, fontWeight: 'bold' }} />
-                </Area>
-              </ComposedChart>
-            </ResponsiveContainer>
+          <div className={`grid grid-cols-1 ${!canonicalData ? 'md:grid-cols-2' : ''} gap-6`}>
+            {!canonicalData && (
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80">
+                <h3 className="text-center font-bold text-gray-700 mb-4">ยอด Lead สะสม ปี {cumulativeYear} (ราย)</h3>
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={metrics.cumulativeChartLeads} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                    <XAxis dataKey="month" tick={{fontSize: 12, fill: '#64748b', fontWeight: 600}} axisLine={false} tickLine={false} dy={10} />
+                    <YAxis allowDecimals={false} tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false} dx={-10} />
+                    <RechartsTooltip 
+                      contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} 
+                      labelStyle={{ fontWeight: 'bold', color: '#1e293b', marginBottom: '8px' }}
+                    />
+                    <Area type="monotone" dataKey="cumulative" name="ยอด Lead สะสม" fill="#fef3c7" stroke="#f59e0b" strokeWidth={3} dot={{r: 4, fill: '#ffffff', stroke: '#f59e0b', strokeWidth: 2}} activeDot={{r: 7, strokeWidth: 0}}>
+                      <LabelList dataKey="cumulative" position="top" offset={10} style={{ fill: '#d97706', fontSize: 11, fontWeight: 'bold' }} />
+                    </Area>
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80">
+              <h3 className="text-center font-bold text-gray-700 mb-4">ยอดเข้าชมสะสม ปี {cumulativeYear} (ครั้ง)</h3>
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={metrics.cumulativeChartViews} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis dataKey="month" tick={{fontSize: 12, fill: '#64748b', fontWeight: 600}} axisLine={false} tickLine={false} dy={10} />
+                  <YAxis allowDecimals={false} tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false} dx={-10} />
+                  <RechartsTooltip 
+                    contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} 
+                    labelStyle={{ fontWeight: 'bold', color: '#1e293b', marginBottom: '8px' }}
+                  />
+                  <Area type="monotone" dataKey="cumulative" name="ยอดเข้าชมสะสม" fill="#f3e8ff" stroke="#a855f7" strokeWidth={3} dot={{r: 4, fill: '#ffffff', stroke: '#a855f7', strokeWidth: 2}} activeDot={{r: 7, strokeWidth: 0}}>
+                    <LabelList dataKey="cumulative" position="top" offset={10} style={{ fill: '#9333ea', fontSize: 11, fontWeight: 'bold' }} />
+                  </Area>
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </div>
 
