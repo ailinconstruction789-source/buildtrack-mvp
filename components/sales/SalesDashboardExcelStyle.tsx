@@ -753,15 +753,22 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
     const targetDayCutoff = targetDate.toISOString().split('T')[0];
 
     // Current Weekly Cycle: from most recent Wednesday up to targetDayCutoff (Wednesday = 3)
-    // If targetDate is Wednesday, cycle starts today. If Thu-Tue, cycle starts on the previous Wednesday.
+    // Previous Weekly Cycle: from Wednesday prior to that up to the Tuesday before current cycle (full 7-day span)
     const computeWeeklyRange = (dStr: string) => {
       const parts = dStr.split('-').map(Number);
       const curr = new Date(parts[0], parts[1] - 1, parts[2], 12, 0, 0);
       const dayOfWeek = curr.getDay(); // 0: Sun, 1: Mon, 2: Tue, 3: Wed, 4: Thu, 5: Fri, 6: Sat
       const diffToWed = (dayOfWeek - 3 + 7) % 7; // days since most recent Wednesday
+      
       const startWed = new Date(curr);
       startWed.setDate(curr.getDate() - diffToWed);
       
+      const prevWed = new Date(startWed);
+      prevWed.setDate(startWed.getDate() - 7);
+
+      const prevTue = new Date(startWed);
+      prevTue.setDate(startWed.getDate() - 1);
+
       const formatYMD = (d: Date) => {
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -772,6 +779,9 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       const startStr = formatYMD(startWed);
       const endStr = dStr;
 
+      const prevStartStr = formatYMD(prevWed);
+      const prevEndStr = formatYMD(prevTue);
+
       const formatThaiShort = (d: Date) => {
         const thaiMonthsShort = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
         return `${d.getDate()} ${thaiMonthsShort[d.getMonth()]}`;
@@ -781,7 +791,9 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
         ? `${formatThaiShort(startWed)} (วันนี้)`
         : `${formatThaiShort(startWed)} - ${formatThaiShort(curr)}`;
 
-      return { startStr, endStr, label };
+      const prevLabel = `${formatThaiShort(prevWed)} - ${formatThaiShort(prevTue)}`;
+
+      return { startStr, endStr, label, prevStartStr, prevEndStr, prevLabel };
     };
 
     const currentWeek = computeWeeklyRange(targetDayCutoff);
@@ -821,12 +833,38 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       ? filteredLeadItems.filter((l: any) => l.leadDate && l.leadDate >= currentWeek.startStr && l.leadDate <= currentWeek.endStr)
       : validRecords.filter((r: any) => r.createdDate && r.createdDate >= currentWeek.startStr && r.createdDate <= currentWeek.endStr);
 
+    const leadsPrevWeek = hasRealLeads
+      ? filteredLeadItems.filter((l: any) => l.leadDate && l.leadDate >= currentWeek.prevStartStr && l.leadDate <= currentWeek.prevEndStr)
+      : validRecords.filter((r: any) => r.createdDate && r.createdDate >= currentWeek.prevStartStr && r.createdDate <= currentWeek.prevEndStr);
+
     const viewsWeek = hasRealVisits
       ? filteredVisits.filter((v: any) => v.visitDate && v.visitDate >= currentWeek.startStr && v.visitDate <= currentWeek.endStr)
       : validRecords.filter((r: any) => r.createdDate && r.createdDate >= currentWeek.startStr && r.createdDate <= currentWeek.endStr);
     const surveysWeek = hasRealVisits
       ? viewsWeek.filter((v: any) => v.hasSurvey).length
       : 0;
+
+    const viewsPrevWeek = hasRealVisits
+      ? filteredVisits.filter((v: any) => v.visitDate && v.visitDate >= currentWeek.prevStartStr && v.visitDate <= currentWeek.prevEndStr)
+      : validRecords.filter((r: any) => r.createdDate && r.createdDate >= currentWeek.prevStartStr && r.createdDate <= currentWeek.prevEndStr);
+    const surveysPrevWeek = hasRealVisits
+      ? viewsPrevWeek.filter((v: any) => v.hasSurvey).length
+      : 0;
+
+    // Helper to calculate percentage change
+    const calcPctDiff = (curr: number, prev: number) => {
+      if (prev === 0) {
+        if (curr === 0) return { pct: 0, text: '0%', type: 'neutral' as const };
+        return { pct: 100, text: `+${curr}`, type: 'increase' as const };
+      }
+      const diff = Math.round(((curr - prev) / prev) * 100);
+      if (diff > 0) return { pct: diff, text: `+${diff}%`, type: 'increase' as const };
+      if (diff < 0) return { pct: diff, text: `${diff}%`, type: 'decrease' as const };
+      return { pct: 0, text: '0%', type: 'neutral' as const };
+    };
+
+    const leadsWeekDiff = calcPctDiff(leadsWeek.length, leadsPrevWeek.length);
+    const viewsWeekDiff = calcPctDiff(viewsWeek.length, viewsPrevWeek.length);
     // Gross bookings in targetMonth up to targetDate (includes active, transferred, and later cancelled bookings)
     const bookedMonth = filteredRecords.filter((r: any) => r.bookDate?.startsWith(targetMonthPrefix) && r.bookDate <= targetDate.toISOString().split('T')[0]);
     const bookedMonthRent = bookedMonth.filter((r: any) => r.isRental).length;
@@ -1302,6 +1340,8 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       leadsMonth, viewsMonth, surveysMonth, bookedMonth, transferMonth, cancelMonth,
       bookedMonthBuy, bookedMonthRent,
       currentWeek, leadsWeek, viewsWeek, surveysWeek,
+      leadsPrevWeek, viewsPrevWeek, surveysPrevWeek,
+      leadsWeekDiff, viewsWeekDiff,
       agentPerformanceList,
       expectingTransfer: expectingThisMonthPlots,
       carriedOverTransfers: carriedOverPlots,
@@ -1505,12 +1545,34 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
                   <span className="text-gray-600 text-sm font-medium">ยอด Lead ใหม่</span>
                   <span className="text-lg font-bold text-indigo-700">{metrics.leadsMonth.length}</span>
                 </div>
+                
+                {/* สัปดาห์นี้ */}
                 <div className="mt-1 flex items-center justify-between bg-indigo-50/70 border border-indigo-100/80 rounded-lg px-2.5 py-1 text-xs">
                   <span className="text-indigo-800 font-medium flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
                     สัปดาห์นี้ <span className="text-indigo-500 text-[11px]">({metrics.currentWeek.label})</span>
                   </span>
-                  <span className="font-extrabold text-indigo-700 text-sm">{metrics.leadsWeek.length}</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-extrabold text-indigo-700 text-sm">{metrics.leadsWeek.length}</span>
+                    <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded-full border ${
+                      metrics.leadsWeekDiff.type === 'increase'
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : metrics.leadsWeekDiff.type === 'decrease'
+                        ? 'bg-rose-50 text-rose-700 border-rose-200'
+                        : 'bg-gray-100 text-gray-600 border-gray-200'
+                    }`}>
+                      {metrics.leadsWeekDiff.type === 'increase' ? '▲ ' : metrics.leadsWeekDiff.type === 'decrease' ? '▼ ' : ''}{metrics.leadsWeekDiff.text}
+                    </span>
+                  </div>
+                </div>
+
+                {/* สัปดาห์ที่แล้ว */}
+                <div className="mt-1 flex items-center justify-between bg-slate-50 border border-slate-200/60 rounded-lg px-2.5 py-1 text-xs">
+                  <span className="text-slate-600 font-medium flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                    สัปดาห์ที่แล้ว <span className="text-slate-400 text-[11px]">({metrics.currentWeek.prevLabel})</span>
+                  </span>
+                  <span className="font-bold text-slate-700 text-sm">{metrics.leadsPrevWeek.length}</span>
                 </div>
               </div>
 
@@ -1522,14 +1584,37 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
                 <div className="text-[11px] font-bold text-purple-700 text-right mt-0.5">
                   (ทำแบบสอบถาม {metrics.surveysMonth} คน)
                 </div>
+
+                {/* สัปดาห์นี้ */}
                 <div className="mt-1 flex items-center justify-between bg-purple-50/70 border border-purple-100/80 rounded-lg px-2.5 py-1 text-xs">
                   <span className="text-purple-900 font-medium flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-purple-500"></span>
                     สัปดาห์นี้ <span className="text-purple-600 text-[11px]">({metrics.currentWeek.label})</span>
                   </span>
-                  <div className="flex items-baseline gap-1.5">
+                  <div className="flex items-center gap-1.5">
                     <span className="font-extrabold text-purple-800 text-sm">{metrics.viewsWeek.length}</span>
                     <span className="text-[10px] text-purple-600 font-medium">(แบบสอบถาม {metrics.surveysWeek})</span>
+                    <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded-full border ${
+                      metrics.viewsWeekDiff.type === 'increase'
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : metrics.viewsWeekDiff.type === 'decrease'
+                        ? 'bg-rose-50 text-rose-700 border-rose-200'
+                        : 'bg-gray-100 text-gray-600 border-gray-200'
+                    }`}>
+                      {metrics.viewsWeekDiff.type === 'increase' ? '▲ ' : metrics.viewsWeekDiff.type === 'decrease' ? '▼ ' : ''}{metrics.viewsWeekDiff.text}
+                    </span>
+                  </div>
+                </div>
+
+                {/* สัปดาห์ที่แล้ว */}
+                <div className="mt-1 flex items-center justify-between bg-slate-50 border border-slate-200/60 rounded-lg px-2.5 py-1 text-xs">
+                  <span className="text-slate-600 font-medium flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                    สัปดาห์ที่แล้ว <span className="text-slate-400 text-[11px]">({metrics.currentWeek.prevLabel})</span>
+                  </span>
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="font-bold text-slate-700 text-sm">{metrics.viewsPrevWeek.length}</span>
+                    <span className="text-[10px] text-slate-500 font-medium">(แบบสอบถาม {metrics.surveysPrevWeek})</span>
                   </div>
                 </div>
               </div>
