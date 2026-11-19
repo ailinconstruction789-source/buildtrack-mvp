@@ -5,7 +5,7 @@ import { extractAgreedPrices, extractCancelledDate, extractExpectedTransferDate 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { fetchSalesWithoutLimit } from '@/lib/sales/fetchWithoutLimit';
-import { Loader2, Calendar, TrendingUp, Users, BarChart, ChevronDown, ChevronUp, Search, Building2 } from 'lucide-react';
+import { Loader2, Calendar, TrendingUp, Users, BarChart, ChevronDown, ChevronUp, Search, Building2, X, CheckCircle2, UserCheck, Phone, MapPin, Eye } from 'lucide-react';
 import WaitingForTransferDetails from './WaitingForTransferDetails';
 import { ComposedChart, Bar, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, LabelList } from 'recharts';
 import SalesOverlay from './SalesOverlay';
@@ -41,6 +41,22 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
   const [cumulativeYear, setCumulativeYear] = useState<string>(selectedYear);
   const [selectedProjectFilter, setSelectedProjectFilter] = useState<string | null>(project?.name || null);
   const [customerSearch, setCustomerSearch] = useState<string>('');
+  
+  // Drill-down Modal State
+  const [drilldownModal, setDrilldownModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    subtitle: string;
+    type: 'leads' | 'visits';
+    items: any[];
+  }>({
+    isOpen: false,
+    title: '',
+    subtitle: '',
+    type: 'leads',
+    items: []
+  });
+  const [modalSearch, setModalSearch] = useState('');
 
   useEffect(() => {
     setCumulativeYear(selectedYear);
@@ -435,8 +451,32 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       : data.plots;
 
     // Build unified visits, lead dates, and appraisal amounts from CRM V2 evidence
-    const visitMap = new Map<string, { key: string; customerId?: string; visitDate: string; projectName: string | null; agentName?: string | null; hasSurvey?: boolean }>();
-    const leadMap = new Map<string, { key: string; customerId?: string; leadDate: string; projectName: string | null; agentName: string }>();
+    const visitMap = new Map<string, {
+      key: string;
+      customerId?: string;
+      customerName?: string;
+      phone?: string;
+      visitDate: string;
+      projectName: string | null;
+      plotName?: string | null;
+      agentName?: string | null;
+      hasSurvey?: boolean;
+      status?: string;
+    }>();
+    const leadMap = new Map<string, {
+      key: string;
+      customerId?: string;
+      customerName?: string;
+      phone?: string;
+      leadDate: string;
+      projectName: string | null;
+      plotName?: string | null;
+      agentName: string;
+      status?: string;
+      hasVisited?: boolean;
+      visitDate?: string | null;
+      hasSurvey?: boolean;
+    }>();
     const leadDates = new Map<string, string>();
     const tdPriceMap = new Map<string, number>();
 
@@ -512,15 +552,23 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
           if (existingVisit) {
             existingVisit.agentName = existingVisit.agentName || agentName;
             existingVisit.hasSurvey = Boolean(existingVisit.hasSurvey || hasSurvey);
+            existingVisit.customerName = existingVisit.customerName || l.customer_name;
+            existingVisit.phone = existingVisit.phone || l.phone;
+            existingVisit.plotName = existingVisit.plotName || l.interested_plot_name;
+            existingVisit.status = existingVisit.status || l.status || l.crm_status;
           } else {
             const k = `lead-visit:${l.id}`;
             visitMap.set(k, {
               key: k,
               customerId: l.id,
+              customerName: l.customer_name,
+              phone: l.phone,
               visitDate: cleanDate,
               projectName: l.project_name || null,
+              plotName: l.interested_plot_name || null,
               agentName,
-              hasSurvey
+              hasSurvey,
+              status: l.status || l.crm_status
             });
           }
         }
@@ -532,9 +580,16 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
           leadMap.set(lk, {
             key: lk,
             customerId: l.id,
+            customerName: l.customer_name,
+            phone: l.phone,
             leadDate: cleanDate,
             projectName: l.project_name || null,
-            agentName
+            plotName: l.interested_plot_name || null,
+            agentName,
+            status: l.status || l.crm_status,
+            hasVisited: Boolean(visitD),
+            visitDate: visitD ? visitD.split('T')[0] : null,
+            hasSurvey: Boolean(hasSurvey)
           });
           if (!leadDates.has(l.id)) leadDates.set(l.id, cleanDate);
           if (l.customer_name) {
@@ -809,9 +864,10 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
 
     const currentWeek = computeWeeklyRange(targetDayCutoff);
 
-    const leadsAcc = hasRealLeads
-      ? filteredLeadItems.filter((l: any) => l.leadDate && l.leadDate.startsWith(selectedYear) && l.leadDate <= targetDayCutoff).length
-      : validRecords.filter((r: any) => r.createdDate && r.createdDate.startsWith(selectedYear) && r.createdDate <= targetDayCutoff).length;
+    const leadsAccList = hasRealLeads
+      ? filteredLeadItems.filter((l: any) => l.leadDate && l.leadDate.startsWith(selectedYear) && l.leadDate <= targetDayCutoff)
+      : validRecords.filter((r: any) => r.createdDate && r.createdDate.startsWith(selectedYear) && r.createdDate <= targetDayCutoff);
+    const leadsAcc = leadsAccList.length;
 
     const viewsAccList = hasRealVisits
       ? filteredVisits.filter((v: any) => v.visitDate && v.visitDate.startsWith(selectedYear) && v.visitDate <= targetDayCutoff)
@@ -1347,6 +1403,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
     return {
       unknownHistory,
       leadsAcc, viewsAcc, surveysAcc, bookedAcc, cancelAcc, transferAcc,
+      leadsAccList, viewsAccList,
       bookedAccBuy, bookedAccRent,
       leadsMonth, viewsMonth, surveysMonth, bookedMonth, transferMonth, cancelMonth,
       bookedMonthBuy, bookedMonthRent,
@@ -1504,14 +1561,36 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
             <div className="flex justify-between items-center mb-0.5 pb-3 border-b border-gray-100">
                <span className="font-bold text-gray-800 text-base">ยอดสะสมประจำปี {selectedYear}</span>
             </div>
-            <div className="flex justify-between items-center">
-              <span className="font-bold text-gray-600 text-sm">ยอด Lead สะสม</span>
-              <span className="text-2xl font-black text-indigo-700">{metrics.leadsAcc}</span>
+            <div className="flex justify-between items-center cursor-pointer hover:bg-indigo-50/50 p-1.5 -mx-1.5 rounded-xl transition-colors group"
+              onClick={() => setDrilldownModal({
+                isOpen: true,
+                title: `รายชื่อลูกค้า Lead สะสม ปี ${selectedYear}`,
+                subtitle: `ยอด Lead สะสมทั้งหมด ${metrics.leadsAcc} ราย (มีเครื่องหมายระบุคนเข้าชมแล้ว)`,
+                type: 'leads',
+                items: metrics.leadsAccList || []
+              })}
+              title="คลิกเพื่อดูรายชื่อลูกค้า Lead ทั้งหมด"
+            >
+              <span className="font-bold text-gray-600 text-sm group-hover:text-indigo-900 flex items-center gap-1.5">
+                ยอด Lead สะสม <Eye className="w-3.5 h-3.5 text-gray-400 group-hover:text-indigo-600" />
+              </span>
+              <span className="text-2xl font-black text-indigo-700 underline decoration-indigo-300 decoration-2 underline-offset-4">{metrics.leadsAcc}</span>
             </div>
-            <div>
+            <div className="cursor-pointer hover:bg-blue-50/50 p-1.5 -mx-1.5 rounded-xl transition-colors group"
+              onClick={() => setDrilldownModal({
+                isOpen: true,
+                title: `รายชื่อลูกค้าเข้าชมสะสม ปี ${selectedYear}`,
+                subtitle: `ยอดลูกค้าเข้าชมสะสมทั้งหมด ${metrics.viewsAcc} ครั้ง (ทำแบบสอบถาม ${metrics.surveysAcc} คน)`,
+                type: 'visits',
+                items: metrics.viewsAccList || []
+              })}
+              title="คลิกเพื่อดูรายชื่อลูกค้าที่เข้าชมทั้งหมด"
+            >
               <div className="flex justify-between items-center">
-                <span className="font-bold text-gray-600 text-sm">ยอดลูกค้าเข้าชมสะสม</span>
-                <span className="text-2xl font-black text-blue-900">{metrics.viewsAcc}</span>
+                <span className="font-bold text-gray-600 text-sm group-hover:text-blue-900 flex items-center gap-1.5">
+                  ยอดลูกค้าเข้าชมสะสม <Eye className="w-3.5 h-3.5 text-gray-400 group-hover:text-blue-600" />
+                </span>
+                <span className="text-2xl font-black text-blue-900 underline decoration-blue-300 decoration-2 underline-offset-4">{metrics.viewsAcc}</span>
               </div>
               <div className="text-[11px] font-bold text-purple-700 text-right mt-0.5">
                 (ทำแบบสอบถาม {metrics.surveysAcc} คน)
@@ -1552,13 +1631,34 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
             </div>
             <div className="space-y-3">
               <div>
-                <div className="flex justify-between items-center">
-                  <span className="text-gray-600 text-sm font-medium">ยอด Lead ใหม่</span>
-                  <span className="text-lg font-bold text-indigo-700">{metrics.leadsMonth.length}</span>
+                <div className="flex justify-between items-center cursor-pointer hover:bg-indigo-50/50 p-1 -mx-1 rounded-lg transition-colors group"
+                  onClick={() => setDrilldownModal({
+                    isOpen: true,
+                    title: `รายชื่อลูกค้า Lead ประจำเดือน ${selectedMonth}/${selectedYear}`,
+                    subtitle: `ยอด Lead ใหม่ทั้งหมด ${metrics.leadsMonth.length} ราย (มีเครื่องหมายระบุคนเข้าชมแล้ว)`,
+                    type: 'leads',
+                    items: metrics.leadsMonth || []
+                  })}
+                  title="คลิกเพื่อดูรายชื่อลูกค้า Lead ประจำเดือนนี้"
+                >
+                  <span className="text-gray-600 text-sm font-medium group-hover:text-indigo-900 flex items-center gap-1">
+                    ยอด Lead ใหม่ <Eye className="w-3 h-3 text-gray-400 group-hover:text-indigo-600" />
+                  </span>
+                  <span className="text-lg font-bold text-indigo-700 underline decoration-indigo-300 underline-offset-2">{metrics.leadsMonth.length}</span>
                 </div>
                 
                 {/* สัปดาห์นี้ */}
-                <div className="mt-1 flex items-center justify-between bg-indigo-50/70 border border-indigo-100/80 rounded-lg px-2.5 py-1 text-xs whitespace-nowrap">
+                <div 
+                  className="mt-1 flex items-center justify-between bg-indigo-50/70 hover:bg-indigo-100/70 border border-indigo-100/80 rounded-lg px-2.5 py-1 text-xs whitespace-nowrap cursor-pointer transition-colors"
+                  onClick={() => setDrilldownModal({
+                    isOpen: true,
+                    title: `รายชื่อลูกค้า Lead สัปดาห์นี้ (${metrics.currentWeek.label})`,
+                    subtitle: `ยอด Lead สัปดาห์นี้ ${metrics.leadsWeek.length} ราย (มีเครื่องหมายระบุคนเข้าชมแล้ว)`,
+                    type: 'leads',
+                    items: metrics.leadsWeek || []
+                  })}
+                  title="คลิกเพื่อดูรายชื่อลูกค้า Lead สัปดาห์นี้"
+                >
                   <span className="text-indigo-800 font-medium flex items-center gap-1.5 shrink-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
                     สัปดาห์นี้ <span className="text-indigo-500 text-[11px]">({metrics.currentWeek.label})</span>
@@ -1578,7 +1678,17 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
                 </div>
 
                 {/* สัปดาห์ที่แล้ว */}
-                <div className="mt-1 flex items-center justify-between bg-slate-50 border border-slate-200/60 rounded-lg px-2.5 py-1 text-xs whitespace-nowrap">
+                <div 
+                  className="mt-1 flex items-center justify-between bg-slate-50 hover:bg-slate-100/80 border border-slate-200/60 rounded-lg px-2.5 py-1 text-xs whitespace-nowrap cursor-pointer transition-colors"
+                  onClick={() => setDrilldownModal({
+                    isOpen: true,
+                    title: `รายชื่อลูกค้า Lead สัปดาห์ที่แล้ว (${metrics.currentWeek.prevLabel})`,
+                    subtitle: `ยอด Lead สัปดาห์ที่แล้ว ${metrics.leadsPrevWeek.length} ราย (มีเครื่องหมายระบุคนเข้าชมแล้ว)`,
+                    type: 'leads',
+                    items: metrics.leadsPrevWeek || []
+                  })}
+                  title="คลิกเพื่อดูรายชื่อลูกค้า Lead สัปดาห์ที่แล้ว"
+                >
                   <span className="text-slate-600 font-medium flex items-center gap-1.5 shrink-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
                     สัปดาห์ที่แล้ว <span className="text-slate-400 text-[11px]">({metrics.currentWeek.prevLabel})</span>
@@ -1588,16 +1698,37 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
               </div>
 
               <div>
-                <div className="flex justify-between items-center">
-                  <span className="text-gray-600 text-sm font-medium">ยอดเข้าชม</span>
-                  <span className="text-lg font-bold text-gray-900">{metrics.viewsMonth.length}</span>
+                <div className="flex justify-between items-center cursor-pointer hover:bg-blue-50/50 p-1 -mx-1 rounded-lg transition-colors group"
+                  onClick={() => setDrilldownModal({
+                    isOpen: true,
+                    title: `รายชื่อลูกค้าเข้าชม ประจำเดือน ${selectedMonth}/${selectedYear}`,
+                    subtitle: `ยอดเข้าชมทั้งหมด ${metrics.viewsMonth.length} ครั้ง (ทำแบบสอบถาม ${metrics.surveysMonth} คน)`,
+                    type: 'visits',
+                    items: metrics.viewsMonth || []
+                  })}
+                  title="คลิกเพื่อดูรายชื่อลูกค้าเข้าชมประจำเดือนนี้"
+                >
+                  <span className="text-gray-600 text-sm font-medium group-hover:text-blue-900 flex items-center gap-1">
+                    ยอดเข้าชม <Eye className="w-3 h-3 text-gray-400 group-hover:text-blue-600" />
+                  </span>
+                  <span className="text-lg font-bold text-gray-900 underline decoration-blue-300 underline-offset-2">{metrics.viewsMonth.length}</span>
                 </div>
                 <div className="text-[11px] font-bold text-purple-700 text-right mt-0.5">
                   (ทำแบบสอบถาม {metrics.surveysMonth} คน)
                 </div>
 
                 {/* สัปดาห์นี้ */}
-                <div className="mt-1 flex items-center justify-between bg-purple-50/70 border border-purple-100/80 rounded-lg px-2.5 py-1 text-xs whitespace-nowrap">
+                <div 
+                  className="mt-1 flex items-center justify-between bg-purple-50/70 hover:bg-purple-100/70 border border-purple-100/80 rounded-lg px-2.5 py-1 text-xs whitespace-nowrap cursor-pointer transition-colors"
+                  onClick={() => setDrilldownModal({
+                    isOpen: true,
+                    title: `รายชื่อลูกค้าเข้าชม สัปดาห์นี้ (${metrics.currentWeek.label})`,
+                    subtitle: `ยอดเข้าชม ${metrics.viewsWeek.length} ครั้ง (ทำแบบสอบถาม ${metrics.surveysWeek} คน)`,
+                    type: 'visits',
+                    items: metrics.viewsWeek || []
+                  })}
+                  title="คลิกเพื่อดูรายชื่อลูกค้าเข้าชมสัปดาห์นี้"
+                >
                   <span className="text-purple-900 font-medium flex items-center gap-1.5 shrink-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-purple-500"></span>
                     สัปดาห์นี้ <span className="text-purple-600 text-[11px]">({metrics.currentWeek.label})</span>
@@ -1618,7 +1749,17 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
                 </div>
 
                 {/* สัปดาห์ที่แล้ว */}
-                <div className="mt-1 flex items-center justify-between bg-slate-50 border border-slate-200/60 rounded-lg px-2.5 py-1 text-xs whitespace-nowrap">
+                <div 
+                  className="mt-1 flex items-center justify-between bg-slate-50 hover:bg-slate-100/80 border border-slate-200/60 rounded-lg px-2.5 py-1 text-xs whitespace-nowrap cursor-pointer transition-colors"
+                  onClick={() => setDrilldownModal({
+                    isOpen: true,
+                    title: `รายชื่อลูกค้าเข้าชม สัปดาห์ที่แล้ว (${metrics.currentWeek.prevLabel})`,
+                    subtitle: `ยอดเข้าชม ${metrics.viewsPrevWeek.length} ครั้ง (ทำแบบสอบถาม ${metrics.surveysPrevWeek} คน)`,
+                    type: 'visits',
+                    items: metrics.viewsPrevWeek || []
+                  })}
+                  title="คลิกเพื่อดูรายชื่อลูกค้าเข้าชมสัปดาห์ที่แล้ว"
+                >
                   <span className="text-slate-600 font-medium flex items-center gap-1.5 shrink-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
                     สัปดาห์ที่แล้ว <span className="text-slate-400 text-[11px]">({metrics.currentWeek.prevLabel})</span>
@@ -2451,6 +2592,186 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
                   </div>
                 );
               })}
+            </div>
+          </div>
+        </SalesOverlay>
+      )}
+
+      {/* DRILL-DOWN MODAL FOR LEADS & VISITS */}
+      {drilldownModal.isOpen && (
+        <SalesOverlay className="fixed inset-0 z-[500] bg-black/50 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-150 border border-slate-200">
+            {/* Modal Header */}
+            <div className="p-5 sm:p-6 border-b border-gray-100 flex items-start justify-between gap-4 bg-slate-50/70 shrink-0">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                    drilldownModal.type === 'leads' ? 'bg-indigo-100 text-indigo-700' : 'bg-purple-100 text-purple-700'
+                  }`}>
+                    {drilldownModal.type === 'leads' ? 'ยอด Lead ลูกค้า' : 'ยอดลูกค้าเข้าชม'}
+                  </span>
+                  <h3 className="text-lg sm:text-xl font-black text-gray-900">{drilldownModal.title}</h3>
+                </div>
+                <p className="text-xs sm:text-sm text-gray-500 font-medium">{drilldownModal.subtitle}</p>
+              </div>
+              <button 
+                onClick={() => {
+                  setDrilldownModal(prev => ({ ...prev, isOpen: false }));
+                  setModalSearch('');
+                }} 
+                className="w-9 h-9 rounded-full hover:bg-gray-200 flex items-center justify-center text-gray-500 transition-colors shrink-0"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Search Bar */}
+            <div className="p-4 bg-white border-b border-gray-100 shrink-0">
+              <div className="relative">
+                <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={modalSearch}
+                  onChange={e => setModalSearch(e.target.value)}
+                  placeholder="ค้นหาชื่อลูกค้า, เบอร์โทร, โครงการ, เซลส์..."
+                  className="w-full pl-9 pr-4 py-2 bg-gray-50 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                />
+                {modalSearch && (
+                  <button onClick={() => setModalSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-600">✕</button>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Table Content */}
+            <div className="p-0 overflow-y-auto flex-1 bg-white">
+              {(() => {
+                const term = modalSearch.trim().toLowerCase();
+                const filtered = (drilldownModal.items || []).filter((item: any) => {
+                  if (!term) return true;
+                  const cName = (item.customerName || item.customer_name || '').toLowerCase();
+                  const phone = (item.phone || '').toLowerCase();
+                  const proj = (item.projectName || item.project_name || '').toLowerCase();
+                  const plot = (item.plotName || item.plot_name || '').toLowerCase();
+                  const agent = (item.agentName || item.agent_name || '').toLowerCase();
+                  return cName.includes(term) || phone.includes(term) || proj.includes(term) || plot.includes(term) || agent.includes(term);
+                });
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="p-12 text-center text-gray-400">
+                      <Users className="w-10 h-10 mx-auto mb-2 text-gray-300" />
+                      <p className="font-semibold text-sm">
+                        {modalSearch ? `ไม่พบรายชื่อลูกค้าที่ตรงกับ "${modalSearch}"` : 'ไม่มีรายชื่อลูกค้าในรายการนี้'}
+                      </p>
+                    </div>
+                  );
+                }
+
+                return (
+                  <table className="w-full text-sm text-left">
+                    <thead className="bg-slate-50 text-slate-600 text-xs uppercase sticky top-0 z-10 border-b border-gray-200">
+                      <tr>
+                        <th className="p-3 font-bold">ลำดับ</th>
+                        <th className="p-3 font-bold">วันที่</th>
+                        <th className="p-3 font-bold">ชื่อลูกค้า</th>
+                        <th className="p-3 font-bold">เบอร์โทร</th>
+                        <th className="p-3 font-bold">โครงการ / แปลง</th>
+                        <th className="p-3 font-bold">เซลส์ผู้ดูแล</th>
+                        <th className="p-3 font-bold text-center">
+                          {drilldownModal.type === 'leads' ? 'การเข้าชม / สถานะ' : 'แบบสอบถาม / สถานะ'}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {filtered.map((item: any, idx: number) => {
+                        const dateStr = item.leadDate || item.visitDate || '-';
+                        const cName = item.customerName || item.customer_name || 'ลูกค้าไม่ระบุชื่อ';
+                        const phone = item.phone || '-';
+                        const proj = item.projectName || item.project_name || '-';
+                        const plot = item.plotName || item.plot_name ? ` (แปลง ${item.plotName || item.plot_name})` : '';
+                        const agent = item.agentName || item.agent_name || '-';
+                        const hasVisited = Boolean(item.hasVisited || item.visitDate || item.status === 'Visit');
+                        const hasSurvey = Boolean(item.hasSurvey);
+
+                        return (
+                          <tr key={item.key || item.customerId || idx} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="p-3 text-gray-400 text-xs font-mono">{idx + 1}</td>
+                            <td className="p-3 text-gray-600 whitespace-nowrap text-xs font-medium">{dateStr}</td>
+                            <td className="p-3 font-bold text-gray-900 whitespace-nowrap">
+                              <div className="flex items-center gap-1.5">
+                                <span>{cName}</span>
+                                {drilldownModal.type === 'leads' && (
+                                  hasVisited ? (
+                                    <span className="text-[11px] font-bold text-purple-700 bg-purple-50 border border-purple-200 px-1.5 py-0.5 rounded-full inline-flex items-center gap-1">
+                                      <CheckCircle2 className="w-3 h-3 text-purple-600" />
+                                      เข้าชมแล้ว
+                                    </span>
+                                  ) : (
+                                    <span className="text-[11px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded-full">
+                                      ยังไม่เข้าชม
+                                    </span>
+                                  )
+                                )}
+                              </div>
+                            </td>
+                            <td className="p-3 text-gray-600 text-xs font-mono whitespace-nowrap">{phone}</td>
+                            <td className="p-3 text-gray-700 whitespace-nowrap text-xs font-medium">
+                              {proj}{plot}
+                            </td>
+                            <td className="p-3 text-gray-600 text-xs whitespace-nowrap font-medium">{agent}</td>
+                            <td className="p-3 text-center whitespace-nowrap">
+                              {drilldownModal.type === 'leads' ? (
+                                <div className="inline-flex items-center gap-1">
+                                  {hasSurvey && (
+                                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-md">
+                                      ทำแบบสอบถามแล้ว
+                                    </span>
+                                  )}
+                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                                    item.status === 'Booked' ? 'bg-blue-100 text-blue-700' :
+                                    item.status === 'Transferred' ? 'bg-emerald-100 text-emerald-700' :
+                                    item.status === 'Cancelled' ? 'bg-rose-100 text-rose-700' :
+                                    'bg-slate-100 text-slate-700'
+                                  }`}>
+                                    {item.status || 'Lead'}
+                                  </span>
+                                </div>
+                              ) : (
+                                <div className="inline-flex items-center gap-1">
+                                  {hasSurvey ? (
+                                    <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                      ทำแบบสอบถามแล้ว
+                                    </span>
+                                  ) : (
+                                    <span className="text-[11px] font-medium text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">
+                                      ยังไม่ได้ทำ
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                );
+              })()}
+            </div>
+            
+            {/* Modal Footer */}
+            <div className="p-3.5 px-6 bg-slate-50 border-t border-gray-100 flex justify-between items-center text-xs text-gray-500 font-medium shrink-0">
+              <span>แสดงทั้งหมด {drilldownModal.items?.length || 0} ราย</span>
+              <button 
+                onClick={() => {
+                  setDrilldownModal(prev => ({ ...prev, isOpen: false }));
+                  setModalSearch('');
+                }}
+                className="px-4 py-1.5 bg-white border border-gray-200 rounded-xl font-bold text-gray-700 hover:bg-gray-100 transition-colors shadow-sm"
+              >
+                ปิดหน้าต่าง
+              </button>
             </div>
           </div>
         </SalesOverlay>
