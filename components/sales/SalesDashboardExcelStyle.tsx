@@ -787,11 +787,22 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
         return `${d.getDate()} ${thaiMonthsShort[d.getMonth()]}`;
       };
 
-      const label = startStr === endStr
-        ? `${formatThaiShort(startWed)} (วันนี้)`
-        : `${formatThaiShort(startWed)} - ${formatThaiShort(curr)}`;
+      const formatThaiRange = (d1: Date, d2: Date) => {
+        const thaiMonthsShort = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+        if (d1.getTime() === d2.getTime()) {
+          return `${d1.getDate()} ${thaiMonthsShort[d1.getMonth()]}`;
+        }
+        if (d1.getMonth() === d2.getMonth() && d1.getFullYear() === d2.getFullYear()) {
+          return `${d1.getDate()}-${d2.getDate()} ${thaiMonthsShort[d1.getMonth()]}`;
+        }
+        return `${d1.getDate()} ${thaiMonthsShort[d1.getMonth()]} - ${d2.getDate()} ${thaiMonthsShort[d2.getMonth()]}`;
+      };
 
-      const prevLabel = `${formatThaiShort(prevWed)} - ${formatThaiShort(prevTue)}`;
+      const label = startStr === endStr
+        ? `${formatThaiShort(startWed)}`
+        : formatThaiRange(startWed, curr);
+
+      const prevLabel = formatThaiRange(prevWed, prevTue);
 
       return { startStr, endStr, label, prevStartStr, prevEndStr, prevLabel };
     };
@@ -1488,8 +1499,8 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
         </div>
 
         {/* ROW 1: KPI SUMMARY CARDS */}
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-          <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col gap-3.5">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-5">
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col gap-3.5 lg:col-span-3">
             <div className="flex justify-between items-center mb-0.5 pb-3 border-b border-gray-100">
                <span className="font-bold text-gray-800 text-base">ยอดสะสมประจำปี {selectedYear}</span>
             </div>
@@ -1532,7 +1543,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
             </div>
           </div>
 
-          <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 lg:col-span-4">
             <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-100">
               <div className="flex items-center gap-2">
                 <Calendar className="w-5 h-5 text-blue-600" />
@@ -1547,14 +1558,14 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
                 </div>
                 
                 {/* สัปดาห์นี้ */}
-                <div className="mt-1 flex items-center justify-between bg-indigo-50/70 border border-indigo-100/80 rounded-lg px-2.5 py-1 text-xs">
-                  <span className="text-indigo-800 font-medium flex items-center gap-1">
+                <div className="mt-1 flex items-center justify-between bg-indigo-50/70 border border-indigo-100/80 rounded-lg px-2.5 py-1 text-xs whitespace-nowrap">
+                  <span className="text-indigo-800 font-medium flex items-center gap-1.5 shrink-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
                     สัปดาห์นี้ <span className="text-indigo-500 text-[11px]">({metrics.currentWeek.label})</span>
                   </span>
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 shrink-0">
                     <span className="font-extrabold text-indigo-700 text-sm">{metrics.leadsWeek.length}</span>
-                    <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded-full border ${
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${
                       metrics.leadsWeekDiff.type === 'increase'
                         ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                         : metrics.leadsWeekDiff.type === 'decrease'
@@ -1567,12 +1578,12 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
                 </div>
 
                 {/* สัปดาห์ที่แล้ว */}
-                <div className="mt-1 flex items-center justify-between bg-slate-50 border border-slate-200/60 rounded-lg px-2.5 py-1 text-xs">
-                  <span className="text-slate-600 font-medium flex items-center gap-1">
+                <div className="mt-1 flex items-center justify-between bg-slate-50 border border-slate-200/60 rounded-lg px-2.5 py-1 text-xs whitespace-nowrap">
+                  <span className="text-slate-600 font-medium flex items-center gap-1.5 shrink-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
                     สัปดาห์ที่แล้ว <span className="text-slate-400 text-[11px]">({metrics.currentWeek.prevLabel})</span>
                   </span>
-                  <span className="font-bold text-slate-700 text-sm">{metrics.leadsPrevWeek.length}</span>
+                  <span className="font-bold text-slate-700 text-sm shrink-0">{metrics.leadsPrevWeek.length}</span>
                 </div>
               </div>
 
@@ -1586,15 +1597,15 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
                 </div>
 
                 {/* สัปดาห์นี้ */}
-                <div className="mt-1 flex items-center justify-between bg-purple-50/70 border border-purple-100/80 rounded-lg px-2.5 py-1 text-xs">
-                  <span className="text-purple-900 font-medium flex items-center gap-1">
+                <div className="mt-1 flex items-center justify-between bg-purple-50/70 border border-purple-100/80 rounded-lg px-2.5 py-1 text-xs whitespace-nowrap">
+                  <span className="text-purple-900 font-medium flex items-center gap-1.5 shrink-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-purple-500"></span>
                     สัปดาห์นี้ <span className="text-purple-600 text-[11px]">({metrics.currentWeek.label})</span>
                   </span>
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 shrink-0">
                     <span className="font-extrabold text-purple-800 text-sm">{metrics.viewsWeek.length}</span>
-                    <span className="text-[10px] text-purple-600 font-medium">(แบบสอบถาม {metrics.surveysWeek})</span>
-                    <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded-full border ${
+                    <span className="text-[10px] text-purple-600 font-medium bg-purple-100/60 px-1 py-0.5 rounded">(แบบสอบถาม {metrics.surveysWeek})</span>
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${
                       metrics.viewsWeekDiff.type === 'increase'
                         ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                         : metrics.viewsWeekDiff.type === 'decrease'
@@ -1607,14 +1618,14 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
                 </div>
 
                 {/* สัปดาห์ที่แล้ว */}
-                <div className="mt-1 flex items-center justify-between bg-slate-50 border border-slate-200/60 rounded-lg px-2.5 py-1 text-xs">
-                  <span className="text-slate-600 font-medium flex items-center gap-1">
+                <div className="mt-1 flex items-center justify-between bg-slate-50 border border-slate-200/60 rounded-lg px-2.5 py-1 text-xs whitespace-nowrap">
+                  <span className="text-slate-600 font-medium flex items-center gap-1.5 shrink-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
                     สัปดาห์ที่แล้ว <span className="text-slate-400 text-[11px]">({metrics.currentWeek.prevLabel})</span>
                   </span>
-                  <div className="flex items-baseline gap-1.5">
+                  <div className="flex items-center gap-1.5 shrink-0">
                     <span className="font-bold text-slate-700 text-sm">{metrics.viewsPrevWeek.length}</span>
-                    <span className="text-[10px] text-slate-500 font-medium">(แบบสอบถาม {metrics.surveysPrevWeek})</span>
+                    <span className="text-[10px] text-slate-500 font-medium bg-slate-200/60 px-1 py-0.5 rounded">(แบบสอบถาม {metrics.surveysPrevWeek})</span>
                   </div>
                 </div>
               </div>
@@ -1635,7 +1646,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
           </div>
 
           {/* Card 3: ภาพรวมการโอน & สัญญาเดือนนี้ */}
-          <div className="bg-gradient-to-br from-blue-900 to-indigo-950 p-5 rounded-2xl shadow-md text-white flex flex-col justify-between col-span-1 md:col-span-2 xl:col-span-2">
+          <div className="bg-gradient-to-br from-blue-900 to-indigo-950 p-5 rounded-2xl shadow-md text-white flex flex-col justify-between col-span-1 md:col-span-2 lg:col-span-5">
             {/* Header: Title + Big Totals */}
             <div className="flex flex-wrap items-start justify-between gap-3 mb-2">
               <div>
