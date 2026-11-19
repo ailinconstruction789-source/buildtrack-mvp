@@ -1803,7 +1803,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
 
           {/* Card 4: บ้านทั้งหมด */}
           <div 
-            className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between cursor-pointer hover:bg-slate-50 transition-colors relative group col-span-1 md:col-span-2 xl:col-span-4"
+            className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between cursor-pointer hover:bg-slate-50 transition-colors relative group col-span-1 md:col-span-2 lg:col-span-12"
             onClick={() => setShowTotalBreakdown(true)}
           >
             <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1811,47 +1811,47 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
             </div>
             <div className="grid grid-cols-2 lg:grid-cols-5 divide-y lg:divide-y-0 lg:divide-x divide-gray-100 gap-4 lg:gap-0">
               <div className="px-3">
-                <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1 group-hover:text-gray-700 transition-colors">บ้านทั้งหมด (ปี {selectedYear})</div>
-                <div className="text-xl font-black text-gray-800">{fmtM(metrics.sumYearTotalVal)}</div>
-                <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
-                  <span>{metrics.sumYearTotalCnt} หลัง</span>
-                  <span>เฉลี่ย {fmtM(metrics.sumYearTotalVal / (metrics.sumYearTotalCnt || 1))}/หลัง</span>
+                <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1 group-hover:text-gray-700 transition-colors truncate">บ้านทั้งหมด (ปี {selectedYear})</div>
+                <div className="text-xl font-black text-gray-800 truncate">{fmtM(metrics.sumYearTotalVal)}</div>
+                <div className="flex flex-wrap justify-between gap-1 mt-1 text-xs text-gray-500 font-medium">
+                  <span className="whitespace-nowrap">{metrics.sumYearTotalCnt} หลัง</span>
+                  <span className="whitespace-nowrap">เฉลี่ย {fmtM(metrics.sumYearTotalVal / (metrics.sumYearTotalCnt || 1))}/หลัง</span>
                 </div>
               </div>
 
               <div className="px-3 pt-3 lg:pt-0">
-                <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">ยอดโอนสะสม (ปี {selectedYear})</div>
-                <div className="text-xl font-black text-emerald-600">{fmtM(metrics.sumYearTransVal)}</div>
-                <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
-                  <span>{metrics.sumYearTransCnt} หลัง</span>
-                  <span className="text-rose-500">ท.ด. {fmtM(metrics.sumYearTransAppraisal)}</span>
+                <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1 truncate">ยอดโอนสะสม (ปี {selectedYear})</div>
+                <div className="text-xl font-black text-emerald-600 truncate">{fmtM(metrics.sumYearTransVal)}</div>
+                <div className="flex flex-wrap justify-between gap-1 mt-1 text-xs text-gray-500 font-medium">
+                  <span className="whitespace-nowrap">{metrics.sumYearTransCnt} หลัง</span>
+                  <span className="text-rose-500 whitespace-nowrap">ท.ด. {fmtM(metrics.sumYearTransAppraisal)}</span>
                 </div>
               </div>
 
               <div className="px-3 pt-3 lg:pt-0">
-                <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">ยอดรอโอน (ปี {selectedYear})</div>
-                <div className="text-xl font-black text-blue-600">{fmtM(metrics.sumYearWaitVal)}</div>
-                <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
-                  <span>{metrics.sumYearWaitCnt} หลัง</span>
-                  <span className="text-rose-500">ท.ด. {fmtM(metrics.sumYearWaitAppraisal)}</span>
+                <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1 truncate">ยอดรอโอน (ปี {selectedYear})</div>
+                <div className="text-xl font-black text-blue-600 truncate">{fmtM(metrics.sumYearWaitVal)}</div>
+                <div className="flex flex-wrap justify-between gap-1 mt-1 text-xs text-gray-500 font-medium">
+                  <span className="whitespace-nowrap">{metrics.sumYearWaitCnt} หลัง</span>
+                  <span className="text-rose-500 whitespace-nowrap">ท.ด. {fmtM(metrics.sumYearWaitAppraisal)}</span>
                 </div>
               </div>
 
               <div className="px-3 pt-3 lg:pt-0">
-                <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">ยอดเช่า (ปี {selectedYear})</div>
-                <div className="text-xl font-black text-teal-600">{fmtM(metrics.sumRentedVal || 0)}</div>
-                <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
-                  <span>{metrics.sumRentedCnt || 0} หลัง</span>
-                  <span>เฉลี่ย {fmtM((metrics.sumRentedVal || 0) / (metrics.sumRentedCnt || 1))}/หลัง</span>
+                <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1 truncate">ยอดเช่า (ปี {selectedYear})</div>
+                <div className="text-xl font-black text-teal-600 truncate">{fmtM(metrics.sumRentedVal || 0)}</div>
+                <div className="flex flex-wrap justify-between gap-1 mt-1 text-xs text-gray-500 font-medium">
+                  <span className="whitespace-nowrap">{metrics.sumRentedCnt || 0} หลัง</span>
+                  <span className="whitespace-nowrap">เฉลี่ย {fmtM((metrics.sumRentedVal || 0) / (metrics.sumRentedCnt || 1))}/หลัง</span>
                 </div>
               </div>
 
               <div className="px-3 pt-3 lg:pt-0">
-                <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">ยอดคงเหลือ (ว่าง)</div>
-                <div className="text-xl font-black text-gray-800">{fmtM(metrics.sumAvailVal)}</div>
-                <div className="flex justify-between mt-1 text-xs text-gray-500 font-medium">
-                  <span>{metrics.sumAvailCnt} หลัง</span>
-                  <span>เฉลี่ย {fmtM(metrics.sumAvailVal / (metrics.sumAvailCnt || 1))}/หลัง</span>
+                <div className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1 truncate">ยอดคงเหลือ (ว่าง)</div>
+                <div className="text-xl font-black text-gray-800 truncate">{fmtM(metrics.sumAvailVal)}</div>
+                <div className="flex flex-wrap justify-between gap-1 mt-1 text-xs text-gray-500 font-medium">
+                  <span className="whitespace-nowrap">{metrics.sumAvailCnt} หลัง</span>
+                  <span className="whitespace-nowrap">เฉลี่ย {fmtM(metrics.sumAvailVal / (metrics.sumAvailCnt || 1))}/หลัง</span>
                 </div>
               </div>
             </div>
