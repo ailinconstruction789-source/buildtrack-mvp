@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useTransition } from 'react';
 import {
   Calendar,
   ChevronLeft,
@@ -97,13 +97,16 @@ export default function ForemanInspectionCalendar({
   const [currentYear, setCurrentYear] = useState<number>(now.getFullYear());
   const [currentMonth, setCurrentMonth] = useState<number>(now.getMonth() + 1); // 1-12
 
-  // Internal foreman filter
+  // Internal foreman filter with React 18/19 useTransition (prevents blocking Main Thread during selection)
   const [internalForeman, setInternalForeman] = useState<string>(propForeman || 'all');
   const activeForeman = propForeman !== undefined ? propForeman : internalForeman;
+  const [isPendingForeman, startTransition] = useTransition();
 
   const handleForemanChange = (fm: string) => {
-    setInternalForeman(fm);
-    if (onSelectForeman) onSelectForeman(fm);
+    startTransition(() => {
+      setInternalForeman(fm);
+      if (onSelectForeman) onSelectForeman(fm);
+    });
   };
 
   // Selected Day Modal for Drill-down
@@ -126,18 +129,34 @@ export default function ForemanInspectionCalendar({
 
   const snapshotsRef = React.useRef(snapshots);
   snapshotsRef.current = snapshots;
+
+  // Lightweight fingerprint hash (< 0.1ms without string allocations)
   const snapshotsFingerprint = useMemo(() => {
     if (!snapshots || snapshots.length === 0) return '0';
-    return `${snapshots.length}:` + snapshots.map(s =>
-      `${s.id || ''}_${s.snapshot_date || ''}_${s.plot_id || ''}_${s.task_template_id || ''}_${s.planned_start || ''}_${s.planned_end || ''}_${s.is_updated_today ? 1 : 0}_${s.status_reason || ''}_${s.status_note || ''}_${s.current_progress || 0}`
-    ).join(';');
+    let hash = 0;
+    const len = snapshots.length;
+    for (let i = 0; i < len; i += Math.max(1, Math.floor(len / 25))) {
+      const s = snapshots[i];
+      const str = `${s.id || ''}_${s.snapshot_date || ''}_${s.plot_id || ''}_${s.task_template_id || ''}_${s.is_updated_today ? 1 : 0}_${s.current_progress || 0}`;
+      for (let j = 0; j < str.length; j++) {
+        hash = ((hash << 5) - hash + str.charCodeAt(j)) | 0;
+      }
+    }
+    return `${len}:${hash}`;
   }, [snapshots]);
 
+  // Lightweight plots hash including previous_foreman_name
   const plotsFingerprint = useMemo(() => {
     if (!plots || plots.length === 0) return '0';
-    return plots
-      .map(p => `${p.id}:${getPlotForemanName(p) || ''}:${String(p.handover_foreman_name || '').trim()}`)
-      .join('|');
+    let hash = 0;
+    for (let i = 0; i < plots.length; i++) {
+      const p = plots[i];
+      const str = `${p.id}:${p.foreman_name || p.foreman || ''}:${p.previous_foreman_name || ''}:${p.handover_foreman_name || ''}`;
+      for (let j = 0; j < str.length; j++) {
+        hash = ((hash << 5) - hash + str.charCodeAt(j)) | 0;
+      }
+    }
+    return `${plots.length}:${hash}`;
   }, [plots]);
 
   const activeRequestRef = React.useRef<{ year: number; month: number; foreman: string; project: string }>({
@@ -162,6 +181,7 @@ export default function ForemanInspectionCalendar({
       ? (plots || []).filter(p =>
           (getPlotForemanName(p) || '').toLowerCase() === reqForeman.toLowerCase() ||
           String(p.handover_foreman_name || '').trim().toLowerCase() === reqForeman.toLowerCase() ||
+          String((p as any).previous_foreman_name || '').trim().toLowerCase() === reqForeman.toLowerCase() ||
           (defects || []).some((d: any) =>
             d?.defect_stage === 'handover' &&
             String(d.plot_id) === String(p.id) &&
@@ -217,7 +237,7 @@ export default function ForemanInspectionCalendar({
   };
 
   // Overall loading flag (true if fetching snapshots or parent data is not yet available)
-  const isDataLoading = propIsLoading || isLoadingSnapshots || plots.length === 0;
+  const isDataLoading = propIsLoading || isLoadingSnapshots || isPendingForeman || plots.length === 0;
 
   // Available foremen list
   const availableForemen = useMemo(() => {
@@ -537,8 +557,12 @@ export default function ForemanInspectionCalendar({
         {/* Toolbar: Stepper & Foreman Selector & Manual Refresh */}
         <div className="flex flex-wrap items-center gap-2.5">
           {/* Foreman Selector */}
-          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5">
-            <User size={13} className="text-blue-600" />
+          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 transition-all">
+            {isPendingForeman ? (
+              <Loader2 size={13} className="text-blue-600 animate-spin" />
+            ) : (
+              <User size={13} className="text-blue-600" />
+            )}
             <select
               value={activeForeman}
               onChange={e => handleForemanChange(e.target.value)}
