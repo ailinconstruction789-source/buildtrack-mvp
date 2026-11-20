@@ -264,10 +264,21 @@ export default function AdminPlotView({
 
     setIsUpdating(true);
     try {
+      const oldFm = (editingPlot.foreman_name || editingPlot.foreman || '').trim();
+      const newFm = (editForemanName || '').trim();
+      const isForemanChanged = oldFm && newFm && oldFm.toLowerCase() !== newFm.toLowerCase();
+
       const payload: any = {
         house_type_id: editHouseTypeId,
-        foreman_name: editForemanName || null,
-        garage_orientation: isEditInfrastructure ? 'standard' : editGarageOrientation
+        foreman_name: newFm || null,
+        garage_orientation: isEditInfrastructure ? 'standard' : editGarageOrientation,
+        ...(isForemanChanged
+          ? {
+              previous_foreman_name: oldFm,
+              foreman_handoff_at: new Date().toISOString(),
+              foreman_handoff_reason: 'แก้ไขจากหน้าจัดการแปลง',
+            }
+          : {}),
       };
 
       let { error } = await supabase
@@ -277,6 +288,9 @@ export default function AdminPlotView({
 
       if (error && error.code === '42703') {
         delete payload.garage_orientation;
+        delete payload.previous_foreman_name;
+        delete payload.foreman_handoff_at;
+        delete payload.foreman_handoff_reason;
         const res = await supabase.from('plots').update(payload).eq('id', editingPlot.id);
         error = res.error;
       }
@@ -719,7 +733,14 @@ export default function AdminPlotView({
                               )}
                             </td>
                             <td className="py-3 px-4 font-medium text-slate-600">
-                              {plot.foreman_name || <span className="text-slate-300">-</span>}
+                              <div className="flex flex-col">
+                                <span>{plot.foreman_name || <span className="text-slate-300">-</span>}</span>
+                                {plot.previous_foreman_name && (
+                                  <span className="text-[10px] text-amber-600 font-semibold" title={`รับช่วงต่อจาก: ${plot.previous_foreman_name}`}>
+                                    🔄 เดิม: {plot.previous_foreman_name}
+                                  </span>
+                                )}
+                              </div>
                             </td>
                             <td className="py-3 px-4 text-right">
                               <button

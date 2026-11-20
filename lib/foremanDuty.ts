@@ -557,6 +557,15 @@ export function getForemanScheduledTasksForDate(options: GetForemanTasksOptions)
     if (pFm.toLowerCase() === targetFmLower) return true;
     // If this plot has a snapshot recorded on target date for this foreman, include it (Finding G)
     if (historicalPlotIdsForFm.has(String(plot.id))) return true;
+    // If any assignment for this plot is explicitly assigned to target foreman
+    if (assignmentMap.size > 0) {
+      for (const [key, a] of assignmentMap) {
+        if (key.startsWith(`${plot.id}-`) || key.startsWith(`${plot.id}_`)) {
+          const aFm = String(a?.foreman_name || '').trim().toLowerCase();
+          if (aFm && aFm === targetFmLower) return true;
+        }
+      }
+    }
     return false;
   });
 
@@ -606,14 +615,18 @@ export function getForemanScheduledTasksForDate(options: GetForemanTasksOptions)
         return;
       }
 
-      // Today (live operational view): reflect live plot foreman immediately even if an earlier morning snapshot existed.
-      // Past dates: preserve historical foreman from snapshot (Finding G), EXCEPT when the snapshot only recorded an
-      // unassigned placeholder ("ยังไม่ระบุโฟร์แมน") and the plot now has a real foreman assigned.
+      // Today (live operational view): reflect task-specific assignment foreman if set, otherwise plot foreman
+      const assignFm = String(taskAssign?.foreman_name || '').trim();
+      const hasAssignFm = Boolean(assignFm) && !isUnassignedForemanName(assignFm);
+      const effectivePlotFm = hasAssignFm
+        ? canonicalizeForemanName(assignFm, foremenList)
+        : plotFm;
+
       const rawSnapFm = String(snapshot?.foreman_name || '').trim();
       const hasConcreteSnapFm = Boolean(rawSnapFm) && !isUnassignedForemanName(rawSnapFm);
       const taskForeman = isViewingToday
-        ? plotFm
-        : (hasConcreteSnapFm ? canonicalizeForemanName(rawSnapFm, foremenList) : plotFm);
+        ? effectivePlotFm
+        : (hasConcreteSnapFm ? canonicalizeForemanName(rawSnapFm, foremenList) : effectivePlotFm);
 
       if (!isTargetAll && taskForeman.toLowerCase() !== targetFmLower) {
         return;
@@ -2089,6 +2102,7 @@ export function getMonthlyForemanInspectionCompliance(options: GetMonthlyInspect
   }
   plots.forEach(p => {
     registerCanonicalForeman(p?.foreman_name || p?.foreman);
+    registerCanonicalForeman(p?.previous_foreman_name);
     registerCanonicalForeman(p?.handover_foreman_name);
   });
   (defects || []).forEach(d => {

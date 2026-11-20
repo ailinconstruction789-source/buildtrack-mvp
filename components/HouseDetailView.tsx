@@ -3,7 +3,7 @@ import React from 'react';
 import { supabase } from '@/lib/supabase';
 import { 
   Activity, Calendar, Camera, HardHat, Loader2, Monitor, Pickaxe, PlusCircle, UserCog, Users, ImageIcon, Truck, XCircle, Send, Clock, CheckCircle, ShieldAlert, Search, Package,
-  Droplets, Zap, Eye, X, CheckCircle2, AlertCircle, ShieldCheck
+  Droplets, Zap, Eye, X, CheckCircle2, AlertCircle, ShieldCheck, RefreshCw
 } from 'lucide-react';
 import HouseHandoverView from './HouseHandoverView';
 import QCPlotTaskTab from './qc/QCPlotTaskTab';
@@ -24,6 +24,8 @@ import {
 import ScheduleRevisionModal from './ScheduleRevisionModal';
 import ScheduleHistoryModal from './ScheduleHistoryModal';
 import LockBaselineModal from './LockBaselineModal';
+import ConstructionForemanHandoffModal from './ConstructionForemanHandoffModal';
+import { getPlotConstructionForemanInfo } from '@/lib/foremanHandoff';
 
 interface HouseDetailViewProps {
   view: string;
@@ -277,6 +279,24 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
 
   const baseline: PlotBaselineData = React.useMemo(() => parsePlotBaseline(selectedPlot), [selectedPlot]);
   const scoreStyle = React.useMemo(() => getScoreBadgeStyle(baseline.score), [baseline.score]);
+
+  // Construction Foreman Handoff State
+  const [isHandoffModalOpen, setIsHandoffModalOpen] = React.useState(false);
+  const constructionForemanInfo = React.useMemo(() => {
+    if (!selectedPlot) return null;
+    const plotTasks = Array.isArray(taskTemplates)
+      ? taskTemplates.filter((t: any) => !selectedPlot.house_type_id || !t.house_type_id || String(t.house_type_id) === String(selectedPlot.house_type_id))
+      : [];
+    const plotAssignments = (assignments || []).filter((a: any) => String(a.plot_id) === String(selectedPlot.id));
+    const plotUpdates = (allUpdatesRecord || []).filter((u: any) => String(u.plot_id) === String(selectedPlot.id));
+    return getPlotConstructionForemanInfo({
+      plot: selectedPlot,
+      tasks: plotTasks,
+      assignments: plotAssignments,
+      updates: plotUpdates,
+      foremenList: foremenList || [],
+    });
+  }, [selectedPlot, taskTemplates, assignments, allUpdatesRecord, foremenList]);
 
   const handleScheduleSaveCheck = () => {
     const inputTaskIds = Object.keys(scheduleInputs || {});
@@ -831,7 +851,32 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                            )}
                            <MeterStatusBadges plot={selectedPlot} size="sm" onRefresh={fetchAllData} />
                         </div>
-                        <p className="text-slate-400 font-bold uppercase text-[9px] italic">{selectedPlot.foreman || 'ไม่ระบุ'}</p>
+                        {/* 👷 โฟร์แมนผู้รับผิดชอบ & โฟร์แมนคนเดิม (ถ้ามีการส่งมอบงาน) พร้อมปุ่มเปลี่ยน */}
+                        <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                          <span className="text-slate-300 font-bold text-[10px] sm:text-xs flex items-center gap-1" title="โฟร์แมนผู้รับผิดชอบปัจจุบัน">
+                            <span className="text-slate-400 text-[9px] uppercase font-bold">โฟร์แมน:</span>
+                            <span className="text-white font-bold">{selectedPlot.foreman_name || selectedPlot.foreman || 'ไม่ระบุ'}</span>
+                          </span>
+                          {selectedPlot.previous_foreman_name && (
+                            <span
+                              className="inline-flex items-center gap-0.5 bg-slate-700/80 hover:bg-slate-700 text-amber-300 border border-amber-400/30 text-[9px] sm:text-[10px] px-2 py-0.5 rounded-full font-semibold shadow-2xs transition-colors cursor-help"
+                              title={`รับช่วงต่อจาก: ${selectedPlot.previous_foreman_name}${selectedPlot.foreman_handoff_at ? ` เมื่อ ${new Date(selectedPlot.foreman_handoff_at).toLocaleDateString('th-TH')}` : ''}${selectedPlot.foreman_handoff_reason ? ` (${selectedPlot.foreman_handoff_reason})` : ''}`}
+                            >
+                              <span>🔄 เดิม: {selectedPlot.previous_foreman_name}</span>
+                            </span>
+                          )}
+                          {(isAdmin || isOwner || isProjectPlanner || currentUserRole === 'Foreman') && (
+                            <button
+                              type="button"
+                              onClick={() => setIsHandoffModalOpen(true)}
+                              className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] font-bold text-indigo-300 hover:text-white bg-indigo-500/20 hover:bg-indigo-600/40 border border-indigo-400/30 px-2 py-0.5 rounded-lg transition-all active:scale-95 shrink-0 shadow-xs ml-1"
+                              title="เปลี่ยนโฟร์แมนผู้รับผิดชอบ (ส่งมอบงานค้าง / โอนย้ายงาน)"
+                            >
+                              <RefreshCw size={10} />
+                              <span>เปลี่ยนโฟร์แมน</span>
+                            </button>
+                          )}
+                        </div>
                     </div>
 
                     {/* ส่วนกลาง: ข้อมูล 4 ตัว (ปรับฟอนต์ให้เท่าขนาดชื่องานคือ text-xs) */}
@@ -1544,6 +1589,11 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                                                     )}
                                                       {renderSEBadge(seStatus, seInspector, seDate, openTaskProgress)}
                                                       {renderQCBadge(qcStatus, qcInspector, qcDate, task.require_qc, openTaskProgress)}
+                                                      {assignment?.foreman_name && (
+                                                        <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100" title={`โฟร์แมนผู้รับผิดชอบงานนี้: ${assignment.foreman_name}`}>
+                                                          👤 {assignment.foreman_name}
+                                                        </span>
+                                                      )}
                                                     </div>
                                                   </div>
                                               </div>
@@ -1730,6 +1780,11 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
                                                <div className="flex flex-col min-w-0 flex-1">
                                                   <span className="text-[10px] sm:text-xs font-bold text-blue-700 truncate">{assignment.contractor_name ? assignment.contractor_name.split(' ')[0] : 'ไม่ระบุ'}</span>
                                                   {assignment.contractor_phone && <span className="text-[9px] sm:text-[10px] font-medium text-slate-400 truncate">📞 {assignment.contractor_phone}</span>}
+                                                  {assignment?.foreman_name && (
+                                                    <span className="text-[9px] font-bold text-indigo-600 truncate block" title={`โฟร์แมนผู้รับผิดชอบงานนี้: ${assignment.foreman_name}`}>
+                                                      👤 {assignment.foreman_name}
+                                                    </span>
+                                                  )}
                                                </div>
                                                {/* ✅ แก้ไขปุ่มเปลี่ยนช่าง (รูปเฟือง UserCog) ให้เรียก Modal ถูกต้อง */}
                                                {(isAdmin || isProjectPlanner || isProcurement) && (
@@ -2194,6 +2249,29 @@ const HouseDetailView = function HouseDetailView(props: HouseDetailViewProps) {
           startDate={lockBaselineModalData.startDate}
           endDate={lockBaselineModalData.endDate}
           isSubmitting={isLockingBaseline}
+        />
+      )}
+
+      {/* 🔄 Construction Foreman Handoff Modal */}
+      {isHandoffModalOpen && constructionForemanInfo && (
+        <ConstructionForemanHandoffModal
+          isOpen={isHandoffModalOpen}
+          onClose={() => setIsHandoffModalOpen(false)}
+          plot={selectedPlot}
+          foremanInfo={constructionForemanInfo}
+          foremenList={foremenList || []}
+          currentUserName={currentUserName || 'User'}
+          onSuccess={(newFm, prevFm) => {
+            if (selectedPlot) {
+              selectedPlot.foreman_name = newFm;
+              selectedPlot.foreman = newFm;
+              selectedPlot.previous_foreman_name = prevFm;
+              selectedPlot.foreman_handoff_at = new Date().toISOString();
+            }
+            if (fetchAllData) fetchAllData();
+          }}
+          showAlert={showAlert}
+          showToast={showToast ? (msg) => showToast(msg, 'success') : undefined}
         />
       )}
 

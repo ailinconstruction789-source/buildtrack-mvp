@@ -49,7 +49,7 @@ export default function LockBaselineModal({
   const totalDays = calculateDays();
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
       <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-200">
         {/* Header */}
         <div className="bg-gradient-to-r from-indigo-600 via-indigo-700 to-blue-600 p-4 text-white flex items-center justify-between">

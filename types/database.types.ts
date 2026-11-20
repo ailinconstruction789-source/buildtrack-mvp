@@ -65,6 +65,11 @@ export interface Plot {
   schedule_delay_revisions?: number;
   schedule_planning_score?: number;
   handover_notes?: string;
+  // Construction Foreman Tracking & Handoff
+  foreman_assigned_at?: string;
+  previous_foreman_name?: string;
+  foreman_handoff_at?: string;
+  foreman_handoff_reason?: string;
 }
 
 export interface PlotScheduleRevision {
@@ -105,9 +110,25 @@ export interface PlotTaskAssignment {
   task_name: string;
   contractor_name?: string;
   contractor_phone?: string;
+  foreman_name?: string;
   current_progress: number;
   actual_start_date?: string;
   actual_end_date?: string;
+  created_at: string;
+}
+
+export interface PlotForemanHandover {
+  id: string;
+  plot_id: string;
+  from_foreman?: string;
+  to_foreman: string;
+  handoff_mode?: 'takeover' | 'reassign_all';
+  reason?: string;
+  completed_tasks_count?: number;
+  transferred_tasks_count?: number;
+  transferred_task_ids?: string[];
+  frozen_task_ids?: string[];
+  created_by?: string;
   created_at: string;
 }
 
