@@ -11,6 +11,7 @@ import { ComposedChart, Bar, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip as
 import SalesOverlay from './SalesOverlay';
 import { excelReportApi } from '@/lib/sales/excelReportClient';
 import { useSalesWorkspaceMode } from './SalesWorkspaceModeProvider';
+import { isExternalProject } from '@/lib/projectUtils';
 
 const getTodayDateStr = () => {
   const d = new Date();
@@ -125,7 +126,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
             excelReportApi.read(projectName),
             fetchSalesWithoutLimit('plots', { select: '*, house_types(type_name, is_infrastructure)', orderBy: 'id', ascending: true }),
             catalog(supabase.from('house_types').select('*')),
-            catalog(supabase.from('projects').select('name, is_closed').order('name'))
+            catalog(supabase.from('projects').select('name, is_closed, layout_data').order('name'))
           ]);
           if (!isCurrentRequest()) return;
           const sales = report.projects.flatMap(project => {
@@ -143,7 +144,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
         const [pData, hTypeData, projList, lData, rContracts] = await Promise.all([
           fetchSalesWithoutLimit('plots', { select: '*, house_types(type_name, is_infrastructure)', orderBy: 'id', ascending: true }),
           supabase.from('house_types').select('*').then(r => r.data || []),
-          supabase.from('projects').select('name, is_closed').order('name').then(r => r.data || []),
+          supabase.from('projects').select('name, is_closed, layout_data').order('name').then(r => r.data || []),
           fetchSalesWithoutLimit('leads', { orderBy: 'created_at', ascending: false }),
           Promise.resolve(supabase.from('rental_contracts').select('*')).then(r => r.data || []).catch(() => [])
         ]);
@@ -445,10 +446,13 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
     const targetMonthPrefix = `${selectedYear}-${selectedMonth.padStart(2, '0')}`;
     const activeProjectName = (selectedProjectFilter && selectedProjectFilter !== 'all') ? selectedProjectFilter : null;
 
-    // Filter plots by project if specified
+    // Filter plots by project if specified. When viewing all, exclude external projects (งานนอกโครงการ / บ้านสั่งสร้างพิเศษ)
     const activePlots = activeProjectName 
       ? data.plots.filter((p: any) => p.project_name === activeProjectName)
-      : data.plots;
+      : data.plots.filter((p: any) => {
+          const proj = (data.projects || []).find((pr: any) => pr.name === p.project_name);
+          return !isExternalProject(proj || p.project_name);
+        });
 
     // Build unified visits, lead dates, and appraisal amounts from CRM V2 evidence
     const visitMap = new Map<string, {
@@ -603,11 +607,17 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
     const allVisits = Array.from(visitMap.values());
     const filteredVisits = activeProjectName 
       ? allVisits.filter(v => v.projectName === activeProjectName)
-      : allVisits;
+      : allVisits.filter(v => {
+          const proj = (data.projects || []).find((pr: any) => pr.name === v.projectName);
+          return !isExternalProject(proj || v.projectName);
+        });
     const allLeadItems = Array.from(leadMap.values());
     const filteredLeadItems = activeProjectName
       ? allLeadItems.filter(l => l.projectName === activeProjectName)
-      : allLeadItems;
+      : allLeadItems.filter(l => {
+          const proj = (data.projects || []).find((pr: any) => pr.name === l.projectName);
+          return !isExternalProject(proj || l.projectName);
+        });
     const hasRealVisits = data.canonical || allVisits.length > 0;
     const hasRealLeads = data.canonical || allLeadItems.length > 0;
 
@@ -791,10 +801,14 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       });
     }
 
-    // Filter records by project if specified
+    // Filter records by project if specified. When viewing all, exclude external projects (งานนอกโครงการ / บ้านสั่งสร้างพิเศษ)
     const filteredRecords = activeProjectName 
       ? records.filter((r: any) => r.plot?.project_name === activeProjectName || r.project_name === activeProjectName)
-      : records;
+      : records.filter((r: any) => {
+          const pName = r.plot?.project_name || r.project_name;
+          const proj = (data.projects || []).find((pr: any) => pr.name === pName);
+          return !isExternalProject(proj || pName);
+        });
     const unknownHistory = data.canonical ? {
       booking: filteredRecords.filter((r: any) => !r.bookDate).length,
       transfer: filteredRecords.filter((r: any) => ['transferred', 'handover'].includes(r.stage) && !r.transferDate).length,
@@ -1074,6 +1088,8 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
         return proj === selectedProjectFilter;
       }
       const isClosed = closedProjects.has(proj);
+      const targetProj = (data.projects || []).find((pr: any) => pr.name === proj);
+      if (isExternalProject(targetProj || proj)) return false;
       const yearTotal = stats.transferred + stats.waiting + stats.available + (stats.rented || 0);
       return !isClosed && yearTotal > 0;
     });
@@ -1513,7 +1529,9 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
               >
                 <option value="">ทุกโครงการ</option>
                 {(data.projects || []).filter((p: any) => !p.is_closed).map((p: any) => (
-                  <option key={p.name} value={p.name}>{p.name}</option>
+                  <option key={p.name} value={p.name}>
+                    {p.name}{isExternalProject(p) ? ' 🏷️ (งานนอกโครงการ)' : ''}
+                  </option>
                 ))}
               </select>
             </div>

@@ -2,6 +2,7 @@ import { buildProjectMap, type ProjectMapStatus } from './projectMapContracts';
 import type { ProjectSaleRow } from './projectSalesContracts';
 import type { ExcelReportData } from './excelReportContracts';
 import type { ExcelHouseDetails } from './excelHouseDetails';
+import { isExternalProject } from '@/lib/projectUtils';
 
 export interface ExcelSaleRow { sale: ProjectSaleRow; bookedDate: string | null; cancelledDate: string | null; transferredDate: string | null; expectedTransferDate: string | null; leadDate: string | null; houseDetails?: ExcelHouseDetails; tdPrice?: number | null }
 export interface ExcelStockRow {
@@ -34,7 +35,10 @@ function eventDates(sale: ProjectSaleRow): ExcelSaleRow {
 export function buildExcelReport(data: ExcelReportData, projectName: string | null, cutoff: string, cumulativeYear: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(cutoff) || !Number.isFinite(Date.parse(cutoff))
     || new Date(cutoff).toISOString().slice(0, 10) !== cutoff || !/^\d{4}$/.test(cumulativeYear)) throw new Error('Invalid report date');
-  const projects = data.projects.filter(project => projectName === null || project.map.projectName === projectName);
+  const projects = data.projects.filter(project => {
+    if (projectName !== null) return project.map.projectName === projectName;
+    return !isExternalProject(project.map.projectName);
+  });
   const leadDates = new Map<string, string>();
   for (const project of data.projects) for (const visit of [...project.evidence.legacyVisits, ...project.evidence.unassignedLegacyVisits]) {
     const prior = leadDates.get(visit.customerId);
