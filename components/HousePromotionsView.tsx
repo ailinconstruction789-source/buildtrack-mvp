@@ -1017,40 +1017,40 @@ export default function HousePromotionsView({
                 <thead>
                   {/* Row 1: Room Headers */}
                   <tr className="bg-slate-900 text-white text-xs font-black">
-                    <th className="sticky left-0 bg-slate-900 p-3 z-30 min-w-[150px] border-r-4 border-slate-700 shadow-md">
+                    <th className="sticky top-0 left-0 bg-slate-900 p-3 z-40 min-w-[150px] border-r-4 border-slate-700 shadow-md">
                       แปลงบ้าน
                     </th>
                     {ROOM_GROUPS.map((group, gIdx) => (
                       <th 
                         key={gIdx} 
                         colSpan={group.items.length} 
-                        className="p-3 text-center border-r-4 border-slate-700 bg-slate-800/95 uppercase tracking-wider"
+                        className="sticky top-0 p-3 text-center border-r-4 border-slate-700 bg-slate-800 text-white uppercase tracking-wider z-30"
                       >
                         <span className="mr-1.5 text-lg">{group.icon}</span> {group.room}
                       </th>
                     ))}
-                    <th className="p-3 text-center min-w-[150px] bg-slate-900 border-l-2 border-slate-700">
+                    <th className="sticky top-0 p-3 text-center min-w-[150px] bg-slate-900 border-l-2 border-slate-700 z-30">
                       ความคืบหน้ารวม
                     </th>
                   </tr>
 
                   {/* Row 2: Master Item Names */}
                   <tr className="bg-slate-100 text-slate-800 text-[11px] font-black border-b-2 border-slate-300">
-                    <th className="sticky left-0 bg-slate-100 p-2.5 z-30 border-r-4 border-slate-300 shadow-xs">
+                    <th className="sticky top-[45px] left-0 bg-slate-100 p-2.5 z-40 border-r-4 border-slate-300 shadow-xs">
                       รหัสแปลง / แบบบ้าน
                     </th>
                     {ALL_MASTER_ITEMS.map((item, iIdx) => (
                       <th 
                         key={iIdx} 
-                        className={`p-2.5 text-center font-extrabold min-w-[130px] max-w-[160px] truncate ${
-                          item.isLastInRoom ? 'border-r-4 border-slate-300 bg-slate-200/50' : 'border-r border-slate-200'
+                        className={`sticky top-[45px] p-2.5 text-center font-extrabold min-w-[130px] max-w-[160px] truncate bg-slate-100 z-20 ${
+                          item.isLastInRoom ? 'border-r-4 border-slate-300 bg-slate-200/90' : 'border-r border-slate-200'
                         }`} 
                         title={`${item.room}: ${item.item_name}`}
                       >
                         {item.item_name}
                       </th>
                     ))}
-                    <th className="p-2.5 text-center border-l-2 border-slate-300 bg-slate-100">
+                    <th className="sticky top-[45px] p-2.5 text-center border-l-2 border-slate-300 bg-slate-100 z-20">
                       สรุป % ติดตั้ง
                     </th>
                   </tr>
