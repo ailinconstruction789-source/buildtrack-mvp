@@ -296,6 +296,25 @@ export function buildConstructionHandoffPlan(options: {
 }
 
 /**
+ * Helper to identify missing column or schema cache mismatch errors from PostgREST / Supabase.
+ */
+export function isMissingColumnOrSchemaError(err: any): boolean {
+  if (!err) return false;
+  const code = String(err.code || '');
+  const msg = String(err.message || '').toLowerCase();
+  return (
+    code === '42703' ||
+    code === '42P01' ||
+    code === 'PGRST204' ||
+    code === 'PGRST205' ||
+    msg.includes('schema cache') ||
+    msg.includes('could not find the') ||
+    msg.includes('column') ||
+    msg.includes('does not exist')
+  );
+}
+
+/**
  * Executes the database updates for a construction foreman handoff:
  * 1. Updates plot_task_assignments for frozen completed tasks.
  * 2. Updates plot_task_assignments for transferred incomplete tasks.
@@ -345,20 +364,23 @@ export async function executeConstructionForemanHandoff(
 
     // 1. Freeze completed tasks with the original foreman (if in takeover mode)
     if (plan.mode === 'takeover' && plan.freezeCompletedTaskTemplateIds.length > 0 && plan.freezeCompletedForeman) {
-      // First ensure the rows exist in plot_task_assignments
       for (const tId of plan.freezeCompletedTaskTemplateIds) {
-        const { error: freezeErr } = await supabaseClient
-          .from('plot_task_assignments')
-          .upsert(
-            {
-              plot_id: String(plotId),
-              task_template_id: tId,
-              foreman_name: plan.freezeCompletedForeman,
-            },
-            { onConflict: 'plot_id,task_template_id' }
-          );
-        if (freezeErr && freezeErr.code !== '42703') {
-          console.warn('Notice updating frozen task assignment:', freezeErr.message);
+        try {
+          const { error: freezeErr } = await supabaseClient
+            .from('plot_task_assignments')
+            .upsert(
+              {
+                plot_id: String(plotId),
+                task_template_id: tId,
+                foreman_name: plan.freezeCompletedForeman,
+              },
+              { onConflict: 'plot_id,task_template_id' }
+            );
+          if (freezeErr && !isMissingColumnOrSchemaError(freezeErr)) {
+            console.warn('Notice updating frozen task assignment:', freezeErr.message);
+          }
+        } catch (e) {
+          // Graceful fallback if task-level column not yet created
         }
       }
     }
@@ -366,26 +388,30 @@ export async function executeConstructionForemanHandoff(
     // 2. Transfer incomplete / pending tasks to the new incoming foreman
     if (plan.transferTaskTemplateIds.length > 0) {
       for (const tId of plan.transferTaskTemplateIds) {
-        const { error: transferErr } = await supabaseClient
-          .from('plot_task_assignments')
-          .upsert(
-            {
-              plot_id: String(plotId),
-              task_template_id: tId,
-              foreman_name: plan.newPlotForeman,
-            },
-            { onConflict: 'plot_id,task_template_id' }
-          );
-        if (transferErr && transferErr.code !== '42703') {
-          console.warn('Notice updating transferred task assignment:', transferErr.message);
+        try {
+          const { error: transferErr } = await supabaseClient
+            .from('plot_task_assignments')
+            .upsert(
+              {
+                plot_id: String(plotId),
+                task_template_id: tId,
+                foreman_name: plan.newPlotForeman,
+              },
+              { onConflict: 'plot_id,task_template_id' }
+            );
+          if (transferErr && !isMissingColumnOrSchemaError(transferErr)) {
+            console.warn('Notice updating transferred task assignment:', transferErr.message);
+          }
+        } catch (e) {
+          // Graceful fallback if task-level column not yet created
         }
       }
     }
 
-    // 3. Update the plot with the new foreman and record the previous foreman
+    // 3. Update the plot with the new foreman and record previous foreman
+    // NOTE: Only use valid database columns on `plots` (use `foreman_name`, NOT `foreman`)
     const plotPayload: any = {
       foreman_name: plan.newPlotForeman,
-      foreman: plan.newPlotForeman,
       previous_foreman_name: plan.previousPlotForeman || null,
       foreman_handoff_at: nowIso,
       foreman_handoff_reason: reason.trim() || null,
@@ -397,15 +423,13 @@ export async function executeConstructionForemanHandoff(
       .update(plotPayload)
       .eq('id', String(plotId));
 
-    // Graceful fallback if new columns are not yet applied to the active DB instance
-    if (plotErr && plotErr.code === '42703') {
-      delete plotPayload.previous_foreman_name;
-      delete plotPayload.foreman_handoff_at;
-      delete plotPayload.foreman_handoff_reason;
-      delete plotPayload.foreman_assigned_at;
+    // Graceful fallback if extra tracking columns are not yet in PostgREST schema cache
+    if (plotErr && isMissingColumnOrSchemaError(plotErr)) {
       const fallbackRes = await supabaseClient
         .from('plots')
-        .update(plotPayload)
+        .update({
+          foreman_name: plan.newPlotForeman,
+        })
         .eq('id', String(plotId));
       plotErr = fallbackRes.error;
     }
@@ -414,7 +438,7 @@ export async function executeConstructionForemanHandoff(
 
     // 4. Record audit entry in plot_foreman_handovers
     try {
-      await supabaseClient.from('plot_foreman_handovers').insert([
+      const { error: auditErr } = await supabaseClient.from('plot_foreman_handovers').insert([
         {
           plot_id: String(plotId),
           from_foreman: plan.previousPlotForeman || null,
@@ -429,6 +453,9 @@ export async function executeConstructionForemanHandoff(
           created_at: nowIso,
         },
       ]);
+      if (auditErr && !isMissingColumnOrSchemaError(auditErr)) {
+        console.warn('Notice inserting plot_foreman_handovers audit record:', auditErr.message);
+      }
     } catch (auditErr) {
       console.warn('Notice inserting plot_foreman_handovers audit record:', auditErr);
     }

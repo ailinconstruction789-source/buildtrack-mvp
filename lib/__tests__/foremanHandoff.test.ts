@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   isQCApprovedAction,
   isQCRejectedAction,
+  isMissingColumnOrSchemaError,
   evaluateConstructionTaskStatus,
   getPlotConstructionForemanInfo,
   buildConstructionHandoffPlan,
@@ -252,6 +253,79 @@ describe('foremanHandoff Helper', () => {
           transferred_tasks_count: 1,
         })
       ]);
+    });
+
+    it('handles PostgREST schema cache mismatch gracefully by falling back to core foreman_name', async () => {
+      const mockUpsert = vi.fn().mockResolvedValue({
+        error: { code: 'PGRST204', message: "Could not find the 'foreman_name' column of 'plot_task_assignments' in the schema cache" }
+      });
+      let updateAttempt = 0;
+      const mockUpdate = vi.fn().mockImplementation((payload) => {
+        updateAttempt++;
+        return {
+          eq: vi.fn().mockImplementation(() => {
+            if (updateAttempt === 1) {
+              // First attempt with extra columns fails with schema cache mismatch
+              return Promise.resolve({
+                error: { code: 'PGRST204', message: "Could not find the 'previous_foreman_name' column of 'plots' in the schema cache" }
+              });
+            }
+            // Second fallback attempt with only foreman_name succeeds
+            return Promise.resolve({ error: null });
+          })
+        };
+      });
+      const mockInsert = vi.fn().mockResolvedValue({
+        error: { code: 'PGRST205', message: "Could not find the 'plot_foreman_handovers' relation in the schema cache" }
+      });
+
+      const mockSupabase = {
+        from: vi.fn((table: string) => {
+          if (table === 'plot_task_assignments') return { upsert: mockUpsert };
+          if (table === 'plots') return { update: mockUpdate };
+          if (table === 'plot_foreman_handovers') return { insert: mockInsert };
+          return {};
+        }),
+      };
+
+      const foremanInfo = {
+        plotId: 'plot-10',
+        currentForeman: 'LEAB',
+        previousForeman: '',
+        handoffAt: null,
+        handoffReason: null,
+        completedTasks: [],
+        pendingTasks: [
+          { taskId: 't1', taskName: 'ตั้งเสา', taskOrder: 1, currentProgress: 0, isCompleted: false, qcStatus: 'none' as const, assignedForeman: null }
+        ],
+        completedCount: 0,
+        pendingCount: 1,
+      };
+
+      const result = await executeConstructionForemanHandoff(mockSupabase, {
+        plotId: 'plot-10',
+        incomingForeman: 'DEN',
+        currentForeman: 'LEAB',
+        mode: 'takeover',
+        reason: 'เกลี่ยงาน',
+        actorName: 'Admin',
+        foremanInfo,
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockUpdate).toHaveBeenCalledTimes(2);
+      expect(mockUpdate).toHaveBeenLastCalledWith({
+        foreman_name: 'DEN',
+      });
+    });
+
+    it('correctly identifies schema cache error strings and error codes', () => {
+      expect(isMissingColumnOrSchemaError({ code: 'PGRST204' })).toBe(true);
+      expect(isMissingColumnOrSchemaError({ code: '42703' })).toBe(true);
+      expect(isMissingColumnOrSchemaError({ message: "Could not find the 'foreman' column of 'plots' in the schema cache" })).toBe(true);
+      expect(isMissingColumnOrSchemaError({ message: "relation 'plot_foreman_handovers' does not exist" })).toBe(true);
+      expect(isMissingColumnOrSchemaError({ message: "network timeout" })).toBe(false);
+      expect(isMissingColumnOrSchemaError(null)).toBe(false);
     });
   });
 });
