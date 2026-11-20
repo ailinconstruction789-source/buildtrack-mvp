@@ -22,6 +22,7 @@ import {
   ProjectPlannerScoreSummary
 } from '@/lib/plannerScoring';
 import { isRelevantExecutiveProject } from '@/lib/constructionReportsIndex';
+import { isExternalProject } from '@/lib/projectUtils';
 import { supabase } from '@/lib/supabase';
 import ScheduleHistoryModal from './ScheduleHistoryModal';
 import SEForemanAssignmentModal from './SEForemanAssignmentModal';
@@ -124,10 +125,15 @@ export default function PlannerScoringDashboard({
   const relevantPlots = useMemo(() => {
     return (plots || []).filter((p: any) => {
       if (!isRelevantExecutiveProject(p.project_name)) return false;
-      if (selectedProjectId !== 'all' && p.project_name !== selectedProjectId) return false;
+      if (selectedProjectId !== 'all') {
+        return p.project_name === selectedProjectId;
+      }
+      // When viewing 'all' projects, exclude external projects (e.g. บ้านคุณโอ / งานสั่งสร้างพิเศษ)
+      const proj = (projects || []).find((pr: any) => pr.name === p.project_name);
+      if (isExternalProject(proj || p.project_name)) return false;
       return true;
     });
-  }, [plots, selectedProjectId]);
+  }, [plots, selectedProjectId, projects]);
 
   // 1. Calculate Foreman Aggregates
   const foremanSummaries: ForemanScoreSummary[] = useMemo(() => {
@@ -284,7 +290,9 @@ export default function PlannerScoringDashboard({
               >
                 <option value="all">ทุกโครงการ (ไอลิน 6 และโครงการใหม่)</option>
                 {activeProjectsList.map((p: any, idx: number) => (
-                  <option key={p.name || p.id || `proj-${idx}`} value={p.name}>{p.name}</option>
+                  <option key={p.name || p.id || `proj-${idx}`} value={p.name}>
+                    {p.name}{isExternalProject(p) ? ' 🏷️ (งานนอกโครงการ)' : ''}
+                  </option>
                 ))}
               </select>
             </div>

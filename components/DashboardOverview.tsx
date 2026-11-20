@@ -1,6 +1,7 @@
 import React from 'react';
 import { Wrench, Users, PlusCircle, Building, ClipboardList, Monitor, Settings, Map as MapIcon, AlertTriangle, Grid, Clock, SortAsc, CheckCircle, XCircle, HardHat, FolderOpen, Activity, AlertCircle, Home } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { isExternalProject } from '@/lib/projectUtils';
 import MeterStatusBadges from './MeterStatusBadges';
 
 interface DashboardOverviewProps {
@@ -150,7 +151,14 @@ const DashboardOverview = function DashboardOverview({
             )}
 
             <Building size={isMobileLayout ? 80 : 120} className="absolute -right-6 -bottom-6 text-slate-100/50 group-hover:text-blue-50 transition-colors rotate-12 pointer-events-none" />
-            <h3 className="text-2xl sm:text-3xl font-semibold tracking-tight text-[#1d1d1f] mb-2 relative z-10 w-full truncate text-left">{proj.name}</h3>
+            <div className="flex items-center gap-2 mb-2 relative z-10">
+              <h3 className="text-2xl sm:text-3xl font-semibold tracking-tight text-[#1d1d1f] truncate text-left">{proj.name}</h3>
+              {isExternalProject(proj) && (
+                <span className="shrink-0 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600 border border-amber-300">
+                  🏷️ งานนอกโครงการ
+                </span>
+              )}
+            </div>
             <p className="text-[12px] sm:text-sm text-[#86868b] font-medium tracking-wide mb-6 sm:mb-8 relative z-10 flex items-center gap-1.5">
               <MapIcon size={14} className="sm:w-4 sm:h-4"/> {isForeman ? `งานของคุณ ${plots.filter(p => p.project_name === proj.name && p.foreman === loggedInUser.username).length} แปลง` : `รวมทั้งหมด ${proj.plotCount || plots.filter(p => p.project_name === proj.name).length} แปลง`}
             </p>

@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { firstBy, groupBy, parseConstructionRiskAlerts, isRelevantExecutiveProject } from '@/lib/constructionReportsIndex';
+import { isExternalProject } from '@/lib/projectUtils';
 import { supabase } from '@/lib/supabase';
 import { TrendingUp, AlertTriangle, Target, ShieldAlert, Award, Users, Activity, CloudRain, Clock, CalendarClock, ArrowUpDown } from 'lucide-react';
 import { LineChart, Line, BarChart, Bar, ComposedChart, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
@@ -25,11 +26,14 @@ export default function OwnerAnalyticsDashboard({
         .filter((p: any) => {
            if (!isRelevantExecutiveProject(p.project_name)) return false;
            if (selectedProjectId !== 'all') return p.project_name === selectedProjectId;
+           // Exclude external projects (งานนอกโครงการ / บ้านสั่งสร้างพิเศษ) from company-wide "all" summaries
+           const proj = (projects || []).find((pr: any) => pr.name === p.project_name);
+           if (isExternalProject(proj || p.project_name)) return false;
            return activeProjectsList.some((ap: any) => ap.name === p.project_name);
         })
         .map((p: any) => p.id)
     );
-  }, [plots, activeProjectsList, selectedProjectId]);
+  }, [plots, activeProjectsList, selectedProjectId, projects]);
 
   // Helper: Strictly exclude completed (100% finished or handed over) and ready-for-sale houses from risk analysis
   const isPlotCompletedOrReadyForSale = (p: any) => {
@@ -1015,7 +1019,9 @@ export default function OwnerAnalyticsDashboard({
           >
             <option value="all">ทุกโครงการ (ไอลิน 6 และโครงการใหม่)</option>
             {activeProjectsList.map((proj: any) => (
-              <option key={proj.name} value={proj.name}>{proj.name}</option>
+              <option key={proj.name} value={proj.name}>
+                {proj.name} {isExternalProject(proj) ? '🏷️ (งานนอกโครงการ)' : ''}
+              </option>
             ))}
           </select>
         </div>

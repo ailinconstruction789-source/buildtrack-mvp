@@ -27,6 +27,7 @@ import {
   isUnassignedForemanName,
   backfillUnassignedSnapshotsForPlot,
 } from '@/lib/handoverForeman';
+import { createProjectWithSettings, updateProjectExternalStatus, isExternalProject } from '@/lib/projectUtils';
 import RoadblockReasonCallout from '@/components/RoadblockReasonCallout';
 import QCInspectionInlineCard from '@/components/qc/QCInspectionInlineCard';
 import QCInspectionReportModal from '@/components/qc/QCInspectionReportModal';
@@ -308,7 +309,8 @@ export default function ConstructionApp() {
   // Extracted: [taskTemplates,
   // Extracted: [loading,
   const [editPlotModal, setEditPlotModal] = useState<any>({ isOpen: false, plot: null, id: '', house_type_id: '', foreman_name: '' });
-  const [editProjectModal, setEditProjectModal] = useState({ isOpen: false, oldName: '', newName: '' });
+  const [editProjectModal, setEditProjectModal] = useState<{ isOpen: boolean; oldName: string; newName: string; isExternal: boolean }>({ isOpen: false, oldName: '', newName: '', isExternal: false });
+  const [isNewProjectExternal, setIsNewProjectExternal] = useState<boolean>(false);
   const [markPlotModal, setMarkPlotModal] = useState<any>({ isOpen: false, plot: null, color: '', note: '' });
   const [confirmDialog, setConfirmDialog] = useState<any>({ isOpen: false, title: '', message: '', onConfirm: null, isDestructive: true });
   const [errorDialog, setErrorDialog] = useState<any>({ isOpen: false, title: '', message: '' });
@@ -1633,9 +1635,19 @@ export default function ConstructionApp() {
     if (!newProjectName.trim()) return showAlert('แจ้งเตือน', 'กรุณาระบุชื่อโครงการก่อนบันทึก'); 
     setIsSubmitting(true);
     try {
-      await supabase.from('projects').insert([{ name: newProjectName.trim() }]);
-      setNewProjectName(''); await fetchAllData(); setView('dashboard'); setSelectedProject(null); showToast('สร้างโครงการใหม่เรียบร้อยแล้ว', "success");
-    } catch (e: any) { showAlert('Error', (e as Error).message); } finally { setIsSubmitting(false); }
+      const res = await createProjectWithSettings(supabase, newProjectName.trim(), isNewProjectExternal);
+      if (!res.success) throw new Error(res.error || 'Failed to create project');
+      setNewProjectName('');
+      setIsNewProjectExternal(false);
+      await fetchAllData();
+      setView('dashboard');
+      setSelectedProject(null);
+      showToast('สร้างโครงการใหม่เรียบร้อยแล้ว', "success");
+    } catch (e: any) {
+      showAlert('Error', (e as Error).message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleDownloadTemplate = async () => {
@@ -2168,31 +2180,49 @@ export default function ConstructionApp() {
 
   // 🌟 1. ฟังก์ชันเปิดหน้าต่างแก้ไขโครงการ
   const handleEditProject = (proj: any) => {
-    setEditProjectModal({ isOpen: true, oldName: proj.name, newName: proj.name });
+    setEditProjectModal({
+      isOpen: true,
+      oldName: proj.name,
+      newName: proj.name,
+      isExternal: isExternalProject(proj),
+    });
   };
 
-  // 🌟 2. ฟังก์ชันบันทึกการแก้ไขชื่อโครงการ (อัปเดต 2 ตารางพร้อมกัน)
+  // 🌟 2. ฟังก์ชันบันทึกการแก้ไขชื่อและสถานะโครงการ (อัปเดต 2 ตารางพร้อมกัน)
   const handleUpdateProject = async () => {
     if (!editProjectModal.newName.trim()) return showAlert('แจ้งเตือน', 'กรุณาระบุชื่อโครงการ');
     setIsSubmitting(true);
     try {
-      // ขั้นตอนที่ ก: อัปเดตตาราง projects
-      const { error: projError } = await supabase
-        .from('projects')
-        .update({ name: editProjectModal.newName.trim() })
-        .eq('name', editProjectModal.oldName);
-      if (projError) throw projError;
+      const currentProj = (projects || []).find((p: any) => p.name === editProjectModal.oldName);
+      const targetName = editProjectModal.newName.trim();
 
-      // ขั้นตอนที่ ข: อัปเดตตาราง plots ทุกแปลงที่สังกัดโครงการนี้ (สำคัญมาก!)
-      const { error: plotError } = await supabase
-        .from('plots')
-        .update({ project_name: editProjectModal.newName.trim() })
-        .eq('project_name', editProjectModal.oldName);
-      if (plotError) throw plotError;
+      // ขั้นตอนที่ ก: อัปเดตสถานะ is_external หรือ layout_data config
+      const res = await updateProjectExternalStatus(
+        supabase,
+        editProjectModal.oldName,
+        editProjectModal.isExternal,
+        currentProj?.layout_data
+      );
+      if (!res.success) throw new Error(res.error || 'Failed to update project external status');
+
+      // ขั้นตอนที่ ข: หากมีการเปลี่ยนชื่อ ให้อัปเดตตาราง projects และ plots
+      if (targetName !== editProjectModal.oldName) {
+        const { error: projError } = await supabase
+          .from('projects')
+          .update({ name: targetName })
+          .eq('name', editProjectModal.oldName);
+        if (projError) throw projError;
+
+        const { error: plotError } = await supabase
+          .from('plots')
+          .update({ project_name: targetName })
+          .eq('project_name', editProjectModal.oldName);
+        if (plotError) throw plotError;
+      }
 
       setEditProjectModal({ ...editProjectModal, isOpen: false });
       await fetchAllData();
-      showToast('เปลี่ยนชื่อโครงการเรียบร้อยแล้ว', "success");
+      showToast('บันทึกข้อมูลโครงการเรียบร้อยแล้ว', "success");
     } catch (e: any) {
       showAlert('ข้อผิดพลาด', e.message);
     } finally {
@@ -5813,6 +5843,8 @@ export default function ConstructionApp() {
                   isMobileLayout={isMobileLayout}
                   newProjectName={newProjectName}
                   setNewProjectName={setNewProjectName}
+                  isNewProjectExternal={isNewProjectExternal}
+                  setIsNewProjectExternal={setIsNewProjectExternal}
                   isSubmitting={isSubmitting}
                   handleAddProject={handleAddProject}
                 />
@@ -6212,14 +6244,32 @@ export default function ConstructionApp() {
         <div className="absolute inset-0 z-[600] bg-black/40 backdrop-blur-xl flex items-center justify-center p-4 fixed transition-all">
           <div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full p-6 space-y-5 animate-in zoom-in-95 duration-200">
             <div>
-              <h3 className="text-xl font-black text-slate-800 italic uppercase flex items-center gap-2"><Settings className="text-blue-600" /> Edit Project Name</h3>
+              <h3 className="text-xl font-black text-slate-800 italic uppercase flex items-center gap-2"><Settings className="text-blue-600" /> Edit Project</h3>
               <p className="text-sm text-slate-500 font-bold">ชื่อเดิม: {editProjectModal.oldName}</p>
             </div>
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-black text-slate-500 mb-1 uppercase tracking-widest">ชื่อโครงการใหม่</label>
+                <label className="block text-xs font-black text-slate-500 mb-1 uppercase tracking-widest">ชื่อโครงการ</label>
                 <input type="text" value={editProjectModal.newName} onChange={(e) => setEditProjectModal({ ...editProjectModal, newName: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-bold text-slate-700 outline-none focus:border-blue-500" placeholder="ระบุชื่อโครงการ..." />
               </div>
+
+              {/* Checkbox กำหนดงานนอกโครงการ */}
+              <label className="flex items-start gap-3 p-3 bg-amber-50/70 border border-amber-200 rounded-xl cursor-pointer hover:bg-amber-100/60 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={editProjectModal.isExternal}
+                  onChange={(e) => setEditProjectModal({ ...editProjectModal, isExternal: e.target.checked })}
+                  className="mt-0.5 w-4 h-4 text-amber-600 rounded border-slate-300 focus:ring-amber-500 cursor-pointer"
+                />
+                <div className="text-xs">
+                  <div className="font-bold text-amber-900 flex items-center gap-1.5">
+                    🏷️ งานนอกโครงการ / สั่งสร้างพิเศษ
+                  </div>
+                  <div className="text-amber-700 text-[11px] leading-relaxed mt-0.5">
+                    ไม่นำมารวมในแดชบอร์ดสรุปภาพรวม แต่ยังตรวจงานและลงงานประจำวันได้ตามปกติ
+                  </div>
+                </div>
+              </label>
             </div>
             <div className="flex gap-3 w-full mt-2">
               <button onClick={() => setEditProjectModal({ ...editProjectModal, isOpen: false })} className="flex-1 bg-slate-100 text-slate-600 font-bold py-3.5 rounded-xl hover:bg-slate-200">ยกเลิก</button>
