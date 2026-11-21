@@ -1321,9 +1321,21 @@ export default function ForemanWorkspaceView({
                 <div className="text-2xl font-black text-purple-700">
                   {outOfPlanTasks.length}
                 </div>
-                <p className="text-[11px] text-purple-600 font-medium mt-0.5">
-                  อัปเดตนอกตารางแผน
-                </p>
+                <div className="flex items-center justify-between text-[11px] text-purple-600 font-medium mt-0.5">
+                  <span>อัปเดตนอกตารางแผน</span>
+                  {adhocTodayCount > 0 && (
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMainTab('adhoc_chat');
+                      }}
+                      className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-teal-100 text-teal-800 border border-teal-200 hover:bg-teal-200 transition-all cursor-pointer"
+                      title="คลิกเพื่อไปที่แท็บแชทรายงานนอกแผน"
+                    >
+                      + แชท {adhocTodayCount}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -1349,7 +1361,7 @@ export default function ForemanWorkspaceView({
           </div>
 
           {/* ⚡ Daily Total Effort Banner */}
-          {outOfPlanTasks.length > 0 && (
+          {(outOfPlanTasks.length > 0 || adhocTodayCount > 0) && (
             <div className="bg-purple-50/80 border border-purple-200/90 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-purple-950 shadow-2xs">
               <div className="flex items-center gap-2.5">
                 <div className="p-1.5 bg-purple-600 text-white rounded-lg shrink-0">
@@ -1363,15 +1375,35 @@ export default function ForemanWorkspaceView({
                       {summary.updatedTasks + summary.roadblockTasks + outOfPlanTasks.length}
                     </strong>{' '}
                     งาน (ในแผน {summary.updatedTasks + summary.roadblockTasks} งาน + นอกแผน/ล่วงหน้า {outOfPlanTasks.length} งาน)
+                    {adhocTodayCount > 0 && (
+                      <span className="ml-2 inline-flex items-center gap-1 text-teal-800 font-bold bg-teal-50 px-2 py-0.5 rounded-lg border border-teal-200">
+                        <MessageSquareText size={12} className="text-teal-600" />
+                        รายงานพิเศษหน้างาน {adhocTodayCount} เรื่อง
+                      </span>
+                    )}
                   </span>
                 </div>
               </div>
-              <button
-                onClick={() => setActiveTab(activeTab === 'out_of_plan' ? 'all' : 'out_of_plan')}
-                className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold transition-all shrink-0 cursor-pointer text-xs active:scale-95"
-              >
-                {activeTab === 'out_of_plan' ? 'ดูงานทั้งหมด' : `ดูงานนอกแผน (${outOfPlanTasks.length})`}
-              </button>
+              <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                {outOfPlanTasks.length > 0 && (
+                  <button
+                    onClick={() => setActiveTab(activeTab === 'out_of_plan' ? 'all' : 'out_of_plan')}
+                    className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold transition-all cursor-pointer text-xs active:scale-95"
+                  >
+                    {activeTab === 'out_of_plan' ? 'ดูงานทั้งหมด' : `ดูงานนอกแผน (${outOfPlanTasks.length})`}
+                  </button>
+                )}
+                {adhocTodayCount > 0 && (
+                  <button
+                    onClick={() => setMainTab('adhoc_chat')}
+                    className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-xl font-bold transition-all cursor-pointer text-xs active:scale-95 flex items-center gap-1.5 shadow-xs"
+                    title="เปิดดูรายงานงานนอกแผนและรูปถ่ายในช่องแชท"
+                  >
+                    <MessageSquareText size={13} />
+                    <span>ดูแชทรายงาน ({adhocTodayCount})</span>
+                  </button>
+                )}
+              </div>
             </div>
           )}
 
