@@ -9,33 +9,40 @@
 /**
  * Checks whether a project or project name represents an external/custom-built site.
  */
-export function isExternalProject(project: any | string | null | undefined): boolean {
+export function isExternalProject(
+  project: any | string | null | undefined,
+  allProjects?: any[]
+): boolean {
   if (!project) return false;
 
-  // Handle string project name
-  if (typeof project === 'string') {
-    const clean = project.trim();
-    if (clean === 'บ้านคุณโอ') return true;
-    return false;
-  }
+  const pName = typeof project === 'string'
+    ? project.trim()
+    : String(project.name || project.project_name || '').trim();
+
+  // Known built-in external jobs fallback
+  if (pName === 'บ้านคุณโอ') return true;
 
   // Handle object: direct is_external property
-  if (project.is_external !== undefined && project.is_external !== null) {
-    return Boolean(project.is_external);
-  }
+  if (typeof project === 'object') {
+    if (project.is_external !== undefined && project.is_external !== null) {
+      return Boolean(project.is_external);
+    }
 
-  // Handle object: configuration stored in layout_data
-  if (Array.isArray(project.layout_data)) {
-    const conf = project.layout_data.find((c: any) => c?.type === 'config');
-    if (conf && conf.is_external !== undefined && conf.is_external !== null) {
-      return Boolean(conf.is_external);
+    // Handle object: configuration stored in layout_data
+    if (Array.isArray(project.layout_data)) {
+      const conf = project.layout_data.find((c: any) => c?.type === 'config');
+      if (conf && conf.is_external !== undefined && conf.is_external !== null) {
+        return Boolean(conf.is_external);
+      }
     }
   }
 
-  // Known built-in external jobs fallback
-  const pName = String(project.name || '').trim();
-  if (pName === 'บ้านคุณโอ') {
-    return true;
+  // If allProjects array provided and we have pName, look up the project object
+  if (Array.isArray(allProjects) && pName) {
+    const match = allProjects.find((p: any) => (p.name || p.project_name) === pName);
+    if (match && match !== project) {
+      return isExternalProject(match);
+    }
   }
 
   return false;

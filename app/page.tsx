@@ -49,6 +49,7 @@ const DailyActivityHub = dynamic(() => import('@/components/DailyActivityHub'));
 const DailySiteActivitiesView = dynamic(() => import('@/components/DailySiteActivitiesView'));
 const HousePromotionsView = dynamic(() => import('@/components/HousePromotionsView'));
 const QCPerformanceDashboard = dynamic(() => import('@/components/QCPerformanceDashboard'));
+const QCDailyInspectionPlanView = dynamic(() => import('@/components/qc/QCDailyInspectionPlanView'));
 const QCStandardConfigView = dynamic(() => import('@/components/qc/QCStandardConfigView'));
 const ExecutiveAnalytics = dynamic(() => import('@/components/ExecutiveAnalytics'));
 const MasterGanttChart = dynamic(() => import('@/components/MasterGanttChart'));
@@ -3044,10 +3045,12 @@ export default function ConstructionApp() {
   const isPendingQC = lastUpd?.progress === 100 && lastUpd?.action === 'Site Engineer อนุมัติ';
   const isTaskCompleted = lastUpd?.progress === 100 && (lastUpd?.action === 'QC อนุมัติ' || lastUpd?.action === 'QC อนุมัติผ่าน' || Boolean(lastUpd?.action && String(lastUpd.action).includes('PE อนุมัติ')));
   const currentAssignment = assignments.slice().reverse().find(a => String(a.plot_id) === String(selectedPlot?.id) && String(a.task_template_id) === String(selectedTask?.id));
-  const isLockedForForeman = isForeman && !currentAssignment;
+  // 🌟 สำหรับงานนอกโครงการ (External Projects เช่น บ้านคุณโอ) โฟร์แมนสามารถอัปเดตงานได้โดยไม่ต้องระบุชื่อช่าง
+  const isSelectedPlotExternal = isExternalProject(selectedPlot?.project_name || selectedPlot, projects) || isExternalProject(selectedProject, projects);
+  const isLockedForForeman = isForeman && !isSelectedPlotExternal && !currentAssignment;
 
   const activeDefect = (defects || []).find((d: any) => String(d.id) === String(selectedDefect?.id)) || selectedDefect;
-  const isLockedForDefectForeman = isForeman && !(activeDefect?.contractor_id || activeDefect?.contractor_name || activeDefect?.contractor);
+  const isLockedForDefectForeman = isForeman && !isSelectedPlotExternal && !(activeDefect?.contractor_id || activeDefect?.contractor_name || activeDefect?.contractor);
 
   const plotBounds: { [key: string]: any } = {};
   mapGrid.filter(c => c.type === 'plot').forEach(c => {
@@ -5106,6 +5109,25 @@ export default function ConstructionApp() {
                     isAdmin={isAdmin}
                     isOwner={isOwner}
                     inspectionQueue={inspectionQueue}
+                  />
+                </div>
+              )}
+
+              {/* 📋 View: แผนตรวจงานประจำวัน QC (QC Daily Inspection Plan) */}
+              {view === 'qc-daily-plan' && (
+                <div className="animate-in slide-in-from-bottom-4 duration-500 w-full mx-auto p-4 sm:p-8">
+                  <QCDailyInspectionPlanView
+                    inspectionQueue={inspectionQueue}
+                    taskTemplates={taskTemplates}
+                    plots={plots}
+                    projects={projects}
+                    currentUserRole={currentUserRole}
+                    loggedInUsername={loggedInUser?.username || loggedInUser?.name || 'Admin'}
+                    setSelectedProject={setSelectedProject}
+                    setSelectedPlot={setSelectedPlot}
+                    setSelectedTask={setSelectedTask}
+                    setTaskReturnView={setTaskReturnView}
+                    setView={setView}
                   />
                 </div>
               )}

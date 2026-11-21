@@ -45,6 +45,17 @@ describe('projectUtils helper library', () => {
 
     it('falls back to true for บ้านคุณโอ object even without is_external property', () => {
       expect(isExternalProject({ name: 'บ้านคุณโอ' })).toBe(true);
+      expect(isExternalProject({ project_name: 'บ้านคุณโอ' })).toBe(true);
+    });
+
+    it('identifies external project via allProjects lookup', () => {
+      const allProjects = [
+        { name: 'ไอลิน 6', is_external: false },
+        { name: 'วิลล่าสั่งสร้างพิเศษ', is_external: true }
+      ];
+      expect(isExternalProject('วิลล่าสั่งสร้างพิเศษ', allProjects)).toBe(true);
+      expect(isExternalProject({ project_name: 'วิลล่าสั่งสร้างพิเศษ' }, allProjects)).toBe(true);
+      expect(isExternalProject('ไอลิน 6', allProjects)).toBe(false);
     });
   });
 
