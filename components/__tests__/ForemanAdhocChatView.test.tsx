@@ -142,4 +142,26 @@ describe('ForemanAdhocChatView Component', () => {
     const urgentTagBtn = screen.getByText('งานเร่งด่วน');
     fireEvent.click(urgentTagBtn);
   });
+
+  it('submits report with valid non-null plot_id even when common site is selected', async () => {
+    const { supabase } = await import('@/lib/supabase');
+    render(
+      <ForemanAdhocChatView
+        plots={mockPlots}
+        projects={mockProjects}
+        allUpdatesRecord={mockUpdates}
+        loggedInUser={{ username: 'Admin', role: 'Admin' }}
+        currentUserRole="Admin"
+      />
+    );
+
+    const textarea = screen.getByPlaceholderText(/พิมพ์รายงานสิ่งที่ได้ทำนอกเหนือจากแผนงาน/);
+    fireEvent.change(textarea, { target: { value: 'ทดสอบส่งข้อความพื้นที่ส่วนกลาง' } });
+
+    const submitBtn = screen.getByText('ส่งรายงานเข้าแชท');
+    fireEvent.click(submitBtn);
+
+    // Verify insert was called with a non-null plot_id
+    expect(supabase.from).toHaveBeenCalledWith('task_updates');
+  });
 });

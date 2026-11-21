@@ -208,6 +208,24 @@ export default function ForemanAdhocChatView({
     return plots.filter(p => p.project_name === formProject);
   }, [plots, formProject]);
 
+  // Keep formProject and formPlotId in sync with projects and plots
+  React.useEffect(() => {
+    if (!formProject && projects.length > 0) {
+      const first = projects[0];
+      const name = first.name || first.project_name || '';
+      setFormProject(name);
+    }
+  }, [projects, formProject]);
+
+  React.useEffect(() => {
+    if (availableFormPlots.length > 0) {
+      const exists = availableFormPlots.some(p => String(p.id) === String(formPlotId));
+      if (!exists && formPlotId !== 'common') {
+        setFormPlotId(String(availableFormPlots[0].id));
+      }
+    }
+  }, [availableFormPlots, formPlotId]);
+
   // Combined updates (Optimistic + allUpdatesRecord)
   const allParsedReports = useMemo<AdhocReportItem[]>(() => {
     const combined = [...localOptimisticUpdates, ...allUpdatesRecord];
@@ -234,8 +252,34 @@ export default function ForemanAdhocChatView({
 
       // Parse plot & project
       const plot = upd.plot_id ? plotsMap.get(String(upd.plot_id)) : null;
-      const plotName = plot?.plot_name || plot?.name || (upd.plot_id ? `แปลง ${upd.plot_id}` : 'พื้นที่ส่วนกลาง / ทั่วไป');
-      const projectName = plot?.project_name || upd.project_name || 'ไม่ระบุโครงการ';
+      let plotName = plot?.plot_name || plot?.name;
+      let projectName = plot?.project_name;
+
+      if (!plot) {
+        const plotIdStr = String(upd.plot_id || '');
+        if (plotIdStr.includes('-ส่วนกลาง') || plotIdStr.includes('-COMMON')) {
+          projectName = plotIdStr.replace(/-ส่วนกลาง|-COMMON/g, '');
+          plotName = '📍 พื้นที่ส่วนกลาง / ทั่วไป';
+        } else if (plotIdStr.includes('-')) {
+          const parts = plotIdStr.split('-');
+          projectName = parts[0];
+          plotName = parts.slice(1).join('-');
+        } else {
+          plotName = plotIdStr ? `แปลง ${plotIdStr}` : '📍 พื้นที่ส่วนกลาง / ทั่วไป';
+          projectName = 'ไม่ระบุโครงการ';
+        }
+      }
+
+      // Fallback projectName if still empty or 'ไม่ระบุโครงการ'
+      if (!projectName || projectName === 'ไม่ระบุโครงการ') {
+        const matchedProj = projects.find((p: any) => {
+          const pName = p.name || p.project_name;
+          return pName && (String(upd.plot_id || '').includes(pName) || String(upd.text_content || '').includes(pName));
+        });
+        if (matchedProj) {
+          projectName = matchedProj.name || matchedProj.project_name;
+        }
+      }
 
       // Parse tag and clean text
       const rawText = (upd.text_content || '').trim();
@@ -421,13 +465,27 @@ export default function ForemanAdhocChatView({
 
     setIsSubmitting(true);
     setSubmitError(null);
+    const tempId = `temp-${Date.now()}`;
 
     try {
-      // 1. Upload photos if any
-      const uploadedUrls: string[] = [];
-      const targetPlotId = formPlotId !== 'all' ? formPlotId : null;
-      const safePlotFolder = targetPlotId ? String(targetPlotId).replace(/[^a-zA-Z0-9-]/g, '') : 'general';
+      // 1. Resolve non-null plot_id (task_updates requires non-null plot_id)
+      const safeProject = (formProject && formProject !== 'all')
+        ? formProject
+        : (availableFormPlots[0]?.project_name || projects[0]?.name || projects[0]?.project_name || 'ทั่วไป');
 
+      let targetPlotId: string;
+      if (formPlotId && formPlotId !== 'all' && formPlotId !== 'common') {
+        targetPlotId = String(formPlotId);
+      } else if (availableFormPlots.length > 0 && formPlotId !== 'common') {
+        targetPlotId = String(availableFormPlots[0].id);
+      } else {
+        targetPlotId = `${safeProject}-ส่วนกลาง`;
+      }
+
+      const safePlotFolder = String(targetPlotId).replace(/[^a-zA-Z0-9-]/g, '_');
+
+      // 2. Upload photos if any
+      const uploadedUrls: string[] = [];
       for (const item of attachedFiles) {
         const fileExt = item.file.name.split('.').pop() || 'jpg';
         const fileName = `adhoc/${safePlotFolder}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${fileExt}`;
@@ -448,7 +506,7 @@ export default function ForemanAdhocChatView({
         }
       }
 
-      // 2. Prepare payload
+      // 3. Prepare payload
       const currentTagObj = ADHOC_TAGS.find(t => t.id === selectedTag);
       const tagLabel = currentTagObj ? currentTagObj.label : 'งานเสริมทั่วไป';
       const fullText = `[${tagLabel}] ${reportText.trim()}`;
@@ -468,15 +526,14 @@ export default function ForemanAdhocChatView({
         created_at: nowIso,
       };
 
-      // 3. Optimistic update
-      const tempId = `temp-${Date.now()}`;
+      // 4. Optimistic update
       const optimisticRow = {
         ...insertPayload,
         id: tempId,
       };
       setLocalOptimisticUpdates(prev => [optimisticRow, ...prev]);
 
-      // 4. Save to Supabase
+      // 5. Save to Supabase
       const { data, error } = await supabase
         .from('task_updates')
         .insert([insertPayload])
@@ -491,18 +548,20 @@ export default function ForemanAdhocChatView({
         setLocalOptimisticUpdates(prev => prev.map(row => (row.id === tempId ? data[0] : row)));
       }
 
-      // 5. Reset form
+      // 6. Reset form
       setReportText('');
       setAttachedFiles([]);
       setSubmitSuccess(true);
       setTimeout(() => setSubmitSuccess(false), 3000);
 
-      // 6. Refresh data in background
+      // 7. Refresh data in background
       if (fetchAllData) {
         fetchAllData().catch(err => console.warn('Background refresh error:', err));
       }
     } catch (err: any) {
       console.error('Failed to submit ad-hoc report:', err);
+      // Clean up temporary optimistic update on failure
+      setLocalOptimisticUpdates(prev => prev.filter(row => row.id !== tempId));
       setSubmitError(err?.message || 'เกิดข้อผิดพลาดในการบันทึกรายงาน กรุณาลองใหม่อีกครั้ง');
     } finally {
       setIsSubmitting(false);
@@ -641,8 +700,14 @@ export default function ForemanAdhocChatView({
               <select
                 value={formProject}
                 onChange={e => {
-                  setFormProject(e.target.value);
-                  setFormPlotId('all');
+                  const newProj = e.target.value;
+                  setFormProject(newProj);
+                  const matchingPlots = plots.filter((p: any) => p.project_name === newProj);
+                  if (matchingPlots.length > 0) {
+                    setFormPlotId(String(matchingPlots[0].id));
+                  } else {
+                    setFormPlotId('common');
+                  }
                 }}
                 className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-teal-500 focus:outline-none transition-all cursor-pointer"
               >
@@ -667,7 +732,6 @@ export default function ForemanAdhocChatView({
                 onChange={e => setFormPlotId(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-teal-500 focus:outline-none transition-all cursor-pointer"
               >
-                <option value="all">📍 พื้นที่ส่วนกลาง / ไม่ระบุแปลงเฉพาะเจาะจง</option>
                 {availableFormPlots.map((plot: any) => {
                   const pName = plot.plot_name || plot.name || `แปลง ${plot.id}`;
                   return (
@@ -676,6 +740,7 @@ export default function ForemanAdhocChatView({
                     </option>
                   );
                 })}
+                <option value="common">📍 พื้นที่ส่วนกลาง / ไม่ระบุแปลงเฉพาะเจาะจง</option>
               </select>
             </div>
           </div>
