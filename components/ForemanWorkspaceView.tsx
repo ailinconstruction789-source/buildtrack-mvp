@@ -34,6 +34,7 @@ import {
   Grid,
   SortAsc,
   Activity,
+  MessageSquareText,
 } from 'lucide-react';
 import {
   ROADBLOCK_REASONS,
@@ -58,6 +59,7 @@ import {
 } from '@/lib/foremanDuty';
 import ForemanInspectionCalendar from './ForemanInspectionCalendar';
 import ForemanDailyActivityView from './ForemanDailyActivityView';
+import ForemanAdhocChatView from './ForemanAdhocChatView';
 import MeterStatusBadges from './MeterStatusBadges';
 
 interface ForemanWorkspaceViewProps {
@@ -118,7 +120,7 @@ export default function ForemanWorkspaceView({
 
   // Main view mode: 'schedule' (งานตามแผน) | 'rework' (งานที่ต้องแก้ไข & Defect) | 'calendar' (ปฏิทินตรวจงานรายเดือน)
   // 🌟 For Owner, default to 'calendar' as requested; for others, default to 'schedule'
-  const [mainTab, setMainTab] = useState<'schedule' | 'activity' | 'rework' | 'calendar'>(() => {
+  const [mainTab, setMainTab] = useState<'schedule' | 'activity' | 'rework' | 'calendar' | 'adhoc_chat'>(() => {
     return isOwnerUser ? 'calendar' : 'schedule';
   });
 
@@ -139,6 +141,27 @@ export default function ForemanWorkspaceView({
     const day = String(d.getDate()).padStart(2, '0');
     return `${y}-${m}-${day}`;
   }, []);
+
+
+  // 💬 Count of today's ad-hoc reports
+  const adhocTodayCount = useMemo(() => {
+    if (!Array.isArray(allUpdatesRecord)) return 0;
+    return allUpdatesRecord.filter(upd => {
+      const isAdhoc =
+        upd.action === 'รายงานนอกแผน' ||
+        upd.action === 'ADHOC_REPORT' ||
+        upd.action === 'รายงานนอกแผน (Chat)' ||
+        (!upd.task_template_id && (
+          upd.action?.includes('นอกแผน') ||
+          upd.action?.includes('ADHOC') ||
+          upd.action?.includes('แชท') ||
+          upd.action === 'อัปเดตหน้างานพิเศษ'
+        ));
+      if (!isAdhoc) return false;
+      const dateStr = normalizeDateStr(upd.created_at);
+      return dateStr === todayStr;
+    }).length;
+  }, [allUpdatesRecord, todayStr]);
 
   // Selected date for daily dispatch
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
@@ -991,6 +1014,27 @@ export default function ForemanWorkspaceView({
             <span>ปฏิทินตรวจงานรายเดือน (Owner)</span>
           </button>
         )}
+
+        <button
+          onClick={() => setMainTab('adhoc_chat')}
+          className={`flex items-center gap-2.5 px-5 py-3 rounded-2xl text-xs sm:text-sm font-black transition-all cursor-pointer ${
+            mainTab === 'adhoc_chat'
+              ? 'bg-teal-600 text-white shadow-md shadow-teal-500/20'
+              : 'bg-white text-slate-600 hover:bg-teal-50 hover:text-teal-700 border border-slate-200/80'
+          }`}
+        >
+          <MessageSquareText size={18} />
+          <span>รายงานงานนอกแผน (Chat)</span>
+          {adhocTodayCount > 0 && (
+            <span
+              className={`px-2 py-0.5 rounded-full text-[11px] font-black ${
+                mainTab === 'adhoc_chat' ? 'bg-teal-700 text-teal-100' : 'bg-teal-100 text-teal-700'
+              }`}
+            >
+              {adhocTodayCount}
+            </span>
+          )}
+        </button>
       </div>
 
       {/* 🌴 Weekly Sunday Holiday Notice (Option B: no penalty, tasks stay accessible for optional updates) */}
@@ -1073,7 +1117,7 @@ export default function ForemanWorkspaceView({
       )}
 
       {/* ⚙️ Toolbar: Foreman Selector, Project Filter, Search & Auto-Save Badge */}
-      {mainTab !== 'calendar' && (
+      {mainTab !== 'calendar' && mainTab !== 'adhoc_chat' && (
         <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200/80 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-3">
           {/* Foreman Selector */}
@@ -1901,6 +1945,30 @@ export default function ForemanWorkspaceView({
             setSelectedDate(dateStr);
             setMainTab('activity');
           }}
+        />
+      )}
+
+
+      {/* ============================================================== */}
+      {/* 💬 MODE 5: AD-HOC SITE CHAT & OFF-SCHEDULE REPORTING */}
+      {/* ============================================================== */}
+      {mainTab === 'adhoc_chat' && (
+        <ForemanAdhocChatView
+          plots={plots}
+          projects={projects}
+          allUpdatesRecord={allUpdatesRecord}
+          loggedInUser={loggedInUser}
+          currentUserRole={currentUserRole}
+          isAdmin={isAdmin}
+          isOwner={isOwner}
+          isSiteEngineer={isSiteEngineer}
+          isProjectPlanner={isProjectPlanner}
+          isForeman={isForeman}
+          foremenList={foremenList}
+          selectedProject={selectedProject}
+          selectedForeman={selectedForeman}
+          onPreviewImage={(url) => setPreviewImage(url)}
+          fetchAllData={fetchAllData}
         />
       )}
 
