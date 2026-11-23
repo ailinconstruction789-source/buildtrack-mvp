@@ -88,12 +88,12 @@ export async function hasInspectionStarted(plotId: string, taskTemplateId: strin
         const act = String(u.action || '');
         const r = String(u.role || '');
         if (r === 'Site Engineer' || act.startsWith('Site Engineer')) return false;
-        return r === 'QC' || act.includes('QC') || act.includes('PE อนุมัติ') || act.includes('PE สั่งแก้');
+        return r === 'QC' || act.includes('QC') || (act.includes('PE อนุมัติ') && !act.includes('รอ PE อนุมัติ')) || act.includes('PE สั่งแก้');
       });
 
       if (qcActions.length > 0) {
         const latestQcAct = String(qcActions[0].action || '');
-        const isApproved = latestQcAct.includes('QC อนุมัติ') || latestQcAct.includes('QC ผ่าน') || latestQcAct.includes('PE อนุมัติ');
+        const isApproved = latestQcAct.includes('QC อนุมัติ') || latestQcAct.includes('QC ผ่าน') || (latestQcAct.includes('PE อนุมัติ') && !latestQcAct.includes('รอ PE อนุมัติ'));
         return {
           started: true,
           method: 'legacy',
@@ -1091,7 +1091,7 @@ export async function previewSmartPlotsQC(params: {
     for (const u of updates || []) {
       const key = `${u.plot_id}_${u.task_template_id}`;
       const action = u.action || '';
-      if (action.includes('QC อนุมัติ') || action.includes('QC ผ่าน') || action.includes('PE อนุมัติ')) {
+      if (action.includes('QC อนุมัติ') || action.includes('QC ผ่าน') || (action.includes('PE อนุมัติ') && !action.includes('รอ PE อนุมัติ'))) {
         completedSet.add(key);
       } else if (action.includes('แจ้งแก้ไข') || action.includes('ไม่อนุมัติ') || action.includes('ตีกลับ')) {
         completedSet.delete(key);
@@ -1210,7 +1210,7 @@ export async function executeSmartActivatePlotsQC(params: {
     for (const u of updates || []) {
       const key = `${u.plot_id}_${u.task_template_id}`;
       const action = u.action || '';
-      if (action.includes('QC อนุมัติ') || action.includes('QC ผ่าน') || action.includes('PE อนุมัติ')) {
+      if (action.includes('QC อนุมัติ') || action.includes('QC ผ่าน') || (action.includes('PE อนุมัติ') && !action.includes('รอ PE อนุมัติ'))) {
         completedSet.add(key);
       } else if (action.includes('แจ้งแก้ไข') || action.includes('ไม่อนุมัติ') || action.includes('ตีกลับ')) {
         completedSet.delete(key);

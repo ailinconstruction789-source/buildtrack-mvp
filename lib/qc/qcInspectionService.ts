@@ -436,7 +436,9 @@ export async function submitInspection(params: {
             user_name: actorUsername,
             role: actorRole || 'QC',
             action: 'QC ส่งตรวจแบบมีเงื่อนไข (รอ PE อนุมัติ)',
-            text_content: `ตรวจพบรายการผ่านแบบมีเงื่อนไข (${evaluation.conditionalItems} ข้อ) ส่งต่อให้วิศวกรโครงการ (PE) พิจารณาอนุมัติ${inspectionId ? ` [ref:qc_insp_${inspectionId}]` : ''}`,
+            text_content: evaluation.conditionalItems > 0
+              ? `ตรวจพบรายการผ่านแบบมีเงื่อนไข (${evaluation.conditionalItems} ข้อ) ส่งต่อให้วิศวกรโครงการ (PE) พิจารณาอนุมัติ${inspectionId ? ` [ref:qc_insp_${inspectionId}]` : ''}`
+              : `ไม่มีรายการตรวจที่ผ่านโดยตรง (ระบุ N/A ${evaluation.naItems} ข้อ) ส่งต่อให้วิศวกรโครงการ (PE) พิจารณาอนุมัติ${inspectionId ? ` [ref:qc_insp_${inspectionId}]` : ''}`,
             progress: 100,
             is_completed: false,
             image_url: (inspData.photo_urls || []).join(',')
@@ -724,6 +726,7 @@ export async function reviewPEInspection(params: {
     const isApproved = decision === 'approve';
     const finalDocStatus = isApproved ? 'approved' : 'rejected';
     const finalResult = isApproved ? 'conditional' : 'failed';
+    const decisionDbValue = isApproved ? 'approved' : 'rejected';
 
     // 1. อัปเดตสถานะใน qc_inspections
     const { error: inspErr } = await supabase
@@ -733,7 +736,7 @@ export async function reviewPEInspection(params: {
         inspection_result: finalResult,
         pe_reviewer_name: peUsername,
         pe_reviewed_at: new Date().toISOString(),
-        pe_review_decision: decision,
+        pe_review_decision: decisionDbValue,
         pe_review_notes: notes || null,
         approved_at: isApproved ? new Date().toISOString() : null,
         approved_by: isApproved ? peUsername : null,
@@ -741,7 +744,7 @@ export async function reviewPEInspection(params: {
       })
       .eq('id', inspection.id);
 
-    if (inspErr) throw inspErr;
+    if (inspErr) throw new Error(inspErr.message || JSON.stringify(inspErr));
 
     // 2. ซิงค์ไปยัง task_updates
     const finalProgress = isApproved ? 100 : 95;
@@ -764,7 +767,7 @@ export async function reviewPEInspection(params: {
       image_url: (inspection.photo_urls || []).join(',')
     }]);
 
-    if (updErr) throw updErr;
+    if (updErr) throw new Error(updErr.message || JSON.stringify(updErr));
 
     // 3. ถ้าอนุมัติผ่านแบบมีเงื่อนไข: ส่งต่อ Defect ไปยังงวดงานปลายทาง (Downstream Task Transfer)
     if (isApproved) {
@@ -786,38 +789,40 @@ export async function reviewPEInspection(params: {
       }
 
       if (defectsToInsert.length > 0) {
-        await supabase.from('defects').insert(defectsToInsert);
+        const { error: defectErr } = await supabase.from('defects').insert(defectsToInsert);
+        if (defectErr) throw new Error(defectErr.message || JSON.stringify(defectErr));
       }
     } else {
       // สั่งแก้ไข
-      await supabase.from('notifications').insert([{
+      const { error: notifErr } = await supabase.from('notifications').insert([{
         plot_id: inspection.plot_id,
         task_template_id: inspection.task_template_id,
-        title: 'วิศวกรโครงการสั่งแก้ไขงาน (PE Reject)',
         message: `วิศวกรโครงการ ${peUsername} ไม่อนุมัติงาน "${inspection.task_name}" แปลง ${inspection.plot_id}: ${notes || 'กรุณาแก้ไขก่อนส่งตรวจใหม่'}`,
         target_role: 'Foreman',
         is_read: false
       }]);
+      if (notifErr) throw new Error(notifErr.message || JSON.stringify(notifErr));
     }
 
     // 4. บันทึก Audit Log
-    await supabase.from('qc_audit_logs').insert([{
+    const { error: auditErr } = await supabase.from('qc_audit_logs').insert([{
       action_type: 'pe_review',
       entity_type: 'qc_inspections',
       entity_id: inspection.id,
       actor_username: peUsername,
-      actor_role: peRole,
+      actor_role: peRole || 'PE',
       details: {
-        decision,
+        decision: decisionDbValue,
         finalDocStatus,
         finalResult,
         notes
       }
     }]);
+    if (auditErr) throw new Error(auditErr.message || JSON.stringify(auditErr));
 
     return { success: true };
   } catch (err: any) {
-    console.error('Error reviewing PE inspection:', err);
+    console.error('Error reviewing PE inspection:', err?.message || err);
     return { success: false, error: err?.message || 'ไม่สามารถบันทึกผลการพิจารณาของ PE ได้' };
   }
 }

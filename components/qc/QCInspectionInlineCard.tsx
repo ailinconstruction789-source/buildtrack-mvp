@@ -30,6 +30,7 @@ interface QCInspectionInlineCardProps {
   compact?: boolean;
   defaultExpanded?: boolean;
   onOpenFullReport?: (inspection: QCInspection) => void;
+  onOpenReview?: (inspection: QCInspection) => void;
   onPreviewPhoto?: (url: string) => void;
 }
 
@@ -38,6 +39,7 @@ export default function QCInspectionInlineCard({
   compact = false,
   defaultExpanded = true,
   onOpenFullReport,
+  onOpenReview,
   onPreviewPhoto
 }: QCInspectionInlineCardProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
@@ -174,6 +176,20 @@ export default function QCInspectionInlineCard({
         </div>
 
         <div className="flex items-center gap-1.5 ml-auto">
+          {isPendingPE && onOpenReview && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenReview(inspection);
+              }}
+              className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white rounded-lg text-[10px] sm:text-xs font-bold flex items-center gap-1 shadow-xs transition-all cursor-pointer animate-pulse"
+              title="เปิดฟอร์มพิจารณาอนุมัติ/สั่งแก้ไขในฐานะวิศวกรโครงการ (PE)"
+            >
+              <ShieldCheck size={12} />
+              <span>พิจารณาอนุมัติ (PE)</span>
+            </button>
+          )}
           {onOpenFullReport && (
             <button
               type="button"

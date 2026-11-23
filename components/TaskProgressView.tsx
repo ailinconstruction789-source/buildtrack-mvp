@@ -359,6 +359,11 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                              setSelectedReportInspection(insp);
                                              setShowQCReport(true);
                                            }}
+                                           onOpenReview={
+                                             (isProjectPlanner || currentUserRole === 'Project Engineer' || currentUserRole === 'Project Planner' || isAdmin || isOwner)
+                                               ? () => setShowQCRunner(true)
+                                               : undefined
+                                           }
                                            onPreviewPhoto={(url) => setFullImageUrl(url)}
                                          />
                                        )}
@@ -414,7 +419,7 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                     </div>
                                )}
 
-                               {isTaskCompleted ? (
+                               {isTaskCompleted && qcResolution?.latestInspection?.document_status !== 'pending_pe' ? (
                                   <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                                     <div className={`flex-1 bg-green-100 text-green-700 py-3 sm:py-4 px-4 sm:px-6 rounded-xl sm:rounded-[1.5rem] font-bold text-center uppercase tracking-widest border border-green-200 flex items-center justify-center gap-2 ${isMobileLayout ? 'text-[10px]' : 'text-xs sm:text-sm'}`}>
                                       <CheckCircle size={isMobileLayout ? 16 : 20}/> ตรวจสอบและอนุมัติเสร็จสิ้น
@@ -447,7 +452,7 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                        <button onClick={() => historyReady && handleReviewAction(true)} disabled={isSending || !historyReady} className={`flex-1 bg-blue-600 text-white ${isMobileLayout ? 'py-2 rounded-lg text-[9px]' : 'py-3 sm:py-4 rounded-xl sm:rounded-[1.5rem] text-[10px] sm:text-sm'} font-bold uppercase tracking-widest hover:bg-blue-700 flex justify-center items-center gap-1.5 disabled:opacity-50`}>{isSending ? <Loader2 className="animate-spin" size={14}/> : 'ตรวจสอบผ่าน'}</button>
                                      </div>
                                    </div>
-                                 ) : ( <div className={`bg-[#f5f5f7] text-slate-400 py-3 sm:py-4 rounded-xl sm:rounded-[1.5rem] font-bold text-center uppercase tracking-widest border border-black/5 ${isMobileLayout ? 'text-[9px]' : 'text-xs sm:text-sm'}`}>รอโฟร์แมน 100% หรือ รอ QC ตรวจ</div> )
+                                 ) : ( <div className={`bg-[#f5f5f7] text-slate-400 py-3 sm:py-4 rounded-xl sm:rounded-[1.5rem] font-bold text-center uppercase tracking-widest border border-black/5 ${isMobileLayout ? 'text-[9px]' : 'text-xs sm:text-sm'}`}>{qcResolution?.latestInspection?.document_status === 'pending_pe' ? 'งานรอวิศวกรโครงการ (PE) พิจารณาอนุมัติเงื่อนไข' : 'รอโฟร์แมน 100% หรือ รอ QC ตรวจ'}</div> )
                                ) : isQC ? (
                                   !isQCResolutionReady ? (
                                     <div className="bg-purple-50/80 border border-purple-200 p-3 sm:p-4 rounded-xl sm:rounded-2xl space-y-2.5">
@@ -554,7 +559,7 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                      <Loader2 size={16} className="animate-spin text-amber-600" />
                                      <span>กำลังตรวจสอบข้อมูลใบตรวจ QC...</span>
                                    </div>
-                                ) : (isProjectPlanner || isAdmin || isOwner) && qcResolution?.latestInspection?.document_status === 'pending_pe' ? (
+                                ) : (isProjectPlanner || currentUserRole === 'Project Engineer' || currentUserRole === 'Project Planner' || isAdmin || isOwner) && qcResolution?.latestInspection?.document_status === 'pending_pe' ? (
                                    <div className="bg-amber-50/90 border-2 border-amber-300 p-3 sm:p-4 rounded-xl sm:rounded-2xl space-y-2.5">
                                      <div className="flex items-center justify-between">
                                        <div className="flex items-center gap-2">
@@ -592,7 +597,9 @@ const TaskProgressView = function TaskProgressView(props: TaskProgressViewProps)
                                 ) : isProcurement || isProjectPlanner || isOwner ? (
                                    <div className={`bg-[#f5f5f7] text-[#86868b] py-3 sm:py-4 px-4 sm:px-6 rounded-xl sm:rounded-[1.5rem] font-bold text-center uppercase tracking-widest border border-black/5 flex items-center justify-center gap-2 ${isMobileLayout ? 'text-[10px]' : 'text-xs sm:text-sm'}`}><AlertCircle size={18}/> ใช้สิทธิ์อัปเดตงานไม่ได้</div>
                                ) : (
-                                 isPendingSE || isPendingQC ? (
+                                 qcResolution?.latestInspection?.document_status === 'pending_pe' ? (
+                                   <div className={`bg-amber-100 text-amber-800 py-3 sm:py-4 px-4 sm:px-6 rounded-xl sm:rounded-[1.5rem] font-bold text-center uppercase tracking-widest border border-amber-200 flex items-center justify-center gap-2 ${isMobileLayout ? 'text-[10px]' : 'text-xs sm:text-sm'}`}><Clock size={18}/> งานรอวิศวกรโครงการ (PE) พิจารณาอนุมัติเงื่อนไข</div>
+                                 ) : isPendingSE || isPendingQC ? (
                                    <div className={`bg-orange-100 text-orange-600 py-3 sm:py-4 px-4 sm:px-6 rounded-xl sm:rounded-[1.5rem] font-bold text-center uppercase tracking-widest border border-orange-200 flex items-center justify-center gap-2 ${isMobileLayout ? 'text-[10px]' : 'text-xs sm:text-sm'}`}><Clock size={18}/> งานรอตรวจสอบ ({isPendingSE ? 'Site Engineer' : 'QC'})</div>
                                  ) : (
                                     <div className={`space-y-2 sm:space-y-4`}>

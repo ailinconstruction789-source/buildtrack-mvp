@@ -1,8 +1,9 @@
-import React from 'react';
-import { Wrench, Users, PlusCircle, Building, ClipboardList, Monitor, Settings, Map as MapIcon, AlertTriangle, Grid, Clock, SortAsc, CheckCircle, XCircle, HardHat, FolderOpen, Activity, AlertCircle, Home } from 'lucide-react';
+import React, { useState } from 'react';
+import { Wrench, Users, PlusCircle, Building, ClipboardList, Monitor, Settings, Map as MapIcon, AlertTriangle, Grid, Clock, SortAsc, CheckCircle, XCircle, HardHat, FolderOpen, Activity, AlertCircle, Home, Calendar } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { isExternalProject } from '@/lib/projectUtils';
 import MeterStatusBadges from './MeterStatusBadges';
+import QCDailyInspectionPlanSlideOver from './qc/QCDailyInspectionPlanSlideOver';
 
 interface DashboardOverviewProps {
   view: string;
@@ -64,6 +65,7 @@ const DashboardOverview = function DashboardOverview({
   handleEditProject, handleToggleProjectStatus
 }: DashboardOverviewProps) {
   const [showClosedProjects, setShowClosedProjects] = React.useState(false);
+  const [showQCPlanSlideOver, setShowQCPlanSlideOver] = useState(false);
 
   if (view !== 'dashboard') return null;
 
@@ -194,7 +196,24 @@ const DashboardOverview = function DashboardOverview({
             )}
         </div>
         
-        <div className="flex items-center gap-2 w-full xl:w-auto">
+        <div className="flex items-center gap-2 w-full xl:w-auto flex-wrap">
+            {/* 📋 ปุ่มเปิดสไลด์แผนตรวจงาน QC (Right Slide-Over) */}
+            {(isQC || isAdmin || isOwner || isSiteEngineer) && (
+              <button
+                type="button"
+                onClick={() => setShowQCPlanSlideOver(true)}
+                className="px-3.5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl shadow-xs text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 shrink-0"
+                title="เปิดแผนตรวจงานประจำวัน QC (สไลด์ด้านขวา)"
+              >
+                <Calendar size={14} />
+                <span className="hidden sm:inline">แผนตรวจ QC</span>
+                <span className="sm:hidden">แผน QC</span>
+                <span className="bg-white/25 px-1.5 py-0.2 rounded-md text-[10px]">
+                  {inspectionQueue.filter(q => q.statusFor === 'QC').length}
+                </span>
+              </button>
+            )}
+
             {/* 🌟 2. View Mode Toggle */}
             <div className="flex bg-black/5 p-1 rounded-xl shrink-0 backdrop-blur-md">
               <button onClick={() => setInspectionViewMode('card')} className={`p-2 rounded-lg transition-all duration-300 ${inspectionViewMode === 'card' ? 'bg-white shadow-sm text-blue-500' : 'text-[#86868b] hover:text-[#1d1d1f]'}`} title="มุมมองการ์ด"><Grid size={16}/></button>
@@ -313,6 +332,30 @@ const DashboardOverview = function DashboardOverview({
       )}
     </div>
   )}
+
+  {/* 📋 QC Daily Inspection Plan Slide-Over (Right Drawer) */}
+  <QCDailyInspectionPlanSlideOver
+    isOpen={showQCPlanSlideOver}
+    onClose={() => setShowQCPlanSlideOver(false)}
+    inspectionQueue={inspectionQueue}
+    taskTemplates={taskTemplates}
+    plots={plots}
+    currentUserRole={loggedInUser?.role || (isAdmin ? 'Admin' : (isOwner ? 'Owner' : (isQC ? 'QC' : 'Site Engineer')))}
+    loggedInUsername={loggedInUser?.username || loggedInUser?.name || 'user'}
+    onSelectTask={(taskItem) => {
+      const relatedProject = projects.find(p => p.name === taskItem.project_name);
+      const relatedPlot = plots.find(p => String(p.id) === String(taskItem.plot_id));
+      const relatedTask = taskTemplates.find(t => String(t.id) === String(taskItem.task_template_id));
+      if (relatedPlot && relatedTask) {
+        if (relatedProject) setSelectedProject(relatedProject);
+        setSelectedPlot(relatedPlot);
+        setSelectedTask(relatedTask);
+        setTaskReturnView('dashboard');
+        setView('task-progress');
+        setShowQCPlanSlideOver(false);
+      }
+    }}
+  />
 
 </div>
   );

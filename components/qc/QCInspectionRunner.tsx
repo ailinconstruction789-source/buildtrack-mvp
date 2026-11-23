@@ -994,8 +994,11 @@ export default function QCInspectionRunner({
                   <h3 className="font-bold text-base text-amber-300">วิศวกรโครงการพิจารณาอนุมัติผ่านแบบมีเงื่อนไข (PE Review)</h3>
                 </div>
                 <p className="text-xs text-slate-300">
-                  การตรวจรอบนี้มีรายการที่ระบุว่า "ผ่านแบบมีเงื่อนไข" ({answers.filter(a => a.status === 'conditional').length} รายการ) 
-                  หากท่านอนุมัติ รายการเหล่านี้จะถูกบันทึกส่งต่อ (Carryover) ไปเป็น Defect ในงวดงานถัดไปโดยอัตโนมัติเพื่อให้ติดตามแก้ไขต่อได้
+                  {answers.filter(a => a.status === 'conditional').length > 0 ? (
+                    <>การตรวจรอบนี้มีรายการที่ระบุว่า "ผ่านแบบมีเงื่อนไข" ({answers.filter(a => a.status === 'conditional').length} รายการ) หากท่านอนุมัติ รายการเหล่านี้จะถูกบันทึกส่งต่อ (Carryover) ไปเป็น Defect ในงวดงานถัดไปโดยอัตโนมัติเพื่อให้ติดตามแก้ไขต่อได้</>
+                  ) : (
+                    <>การตรวจรอบนี้ไม่มีรายการที่ตรวจผ่านโดยตรง (ระบุ N/A {answers.filter(a => a.status === 'na').length} รายการ) กรุณาตรวจสอบความเหมาะสมก่อนอนุมัติผ่านหรือสั่งแก้ไขงาน</>
+                  )}
                 </p>
                 <div>
                   <label className="text-[11px] font-bold text-slate-400 block mb-1">ความเห็น/เงื่อนไขของวิศวกรโครงการ (PE Notes):</label>

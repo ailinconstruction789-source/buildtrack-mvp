@@ -1,9 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { TrendingUp, AlertTriangle, Target, CheckCircle, Clock, PieChart as PieChartIcon, Calendar, List, X, ShieldAlert, Printer, ChevronLeft, ChevronRight, Filter } from 'lucide-react';
+import { TrendingUp, AlertTriangle, Target, CheckCircle, Clock, PieChart as PieChartIcon, Calendar, List, X, ShieldAlert, Printer, ChevronLeft, ChevronRight, Filter, Info } from 'lucide-react';
 import { XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, BarChart, Bar, Legend } from 'recharts';
 import { constructionQueueDate, constructionQueueFirstIndex, constructionQueueHistoryIndex, constructionQueueKey } from '@/lib/constructionQueue';
 import { formatRoadblockActionLabel, formatTaskUpdateDisplayText } from '@/lib/foremanDuty';
+import QCDailyInspectionPlanSlideOver from './qc/QCDailyInspectionPlanSlideOver';
+import QCInspectionAuditCalendar from './qc/QCInspectionAuditCalendar';
+import { getMonthlyQCPlanItems, getQCTaskWeights, type QCPlanItem } from '@/lib/qc/qcInspectionPlanService';
+import { getQCLeaveRequests, type QCLeaveRequest } from '@/lib/qc/qcLeaveAndStandInService';
 
 export default function QCPerformanceDashboard({
   plots, taskTemplates, defects, allUpdatesRecord, assignments, isAdmin, isOwner, inspectionQueue
@@ -15,6 +19,47 @@ export default function QCPerformanceDashboard({
   const [lightbox, setLightbox] = useState<{isOpen: boolean, images: string[], currentIndex: number}>({ isOpen: false, images: [], currentIndex: 0 });
   const [valueChartRange, setValueChartRange] = useState<number>(14);
   const [suspectPage, setSuspectPage] = useState(1);
+  const [showQCPlanSlideOver, setShowQCPlanSlideOver] = useState(false);
+  const [qcPlanItems, setQcPlanItems] = useState<QCPlanItem[]>([]);
+  const [qcLeaves, setQcLeaves] = useState<QCLeaveRequest[]>([]);
+
+  useEffect(() => {
+    const now = new Date();
+    getQCTaskWeights().then(wMap => {
+      getMonthlyQCPlanItems({
+        year: now.getFullYear(),
+        month: now.getMonth() + 1,
+        inspectionQueue,
+        allUpdatesRecord,
+        plots,
+        weightsMap: wMap,
+      }).then(items => {
+        if (items) setQcPlanItems(items);
+      });
+    });
+
+    getQCLeaveRequests().then(reqs => {
+      if (reqs) setQcLeaves(reqs);
+    });
+  }, [inspectionQueue, allUpdatesRecord, plots]);
+
+  const projectNames = useMemo(() => {
+    const s = new Set<string>();
+    (plots || []).forEach((p: any) => {
+      if (p.project_name && !p.project_name.toLowerCase().includes('demo')) {
+        s.add(p.project_name);
+      }
+    });
+    return Array.from(s);
+  }, [plots]);
+
+  const inspectorNames = useMemo(() => {
+    const s = new Set<string>();
+    (inspectionQueue || []).forEach((q: any) => {
+      if (q.foreman && !s.has(q.foreman)) s.add(q.foreman);
+    });
+    return Array.from(s);
+  }, [inspectionQueue]);
   const plotIndex = useMemo(() => constructionQueueFirstIndex<any, string>(plots || [], p => String(p.id)), [plots]);
   const taskIndex = useMemo(() => constructionQueueFirstIndex<any, string>(taskTemplates || [], t => String(t.id)), [taskTemplates]);
   const assignmentIndex = useMemo(() => constructionQueueFirstIndex<any, string>(assignments || [], a => constructionQueueKey(a.plot_id, a.task_template_id)), [assignments]);
@@ -406,10 +451,46 @@ export default function QCPerformanceDashboard({
 
   return (
     <div className="space-y-6 sm:space-y-8 mt-8">
-      <div className="flex items-center gap-3 border-b border-slate-200 pb-4">
-        <ShieldAlert className="text-blue-600" size={28} />
-        <h2 className="text-xl sm:text-3xl font-black text-slate-800 italic uppercase">QC Performance <span className="text-slate-400 text-sm sm:text-base font-bold ml-2">แดชบอร์ดประเมินผล QC</span></h2>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-4">
+        <div className="flex items-center gap-3">
+          <ShieldAlert className="text-blue-600" size={28} />
+          <h2 className="text-xl sm:text-3xl font-black text-slate-800 italic uppercase">
+            QC Performance <span className="text-slate-400 text-sm sm:text-base font-bold ml-2">แดชบอร์ดประเมินผล QC</span>
+          </h2>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowQCPlanSlideOver(true)}
+          className="px-4 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-2xl shadow-xs text-xs font-black flex items-center gap-2 transition-all cursor-pointer active:scale-95 shrink-0"
+        >
+          <Calendar size={15} />
+          <span>แผนตรวจงานประจำวัน QC (สไลด์ด้านขวา)</span>
+        </button>
       </div>
+
+      {/* ⚠️ Legacy Data Notice */}
+      <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 text-xs text-slate-600 flex items-start gap-2.5">
+        <Info size={16} className="text-blue-500 shrink-0 mt-0.5" />
+        <div className="space-y-0.5">
+          <p className="font-bold text-slate-800">
+            หมายเหตุข้อมูลย้อนหลัง (Historical Data Transparency):
+          </p>
+          <p className="text-[11px] leading-relaxed text-slate-500">
+            ข้อมูลการตรวจงานก่อนเริ่มระบบแผนตรวจรายวันและคะแนนถ่วงน้ำหนัก (ก่อน 21 พ.ย. 2569) จะไม่มีข้อมูล Snapshot น้ำหนักงานและเวลาพร้อมตรวจ จึงถูกแยกออกจากการคิด KPI ถ่วงน้ำหนัก เพื่อความถูกต้อง ยุติธรรม และไม่มีการคาดเดาคะแนนย้อนหลัง
+          </p>
+        </div>
+      </div>
+
+      {/* 📅 QC Inspection Audit Calendar & Workload Breakdown */}
+      <QCInspectionAuditCalendar
+        planItems={qcPlanItems}
+        leaves={qcLeaves}
+        projects={projectNames}
+        inspectors={inspectorNames}
+        currentUserRole={isAdmin ? 'admin' : (isOwner ? 'owner' : 'qc')}
+        currentUsername="admin"
+        allUpdatesRecord={allUpdatesRecord}
+      />
 
       {/* 📊 Daily QC Clearance Rate */}
       {(() => {
@@ -1440,6 +1521,17 @@ export default function QCPerformanceDashboard({
         </>,
         document.body
       )}
+
+      {/* 📋 QC Daily Inspection Plan Slide-Over (Right Drawer) */}
+      <QCDailyInspectionPlanSlideOver
+        isOpen={showQCPlanSlideOver}
+        onClose={() => setShowQCPlanSlideOver(false)}
+        inspectionQueue={inspectionQueue}
+        taskTemplates={taskTemplates}
+        plots={plots}
+        currentUserRole={isAdmin ? 'Admin' : (isOwner ? 'Owner' : 'QC')}
+        loggedInUsername={isAdmin ? 'admin' : 'qc_inspector'}
+      />
     </div>
   );
 }

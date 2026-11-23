@@ -3043,7 +3043,12 @@ export default function ConstructionApp() {
   const lastUpd = updates.length > 0 ? updates[updates.length - 1] : null;
   const isPendingSE = lastUpd?.progress === 100 && (lastUpd?.action === 'ส่งงาน 100%' || lastUpd?.role === 'Foreman');
   const isPendingQC = lastUpd?.progress === 100 && lastUpd?.action === 'Site Engineer อนุมัติ';
-  const isTaskCompleted = lastUpd?.progress === 100 && (lastUpd?.action === 'QC อนุมัติ' || lastUpd?.action === 'QC อนุมัติผ่าน' || Boolean(lastUpd?.action && String(lastUpd.action).includes('PE อนุมัติ')));
+  const isTaskCompleted = lastUpd?.progress === 100 && (
+    lastUpd?.action === 'QC อนุมัติ' || 
+    lastUpd?.action === 'QC อนุมัติผ่าน' || 
+    lastUpd?.action === 'Project Engineer อนุมัติ' ||
+    (Boolean(lastUpd?.action && String(lastUpd.action).includes('PE อนุมัติ')) && !String(lastUpd.action).includes('รอ PE อนุมัติ'))
+  );
   const currentAssignment = assignments.slice().reverse().find(a => String(a.plot_id) === String(selectedPlot?.id) && String(a.task_template_id) === String(selectedTask?.id));
   // 🌟 สำหรับงานนอกโครงการ (External Projects เช่น บ้านคุณโอ) โฟร์แมนสามารถอัปเดตงานได้โดยไม่ต้องระบุชื่อช่าง
   const isSelectedPlotExternal = isExternalProject(selectedPlot?.project_name || selectedPlot, projects) || isExternalProject(selectedProject, projects);
@@ -5121,6 +5126,7 @@ export default function ConstructionApp() {
                     taskTemplates={taskTemplates}
                     plots={plots}
                     projects={projects}
+                    allUpdatesRecord={allUpdatesRecord}
                     currentUserRole={currentUserRole}
                     loggedInUsername={loggedInUser?.username || loggedInUser?.name || 'Admin'}
                     setSelectedProject={setSelectedProject}

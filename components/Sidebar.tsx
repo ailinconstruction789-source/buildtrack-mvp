@@ -410,6 +410,9 @@ const Sidebar = React.memo(({
                         {(isAdmin || isOwner || isProjectPlanner || isQC || isSiteEngineer || isProcurement) && (
                           <button onClick={() => setView('qc-performance')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'qc-performance' ? 'bg-rose-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><Activity size={18} /> ประเมินผล QC</button>
                         )}
+                        {(isAdmin || isOwner || isProjectPlanner || isQC || isSiteEngineer) && (
+                          <button onClick={() => setView('qc-daily-plan')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'qc-daily-plan' ? 'bg-purple-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><CalendarDays size={18} /> แผนตรวจงานประจำวัน QC</button>
+                        )}
                         {(isAdmin || isQC || isSiteEngineer || isOwner || isForeman) && (
                           <button onClick={() => setView('defects')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${activeView === 'defects' ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-800 hover:text-white'}`}><ShieldAlert size={18} /> Defect Tracking</button>
                         )}
