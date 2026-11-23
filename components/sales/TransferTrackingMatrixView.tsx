@@ -892,11 +892,11 @@ export default function TransferTrackingMatrixView({
       const actVal = row.actualYear && row.actualMonth ? row.actualYear * 12 + row.actualMonth : null;
       const rentalVal = row.rentalYear && row.rentalMonth ? row.rentalYear * 12 + row.rentalMonth : null;
 
-      // ตัดแปลงที่ไม่ได้ระบุวันเป้าหมายออกทั้งหมด (รอโอนต้องมีวันคาดโอน / โอนแล้วต้องมีวันโอนหรือวันคาดโอน / เช่าต้องมีวันเริ่มสัญญาเช่า)
+      // ตัดแปลงที่ไม่ได้ระบุวันเป้าหมายออกทั้งหมด
+      // ยึดวันคาดโอน (Expected Transfer Date) เป็นเกณฑ์หลักสำหรับบ้านขาย (ทั้งแปลงรอโอน และแปลงที่โอนแล้วตามเป้าหมาย)
+      // และยึดวันเริ่ม/คาดเริ่มสัญญาเช่า สำหรับบ้านเช่า
       if (row.isRental) {
         if (rentalVal === null) return false;
-      } else if (row.isTransferred) {
-        if (expVal === null && actVal === null) return false;
       } else {
         if (expVal === null) return false;
       }
@@ -910,13 +910,8 @@ export default function TransferTrackingMatrixView({
           return rentalVal !== null && rentalVal >= fromVal && rentalVal <= toVal;
         }
 
-        if (row.isTransferred) {
-          const expMatch = expVal !== null && expVal >= fromVal && expVal <= toVal;
-          const actMatch = actVal !== null && actVal >= fromVal && actVal <= toVal;
-          return expMatch || actMatch;
-        }
-
-        // Waiting sale: Strict Month Matching by expected transfer date
+        // ฝั่งขาย: ยึดวันคาดโอน (Expected Transfer Date) ในเดือนที่เลือกเป็นหลัก
+        // เพื่อติดตามว่าบ้านที่มีแผนคาดโอนในเดือนนี้ มีความเคลื่อนไหวอย่างไร (โอนสำเร็จแล้ว หรือ กำลังรอโอน)
         return expVal !== null && expVal >= fromVal && expVal <= toVal;
       }
 
@@ -1042,7 +1037,7 @@ export default function TransferTrackingMatrixView({
               ตารางติดตามบ้านรอโอน (Transfer Tracking Matrix)
             </h1>
             <p className="text-xs text-slate-500 font-medium">
-              คัดเฉพาะบ้านรอโอนกรรมสิทธิ์และบ้านเช่า • ตรวจสอบความพร้อมงานก่อสร้าง, เอกสารสิทธิ์, มิเตอร์น้ำไฟ
+              ติดตามสถานะบ้านตามเป้าหมายวันคาดโอนและบ้านเช่าประจำเดือน • ติดตามความเคลื่อนไหว (โอนแล้ว/รอโอน) พร้อมตรวจสอบงานก่อสร้างและส่งมอบ
             </p>
           </div>
         </div>

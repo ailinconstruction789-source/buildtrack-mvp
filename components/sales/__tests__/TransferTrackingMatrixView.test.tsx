@@ -119,6 +119,16 @@ describe('TransferTrackingMatrixView Component', () => {
             highlight_note: 'ลูกค้า: คุณสมหญิง (รอโอน)',
             created_at: '2026-05-13T08:00:00Z',
             house_types: { type_name: 'บ้านเดี่ยว', is_infrastructure: false }
+          },
+          {
+            id: 'plot-4',
+            plot_name: '20',
+            project_name: 'ไอลิน 6',
+            sale_status: 'transferred',
+            has_customer: true,
+            highlight_note: 'ลูกค้า: คุณเอก (โอนแล้ว)',
+            created_at: '2026-05-13T08:00:00Z',
+            house_types: { type_name: 'บ้านเดี่ยว', is_infrastructure: false }
           }
         ];
         const chain: any = {
@@ -153,6 +163,13 @@ describe('TransferTrackingMatrixView Component', () => {
             transferred_at: null,
             contract_status: 'Contracted',
             crm_stage: 'transfer_pending'
+          },
+          {
+            plot_id: 'plot-4',
+            expected_transfer_date: null,
+            transferred_at: `${ym}-22T10:00:00Z`,
+            contract_status: 'Transferred',
+            crm_stage: 'transferred'
           }
         ];
         const chain: any = {
@@ -183,8 +200,9 @@ describe('TransferTrackingMatrixView Component', () => {
     // Wait for the transferred plot (17) and scheduled waiting plot (19) to render
     expect(await screen.findByText('17')).toBeDefined();
     expect(await screen.findByText('19')).toBeDefined();
-    // Unscheduled waiting plot (18) must NOT be displayed
+    // Unscheduled waiting plot (18) and unscheduled transferred plot (20) must NOT be displayed
     expect(screen.queryByText('18')).toBeNull();
+    expect(screen.queryByText('20')).toBeNull();
 
     // Verify "โอนแล้ว" badge appears
     const transferredBadges = await screen.findAllByText('โอนแล้ว');
@@ -194,10 +212,11 @@ describe('TransferTrackingMatrixView Component', () => {
     expect(screen.getByText(/โอนสำเร็จแล้ว \(1\)/i)).toBeDefined();
     expect(screen.getByText(/รอโอนกรรมสิทธิ์ \(1\)/i)).toBeDefined();
 
-    // Even when toggling "ดูทุกเดือน (All)", unscheduled waiting plot (18) must stay excluded
+    // Even when toggling "ดูทุกเดือน (All)", unscheduled plots (18, 20) must stay excluded
     const allMonthsCheckbox = screen.getByRole('checkbox');
     fireEvent.click(allMonthsCheckbox);
     expect(screen.queryByText('18')).toBeNull();
+    expect(screen.queryByText('20')).toBeNull();
     expect(screen.getByText('17')).toBeDefined();
     expect(screen.getByText('19')).toBeDefined();
   });
