@@ -116,6 +116,7 @@ export default function LeadTrackerView({
       if (!user?.username) throw new Error('กรุณาเข้าสู่ระบบก่อนบันทึก Lead');
       const selectedPlot = await recheckInterestedPlot(newLeadForm.project_name, newLeadPlot?.id || null);
       const now = new Date().toISOString();
+      const isWalkInChannel = /^walk[\s-]*in$/i.test(String(newLeadForm.channel || '').trim());
       const payload = {
         customer_name: newLeadForm.customer_name.trim(),
         phone: newLeadForm.phone.trim(),
@@ -130,8 +131,9 @@ export default function LeadTrackerView({
         lead_date: now,
         contacted_date: null,
         appointment_date: newLeadForm.appointment_date ? new Date(newLeadForm.appointment_date).toISOString() : null,
-        crm_status: 'Follow-up — อยู่ระหว่างติดตาม',
-        auto_status: newLeadForm.appointment_date ? 'นัดชมแล้ว' : 'Lead เข้า',
+        ...(isWalkInChannel ? { actual_visit_date: now, status: 'Visit' } : {}),
+        crm_status: isWalkInChannel ? 'Considering — กำลังพิจารณา / เปรียบเทียบ' : 'Follow-up — อยู่ระหว่างติดตาม',
+        auto_status: isWalkInChannel ? 'เข้าชมแล้ว' : (newLeadForm.appointment_date ? 'นัดชมแล้ว' : 'Lead เข้า'),
         notes: newLeadForm.notes,
         created_at: now
       };

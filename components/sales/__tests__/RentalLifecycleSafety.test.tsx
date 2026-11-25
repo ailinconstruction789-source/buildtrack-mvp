@@ -160,6 +160,44 @@ describe('Rental action identity and error safety', () => {
     expect(onClose).not.toHaveBeenCalled();
     expect(window.alert).not.toHaveBeenCalled();
   });
+  it('never selects non-existent plots.customer_name during move-out or convert-to-buy', async () => {
+    const onClose = vi.fn();
+    render(<RentalActionModal isOpen contractId="contract-1" onClose={onClose} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'ยืนยันเปลี่ยนเป็นซื้อแปลงนี้' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: /3. สิ้นสุดสัญญา/ }));
+    submit(/ยืนยันการย้ายออก/);
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    const plotReads = queries.filter(q => q.table === 'plots' && q.action === 'read');
+    expect(plotReads.length).toBeGreaterThan(0);
+    for (const q of plotReads) {
+      expect(q.columns || '').not.toContain('customer_name');
+    }
+  });
+  it('recovers an incomplete MovedOut contract opened from the plot map without rewriting rental_contracts', async () => {
+    const onClose = vi.fn();
+    resolveQuery = q => {
+      if (q.table === 'rental_contracts' && q.action === 'read') {
+        return ok([{ ...contract, status: 'MovedOut' }]);
+      }
+      if (q.table === 'plots' && q.action === 'read') {
+        return ok({ id: 'plot-1', plot_name: '44', sale_status: 'active', has_customer: false, current_tenant_name: 'Tenant One', rental_program: 'A' });
+      }
+      return defaultResult(q);
+    };
+    render(
+      <RentalActionModal
+        isOpen
+        plot={{ id: 'plot-1', plot_name: '44', sale_status: 'active', current_tenant_name: 'Tenant One', rental_program: 'A' } as never}
+        onClose={onClose}
+      />
+    );
+    await waitFor(() => expect(screen.getByRole('button', { name: /ยืนยันการย้ายออก/ })).toBeEnabled());
+    submit(/ยืนยันการย้ายออก/);
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(writes('rental_contracts')).toHaveLength(0);
+    expect(writes('plots')).toHaveLength(1);
+    expect(writes('leads')[0].payload).toMatchObject({ status: 'MovedOut', rental_status: 'MovedOut' });
+  });
 });
 
 describe('Rental contract creation safety', () => {

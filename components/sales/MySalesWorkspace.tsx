@@ -28,8 +28,9 @@ import { normalizeSalesOwner } from '@/lib/salesNames';
 import type { LoadSalesStartupData } from '@/types/salesStartup';
 import SalesOverlay from './SalesOverlay';
 import { salesDealActionLabel, salesDealStageOf } from '@/lib/sales/dealStatus';
-import { getLeadStage, canStartSalesDeal, canEditSalesRole } from '@/lib/sales/leadStage';
+import { getLeadStage, canStartSalesDeal, canEditSalesRole, preserveLeadDealStage } from '@/lib/sales/leadStage';
 import { isCancelledBookingLead } from '@/lib/sales/leadLifecycle';
+import { broadcastSalesSync } from '@/lib/sales/salesSyncBroadcast';
 import { stageToKanbanStatus, parseStageFromNoteText } from './SalesKanban';
 const RentalActionModal = dynamic(() => import('./RentalActionModal'));
 const SalesDealStatusModal = dynamic(() => import('./SalesDealStatusModal'));
@@ -163,6 +164,7 @@ export default function MySalesWorkspace({
   });
   const [isSavingCustomer, setIsSavingCustomer] = useState(false);
   const [customerEditError, setCustomerEditError] = useState<string | null>(null);
+  const [checkingInLeadId, setCheckingInLeadId] = useState<string | null>(null);
 
   useEffect(() => {
     setBookingTarget(null); setStatusTarget(null); setFollowUpTarget(null); setAppointmentTarget(null);
@@ -792,7 +794,7 @@ export default function MySalesWorkspace({
       const matchedVacantPlot = newPlotName.trim()
         ? availablePlotsForNewLead.find((p: any) => (p.plot_name || p.id) === newPlotName.trim() || p.id === newPlotName.trim())
         : null;
-      const isWalkInChannel = newChannel === 'Walk in';
+      const isWalkInChannel = /^walk[\s-]*in$/i.test(String(newChannel || '').trim());
 
       const { data, error } = await supabase
         .from('leads')
@@ -804,9 +806,10 @@ export default function MySalesWorkspace({
           ...(matchedVacantPlot?.id ? { interested_plot_id: matchedVacantPlot.id } : {}),
           channel: newChannel,
           source: newChannel,
-          status: 'New',
-          crm_status: isWalkInChannel ? 'Appointment — นัดหมายเข้าชมโครงการ' : 'Follow-up — อยู่ระหว่างติดตาม',
-          ...(isWalkInChannel ? { appointment_date: leadTimestamp } : {}),
+          status: isWalkInChannel ? 'Visit' : 'New',
+          auto_status: isWalkInChannel ? 'เข้าชมแล้ว' : 'Lead เข้า',
+          crm_status: isWalkInChannel ? 'Considering — กำลังพิจารณา / เปรียบเทียบ' : 'Follow-up — อยู่ระหว่างติดตาม',
+          ...(isWalkInChannel ? { actual_visit_date: leadTimestamp } : {}),
           agent_name: myDisplayName,
           created_by_agent: myDisplayName,
           notes: initialNote,
@@ -820,7 +823,14 @@ export default function MySalesWorkspace({
       if (error) throw error;
       if (!data?.id) throw new Error('ไม่ได้รับรหัสลูกค้าหลังบันทึก');
 
-      setNotice(`บันทึก Lead ใหม่ "${newCustomerName.trim()}" สำเร็จเรียบร้อยแล้ว!`);
+      if (typeof window !== 'undefined') {
+        broadcastSalesSync({ type: 'customer_updated', leadId: data.id, timestamp: Date.now() });
+      }
+      setNotice(
+        isWalkInChannel
+          ? `บันทึก Lead Walk in "${newCustomerName.trim()}" และนับเข้าชมโครงการเรียบร้อยแล้ว!`
+          : `บันทึก Lead ใหม่ "${newCustomerName.trim()}" สำเร็จเรียบร้อยแล้ว!`
+      );
       setShowAddLeadModal(false);
       setNewCustomerName('');
       setNewPhone('');
@@ -859,6 +869,56 @@ export default function MySalesWorkspace({
   const openRental = (lead: any) => {
     if (getLeadStage(lead) === 'rented') setRentalActionTarget(lead);
     else setRentalTarget(lead);
+  };
+
+  // Instant Check-in Visit Handler (records actual_visit_date directly from My Sales Hub)
+  const handleCheckInLead = async (lead: any) => {
+    const targetLeadId = lead?.leadId || (lead?.sourceKind === 'lead' ? lead?.id : null);
+    if (!canWrite || !targetLeadId || lead?.actual_visit_date || checkingInLeadId) return;
+    if (typeof window !== 'undefined' && !window.confirm(`ยืนยันการเช็คอินเข้าชมโครงการสำหรับคุณ ${lead.customer_name}?`)) return;
+
+    setCheckingInLeadId(targetLeadId);
+    try {
+      const now = new Date();
+      const nowIso = now.toISOString();
+      const timeStr = now.toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const checkInNote = `[${timeStr} ✓ เช็คอินเข้าชมโครงการ โดย ${myDisplayName}]`;
+      const updatedNotes = lead.notes ? `${checkInNote}\n${lead.notes}` : checkInNote;
+
+      const patch = preserveLeadDealStage(lead, {
+        actual_visit_date: nowIso,
+        status: 'Visit',
+        auto_status: 'เข้าชมแล้ว',
+        crm_status: 'Considering — กำลังพิจารณา / เปรียบเทียบ',
+        notes: updatedNotes,
+        updated_at: nowIso,
+      });
+
+      const { error } = await supabase
+        .from('leads')
+        .update(patch)
+        .eq('id', targetLeadId);
+
+      if (error) throw error;
+
+      setLeads(prev =>
+        prev.map(item =>
+          item.id === lead.id || item.leadId === targetLeadId
+            ? { ...item, ...patch }
+            : item
+        )
+      );
+      if (typeof window !== 'undefined') {
+        broadcastSalesSync({ type: 'customer_updated', leadId: targetLeadId, timestamp: Date.now() });
+      }
+      setNotice(`เช็คอินเข้าชมโครงการให้ "${lead.customer_name}" เรียบร้อยแล้ว!`);
+      fetchData(true);
+    } catch (err: any) {
+      console.error('Error checking in lead:', err);
+      alert('เช็คอินเข้าชมไม่สำเร็จ: ' + (err?.message || ''));
+    } finally {
+      setCheckingInLeadId(null);
+    }
   };
   const openAddLead = () => setShowAddLeadModal(true);
 
@@ -1613,7 +1673,13 @@ export default function MySalesWorkspace({
                                 <CheckCircle size={10} /> โอน: {String(lead.transferred_date).split('T')[0]}
                               </span>
                             )}
-                            {lead.appointment_date && stage !== 'transferred' && (
+                            {lead.actual_visit_date && stage !== 'transferred' && (
+                              <span className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md font-bold inline-flex items-center gap-1 shadow-2xs">
+                                <Check size={11} className="text-emerald-600 shrink-0" />
+                                <span>เข้าชมแล้ว: {formatAppointmentDate(lead.actual_visit_date)}</span>
+                              </span>
+                            )}
+                            {lead.appointment_date && !lead.actual_visit_date && stage !== 'transferred' && (
                               <span className="text-[10px] text-purple-700 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-md font-bold inline-flex items-center gap-1 shadow-2xs">
                                 <Calendar size={11} className="text-purple-600 shrink-0" />
                                 <span>นัดดู: {formatAppointmentDate(lead.appointment_date)}</span>
@@ -1636,6 +1702,24 @@ export default function MySalesWorkspace({
                               <PhoneCall size={12} className="text-blue-600" />
                               ติดตาม
                             </button>
+
+                            {/* Quick Check-in button for unvisited leads */}
+                            {canWrite && Boolean(lead.leadId) && canStartSalesDeal(lead) && !lead.actual_visit_date && (
+                              <button
+                                type="button"
+                                onClick={() => handleCheckInLead(lead)}
+                                disabled={checkingInLeadId === lead.leadId}
+                                className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer transition-colors shadow-2xs disabled:opacity-60"
+                                title="ยืนยันว่าลูกค้าเข้าชมโครงการแล้ว (นับเป็นยอดเข้าชมทันที)"
+                              >
+                                {checkingInLeadId === lead.leadId ? (
+                                  <Loader2 size={12} className="animate-spin text-emerald-600" />
+                                ) : (
+                                  <Check size={12} className="text-emerald-600" />
+                                )}
+                                เช็คอิน
+                              </button>
+                            )}
 
                             {/* Appointment button */}
                             {canWrite && canStartSalesDeal(lead) && (
@@ -1699,6 +1783,8 @@ export default function MySalesWorkspace({
                     canWrite={canWrite} onBook={() => openBooking(lead)}
                     onFollowUp={() => openFollowUp(lead)}
                     onAppointment={() => openAppointment(lead)}
+                    onCheckIn={() => handleCheckInLead(lead)}
+                    isCheckingIn={checkingInLeadId === lead.leadId}
                     onRent={() => openRental(lead)}
                     onQuickStatus={(status, label) => handleQuickStatusChange(lead.id, status, label)}
                     onEditCustomer={() => handleOpenEditCustomer(lead)}
@@ -1730,6 +1816,8 @@ export default function MySalesWorkspace({
                     canWrite={canWrite} onBook={() => openBooking(lead)}
                     onFollowUp={() => openFollowUp(lead)}
                     onAppointment={() => openAppointment(lead)}
+                    onCheckIn={() => handleCheckInLead(lead)}
+                    isCheckingIn={checkingInLeadId === lead.leadId}
                     onRent={() => openRental(lead)}
                     onQuickStatus={(status, label) => handleQuickStatusChange(lead.id, status, label)}
                     onEditCustomer={() => handleOpenEditCustomer(lead)}
@@ -1761,6 +1849,8 @@ export default function MySalesWorkspace({
                     canWrite={canWrite} onBook={() => openBooking(lead)}
                     onFollowUp={() => openFollowUp(lead)}
                     onAppointment={() => openAppointment(lead)}
+                    onCheckIn={() => handleCheckInLead(lead)}
+                    isCheckingIn={checkingInLeadId === lead.leadId}
                     onRent={() => openRental(lead)}
                     onQuickStatus={(status, label) => handleQuickStatusChange(lead.id, status, label)}
                     onEditCustomer={() => handleOpenEditCustomer(lead)}
@@ -2032,6 +2122,11 @@ export default function MySalesWorkspace({
                     <option value="Lemon8">Lemon8</option>
                     <option value="Referral">คนแนะนำ (Referral)</option>
                   </select>
+                  {/^walk[\s-]*in$/i.test(String(newChannel || '').trim()) && (
+                    <p className="mt-1 text-[10px] font-bold text-emerald-700 flex items-center gap-1">
+                      <Check size={11} className="shrink-0" /> นับเป็นการเข้าชมโครงการ (Visit) ให้อัตโนมัติทันที
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -2351,6 +2446,8 @@ function LeadKanbanCard({
   onBook,
   onFollowUp,
   onAppointment,
+  onCheckIn,
+  isCheckingIn,
   onRent,
   onQuickStatus,
   canWrite,
@@ -2364,6 +2461,8 @@ function LeadKanbanCard({
   onBook: () => void;
   onFollowUp: () => void;
   onAppointment?: () => void;
+  onCheckIn?: () => void;
+  isCheckingIn?: boolean;
   onRent: () => void;
   onQuickStatus: (status: string, label: string) => void;
   onEditCustomer?: () => void;
@@ -2433,6 +2532,10 @@ function LeadKanbanCard({
           <span className="font-bold text-emerald-700 flex items-center gap-1">
             <CheckCircle size={10} /> โอน: {String(lead.transferred_date).split('T')[0]}
           </span>
+        ) : lead.actual_visit_date ? (
+          <span className="font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 flex items-center gap-1">
+            <Check size={10} className="text-emerald-600 shrink-0" /> เข้าชมแล้ว: {formatAppointmentDate(lead.actual_visit_date)}
+          </span>
         ) : lead.appointment_date ? (
           <span className="font-bold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200 flex items-center gap-1">
             <Calendar size={10} className="text-purple-600 shrink-0" /> นัดดู: {formatAppointmentDate(lead.appointment_date)}
@@ -2442,7 +2545,7 @@ function LeadKanbanCard({
 
       {/* Actions */}
       <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-1 flex-wrap">
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 flex-wrap">
           <button
             type="button"
             disabled={!canWrite || !lead.leadId} onClick={onFollowUp}
@@ -2450,6 +2553,19 @@ function LeadKanbanCard({
           >
             <PhoneCall size={10} className="text-blue-600" /> ตาม
           </button>
+
+          {canWrite && Boolean(lead.leadId) && canStartSalesDeal(lead) && !lead.actual_visit_date && onCheckIn && (
+            <button
+              type="button"
+              disabled={isCheckingIn}
+              onClick={onCheckIn}
+              className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer disabled:opacity-60"
+              title="ยืนยันว่าลูกค้าเข้าชมโครงการแล้ว (นับเป็นยอดเข้าชมทันที)"
+            >
+              {isCheckingIn ? <Loader2 size={10} className="animate-spin text-emerald-600" /> : <Check size={10} className="text-emerald-600" />}
+              เช็คอิน
+            </button>
+          )}
 
           {canWrite && canStartSalesDeal(lead) && onAppointment && (
             <button

@@ -262,17 +262,23 @@ export default function CentralLeadsView({
 
   const handleCreateLead = async (input: CentralCreateInput, expectedActor: string): Promise<CentralCreateResult> => {
     try {
+      const isWalkInChannel = /^walk[\s-]*in$/i.test(String(input.channel || '').trim());
+      const nowIso = new Date().toISOString();
       const { data, error } = await supabase.from('leads').insert([{
         customer_name: input.name,
         phone: input.phone,
         channel: input.channel,
+        source: input.channel,
         notes: input.notes,
         project_name: input.interests?.[0]?.projectName || null,
         interested_plot_name: input.interests?.[0]?.plotId || null,
         agent_name: input.assignedSalesUserId || 'Sales',
-        status: 'Lead เข้า',
-        crm_status: 'Follow-up — อยู่ระหว่างติดตาม',
-        created_at: new Date().toISOString()
+        status: isWalkInChannel ? 'Visit' : 'Lead เข้า',
+        auto_status: isWalkInChannel ? 'เข้าชมแล้ว' : 'Lead เข้า',
+        crm_status: isWalkInChannel ? 'Considering — กำลังพิจารณา / เปรียบเทียบ' : 'Follow-up — อยู่ระหว่างติดตาม',
+        ...(isWalkInChannel ? { actual_visit_date: nowIso } : {}),
+        lead_date: nowIso,
+        created_at: nowIso
       }]).select('id').single();
 
       if (error) throw error;

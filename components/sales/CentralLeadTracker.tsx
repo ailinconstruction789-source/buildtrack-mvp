@@ -284,7 +284,7 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
       let plotToRelease: any = null;
 
       if (targetPlotId) {
-        let query = supabase.from('plots').select('id, project_name, plot_name, sale_status, has_customer, current_tenant_name, current_tenant_phone, rental_program, monthly_rent, highlight_note, customer_name').eq('id', targetPlotId);
+        let query = supabase.from('plots').select('id, project_name, plot_name, sale_status, has_customer, current_tenant_name, current_tenant_phone, rental_program, monthly_rent, highlight_note').eq('id', targetPlotId);
         if (targetProject) query = query.eq('project_name', targetProject);
         const { data: pById, error: pByIdErr } = await query;
         if (pByIdErr) throw new Error('ตรวจสอบข้อมูลแปลงไม่สำเร็จ: ' + pByIdErr.message);
@@ -296,7 +296,7 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
       }
 
       if (!plotToRelease && targetPlotName) {
-        let query = supabase.from('plots').select('id, project_name, plot_name, sale_status, has_customer, current_tenant_name, current_tenant_phone, rental_program, monthly_rent, highlight_note, customer_name').eq('plot_name', targetPlotName);
+        let query = supabase.from('plots').select('id, project_name, plot_name, sale_status, has_customer, current_tenant_name, current_tenant_phone, rental_program, monthly_rent, highlight_note').eq('plot_name', targetPlotName);
         if (targetProject) query = query.eq('project_name', targetProject);
         const { data: pByName, error: pByNameErr } = await query;
         if (pByNameErr) throw new Error('ตรวจสอบข้อมูลแปลงไม่สำเร็จ: ' + pByNameErr.message);

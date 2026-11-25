@@ -218,7 +218,7 @@ export default function RentalActionModal({
           const allowedStatuses = ['Active', 'Renewed'];
           if (lead?.rental_status === 'MovedOut' || lead?.rental_status === 'ConvertedToBuy' || lead?.status === 'MovedOut') {
             allowedStatuses.push('MovedOut', 'ConvertedToBuy');
-          } else if (lead?.id) {
+          } else if (lead?.id || plot?.current_tenant_name || plot?.rental_program) {
             allowedStatuses.push('MovedOut', 'ConvertedToBuy');
           }
           query = query.in('status', allowedStatuses);
@@ -249,6 +249,8 @@ export default function RentalActionModal({
           )) ||
           (contract.status === 'MovedOut' && (
             (lead?.rental_status && lead.rental_status !== 'MovedOut') ||
+            lead?.status === 'Rented' ||
+            lead?.active_rental_contract_id === contract.id ||
             isPlotStillHeldByTenant
           ))
         ));
@@ -308,7 +310,7 @@ export default function RentalActionModal({
     const dmg = parseFloat(damageDeduction) || 0;
     const clean = parseFloat(cleaningDeduction) || 0;
     const totalDeductions = util + dmg + clean;
-    return Math.max(0, initialDeposit - totalDeductions);
+    return Math.round(Math.max(0, initialDeposit - totalDeductions) * 100) / 100;
   }, [activeContract, utilityDeduction, damageDeduction, cleaningDeduction]);
 
   if (!isOpen) return null;
@@ -481,7 +483,7 @@ export default function RentalActionModal({
 
     const { data: rawPlot, error: plotErr } = await supabase
       .from('plots')
-      .select('id, sale_status, has_customer, current_tenant_name, current_tenant_phone, rental_program, security_deposit, lease_start_date, highlight_note, customer_name, lease_end_date, monthly_rent')
+      .select('id, sale_status, has_customer, current_tenant_name, current_tenant_phone, rental_program, security_deposit, lease_start_date, highlight_note, lease_end_date, monthly_rent')
       .eq('id', c.plot_id)
       .maybeSingle();
     if (plotErr) throw plotErr;
@@ -823,7 +825,7 @@ export default function RentalActionModal({
       }
 
       const { data: rawPlot, error: plotErr } = await supabase.from('plots')
-        .select('id, sale_status, has_customer, current_tenant_name, customer_name, lease_end_date')
+        .select('id, sale_status, has_customer, current_tenant_name, lease_end_date')
         .eq('id', c.plot_id)
         .maybeSingle();
 
@@ -1480,6 +1482,7 @@ export default function RentalActionModal({
                     disabled={submitting || (actionProgress.current?.completed || 0) > 0}
                     type="number"
                     min="0"
+                    step="any"
                     value={appliedBookingCredit}
                     onChange={e => setAppliedBookingCredit(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 font-bold text-emerald-800 focus:ring-2 focus:ring-emerald-500 focus:bg-white focus:outline-none"
@@ -1492,6 +1495,7 @@ export default function RentalActionModal({
                     disabled={submitting || (actionProgress.current?.completed || 0) > 0}
                     type="number"
                     min="0"
+                    step="any"
                     value={customPurchasePrice}
                     onChange={e => setCustomPurchasePrice(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 font-black text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:bg-white focus:outline-none"
@@ -1626,6 +1630,7 @@ export default function RentalActionModal({
                     disabled={submitting || (actionProgress.current?.completed || 0) > 0}
                     type="number"
                     min="0"
+                    step="any"
                     value={utilityDeduction}
                     onChange={e => setUtilityDeduction(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 font-medium focus:ring-2 focus:ring-rose-500 focus:outline-none"
@@ -1638,6 +1643,7 @@ export default function RentalActionModal({
                     disabled={submitting || (actionProgress.current?.completed || 0) > 0}
                     type="number"
                     min="0"
+                    step="any"
                     value={damageDeduction}
                     onChange={e => setDamageDeduction(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 font-medium focus:ring-2 focus:ring-rose-500 focus:outline-none"
@@ -1650,6 +1656,7 @@ export default function RentalActionModal({
                     disabled={submitting || (actionProgress.current?.completed || 0) > 0}
                     type="number"
                     min="0"
+                    step="any"
                     value={cleaningDeduction}
                     onChange={e => setCleaningDeduction(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 font-medium focus:ring-2 focus:ring-rose-500 focus:outline-none"
@@ -1664,7 +1671,7 @@ export default function RentalActionModal({
                   <p className="text-[10px] text-slate-500 mt-0.5">เงินประกันตั้งต้น - รายการหักทั้งหมด</p>
                 </div>
                 <div className="text-sm font-black text-rose-700 bg-white px-3 py-1.5 rounded-xl border border-slate-300 shadow-sm">
-                  {moveOutRefund.toLocaleString()} บาท
+                  {moveOutRefund.toLocaleString(undefined, { minimumFractionDigits: Number.isInteger(moveOutRefund) ? 0 : 2, maximumFractionDigits: 2 })} บาท
                 </div>
               </div>
 

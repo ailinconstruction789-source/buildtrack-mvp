@@ -355,6 +355,11 @@ function CentralLeadFormSession({ snapshot, save, onSaved, onClose }: Props) {
             >
               {['โทร', 'Walk in', 'Facebook', 'Line OA', 'Line ส่วนตัว', 'TikTok', 'Youtube', 'Referral', 'Billboard', 'Other'].map(item => <option key={item}>{item}</option>)}
             </select>
+            {/^walk[\s-]*in$/i.test(channel.trim()) && (
+              <span className="mt-1 block text-[11px] font-bold text-emerald-700">
+                ✓ ช่องทาง Walk in จะนับเป็นการเข้าชมโครงการ (Visit) ให้อัตโนมัติทันที
+              </span>
+            )}
           </label>
           {isAdmin ? (
             <label className="text-xs font-bold text-slate-700">
