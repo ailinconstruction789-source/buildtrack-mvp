@@ -65,6 +65,28 @@ const baseData: SalesStartupData = {
       created_at: '2026-11-24T05:00:00Z',
     },
     {
+      id: 'L-MIND',
+      customer_name: 'น้องมายด์',
+      project_name: 'ไอลิน6',
+      channel: 'Walk in',
+      sales_owner: 'FIELD',
+      status: 'Interested',
+      crm_status: 'Interested',
+      actual_visit_date: '2026-06-22T05:00:00Z',
+      created_at: '2026-06-22T05:00:00Z',
+    },
+    {
+      id: 'L-APPT',
+      customer_name: 'คุณนัดชมยังไม่มา',
+      project_name: 'ไอลิน6',
+      channel: 'Line OA',
+      sales_owner: 'FIELD',
+      status: 'New',
+      crm_status: 'Appointment — นัดหมายเข้าชมโครงการ',
+      appointment_date: '2026-11-28T03:00:00Z',
+      created_at: '2026-11-20T03:00:00Z',
+    },
+    {
       id: 'L-LOAN',
       customer_name: 'คุณยื่นกู้',
       project_name: 'ไอลิน 4',
@@ -208,5 +230,49 @@ describe('MySalesWorkspace Walk-in auto-visit & direct Check-in', () => {
     const visitedCard = screen.getByText('คุณเข้าชมแล้ว').closest<HTMLElement>('[class*="rounded-xl"]')!;
     expect(within(visitedCard).queryByRole('button', { name: 'เช็คอิน' })).not.toBeInTheDocument();
     expect(within(visitedCard).getByText(/เข้าชมแล้ว:/)).toBeInTheDocument();
+    expect(within(visitedCard).getByRole('button', { name: /จอง/ })).toBeInTheDocument();
+    expect(within(visitedCard).getByRole('button', { name: /เช่า/ })).toBeInTheDocument();
+  });
+
+  it('separates visited leads (including Interested with actual_visit_date) into the เข้าชมแล้ว tab away from active and appointment tabs', async () => {
+    let checkedInPatch: Record<string, unknown> | null = null;
+    mocks.update.mockImplementation((_table: string, patch: Record<string, unknown>) => {
+      checkedInPatch = patch;
+    });
+    const loadStartupData = vi.fn().mockImplementation(async () => ({
+      ...baseData,
+      leads: baseData.leads.map(l => (l.id === 'L-EMMA' && checkedInPatch ? { ...l, ...checkedInPatch } : l)),
+    }));
+
+    render(<MySalesWorkspace currentUser={user} projects={projects} loadStartupData={loadStartupData} />);
+    await screen.findByText('คุณเอมม่า');
+
+    // Active tab: should contain unvisited คุณเอมม่า, NOT น้องมายด์ or คุณนัดชมยังไม่มา
+    fireEvent.click(screen.getByRole('button', { name: /กำลังติดตาม \/ สนใจ/ }));
+    expect(screen.getByText('คุณเอมม่า')).toBeInTheDocument();
+    expect(screen.queryByText('น้องมายด์')).not.toBeInTheDocument();
+    expect(screen.queryByText('คุณเข้าชมแล้ว')).not.toBeInTheDocument();
+    expect(screen.queryByText('คุณนัดชมยังไม่มา')).not.toBeInTheDocument();
+
+    // Appointment tab: should contain unvisited appointment only
+    fireEvent.click(screen.getByRole('button', { name: /^📅 นัดชมโครงการ \d+$/ }));
+    expect(screen.getByText('คุณนัดชมยังไม่มา')).toBeInTheDocument();
+    expect(screen.queryByText('น้องมายด์')).not.toBeInTheDocument();
+    expect(screen.queryByText('คุณเข้าชมแล้ว')).not.toBeInTheDocument();
+
+    // Visited tab: should contain both น้องมายด์ (Interested + actual_visit_date) and คุณเข้าชมแล้ว
+    fireEvent.click(screen.getByRole('button', { name: /✅ เข้าชมแล้ว/ }));
+    expect(screen.getByText('น้องมายด์')).toBeInTheDocument();
+    expect(screen.getByText('คุณเข้าชมแล้ว')).toBeInTheDocument();
+    expect(screen.queryByText('คุณเอมม่า')).not.toBeInTheDocument();
+    expect(screen.queryByText('คุณนัดชมยังไม่มา')).not.toBeInTheDocument();
+
+    // Checking in คุณเอมม่า from Active tab moves her directly into เข้าชมแล้ว tab
+    fireEvent.click(screen.getByRole('button', { name: /กำลังติดตาม \/ สนใจ/ }));
+    fireEvent.click(within(screen.getByText('คุณเอมม่า').closest('tr')!).getByRole('button', { name: 'เช็คอิน' }));
+    await waitFor(() => expect(screen.queryByText('คุณเอมม่า')).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /✅ เข้าชมแล้ว/ }));
+    expect(screen.getByText('คุณเอมม่า')).toBeInTheDocument();
   });
 });

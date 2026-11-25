@@ -80,6 +80,7 @@ function formatAppointmentDate(value: any): string {
 const STAGES = [
   { id: 'active', label: '🔥 กำลังติดตาม / สนใจ', color: 'bg-blue-50 text-blue-700 border-blue-200' },
   { id: 'appointment', label: '📅 นัดชมโครงการ', color: 'bg-purple-50 text-purple-700 border-purple-200' },
+  { id: 'visited', label: '✅ เข้าชมแล้ว', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
   { id: 'loan', label: '🏦 เช็คเครดิต / ยื่นกู้', color: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
   { id: 'booked', label: '🏷️ วางจองแล้ว', color: 'bg-amber-50 text-amber-700 border-amber-200' },
   { id: 'transferred', label: '🏡 โอนกรรมสิทธิ์แล้ว', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
@@ -558,11 +559,20 @@ export default function MySalesWorkspace({
     return null;
   }, [dbPlots]);
 
+  const isVisitedLead = useCallback((lead: any): boolean => {
+    if (!lead) return false;
+    if (lead.actual_visit_date) return true;
+    const statusLower = String(lead.status || '').trim().toLowerCase();
+    const autoStatusLower = String(lead.auto_status || '').trim().toLowerCase();
+    return statusLower === 'visit' || autoStatusLower === 'เข้าชมแล้ว';
+  }, []);
+
   const getStageCategory = useCallback((lead: any) => {
     const stage = getLeadStage(lead);
     if (stage === 'lost' && isCancelledBookingLead(lead)) return 'cancelled';
+    if ((stage === 'active' || stage === 'appointment') && isVisitedLead(lead)) return 'visited';
     return stage;
-  }, []);
+  }, [isVisitedLead]);
 
   // Available Years list
   const availableYears = useMemo(() => {
@@ -597,7 +607,7 @@ export default function MySalesWorkspace({
         // For past years (e.g. 2025, 2024), strictly filter items matching that year.
         if ((selectedYear === '2026' || selectedYear === new Date().getFullYear().toString())
 ) {
-          if (stage === 'active' || stage === 'appointment' || stage === 'loan' || stage === 'rented') {
+          if (stage === 'active' || stage === 'appointment' || stage === 'visited' || stage === 'loan' || stage === 'rented') {
             // keep ongoing active pipeline and rental leads
           } else if (itemYear !== targetYearNum) {
             return false;
@@ -655,6 +665,12 @@ export default function MySalesWorkspace({
         if (selectedStage === 'appointment') {
           const appt = parseTime(lead.appointment_date);
           if (appt > 0) return 10000000000000 + appt;
+        }
+
+        // When viewing visited stage: prioritize actual_visit_date
+        if (selectedStage === 'visited') {
+          const visited = parseTime(lead.actual_visit_date || lead.contacted_date || lead.lead_date);
+          if (visited > 0) return 10000000000000 + visited;
         }
 
         // When viewing booked stage: prioritize booking_date / booked_at
@@ -1493,7 +1509,7 @@ export default function MySalesWorkspace({
                   const stage = getStageCategory(l);
                   const targetYearNum = selectedYear === 'unknown' ? null : parseInt(selectedYear, 10);
                   if (selectedYear === '2026' || selectedYear === new Date().getFullYear().toString()) {
-                    if (stage === 'active' || stage === 'appointment' || stage === 'loan' || stage === 'rented') {
+                    if (stage === 'active' || stage === 'appointment' || stage === 'visited' || stage === 'loan' || stage === 'rented') {
                       // include ongoing active and rental leads
                     } else if (itemYear !== targetYearNum) {
                       return false;
@@ -1661,6 +1677,7 @@ export default function MySalesWorkspace({
                               stage === 'booked' ? 'bg-amber-100 text-amber-900 border-amber-300' :
                               stage === 'rented' ? 'bg-teal-100 text-teal-900 border-teal-300' :
                               stage === 'appointment' ? 'bg-purple-100 text-purple-900 border-purple-300' :
+                              stage === 'visited' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
                               stage === 'loan' ? 'bg-indigo-100 text-indigo-900 border-indigo-300' :
                               stage === 'cancelled' ? 'bg-orange-100 text-orange-900 border-orange-300' :
                               stage === 'lost' ? 'bg-rose-100 text-rose-900 border-rose-300' :
@@ -1798,7 +1815,7 @@ export default function MySalesWorkspace({
               <div className="flex items-center justify-between pb-1 border-b border-slate-200">
                 <span className="text-xs font-black text-purple-900 flex items-center gap-1.5">
                   <span className="w-2.5 h-2.5 rounded-full bg-purple-500"></span>
-                  📅 นัดชมโครงการ (Visit)
+                  📅 นัดชมโครงการ (Appointment)
                 </span>
                 <span className="text-[11px] font-black text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full">
                   {filteredLeads.filter(l => getStageCategory(l) === 'appointment').length}
@@ -1813,6 +1830,39 @@ export default function MySalesWorkspace({
                     isMine={isMyLead(lead)}
                     plotName={getLeadPlotName(lead)}
                     stage="appointment"
+                    canWrite={canWrite} onBook={() => openBooking(lead)}
+                    onFollowUp={() => openFollowUp(lead)}
+                    onAppointment={() => openAppointment(lead)}
+                    onCheckIn={() => handleCheckInLead(lead)}
+                    isCheckingIn={checkingInLeadId === lead.leadId}
+                    onRent={() => openRental(lead)}
+                    onQuickStatus={(status, label) => handleQuickStatusChange(lead.id, status, label)}
+                    onEditCustomer={() => handleOpenEditCustomer(lead)}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* Column 2.5: เข้าชมโครงการแล้ว (Visited) */}
+            <div className="bg-emerald-50/70 rounded-2xl p-3 border border-emerald-200/80 space-y-3 min-w-[280px] w-72 shrink-0">
+              <div className="flex items-center justify-between pb-1 border-b border-emerald-200/80">
+                <span className="text-xs font-black text-emerald-900 flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                  ✅ เข้าชมแล้ว (Visited)
+                </span>
+                <span className="text-[11px] font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                  {filteredLeads.filter(l => getStageCategory(l) === 'visited').length}
+                </span>
+              </div>
+
+              <div className="space-y-2.5 max-h-[70vh] overflow-y-auto pr-0.5">
+                {filteredLeads.filter(l => getStageCategory(l) === 'visited').map(lead => (
+                  <LeadKanbanCard
+                    key={lead.id}
+                    lead={lead}
+                    isMine={isMyLead(lead)}
+                    plotName={getLeadPlotName(lead)}
+                    stage="visited"
                     canWrite={canWrite} onBook={() => openBooking(lead)}
                     onFollowUp={() => openFollowUp(lead)}
                     onAppointment={() => openAppointment(lead)}
@@ -2585,7 +2635,7 @@ function LeadKanbanCard({
         </div>
 
         <div className="flex items-center gap-1">
-          {(canWrite && ['active', 'appointment', 'loan', 'booked'].includes(stage) || stage === 'transferred') && (
+          {(canWrite && ['active', 'appointment', 'visited', 'loan', 'booked'].includes(stage) || stage === 'transferred') && (
             <button
               type="button"
               onClick={onBook}
@@ -2594,7 +2644,7 @@ function LeadKanbanCard({
               <Tag size={10} className="text-amber-600" /> {['booked', 'transferred'].includes(stage) ? salesDealActionLabel(lead, canWrite) : 'จอง'}
             </button>
           )}
-          {canWrite && ['active', 'appointment', 'loan', 'rented'].includes(stage) && <button
+          {canWrite && ['active', 'appointment', 'visited', 'loan', 'rented'].includes(stage) && <button
             type="button"
             onClick={onRent}
             className="px-2 py-1 bg-teal-50 hover:bg-teal-100 text-teal-900 border border-teal-200 rounded-lg text-[10px] font-black inline-flex items-center gap-1 cursor-pointer"
