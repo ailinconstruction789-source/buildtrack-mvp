@@ -30,6 +30,15 @@ describe('interested plot stock rules', () => {
     expect(filterAvailablePlots(input, sales, 'โครงการ A').map(p => p.id)).toEqual(['cancelled']);
   });
 
+  it('excludes rental-booked or rented plots even when has_customer is false and sale_status is ready_for_sale', () => {
+    const input = [
+      plot('vacant', { sale_status: 'ready_for_sale', has_customer: false }),
+      plot('rent-booked', { sale_status: 'ready_for_sale', has_customer: false, current_tenant_name: 'Evelyn Suen', rental_program: 'program_a' }),
+      plot('rent-program-only', { sale_status: 'active', has_customer: false, rental_program: 'program_b' }),
+    ];
+    expect(filterAvailablePlots(input, [], 'โครงการ A').map(p => p.id)).toEqual(['vacant']);
+  });
+
   it('supports existing text IDs without requiring UUID conversion', () => {
     const plots = [plot('ไอลิน 6-A01', { plot_name: 'A-01' }), plot('ไอลิน 6-B02')];
     expect(searchAvailablePlots(plots, ' a-01 ')).toEqual([plots[0]]);

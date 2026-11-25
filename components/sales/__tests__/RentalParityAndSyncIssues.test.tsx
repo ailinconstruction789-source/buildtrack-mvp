@@ -451,7 +451,10 @@ describe('Rental Parity and Synchronization Defect Tests', () => {
       await waitFor(() => {
         const plotUpdates = writes('plots');
         expect(plotUpdates.length).toBeGreaterThan(0);
-        expect((plotUpdates[0].payload as any).sale_status).toBe('Rented');
+        expect((plotUpdates[0].payload as any).sale_status).toBeUndefined();
+        expect((plotUpdates[0].payload as any).has_customer).toBeUndefined();
+        expect((plotUpdates[0].payload as any).current_tenant_name).toBe('Somchai Jaidee');
+        expect((plotUpdates[0].payload as any).highlight_note).toContain('เช่า:');
       });
     });
 
@@ -4594,7 +4597,7 @@ describe('Rental Parity and Synchronization Defect Tests', () => {
       submit(/ยืนยันเปลี่ยนเป็นซื้อแปลงนี้/);
       await waitFor(() => expect(screen.getByText(/บันทึกบางส่วนแล้ว แต่ยังไม่ครบ.*Temporary network failure/i)).toBeInTheDocument());
       expect(contractRow.status).toBe('ConvertedToBuy');
-      expect(plotRow.sale_status).toBe('Reserved');
+      expect(plotRow.current_tenant_name).toBeNull();
       expect(salesRows).toHaveLength(0);
       expect(onSaved).not.toHaveBeenCalled();
 
@@ -4736,7 +4739,7 @@ describe('Rental Parity and Synchronization Defect Tests', () => {
       await waitFor(() => expect(onClose2).toHaveBeenCalledOnce());
       expect(onSaved2).toHaveBeenCalledOnce();
       expect(contractRow.status).toBe('ConvertedToBuy');
-      expect(plotRow.sale_status).toBe('Reserved');
+      expect(plotRow.current_tenant_name).toBeNull();
       expect(leadRow.status).toBe('Booked');
       expect(salesRows).toHaveLength(1);
     });
@@ -5166,8 +5169,7 @@ describe('Rental Parity and Synchronization Defect Tests', () => {
 
       await waitFor(() => expect(onClose2).toHaveBeenCalledOnce());
       expect(onSaved2).toHaveBeenCalledOnce();
-      expect(plotRow.sale_status).toBe('Available');
-      expect(plotRow.has_customer).toBe(false);
+      expect(plotRow.current_tenant_name).toBeNull();
       expect(leadRow.status).toBe('MovedOut');
       expect(alertSpy).toHaveBeenCalledOnce();
       expect(String(alertSpy.mock.calls[0][0])).toMatch(/กลับมาเป็นแปลงว่าง/);

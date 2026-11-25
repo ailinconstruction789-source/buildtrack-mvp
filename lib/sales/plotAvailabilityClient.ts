@@ -9,7 +9,7 @@ export async function loadAvailablePlots(projectName: string): Promise<Intereste
   const plots: InterestedPlot[] = [];
   for (let offset = 0; ; offset += PAGE_SIZE) {
     const { data, error } = await supabase.from('plots')
-      .select('id, plot_name, project_name, has_customer, sale_status')
+      .select('id, plot_name, project_name, has_customer, sale_status, current_tenant_name, rental_program')
       .eq('project_name', projectName).order('id').range(offset, offset + PAGE_SIZE - 1);
     if (error || !data) throw new Error('ตรวจสอบแปลงว่างไม่สำเร็จ กรุณาลองใหม่');
     plots.push(...data as InterestedPlot[]);

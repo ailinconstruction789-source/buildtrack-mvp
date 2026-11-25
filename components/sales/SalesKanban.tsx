@@ -413,7 +413,7 @@ export default function SalesKanban({
       setLoadError(null);
       try {
         const [plotsData, salesData] = await Promise.all([
-          fetchSalesWithoutLimit('plots', { select: 'id, project_name, has_customer, sale_status', orderBy: 'id', ascending: true }),
+          fetchSalesWithoutLimit('plots', { select: 'id, project_name, has_customer, sale_status, current_tenant_name, rental_program', orderBy: 'id', ascending: true }),
           fetchSalesWithoutLimit('sales', { select: 'plot_id, contract_status', orderBy: 'id', ascending: true })
         ]);
 
@@ -432,6 +432,8 @@ export default function SalesKanban({
           }
           counts[pName].total++;
           const isVacant = p.has_customer === false &&
+            !p.current_tenant_name &&
+            !p.rental_program &&
             (!p.sale_status || ['active', 'normal', 'ready_for_sale', 'available', 'vacant', ''].includes(p.sale_status.toLowerCase())) &&
             !occupied.has(p.id);
           if (isVacant) {
@@ -1277,14 +1279,14 @@ export default function SalesKanban({
               });
               if (rpcRes.error) throw rpcRes.error;
             } catch {
-              // Fallback to direct plot update below
+              // Fallback to clearing non-guarded rental/display fields below
             }
           }
 
           try {
-            let plotQuery = supabase.from('plots').update({
-              sale_status: releasedSaleStatus,
-              has_customer: false,
+            // Clear rental/display fields without overwriting guarded stock columns (sale_status, has_customer)
+            // so guard_booking_plot_stock() allows the update cleanly.
+            const clearPlotPayload: Record<string, unknown> = {
               current_tenant_name: null,
               current_tenant_phone: null,
               rental_program: null,
@@ -1293,7 +1295,11 @@ export default function SalesKanban({
               lease_start_date: null,
               lease_end_date: null,
               highlight_note: null
-            }).eq('id', resolvedPlotId);
+            };
+            if (!isRentDeal && !saleId && matchedPlot?.has_customer === false && ['active', 'ready_for_sale'].includes(String(matchedPlot?.sale_status || ''))) {
+              clearPlotPayload.sale_status = releasedSaleStatus;
+            }
+            let plotQuery = supabase.from('plots').update(clearPlotPayload).eq('id', resolvedPlotId);
             if (projName && matchedPlot?.project_name) {
               plotQuery = plotQuery.eq('project_name', projName);
             }

@@ -517,11 +517,155 @@ describe('RentalContractModal - Plot ordering, Booked plots & Historical dates',
     expect(leadsPayload.deal_type).toBe('rent');
     expect(leadsPayload.status).toBe('Reserved');
 
-    // Check payload sent to plots: must NOT contain customer_name
+    // Check payload sent to plots: must NOT contain customer_name or guarded stock columns (sale_status, has_customer)
     expect(plotsUpdatedPayload).toBeDefined();
     expect(plotsUpdatedPayload.customer_name).toBeUndefined();
+    expect(plotsUpdatedPayload.sale_status).toBeUndefined();
+    expect(plotsUpdatedPayload.has_customer).toBeUndefined();
     expect(plotsUpdatedPayload.current_tenant_name).toBe('คุณสมศักดิ์ จองเช่า');
-    expect(plotsUpdatedPayload.sale_status).toBe('Booked');
+    expect(plotsUpdatedPayload.rental_program).toBe('program_a');
+    expect(plotsUpdatedPayload.highlight_note).toContain('จองเช่า');
+  });
+
+  it('passes live guard_booking_plot_stock trigger on ready_for_sale plots for both rental booking and contract signing', async () => {
+    const plotRow: Record<string, any> = {
+      id: 'ไอลิน 3-68',
+      plot_name: '68',
+      project_name: 'ไอลิน 3',
+      sale_status: 'ready_for_sale',
+      has_customer: false,
+      current_tenant_name: null,
+      rental_program: null,
+      price: 9950000
+    };
+    const simulatedStockGuard = (payload: Record<string, any>) => {
+      if ('sale_status' in payload || 'has_customer' in payload) {
+        return { data: null, error: { message: 'EXTERNAL_WRITER_STOCK_COMMAND_REQUIRED' } };
+      }
+      Object.assign(plotRow, payload);
+      return { data: [{ id: plotRow.id }], count: 1, error: null };
+    };
+
+    const makeChain = (resolver: () => Promise<any>) => {
+      const chain: any = {
+        eq: vi.fn().mockImplementation(() => chain),
+        neq: vi.fn().mockImplementation(() => chain),
+        in: vi.fn().mockImplementation(() => chain),
+        is: vi.fn().mockImplementation(() => chain),
+        select: vi.fn().mockImplementation(() => chain),
+        single: vi.fn().mockImplementation(() => resolver()),
+        then: (resolve: any, reject: any) => resolver().then(resolve, reject)
+      };
+      return chain;
+    };
+
+    mocks.from.mockImplementation((table: string) => {
+      if (table === 'plots') {
+        return {
+          select: vi.fn().mockImplementation(() => makeChain(async () => ({ data: [{ ...plotRow }], error: null }))),
+          update: vi.fn().mockImplementation((payload: Record<string, any>) => makeChain(async () => simulatedStockGuard(payload)))
+        };
+      }
+      if (table === 'leads') {
+        return {
+          select: vi.fn().mockImplementation(() => makeChain(async () => ({ data: [], error: null }))),
+          update: vi.fn().mockImplementation(() => makeChain(async () => ({ data: { id: 'lead-68' }, error: null })))
+        };
+      }
+      if (table === 'rental_contracts') {
+        return {
+          select: vi.fn().mockImplementation(() => makeChain(async () => ({ data: [], error: null }))),
+          insert: vi.fn().mockImplementation(() => makeChain(async () => ({ data: { id: 'rc-68' }, error: null })))
+        };
+      }
+      if (table === 'sales') {
+        return {
+          select: vi.fn().mockImplementation(() => makeChain(async () => ({ data: [], error: null }))),
+          update: vi.fn().mockImplementation(() => makeChain(async () => ({ data: [], error: null })))
+        };
+      }
+      return {
+        select: vi.fn().mockImplementation(() => makeChain(async () => ({ data: [], error: null }))),
+        insert: vi.fn().mockImplementation(() => makeChain(async () => ({ data: null, error: null })))
+      };
+    });
+
+    const onBookingSaved = vi.fn();
+    const onBookingClose = vi.fn();
+    const { unmount } = render(
+      <RentalContractModal
+        isOpen
+        onClose={onBookingClose}
+        onSaved={onBookingSaved}
+        defaultMode="booking"
+        projectName="ไอลิน 3"
+        plotId="ไอลิน 3-68"
+        lead={{
+          id: 'lead-68',
+          customer_name: 'Evelyn Suen Yim Siong',
+          phone: '0952599710',
+          project_name: 'ไอลิน 3',
+          sales_owner: 'YING',
+          created_at: '2026-11-25T00:00:00.000Z'
+        } as any}
+        user={{ displayName: 'YING' }}
+        salesOwners={[{ userId: 'u-ying', displayName: 'YING' }]}
+      />
+    );
+
+    await waitFor(() => expect(screen.queryByText(/กำลังโหลดแปลง.../i)).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /ยืนยันบันทึกการจองเช่า \(ล็อกแปลง\)/i }));
+
+    await waitFor(() => {
+      expect(onBookingSaved).toHaveBeenCalledOnce();
+      expect(onBookingClose).toHaveBeenCalledOnce();
+    });
+    expect(plotRow.sale_status).toBe('ready_for_sale');
+    expect(plotRow.has_customer).toBe(false);
+    expect(plotRow.current_tenant_name).toBe('Evelyn Suen Yim Siong');
+    expect(plotRow.highlight_note).toContain('จองเช่า:');
+    unmount();
+
+    // Now convert the same rental booking to an active rental contract under the same stock guard
+    const onContractSaved = vi.fn();
+    const onContractClose = vi.fn();
+    render(
+      <RentalContractModal
+        isOpen
+        onClose={onContractClose}
+        onSaved={onContractSaved}
+        defaultMode="contract"
+        projectName="ไอลิน 3"
+        plotId="ไอลิน 3-68"
+        lead={{
+          id: 'lead-68',
+          customer_name: 'Evelyn Suen Yim Siong',
+          phone: '0952599710',
+          project_name: 'ไอลิน 3',
+          status: 'Reserved',
+          deal_type: 'rent',
+          rental_status: 'PendingContract',
+          interested_plot_id: 'ไอลิน 3-68',
+          sales_owner: 'YING',
+          created_at: '2026-11-25T00:00:00.000Z'
+        } as any}
+        user={{ displayName: 'YING' }}
+        salesOwners={[{ userId: 'u-ying', displayName: 'YING' }]}
+      />
+    );
+
+    await waitFor(() => expect(screen.queryByText(/กำลังโหลดแปลง.../i)).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /ยืนยันบันทึกสัญญาเช่า/i }));
+
+    await waitFor(() => {
+      expect(onContractSaved).toHaveBeenCalledOnce();
+      expect(onContractClose).toHaveBeenCalledOnce();
+    });
+    expect(plotRow.sale_status).toBe('ready_for_sale');
+    expect(plotRow.has_customer).toBe(false);
+    expect(plotRow.current_tenant_name).toBe('Evelyn Suen Yim Siong');
+    expect(plotRow.highlight_note).toContain('เช่า:');
+    expect(plotRow.lease_start_date).toBeTruthy();
   });
 
   it('preserves user-input monthly rent and does not reset to 15000 on props or background re-renders', async () => {

@@ -5,6 +5,8 @@ export interface InterestedPlot {
   project_name: string;
   has_customer: boolean | null;
   sale_status: string | null;
+  current_tenant_name?: string | null;
+  rental_program?: string | null;
 }
 
 export interface PlotSaleSnapshot {
@@ -28,6 +30,8 @@ export function filterAvailablePlots(
   return plots.filter(plot =>
     plot.project_name === projectName &&
     plot.has_customer === false &&
+    !(plot.current_tenant_name && plot.current_tenant_name.trim()) &&
+    !(plot.rental_program && plot.rental_program.trim()) &&
     VACANT_STATUSES.has((plot.sale_status ?? '').trim().toLowerCase()) &&
     !occupied.has(plot.id),
   ).sort((a, b) => (a.plot_name || a.id).localeCompare(b.plot_name || b.id, 'th', { numeric: true }));

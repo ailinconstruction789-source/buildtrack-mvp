@@ -284,7 +284,7 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
       let plotToRelease: any = null;
 
       if (targetPlotId) {
-        let query = supabase.from('plots').select('id, project_name, plot_name, sale_status, has_customer, current_tenant_name, customer_name').eq('id', targetPlotId);
+        let query = supabase.from('plots').select('id, project_name, plot_name, sale_status, has_customer, current_tenant_name, current_tenant_phone, rental_program, monthly_rent, highlight_note, customer_name').eq('id', targetPlotId);
         if (targetProject) query = query.eq('project_name', targetProject);
         const { data: pById, error: pByIdErr } = await query;
         if (pByIdErr) throw new Error('ตรวจสอบข้อมูลแปลงไม่สำเร็จ: ' + pByIdErr.message);
@@ -296,7 +296,7 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
       }
 
       if (!plotToRelease && targetPlotName) {
-        let query = supabase.from('plots').select('id, project_name, plot_name, sale_status, has_customer, current_tenant_name, customer_name').eq('plot_name', targetPlotName);
+        let query = supabase.from('plots').select('id, project_name, plot_name, sale_status, has_customer, current_tenant_name, current_tenant_phone, rental_program, monthly_rent, highlight_note, customer_name').eq('plot_name', targetPlotName);
         if (targetProject) query = query.eq('project_name', targetProject);
         const { data: pByName, error: pByNameErr } = await query;
         if (pByNameErr) throw new Error('ตรวจสอบข้อมูลแปลงไม่สำเร็จ: ' + pByNameErr.message);
@@ -369,9 +369,18 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
           (cust.plot && (cust.plot === plotToRelease.id || cust.plot === plotToRelease.plot_name))
         );
 
+        const hasRentalPlotData = Boolean(
+          plotToRelease.current_tenant_name ||
+          plotToRelease.current_tenant_phone ||
+          plotToRelease.rental_program ||
+          plotToRelease.monthly_rent ||
+          plotToRelease.highlight_note
+        );
+        const isPlotOccupied = Boolean(plotToRelease.has_customer || hasRentalPlotData || (plotToRelease.sale_status && !['available', 'active', 'normal', 'ready_for_sale', 'vacant'].includes(String(plotToRelease.sale_status).toLowerCase())));
+
         if (hasMatchingPendingContract || hasMatchingSale || hasMatchingInterestedPlot) {
-          shouldReleasePlot = Boolean(plotToRelease.has_customer || plotToRelease.sale_status !== 'available');
-        } else if (plotToRelease.has_customer || plotToRelease.sale_status !== 'available') {
+          shouldReleasePlot = hasRentalPlotData;
+        } else if (isPlotOccupied) {
           throw new Error('ไม่สามารถคืนแปลงได้ เนื่องจากแปลงไม่ได้ถูกผูกสิทธิ์กับลูกค้ารายนี้อย่างชัดเจน');
         }
       }
@@ -400,13 +409,12 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
         contractsCancelled = true;
       }
 
-      // 3. Release plot if held by this customer
+      // 3. Release plot rental/display fields if held by this customer
+      // (Do not overwrite guarded stock columns sale_status/has_customer directly.)
       if (shouldReleasePlot && plotToRelease) {
         let plotUpdQuery = supabase
           .from('plots')
           .update({
-            sale_status: 'available',
-            has_customer: false,
             current_tenant_name: null,
             current_tenant_phone: null,
             rental_program: null,

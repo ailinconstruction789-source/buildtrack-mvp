@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import RentalActionModal from '../RentalActionModal';
 import type { Lead } from '@/types/sales';
@@ -146,7 +146,8 @@ describe('Rental sale recovery with database timestamp semantics', () => {
     expect(database.sales[0]?.id).toBe('ffffffff-ffff-4fff-bfff-ffffffffffff');
     expect(database.rental_contracts[0].status).toBe('ConvertedToBuy');
     expect(database.leads[0].status).toBe('Booked');
-    expect(database.plots[0].sale_status).toBe('Reserved');
+    expect(database.plots[0].current_tenant_name).toBeNull();
+    expect(database.plots[0].highlight_note).toContain('จองซื้อ');
     expect(onSaved).toHaveBeenCalledOnce();
     expect(onClose).toHaveBeenCalledOnce();
   });
@@ -329,5 +330,76 @@ describe('Rental sale recovery with database timestamp semantics', () => {
     await save();
     expect(onSaved).not.toHaveBeenCalled();
     expect(salesWrites()).toHaveLength(1);
+  });
+
+  it('passes guard_booking_plot_stock on ready_for_sale plots for convert_to_buy, renew, and move_out', async () => {
+    const enforceStockGuard = (query: Query) => {
+      if (query.table === 'plots' && query.action === 'update') {
+        const patch = query.payload as Record<string, unknown>;
+        if ('sale_status' in patch || 'has_customer' in patch) {
+          return { data: null, error: { message: 'EXTERNAL_WRITER_STOCK_COMMAND_REQUIRED' } };
+        }
+      }
+      return undefined;
+    };
+    beforeWrite = enforceStockGuard;
+
+    // 1. Renew on ready_for_sale plot
+    database.plots[0] = {
+      id: 'plot-1', sale_status: 'ready_for_sale', has_customer: false,
+      current_tenant_name: 'Alice', rental_program: 'program_a',
+      monthly_rent: 15000, lease_start_date: '2026-01-01', lease_end_date: '2027-01-01',
+      highlight_note: 'เช่า: Rent (Alice)'
+    };
+    const renewView = await openModal();
+    fireEvent.click(screen.getByRole('button', { name: /ต่อสัญญาเช่า/i }));
+    fireEvent.submit(screen.getByRole('button', { name: /ยืนยันต่อสัญญาเช่า/i }).closest('form')!);
+    await waitFor(() => expect(renewView.onSaved).toHaveBeenCalledOnce());
+    expect(database.plots[0].sale_status).toBe('ready_for_sale');
+    expect(database.plots[0].has_customer).toBe(false);
+    cleanup();
+
+    // 2. Move out on ready_for_sale plot
+    database.rental_contracts[0].status = 'Active';
+    database.leads[0].status = 'Rented';
+    database.leads[0].rental_status = 'Active';
+    database.leads[0].active_rental_contract_id = 'contract-1';
+    database.plots[0] = {
+      id: 'plot-1', sale_status: 'ready_for_sale', has_customer: false,
+      current_tenant_name: 'Alice', rental_program: 'program_a',
+      monthly_rent: 15000, lease_start_date: '2026-01-01', lease_end_date: '2027-01-01',
+      highlight_note: 'เช่า: Rent (Alice)'
+    };
+    const moveOutView = await openModal();
+    fireEvent.click(screen.getByRole('button', { name: /สิ้นสุดสัญญา/i }));
+    fireEvent.submit(screen.getByRole('button', { name: /ยืนยันการย้ายออก/i }).closest('form')!);
+    await waitFor(() => expect(moveOutView.onSaved).toHaveBeenCalledOnce());
+    expect(database.plots[0].sale_status).toBe('ready_for_sale');
+    expect(database.plots[0].has_customer).toBe(false);
+    expect(database.plots[0].current_tenant_name).toBeNull();
+    expect(database.plots[0].rental_program).toBeNull();
+    expect(database.plots[0].highlight_note).toBeNull();
+    cleanup();
+
+    // 3. Convert to buy on ready_for_sale plot
+    database.rental_contracts[0].status = 'Active';
+    database.leads[0].status = 'Rented';
+    database.leads[0].rental_status = 'Active';
+    database.leads[0].active_rental_contract_id = 'contract-1';
+    database.sales = [];
+    database.plots[0] = {
+      id: 'plot-1', sale_status: 'ready_for_sale', has_customer: false,
+      current_tenant_name: 'Alice', rental_program: 'program_a',
+      monthly_rent: 15000, lease_start_date: '2026-01-01', lease_end_date: '2027-01-01',
+      highlight_note: 'เช่า: Rent (Alice)'
+    };
+    const convertView = await openModal();
+    await save();
+    expect(convertView.onSaved).toHaveBeenCalledOnce();
+    expect(database.plots[0].sale_status).toBe('ready_for_sale');
+    expect(database.plots[0].has_customer).toBe(false);
+    expect(database.plots[0].current_tenant_name).toBeNull();
+    expect(database.plots[0].highlight_note).toContain('จองซื้อ');
+    expect(database.sales).toHaveLength(1);
   });
 });

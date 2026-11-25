@@ -402,7 +402,7 @@ export default function RentalContractModal({
             }
           } else if (!selectedPlotId && sorted.length > 0) {
             // If no plot selected yet or plot not in this project, pick the first available
-            const firstVacant = sorted.find(p => !p.has_customer && p.sale_status !== 'Reserved' && p.sale_status !== 'Booked' && p.sale_status !== 'Transferred' && p.sale_status !== 'Rented');
+            const firstVacant = sorted.find(p => !p.has_customer && !p.current_tenant_name && !p.rental_program && p.sale_status !== 'Reserved' && p.sale_status !== 'Booked' && p.sale_status !== 'Transferred' && p.sale_status !== 'Rented');
             if (firstVacant) {
               setSelectedPlotId(firstVacant.id);
               const priceVal = firstVacant.selling_price || firstVacant.base_price || firstVacant.price;
@@ -585,7 +585,7 @@ export default function RentalContractModal({
           if (freshPlot.sale_status === 'Transferred') {
             throw new Error('แปลงนี้ถูกโอนกรรมสิทธิ์ไปแล้ว ไม่สามารถดำเนินการได้');
           }
-          if (freshPlot.sale_status === 'Rented' && freshPlot.current_tenant_name && freshPlot.current_tenant_name !== tenantName.trim()) {
+          if ((freshPlot.sale_status === 'Rented' || freshPlot.current_tenant_name) && freshPlot.current_tenant_name && freshPlot.current_tenant_name !== tenantName.trim()) {
             throw new Error(`แปลงนี้มีผู้เช่าอื่น (${freshPlot.current_tenant_name}) ทำสัญญาแล้ว`);
           }
 
@@ -628,7 +628,7 @@ export default function RentalContractModal({
             throw new Error('แปลงนี้ถูกจองหรือมีลูกค้าอื่นถือสิทธิ์อยู่แล้ว กรุณาเลือกแปลงอื่น');
           }
 
-          isPlotMarkedOccupied = freshPlot.sale_status === 'Booked' || freshPlot.sale_status === 'Reserved' || freshPlot.has_customer;
+          isPlotMarkedOccupied = freshPlot.sale_status === 'Booked' || freshPlot.sale_status === 'Reserved' || freshPlot.sale_status === 'Rented' || Boolean(freshPlot.has_customer) || Boolean(freshPlot.current_tenant_name) || Boolean(freshPlot.rental_program);
           if (isPlotMarkedOccupied) {
             if (!targetLeadId) {
               throw new Error('แปลงนี้ถูกจองหรือมีลูกค้าอื่นถือสิทธิ์อยู่แล้ว กรุณาเลือกแปลงอื่น');
@@ -723,7 +723,8 @@ export default function RentalContractModal({
             console.warn('Could not sync sales table booked_at:', saleSyncErr);
           }
 
-          // อัปเดตแปลงบ้านเป็นสถานะ "ติดจอง (Booked)"
+          // อัปเดตข้อมูลผู้เช่า/การจองเช่าบนแปลง (ไม่แก้คอลัมน์สต็อก sale_status/has_customer โดยตรง
+          // เพราะ trigger guard_booking_plot_stock บล็อกการแก้สต็อกแปลงโดยตรงด้วย EXTERNAL_WRITER_STOCK_COMMAND_REQUIRED)
           const bookingPlotFields = {
             current_tenant_name: tenantName.trim(),
             current_tenant_phone: tenantPhone.trim() || null,
@@ -731,13 +732,16 @@ export default function RentalContractModal({
             monthly_rent: rentNum,
             highlight_note: `จองเช่า: ${currentProgram.name} (${tenantName.trim()})`
           };
-          let plotBookingUpdateQuery: any = supabase.from('plots').update({
-            sale_status: 'Booked',
-            has_customer: true,
-            ...bookingPlotFields
-          }, { count: 'exact' }).eq('id', resolvedPlotId);
+          let plotBookingUpdateQuery: any = supabase.from('plots').update(bookingPlotFields, { count: 'exact' }).eq('id', resolvedPlotId);
           if (!isPlotMarkedOccupied) {
-            plotBookingUpdateQuery = plotBookingUpdateQuery.eq('has_customer', false);
+            if (typeof plotBookingUpdateQuery?.eq === 'function') {
+              plotBookingUpdateQuery = plotBookingUpdateQuery.eq('has_customer', false);
+            }
+            if (typeof plotBookingUpdateQuery?.is === 'function') {
+              plotBookingUpdateQuery = plotBookingUpdateQuery.is('current_tenant_name', null);
+            }
+          } else if (freshPlot.current_tenant_name && typeof plotBookingUpdateQuery?.eq === 'function') {
+            plotBookingUpdateQuery = plotBookingUpdateQuery.eq('current_tenant_name', freshPlot.current_tenant_name);
           }
           const plotUpdateRes: any = await plotBookingUpdateQuery;
           if (plotUpdateRes?.error) {
@@ -791,7 +795,11 @@ export default function RentalContractModal({
 
             if (samePlotContract) {
               const isLeadLinked = effectiveLead?.active_rental_contract_id === samePlotContract.id && effectiveLead?.status === 'Rented';
-              const isPlotLinked = freshPlot.sale_status === 'Rented' && (freshPlot.current_tenant_name === tenantName.trim() || !freshPlot.current_tenant_name);
+              const isPlotLinked = (
+                freshPlot.sale_status === 'Rented' ||
+                Boolean(freshPlot.lease_start_date) ||
+                String(freshPlot.highlight_note || '').startsWith('เช่า:')
+              ) && (freshPlot.current_tenant_name === tenantName.trim() || !freshPlot.current_tenant_name);
 
               if (isLeadLinked && isPlotLinked) {
                 throw new Error('ลูกค้ามีสัญญาเช่าที่ใช้งานอยู่แล้ว กรุณาจัดการสัญญาเดิม');
@@ -958,6 +966,8 @@ export default function RentalContractModal({
           }
         });
         steps.push(async () => {
+          // อัปเดตข้อมูลสัญญาเช่าบนแปลงโดยไม่แก้คอลัมน์สต็อก sale_status/has_customer
+          // เพื่อให้ผ่าน trigger guard_booking_plot_stock บนฐานข้อมูลจริง
           const rentalPlotFields = {
             current_tenant_name: tenantName.trim(),
             current_tenant_phone: tenantPhone.trim() || null,
@@ -968,15 +978,18 @@ export default function RentalContractModal({
             lease_end_date: resolvedEndDate,
             highlight_note: 'เช่า: ' + currentProgram.name + ' (' + tenantName.trim() + ')'
           };
-          let plotContractUpdateQuery: any = supabase.from('plots').update({
-            sale_status: 'Rented',
-            has_customer: true,
-            ...rentalPlotFields
-          }, { count: 'exact' }).eq('id', resolvedPlotId);
+          let plotContractUpdateQuery: any = supabase.from('plots').update(rentalPlotFields, { count: 'exact' }).eq('id', resolvedPlotId);
 
           if (!isPlotMarkedOccupied) {
-            plotContractUpdateQuery = plotContractUpdateQuery.eq('has_customer', false);
-          } else if (freshPlot.sale_status === 'Booked' || freshPlot.sale_status === 'Reserved') {
+            if (typeof plotContractUpdateQuery?.eq === 'function') {
+              plotContractUpdateQuery = plotContractUpdateQuery.eq('has_customer', false);
+            }
+            if (typeof plotContractUpdateQuery?.is === 'function') {
+              plotContractUpdateQuery = plotContractUpdateQuery.is('current_tenant_name', null);
+            }
+          } else if (freshPlot.current_tenant_name && typeof plotContractUpdateQuery?.eq === 'function') {
+            plotContractUpdateQuery = plotContractUpdateQuery.eq('current_tenant_name', freshPlot.current_tenant_name);
+          } else if ((freshPlot.sale_status === 'Booked' || freshPlot.sale_status === 'Reserved') && typeof plotContractUpdateQuery?.in === 'function') {
             plotContractUpdateQuery = plotContractUpdateQuery.in('sale_status', ['Booked', 'Reserved', 'Available']);
           }
           const plotUpdateRes: any = await plotContractUpdateQuery;
@@ -1302,7 +1315,13 @@ export default function RentalContractModal({
                   <option value="">-- เลือกแปลงบ้าน (เรียงตามลำดับเลขแปลง) --</option>
                   {availableAndBookedPlots.map(p => {
                     const isMyPlot = checkLeadPlotOwnership(effectiveLead, p, selectedPlotId || plotId);
-                    const isBooked = p.sale_status === 'Booked' || p.sale_status === 'Reserved' || (p.has_customer && !p.current_tenant_name);
+                    const isRentalBooked = Boolean(
+                      p.current_tenant_name &&
+                      !p.lease_start_date &&
+                      p.sale_status !== 'Rented' &&
+                      (String(p.highlight_note || '').startsWith('จองเช่า:') || (isMyPlot && effectiveLead?.rental_status === 'PendingContract'))
+                    );
+                    const isBooked = p.sale_status === 'Booked' || p.sale_status === 'Reserved' || isRentalBooked || (p.has_customer && !p.current_tenant_name);
                     
                     let tag = '🟢 ว่าง';
                     let disabled = false;

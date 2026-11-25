@@ -1153,7 +1153,7 @@ export default function LeadTrackerView({
                   className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 font-bold focus:ring-2 focus:ring-orange-500 focus:bg-white focus:outline-none"
                 >
                   <option value="">-- เลือกแปลงบ้าน --</option>
-                  {plots.filter(p => !p.has_customer && p.sale_status !== 'transferred').map((p: any) => (
+                  {plots.filter(p => !p.has_customer && !p.current_tenant_name && !p.rental_program && p.sale_status !== 'transferred').map((p: any) => (
                     <option key={p.id} value={p.id}>
                       {p.plot_name || p.id} ({p.house_types?.type_name || 'แบบบ้านมาตรฐาน'}) - ฿{(p.selling_price || 0).toLocaleString()}
                     </option>

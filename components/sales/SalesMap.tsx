@@ -228,8 +228,8 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
   const getSalesStatus = (plotId: string) => {
     const lead = findMatchingLead(plotId);
     if (lead) {
-      if (lead.deal_type === 'rent' || lead.rental_status === 'Active' || lead.status === 'Rented' || lead.rental_status === 'PendingContract') {
-        return lead.status === 'Rented' || lead.rental_status === 'Active' ? 'Rented' : 'Reserved';
+      if (lead.deal_type === 'rent' || lead.rental_status === 'Active' || lead.rental_status === 'Renewed' || lead.status === 'Rented' || lead.rental_status === 'PendingContract') {
+        return lead.status === 'Rented' || lead.rental_status === 'Active' || lead.rental_status === 'Renewed' ? 'Rented' : 'Reserved';
       }
       const stage = getLeadStage(lead);
       if (stage === 'transferred' || lead.status === 'Transferred' || Boolean(lead.transferredDate || lead.transferred_date || (lead as any).transferred_at)) {
@@ -242,7 +242,12 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
     const currentPlot = plots.find(p => p.id === plotId || p.plot_name === plotId);
     if (currentPlot) {
       if (currentPlot.sale_status === 'transferred') return 'Transferred';
-      if (currentPlot.sale_status === 'Rented' || currentPlot.current_tenant_name) return 'Rented';
+      if (currentPlot.sale_status === 'Rented' || currentPlot.current_tenant_name) {
+        if (currentPlot.sale_status !== 'Rented' && !currentPlot.lease_start_date && String(currentPlot.highlight_note || '').startsWith('จองเช่า:')) {
+          return 'Reserved';
+        }
+        return 'Rented';
+      }
       if (currentPlot.has_customer && currentPlot.sale_status !== 'ready_for_sale') return 'Reserved';
     }
 

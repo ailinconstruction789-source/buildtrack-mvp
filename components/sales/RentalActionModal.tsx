@@ -481,7 +481,7 @@ export default function RentalActionModal({
 
     const { data: rawPlot, error: plotErr } = await supabase
       .from('plots')
-      .select('id, sale_status, has_customer, current_tenant_name, customer_name, lease_end_date, monthly_rent')
+      .select('id, sale_status, has_customer, current_tenant_name, current_tenant_phone, rental_program, security_deposit, lease_start_date, highlight_note, customer_name, lease_end_date, monthly_rent')
       .eq('id', c.plot_id)
       .maybeSingle();
     if (plotErr) throw plotErr;
@@ -961,7 +961,7 @@ export default function RentalActionModal({
         }, convertContractLog, undefined, { expectedStatus: c.status, allowedStatuses: ['Active', 'Renewed'], actionKind: 'convert_to_buy' }));
       }
 
-      // 2. Plot update: Evaluate latestPlot inside helper; do NOT downgrade if already advanced; reject if Transferred
+      // 2. Plot update: Evaluate latestPlot inside helper; do NOT overwrite guarded stock fields (sale_status/has_customer); reject if Transferred
       steps.push(async () => {
         await updatePlotIfOwnedByContract(c, {
           requireOwnership: true,
@@ -974,14 +974,17 @@ export default function RentalActionModal({
             }
             const latestPlotStage = salesDealStageOf({ status: latestPlot.sale_status });
             const latestIsPlotAdvanced = latestPlotStage !== 'booked' && latestPlotStage !== 'cancelled';
+            // Do not overwrite guarded stock fields (sale_status, has_customer) on plots;
+            // the sales row created/updated in Step 4 derives stock occupancy via DB trigger.
+            const clearRentalFields = {
+              current_tenant_name: null, current_tenant_phone: null, rental_program: null,
+              monthly_rent: null, security_deposit: null, lease_start_date: null, lease_end_date: null
+            };
             return latestIsPlotAdvanced
-              ? {
-                  current_tenant_name: null, current_tenant_phone: null, rental_program: null,
-                  monthly_rent: null, security_deposit: null, lease_start_date: null, lease_end_date: null
-                }
+              ? clearRentalFields
               : {
-                  sale_status: 'Reserved', has_customer: true, current_tenant_name: null,
-                  current_tenant_phone: null, rental_program: null, highlight_note: 'จองซื้อ (เปลี่ยนจากเช่า ' + programMeta.name + ')'
+                  ...clearRentalFields,
+                  highlight_note: 'จองซื้อ (เปลี่ยนจากเช่า ' + programMeta.name + ')'
                 };
           },
           zeroRowError: 'ไม่สามารถอัปเดตแปลงได้ เนื่องจากข้อมูลแปลงมีการเปลี่ยนแปลงหรือไม่มีสิทธิ์'
@@ -1236,12 +1239,25 @@ export default function RentalActionModal({
         guardLeaseEndDate: true,
         exactCount: true,
         buildPatch: (freshPlot) => {
-          if (freshPlot.sale_status && freshPlot.sale_status !== 'Rented' && freshPlot.sale_status !== 'Available') {
+          const normalizedSaleStatus = String(freshPlot.sale_status || '').trim().toLowerCase();
+          const allowedRentalPlotStatuses = ['', 'active', 'normal', 'ready_for_sale', 'available', 'vacant', 'rented'];
+          if (normalizedSaleStatus && !allowedRentalPlotStatuses.includes(normalizedSaleStatus)) {
             throw new Error('ไม่สามารถคืนแปลงได้ เนื่องจากแปลงนี้ถูกโอนกรรมสิทธิ์หรือเปลี่ยนสถานะการขายแล้ว');
           }
-          return (freshPlot.has_customer || freshPlot.sale_status !== 'Available')
+          const hasRentalPlotData = Boolean(
+            freshPlot.current_tenant_name ||
+            freshPlot.current_tenant_phone ||
+            freshPlot.rental_program ||
+            freshPlot.monthly_rent ||
+            freshPlot.security_deposit ||
+            freshPlot.lease_start_date ||
+            freshPlot.lease_end_date ||
+            freshPlot.highlight_note
+          );
+          // Clear rental/display fields only; do not overwrite guarded stock columns (sale_status, has_customer).
+          return hasRentalPlotData
             ? {
-                sale_status: 'Available', has_customer: false, current_tenant_name: null,
+                current_tenant_name: null,
                 current_tenant_phone: null, rental_program: null, monthly_rent: null,
                 security_deposit: null, lease_start_date: null, lease_end_date: null, highlight_note: null
               }
@@ -1283,7 +1299,9 @@ export default function RentalActionModal({
           guardSaleStatus: true,
           guardLeaseEndDate: true,
           buildPatch: (freshPlot) => {
-            if (freshPlot.sale_status && !['Rented', 'Available'].includes(freshPlot.sale_status)) {
+            const normalizedSaleStatus = String(freshPlot.sale_status || '').trim().toLowerCase();
+            const allowedRentalPlotStatuses = ['', 'active', 'normal', 'ready_for_sale', 'available', 'vacant', 'rented'];
+            if (normalizedSaleStatus && !allowedRentalPlotStatuses.includes(normalizedSaleStatus)) {
               throw new Error('ไม่สามารถอัปเดตแปลงได้ เนื่องจากสถานะแปลงมีการเปลี่ยนแปลงระหว่างทำรายการ');
             }
             return { monthly_rent: rentNum, lease_end_date: newEndDate };
