@@ -40,6 +40,7 @@ import {
   resolveCanonicalPlotId,
 } from '@/lib/sales/dealClassification';
 import CancelRentalBookingModal from './CancelRentalBookingModal';
+import SalesDefectTrackerModal, { EMPTY_PLOT_DEFECT_DATA, fetchPlotDefectTrackerData, type PlotDefectTrackerData } from './SalesDefectTrackerModal';
 import { loadSalesStatusHistory, mergeSalesTimeline, type SalesStatusHistoryRow } from '@/lib/sales/salesStatusHistory';
 import { broadcastSalesSync, subscribeToSalesSync } from '@/lib/sales/salesSyncBroadcast';
 
@@ -389,6 +390,8 @@ export default function SalesKanban({
   const [plotInfo, setPlotInfo] = useState<any>(null);
   const [loadingPlotInfo, setLoadingPlotInfo] = useState(false);
   const [fullImageUrl, setFullImageUrl] = useState<string | null>(null);
+  const [plotDefectData, setPlotDefectData] = useState<PlotDefectTrackerData>(EMPTY_PLOT_DEFECT_DATA);
+  const [salesDefectModalPlot, setSalesDefectModalPlot] = useState<any | null>(null);
 
   // Sample House State & Daily Inspection
   const [showDailyInspectionModal, setShowDailyInspectionModal] = useState(false);
@@ -1016,6 +1019,21 @@ export default function SalesKanban({
 
     fetchPlotInfo();
   }, [panelState.plotId, plotInfoRefreshTrigger]);
+
+  useEffect(() => {
+    if (!plotInfo?.id) {
+      setPlotDefectData(EMPTY_PLOT_DEFECT_DATA);
+      return;
+    }
+    let cancelled = false;
+    setPlotDefectData(EMPTY_PLOT_DEFECT_DATA);
+    fetchPlotDefectTrackerData(plotInfo).then(result => {
+      if (!cancelled) setPlotDefectData(result);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [plotInfo?.id, plotInfo?.handover_cycle, plotInfoRefreshTrigger]);
 
   const handleToggleSampleHouse = async () => {
     if (!plotInfo && !panelState.plotId) return;
@@ -2943,6 +2961,24 @@ export default function SalesKanban({
                           </div>
                         </div>
                       )}
+                      {(() => {
+                        const totalDefectsCount = plotDefectData.defects.length;
+                        const completedDefectsCount = plotDefectData.defects.filter(
+                          (d: any) => (d.progress || 0) >= 100 || d.status === 'resolved'
+                        ).length;
+                        return (
+                          <div className="col-span-2">
+                            <button
+                              type="button"
+                              onClick={() => setSalesDefectModalPlot(plotInfo)}
+                              className="w-full mt-2 bg-purple-50 hover:bg-purple-100 text-purple-900 font-extrabold py-2.5 px-3 rounded-xl border border-purple-200 text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-2xs hover:shadow-xs active:scale-98"
+                            >
+                              <Search size={14} className="text-purple-600" />
+                              <span>🔍 ดูแผนเก็บงาน & ติดตามงานซ่อม {totalDefectsCount > 0 ? `(${completedDefectsCount}/${totalDefectsCount} งาน)` : ''}</span>
+                            </button>
+                          </div>
+                        );
+                      })()}
                       </div>
                     </div>
                   ) : (
@@ -4269,6 +4305,15 @@ export default function SalesKanban({
         onReloadRequired={async () => {
           await fetchData();
         }}
+      />
+
+      {/* 🔍 Sales Read-Only Defect Punchlist Tracker Modal */}
+      <SalesDefectTrackerModal
+        plot={salesDefectModalPlot}
+        plotDefects={plotDefectData.defects}
+        defectUpdatesMap={plotDefectData.defectUpdatesMap}
+        taskUpdatesMap={plotDefectData.taskUpdatesMap}
+        onClose={() => setSalesDefectModalPlot(null)}
       />
 
     </div>
