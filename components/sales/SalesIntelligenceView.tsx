@@ -2,6 +2,12 @@
 
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
+import { fetchSalesWithoutLimit } from '@/lib/sales/fetchWithoutLimit';
+import { isExternalProject } from '@/lib/projectUtils';
+import {
+  buildSalesIntelligenceRecords,
+  type SalesIntelligenceRecord,
+} from '@/lib/sales/salesIntelligenceMetrics';
 import SalesIntelligence from './SalesIntelligence';
 import { Loader2, ArrowLeft, Building2, ArrowRight, Layers } from 'lucide-react';
 
@@ -9,7 +15,7 @@ export default function SalesIntelligenceView({ project, projects, onBack }: { p
   const [internalProject, setInternalProject] = useState<any>(project || null);
   const [hasSelected, setHasSelected] = useState<boolean>(!!project);
 
-  const [leads, setLeads] = useState<any[]>([]);
+  const [leads, setLeads] = useState<SalesIntelligenceRecord[]>([]);
   const [projectsData, setProjectsData] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -27,117 +33,69 @@ export default function SalesIntelligenceView({ project, projects, onBack }: { p
       setLoading(true);
       const projName = internalProject === 'all' ? null : internalProject?.name;
       try {
-        let leadsData: any[] = [];
-        let fetchedProjects: any[] = [];
-        
-        // Fetch projects
-        const { data: pData, error: pErr } = await supabase.from('projects').select('name, is_closed');
-        const { data: plotData } = await supabase.from('plots').select('project_name');
+        const [pDataRes, allPlots, leadsData, salesData, houseTypesRes] = await Promise.all([
+          supabase.from('projects').select('name, is_closed'),
+          fetchSalesWithoutLimit('plots', {
+            select: 'id, plot_name, project_name, house_type_id, land_size, selling_price, land_appraisal_price, sale_status',
+            orderBy: 'id',
+            ascending: true,
+            ...(projName ? { filterCol: 'project_name', filterVal: projName } : {}),
+          }),
+          fetchSalesWithoutLimit('leads', {
+            select: '*',
+            orderBy: 'created_at',
+            ascending: false,
+            ...(projName ? { filterCol: 'project_name', filterVal: projName } : {}),
+          }),
+          fetchSalesWithoutLimit('sales', {
+            select: '*',
+            orderBy: 'created_at',
+            ascending: false,
+          }),
+          supabase.from('house_types').select('id, type_name'),
+        ]);
 
-        if (!pErr && pData) {
-          fetchedProjects = pData.map(p => {
-             const count = plotData?.filter(pl => pl.project_name === p.name).length || 0;
-             return { ...p, plotCount: count };
-          });
+        const visiblePlots = projName
+          ? allPlots
+          : allPlots.filter((pl: any) => !isExternalProject(pl?.project_name));
+
+        let fetchedProjects: any[] = [];
+        if (!pDataRes.error && pDataRes.data) {
+          fetchedProjects = pDataRes.data
+            .filter((p: any) => projName ? p.name === projName : !isExternalProject(p))
+            .map((p: any) => {
+              const count = visiblePlots.filter((pl: any) => pl.project_name === p.name).length;
+              return { ...p, plotCount: count };
+            });
         }
         setProjectsData(fetchedProjects);
 
-        let from = 0;
-        const limit = 1000;
-        let hasMore = true;
+        // Fetch status_history in chunks for visit/booking/transfer date fallback
+        const chunkArray = <T,>(arr: T[], size: number) =>
+          Array.from({ length: Math.ceil(arr.length / size) }, (_, i) => arr.slice(i * size, i * size + size));
 
-        while (hasMore) {
-          let query = supabase.from('leads').select('*').range(from, from + limit - 1);
-          if (projName) {
-             query = query.eq('project_name', projName);
-          }
-          const { data: chunk, error: leadsErr } = await query;
-          if (leadsErr) throw leadsErr;
-          
-          if (chunk && chunk.length > 0) {
-            leadsData = [...leadsData, ...chunk];
-            if (chunk.length < limit) {
-              hasMore = false; // We fetched less than limit, no more pages
-            } else {
-              from += limit;
-            }
-          } else {
-            hasMore = false;
-          }
-        }
-        
-        if (!leadsData || leadsData.length === 0) {
-          setLeads([]);
-          setLoading(false);
-          return;
-        }
-
-        // Chunking array helper to prevent PostgREST URL length limit errors
-        const chunkArray = (arr: any[], size: number) => Array.from({ length: Math.ceil(arr.length / size) }, (v, i) => arr.slice(i * size, i * size + size));
-        
-        let salesData: any[] = [];
         let historyData: any[] = [];
-        const leadIds = leadsData.map(l => l.id);
-        const chunks = chunkArray(leadIds, 100);
-        
-        for (const chunk of chunks) {
-          const { data: sData } = await supabase.from('sales').select('*').in('lead_id', chunk);
-          if (sData) salesData = [...salesData, ...sData];
-          
-          const { data: hData } = await supabase.from('status_history').select('*').in('entity_id', chunk).order('created_at', { ascending: true });
-          if (hData) historyData = [...historyData, ...hData];
+        const leadIds = leadsData.map((l: any) => l.id).filter(Boolean);
+        for (const chunk of chunkArray(leadIds, 100)) {
+          const { data: hData } = await supabase
+            .from('status_history')
+            .select('entity_id, new_status, created_at, changed_by')
+            .in('entity_id', chunk)
+            .order('created_at', { ascending: true });
+          if (hData) historyData = historyData.concat(hData);
         }
 
-        const plotIds = salesData.map(s => s.plot_id).filter(Boolean);
-        const uniquePlotIds = Array.from(new Set(plotIds));
-        let plotsData: any[] = [];
-        if (uniquePlotIds.length > 0) {
-          const pChunks = chunkArray(uniquePlotIds, 100);
-          for (const pc of pChunks) {
-            const { data: pData } = await supabase.from('plots').select('id, house_type_id, land_size, selling_price').in('id', pc);
-            if (pData) plotsData = [...plotsData, ...pData];
-          }
-        }
-        const { data: houseTypes } = await supabase.from('house_types').select('id, type_name');
-
-        const formattedLeads = leadsData.map(l => {
-          const sale = salesData?.find(s => s.lead_id === l.id);
-          const history = historyData?.filter(h => h.entity_id === l.id).map(h => ({
-             status: h.new_status,
-             timestamp: h.created_at,
-             note: h.changed_by
-          })) || [];
-          
-          const visitDate = history.find(h => h.status === 'Visit')?.timestamp?.split('T')[0] || l.created_at.split('T')[0];
-          const bookingDate = history.find(h => h.status === 'Reserved')?.timestamp?.split('T')[0] || null;
-
-          const plot = plotsData.find(p => p.id === sale?.plot_id);
-          const houseType = houseTypes?.find(ht => ht.id === plot?.house_type_id);
-
-          return {
-            id: l.id,
-            name: l.customer_name,
-            project: l.project_name,
-            status: l.status,
-            plot: sale?.plot_id || null,
-            salePrice: sale?.sale_price ? Number(sale.sale_price) : 0,
-            rawSellingPrice: plot?.selling_price || 0,
-            landSize: plot?.land_size || 0,
-            houseModel: houseType?.type_name || 'ไม่ระบุ',
-            expectedTransferDate: sale?.expected_transfer_date || null,
-            bookingDate,
-            visitDate,
-            agentName: l.agent_name || 'ไม่ระบุ',
-            source: l.source || 'Walk-in',
-            bankStatus: sale?.bank_status || 'Pending',
-            cancelReason: sale?.cancellation_reason || '',
-            created_at: l.created_at,
-            history
-          };
+        const formattedLeads = buildSalesIntelligenceRecords({
+          leads: leadsData,
+          sales: salesData,
+          plots: visiblePlots,
+          houseTypes: houseTypesRes.data || [],
+          history: historyData,
+          projectName: projName,
         });
-        
+
         setLeads(formattedLeads);
-      } catch(e) {
+      } catch (e) {
         console.error('Error fetching sales data for intelligence:', e);
       }
       setLoading(false);

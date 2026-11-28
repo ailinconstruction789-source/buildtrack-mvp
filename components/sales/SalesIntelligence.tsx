@@ -2,248 +2,82 @@
 
 import React, { useMemo, useState, useEffect } from 'react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, Cell, LineChart, Line, PieChart, Pie, ScatterChart, Scatter, ZAxis } from 'recharts';
-import { Target, TrendingUp, AlertTriangle, Wallet, Users, Activity, Lightbulb, CheckCircle2, ChevronRight, Ban, Zap, Info, ArrowRight, Loader2 } from 'lucide-react';
+import { Target, TrendingUp, AlertTriangle, Wallet, Users, Activity, Lightbulb, CheckCircle2, Ban, Zap, Loader2, RefreshCw } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import {
+  buildSalesIntelligenceRecords,
+  computeSalesIntelligenceMetrics,
+  type SalesIntelligenceRecord,
+} from '@/lib/sales/salesIntelligenceMetrics';
+
+const AI_REPORT_CACHE_VERSION = 'v2';
 
 export default function SalesIntelligence({ leads, projectName, projectsData }: { leads: any[], projectName?: string, projectsData?: any[] }) {
   
   const [aiInsights, setAiInsights] = useState<any>(null);
   const [loadingAi, setLoadingAi] = useState(true);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [refreshNonce, setRefreshNonce] = useState(0);
 
   // ==========================================
   // 1. DATA PROCESSING (MEMOIZED)
   // ==========================================
 
   const data = useMemo(() => {
-    let activeLeads = leads;
-    
-    // KPI Data
-    const totalVisits = activeLeads.length;
-    const bookings = activeLeads.filter(l => ['Reserved', 'Contract Signed', 'Down Payment', 'Bank Processing', 'Bank Approved', 'Transferred'].includes(l.status));
-    const transfers = activeLeads.filter(l => l.status === 'Transferred');
-    const rejects = activeLeads.filter(l => l.bankStatus === 'Rejected' || l.status === 'Bank Rejected');
-    const cancels = activeLeads.filter(l => l.status === 'Cancelled' || l.status === 'Refunded');
-    
-    const rejectRate = bookings.length > 0 ? Math.round((rejects.length / bookings.length) * 100) : 0;
-    const lostRevenue = cancels.reduce((sum, l) => sum + (l.salePrice || 0), 0);
-    const totalRevenue = transfers.reduce((sum, l) => sum + (l.salePrice || 0), 0);
-
-    // 2. Project Positioning Data
-    const projectMap: Record<string, { bookings: number, transfers: number, revenue: number, cancels: number, priceSum: number }> = {};
-    activeLeads.forEach(l => {
-      const pName = l.project || 'Unknown';
-      if (!projectMap[pName]) projectMap[pName] = { bookings: 0, transfers: 0, revenue: 0, cancels: 0, priceSum: 0 };
-      
-      if (['Reserved', 'Contract Signed', 'Down Payment', 'Bank Processing', 'Bank Approved', 'Transferred'].includes(l.status)) {
-        projectMap[pName].bookings++;
-        projectMap[pName].priceSum += (l.salePrice || 0);
+    const normalizedRecords: SalesIntelligenceRecord[] = (leads || []).map(l => {
+      if (typeof l?.isBooked === 'boolean' && typeof l?.isTransferred === 'boolean') {
+        return l as SalesIntelligenceRecord;
       }
-      if (l.status === 'Transferred') {
-        projectMap[pName].transfers++;
-        projectMap[pName].revenue += (l.salePrice || 0);
-      }
-      if (l.status === 'Cancelled') {
-        projectMap[pName].cancels++;
-      }
-    });
+      return buildSalesIntelligenceRecords({
+        leads: [l],
+        sales: [],
+        plots: [],
+        houseTypes: [],
+      })[0];
+    }).filter(Boolean);
 
-    const projectPerformance = Object.entries(projectMap).map(([name, stats]) => {
-      const avgPrice = stats.bookings > 0 ? stats.priceSum / stats.bookings : 0;
-      const cancelRate = stats.bookings > 0 ? (stats.cancels / stats.bookings) * 100 : 0;
-      return {
-        name,
-        bookings: stats.bookings,
-        transfers: stats.transfers,
-        revenue: stats.revenue,
-        avgPrice,
-        cancelRate
-      };
-    }).filter(p => p.bookings > 0);
-
-    // 3. Pricing & Preferences (Sweet Spot)
-    const priceRanges = {
-      '< 2M': 0,
-      '2M - 3M': 0,
-      '3M - 5M': 0,
-      '> 5M': 0
-    };
-    bookings.forEach(l => {
-      const price = l.salePrice || 0;
-      if (price < 2000000) priceRanges['< 2M']++;
-      else if (price < 3000000) priceRanges['2M - 3M']++;
-      else if (price < 5000000) priceRanges['3M - 5M']++;
-      else priceRanges['> 5M']++;
-    });
-    const pricingPreferences = Object.entries(priceRanges).map(([range, count]) => ({ range, count }));
-
-    // 4. Seasonality
-    const monthMap: Record<string, number> = {};
-    bookings.forEach(l => {
-      if (l.bookingDate) {
-        const date = new Date(l.bookingDate);
-        const monthYear = date.toLocaleString('default', { month: 'short', year: '2-digit' });
-        monthMap[monthYear] = (monthMap[monthYear] || 0) + 1;
-      }
-    });
-    const seasonality = Object.entries(monthMap).map(([month, count]) => ({ month, count }));
-
-    // 5. Cancellations & Risk
-    const cancelReasons: Record<string, number> = {};
-    cancels.forEach(l => {
-      const reason = l.cancelReason || 'กู้ไม่ผ่าน (เครดิต/ภาระหนี้)';
-      cancelReasons[reason] = (cancelReasons[reason] || 0) + 1;
-    });
-    const cancellationData = Object.entries(cancelReasons)
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count);
-
-    // 6. Fastest Selling Plots (Sweet Spot Analysis)
-    const plotSales = bookings.map(l => {
-      let daysToBook = 0;
-      if (l.bookingDate && l.visitDate) {
-        daysToBook = Math.max(0, Math.floor((new Date(l.bookingDate).getTime() - new Date(l.visitDate).getTime()) / (1000 * 3600 * 24)));
-      }
-      return {
-        plot: l.plot,
-        houseModel: l.houseModel,
-        landSize: l.landSize,
-        price: l.salePrice || l.rawSellingPrice,
-        daysToBook,
-        status: l.status
-      };
-    }).filter(p => p.plot && p.houseModel && p.houseModel !== 'ไม่ระบุ');
-    
-    // Sort by fastest booking
-    plotSales.sort((a, b) => a.daysToBook - b.daysToBook);
-    const topFastestSellingPlots = plotSales.slice(0, 10);
-
-    // 7. Sales Velocity & Predictions
-    const projectLifecycle: Record<string, {
-      firstBookingDate: number | null,
-      transfers: number,
-      totalPlots: number,
-      transferDates: number[]
-    }> = {};
-
-    activeLeads.forEach(l => {
-      const pName = l.project || 'Unknown';
-      if (!projectLifecycle[pName]) {
-        projectLifecycle[pName] = { firstBookingDate: null, transfers: 0, totalPlots: 0, transferDates: [] };
-      }
-      
-      const isBooked = ['Reserved', 'Contract Signed', 'Down Payment', 'Bank Processing', 'Bank Approved', 'Transferred'].includes(l.status);
-      if (isBooked) {
-         projectLifecycle[pName].totalPlots++;
-         if (l.bookingDate) {
-           const bTime = new Date(l.bookingDate).getTime();
-           if (!projectLifecycle[pName].firstBookingDate || bTime < projectLifecycle[pName].firstBookingDate) {
-             projectLifecycle[pName].firstBookingDate = bTime;
-           }
-         }
-      }
-
-      if (l.status === 'Transferred') {
-         projectLifecycle[pName].transfers++;
-         if (l.transferDate) {
-           projectLifecycle[pName].transferDates.push(new Date(l.transferDate).getTime());
-         }
-      }
-    });
-
-    const projectPredictions = Object.entries(projectLifecycle).map(([name, p]) => {
-      p.transferDates.sort((a,b) => a - b);
-      
-      const dbProject = projectsData?.find(proj => proj.name === name);
-      const absoluteTotalPlots = dbProject?.plotCount > 0 ? dbProject.plotCount : p.totalPlots;
-      
-      const threshold100 = Math.max(1, absoluteTotalPlots);
-      let monthsTo100 = 0;
-      
-      const isCompleted = dbProject ? dbProject.is_closed : (p.transfers >= threshold100);
-
-      if (p.transfers >= threshold100 && p.firstBookingDate) {
-        const date100 = p.transferDates[threshold100 - 1];
-        monthsTo100 = (date100 - p.firstBookingDate) / (1000 * 3600 * 24 * 30.44); 
-      }
-
-      return {
-        name,
-        totalPlots: p.totalPlots,
-        absoluteTotalPlots,
-        transfers: p.transfers,
-        firstBookingDate: p.firstBookingDate,
-        isCompleted,
-        monthsTo100: Math.max(0, monthsTo100),
-        predicted100Date: null as number | null
-      };
-    }).filter(p => p.totalPlots > 0);
-
-    const completedProjects = projectPredictions.filter(p => p.isCompleted && p.monthsTo100 > 0);
-    const avgVelocity = completedProjects.length > 0 
-       ? completedProjects.reduce((sum, p) => sum + p.monthsTo100, 0) / completedProjects.length 
-       : 12;
-
-    projectPredictions.forEach(p => {
-       if (!p.isCompleted && p.firstBookingDate) {
-          const predictedTime = p.firstBookingDate + (avgVelocity * 30.44 * 24 * 3600 * 1000);
-          p.predicted100Date = predictedTime;
-       }
-    });
-
-    return {
-      totalVisits,
-      bookings: bookings.length,
-      transfers: transfers.length,
-      rejectRate,
-      lostRevenue,
-      totalRevenue,
-      projectPerformance,
-      pricingPreferences,
-      seasonality,
-      cancellationData,
-      topFastestSellingPlots,
-      projectPredictions,
-      avgVelocity
-    };
-  }, [leads]);
+    return computeSalesIntelligenceMetrics(normalizedRecords, projectsData);
+  }, [leads, projectsData]);
 
   // AI FETCH EFFECT
   useEffect(() => {
     let isMounted = true;
+    const forceRefresh = refreshNonce > 0;
     
     const checkAndFetchAI = async () => {
       setLoadingAi(true);
       setAiError(null);
       
-      const pName = projectName || 'ALL';
+      const pName = `${projectName || 'ALL'}::${AI_REPORT_CACHE_VERSION}`;
       
       try {
-        // 1. Check Database Cache First
-        const { data: reports, error: fetchErr } = await supabase
-          .from('ai_sales_reports')
-          .select('*')
-          .eq('project_name', pName)
-          .order('created_at', { ascending: false })
-          .limit(1);
+        // 1. Check Database Cache First (unless user explicitly requested refresh)
+        if (!forceRefresh) {
+          const { data: reports, error: fetchErr } = await supabase
+            .from('ai_sales_reports')
+            .select('*')
+            .eq('project_name', pName)
+            .order('created_at', { ascending: false })
+            .limit(1);
 
-        // If the table doesn't exist yet, we will catch the error and fallback to API
-        if (!fetchErr && reports && reports.length > 0) {
-          const report = reports[0];
-          const reportAgeMs = Date.now() - new Date(report.created_at).getTime();
-          const oneHourMs = 60 * 60 * 1000;
-          
-          if (reportAgeMs < oneHourMs) {
-            // Cache is valid (< 1 hour old), use it directly
-            if (isMounted) {
-              setAiInsights(report.report_data);
-              setLoadingAi(false);
+          // If the table doesn't exist yet, we will catch the error and fallback to API
+          if (!fetchErr && reports && reports.length > 0) {
+            const report = reports[0];
+            const reportAgeMs = Date.now() - new Date(report.created_at).getTime();
+            const oneHourMs = 60 * 60 * 1000;
+            
+            if (reportAgeMs < oneHourMs) {
+              // Cache is valid (< 1 hour old), use it directly
+              if (isMounted) {
+                setAiInsights(report.report_data);
+                setLoadingAi(false);
+              }
+              return;
             }
-            return;
           }
         }
         
-        // 2. Cache expired or not found, call AI API
+        // 2. Cache expired, not found, or manually refreshed -> call AI API
         const response = await fetch('/api/ai-sales-analysis', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -287,7 +121,7 @@ export default function SalesIntelligence({ leads, projectName, projectsData }: 
     }
 
     return () => { isMounted = false; };
-  }, [data]);
+  }, [data, projectName, refreshNonce]);
 
   const COLORS = ['#f43f5e', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#64748b'];
 
@@ -315,11 +149,20 @@ export default function SalesIntelligence({ leads, projectName, projectsData }: 
               <Lightbulb size={20} />
               Strategic Analysis Report
             </div>
-            {loadingAi && (
+            {loadingAi ? (
               <div className="flex items-center gap-2 text-blue-600 bg-blue-50 px-3 py-1.5 rounded-full text-sm font-bold">
                 <Loader2 size={16} className="animate-spin" />
                 AI Analyst is analyzing...
               </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setRefreshNonce(n => n + 1)}
+                className="flex items-center gap-1.5 text-slate-600 hover:text-blue-700 bg-slate-100 hover:bg-blue-50 border border-slate-200 hover:border-blue-200 px-3 py-1.5 rounded-full text-xs font-bold transition-colors cursor-pointer"
+              >
+                <RefreshCw size={14} />
+                วิเคราะห์ใหม่ (Refresh AI)
+              </button>
             )}
           </div>
           <h1 className="text-4xl md:text-5xl font-black text-[#0f172a] tracking-tight leading-tight mb-4">
@@ -364,7 +207,7 @@ export default function SalesIntelligence({ leads, projectName, projectsData }: 
             <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow border-b-4 border-b-rose-500">
               <div className="text-slate-500 text-sm font-bold mb-2 uppercase tracking-wider">Lost Revenue</div>
               <div className="text-3xl font-black text-rose-500">฿{formatMoney(data.lostRevenue)}</div>
-              <div className="text-sm font-medium text-slate-400 mt-2">ยอดหลุดจอง/ทิ้งดาวน์</div>
+              <div className="text-sm font-medium text-slate-400 mt-2">ยอดหลุดจอง/ยกเลิก {data.cancelledBookings} รายการ</div>
             </div>
             <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
               <div className="text-slate-500 text-sm font-bold mb-2 uppercase tracking-wider">Total Bookings</div>
@@ -374,7 +217,7 @@ export default function SalesIntelligence({ leads, projectName, projectsData }: 
             <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow border-b-4 border-b-orange-500">
               <div className="text-slate-500 text-sm font-bold mb-2 uppercase tracking-wider">Bank Reject Rate</div>
               <div className="text-3xl font-black text-orange-500">{data.rejectRate}%</div>
-              <div className="text-sm font-medium text-slate-400 mt-2">อัตรากู้ไม่ผ่าน (Reject)</div>
+              <div className="text-sm font-medium text-slate-400 mt-2">อัตรากู้ไม่ผ่าน ({data.bankRejects} ราย)</div>
             </div>
           </div>
         </section>
