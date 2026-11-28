@@ -83,7 +83,10 @@ export interface RawQcInspectionRow {
   plot_id: string | number;
   task_template_id: string | number;
   document_status?: string | null;
+  inspection_result?: string | null;
   overall_result?: string | null;
+  submitted_at?: string | null;
+  approved_at?: string | null;
   inspected_at?: string | null;
   created_at?: string | null;
 }
@@ -209,7 +212,18 @@ interface FilterableQuery<T> {
   lte(column: string, value: unknown): FilterableQuery<T>;
   lt(column: string, value: unknown): FilterableQuery<T>;
   in(column: string, values: unknown[]): FilterableQuery<T>;
-  range(from: number, to: number): PromiseLike<{ data: T[] | null; error: { message: string } | null }>;
+  range(from: number, to: number): PromiseLike<{ data: T[] | null; error: { code?: string; message: string } | null }>;
+}
+
+function isMissingColumnError(error: { code?: string; message: string }): boolean {
+  const msg = String(error.message || '').toLowerCase();
+  const code = String(error.code || '');
+  return (
+    code === '42703' ||
+    code === 'PGRST204' ||
+    (msg.includes('column') && msg.includes('does not exist')) ||
+    (msg.includes('could not find') && msg.includes('column'))
+  );
 }
 
 async function fetchAllRows<T>(
@@ -218,22 +232,32 @@ async function fetchAllRows<T>(
   select: string,
   options?: {
     optional?: boolean;
+    fallbackSelect?: string;
     applyFilter?: (query: FilterableQuery<T>) => FilterableQuery<T>;
     chunkSize?: number;
   },
 ): Promise<T[]> {
   const chunkSize = options?.chunkSize ?? 1000;
-  const rows: T[] = [];
+  const fallbackSelect = options?.fallbackSelect ?? '*';
+  let activeSelect = select;
+  let rows: T[] = [];
   let from = 0;
 
   while (true) {
-    let query = supabase.from(table).select(select) as unknown as FilterableQuery<T>;
+    let query = supabase.from(table).select(activeSelect) as unknown as FilterableQuery<T>;
     if (options?.applyFilter) {
       query = options.applyFilter(query);
     }
 
     const { data, error } = await query.range(from, from + chunkSize - 1);
     if (error) {
+      // If a specific optional column does not exist on this DB, retry with fallbackSelect ('*')
+      if (activeSelect !== fallbackSelect && isMissingColumnError(error)) {
+        activeSelect = fallbackSelect;
+        rows = [];
+        from = 0;
+        continue;
+      }
       if (options?.optional) {
         return [];
       }
@@ -252,11 +276,11 @@ async function fetchAllRows<T>(
 async function safeSelectProjects(supabase: SupabaseClient): Promise<RawProjectRow[]> {
   const { data, error } = await supabase
     .from('projects')
-    .select('id, name, is_closed, is_external, layout_data');
+    .select('name, is_closed, is_external, layout_data');
   if (!error && data) return data as RawProjectRow[];
 
-  // Fallback if is_external or is_closed columns do not exist yet
-  const fallback = await supabase.from('projects').select('id, name, layout_data');
+  // Fallback to '*' if optional columns (e.g. is_external / is_closed) differ on this DB
+  const fallback = await supabase.from('projects').select('*');
   if (fallback.error) throw new Error(`Failed querying projects: ${fallback.error.message}`);
   return (fallback.data || []) as RawProjectRow[];
 }
@@ -620,14 +644,17 @@ export function computeDailySummaryReport(
   for (const qi of scopedQcInspections) {
     const plot = plotById.get(String(qi.plot_id));
     if (!plot) continue;
-    const inspectedDay = toBangkokDateString(qi.inspected_at || qi.created_at);
+    const inspectedDay = toBangkokDateString(
+      qi.submitted_at || qi.approved_at || qi.inspected_at || qi.created_at,
+    );
     if (inspectedDay !== window.dateStr) continue;
     if (qi.document_status === 'draft') continue;
     const projName = String(plot.project_name);
     const taskKey = `${qi.plot_id}::${qi.task_template_id}`;
-    if (qi.overall_result === 'failed' || qi.document_status === 'rejected') {
+    const result = qi.inspection_result ?? qi.overall_result;
+    if (result === 'failed' || qi.document_status === 'rejected') {
       addKey(qcRejectedKeysByProject, projName, taskKey);
-    } else if (qi.overall_result === 'passed' || qi.document_status === 'approved') {
+    } else if (result === 'passed' || qi.document_status === 'approved') {
       addKey(qcPassedKeysByProject, projName, taskKey);
     }
   }
@@ -1086,12 +1113,12 @@ export async function collectDailySummaryReport(
     fetchAllRows<RawPlotRow>(
       supabase,
       'plots',
-      'id, plot_name, project_name, house_type_id, is_completed, progress, sale_status, foreman_name',
+      'id, plot_name, project_name, house_type_id, is_completed, sale_status, foreman_name',
     ),
     fetchAllRows<RawTaskTemplateRow>(
       supabase,
       'task_templates',
-      'id, house_type_id, task_name, cost, require_qc, is_progress_counted',
+      'id, house_type_id, task_name, cost, is_progress_counted',
     ),
     fetchAllRows<RawAssignmentRow>(
       supabase,
@@ -1121,7 +1148,7 @@ export async function collectDailySummaryReport(
     fetchAllRows<RawQcInspectionRow>(
       supabase,
       'qc_inspections',
-      'id, plot_id, task_template_id, document_status, overall_result, inspected_at, created_at',
+      'id, plot_id, task_template_id, document_status, inspection_result, submitted_at, approved_at, created_at',
       { optional: true },
     ),
     fetchAllRows<RawQcLeaveRow>(
