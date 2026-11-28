@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
+import { classifyPlotOccupancy } from '@/lib/sales/plotAvailability';
 import { Loader2, Search, Building2, UserCircle, DollarSign, Home, CheckCircle2, Clock } from 'lucide-react';
 
 export default function SalesSummaryTable() {
@@ -11,6 +12,7 @@ export default function SalesSummaryTable() {
   
   const [plots, setPlots] = useState<any[]>([]);
   const [sales, setSales] = useState<any[]>([]);
+  const [rentalContracts, setRentalContracts] = useState<any[]>([]);
   const [leads, setLeads] = useState<any[]>([]);
 
   // Fetch projects on mount
@@ -41,18 +43,24 @@ export default function SalesSummaryTable() {
         const validPlots = (pData || []).filter(p => p.house_types?.type_name !== 'สาธารณูปโภค');
         setPlots(validPlots);
 
-        // 2. Fetch sales for these plots
+        // 2. Fetch sales & rental contracts for these plots
         const plotIds = validPlots.map(p => p.id);
         let sData: any[] = [];
+        let rcData: any[] = [];
         if (plotIds.length > 0) {
           const chunkArray = (arr: any[], size: number) => Array.from({ length: Math.ceil(arr.length / size) }, (v, i) => arr.slice(i * size, i * size + size));
           const chunks = chunkArray(plotIds, 100);
           for (const chunk of chunks) {
-            const { data } = await supabase.from('sales').select('*').in('plot_id', chunk);
-            if (data) sData = [...sData, ...data];
+            const [{ data: salesChunk }, { data: rcChunk }] = await Promise.all([
+              supabase.from('sales').select('*').in('plot_id', chunk),
+              supabase.from('rental_contracts').select('id, plot_id, status').in('plot_id', chunk),
+            ]);
+            if (salesChunk) sData = [...sData, ...salesChunk];
+            if (rcChunk) rcData = [...rcData, ...rcChunk];
           }
         }
         setSales(sData);
+        setRentalContracts(rcData);
 
         // 3. Fetch leads for these sales
         const leadIds = sData.map(s => s.lead_id).filter(Boolean);
@@ -76,35 +84,61 @@ export default function SalesSummaryTable() {
     fetchData();
   }, [selectedProject]);
 
-  // Combine data
+  // Combine data using unified plot occupancy rules
   const tableData = useMemo(() => {
     return plots.map(plot => {
-      // Find the most recent sale or the active one
-      const sale = sales.find(s => s.plot_id === plot.id && s.contract_status !== 'Cancelled') || sales.find(s => s.plot_id === plot.id);
+      const plotSales = sales.filter(s => s.plot_id === plot.id);
+      const plotRentals = rentalContracts.filter(c => c.plot_id === plot.id);
+      // Find the most recent active sale or fallback to any sale for history
+      const sale = plotSales.find(s => (s.crm_stage || s.contract_status || '').toLowerCase() !== 'cancelled') || plotSales[0] || null;
       const lead = sale ? leads.find(l => l.id === sale.lead_id) : null;
 
+      const occupancy = classifyPlotOccupancy({
+        plot,
+        sales: plotSales,
+        rentalContracts: plotRentals,
+        lead,
+      });
+
       const basePrice = Number(plot.selling_price || 0);
-      const salePrice = sale ? Number(sale.sale_price || 0) : 0;
+      const salePrice = sale && (sale.crm_stage || sale.contract_status || '').toLowerCase() !== 'cancelled'
+        ? Number(sale.sale_price || 0)
+        : 0;
       const landAppraisal = Number(sale?.land_office_price || plot.land_appraisal_price || 0);
-      
-      const isVacant = !plot.has_customer;
+      const isVacant = occupancy.isAvailable;
+      const isTransferred = occupancy.status === 'purchase_transferred';
+      const isRental = occupancy.status === 'rental_active' || occupancy.status === 'rental_pending';
+      const statusLabel = isTransferred
+        ? 'Transferred'
+        : occupancy.status === 'rental_active'
+          ? 'เช่าอยู่ (Rented)'
+          : occupancy.status === 'rental_pending'
+            ? 'จองเช่า (รอทำสัญญา)'
+            : occupancy.status === 'unknown'
+              ? 'ต้องตรวจสอบ'
+              : isVacant
+                ? 'ว่าง'
+                : sale?.contract_status || 'ไม่ว่าง';
 
       return {
         id: plot.id,
         plotName: plot.plot_name || plot.id,
-        hasCustomer: plot.has_customer,
+        hasCustomer: occupancy.isOccupied,
+        isVacant,
+        isRental,
+        isUnknown: occupancy.isConflictOrUnknown,
         customerName: lead?.customer_name || '-',
-        status: sale?.contract_status || plot.sale_status || (isVacant ? 'ว่าง' : 'รอดำเนินการ'),
+        status: statusLabel,
         agentName: lead?.agent_name || '-',
         basePrice,
         salePrice,
         landAppraisal,
         expectedTransfer: sale?.expected_transfer_date ? sale.expected_transfer_date.split('T')[0] : '-',
         actualTransfer: sale?.transferred_at ? sale.transferred_at.split('T')[0] : '-',
-        isTransferred: sale?.contract_status === 'Transferred' || plot.sale_status === 'Transferred'
+        isTransferred
       };
     }).sort((a, b) => String(a.plotName).localeCompare(String(b.plotName), undefined, { numeric: true }));
-  }, [plots, sales, leads]);
+  }, [plots, sales, rentalContracts, leads]);
 
   // Summary Metrics
   const summary = useMemo(() => {
@@ -118,13 +152,13 @@ export default function SalesSummaryTable() {
     tableData.forEach(row => {
       totalBase += row.basePrice;
       totalAppraisal += row.landAppraisal;
-      if (row.hasCustomer) {
+      if (row.hasCustomer && !row.isRental) {
         totalSale += row.salePrice;
       }
       
       if (row.isTransferred) {
         transferred++;
-      } else if (!row.hasCustomer) {
+      } else if (row.isVacant) {
         vacant++;
       } else {
         pending++;

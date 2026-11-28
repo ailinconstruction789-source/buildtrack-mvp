@@ -6,7 +6,15 @@ export type ProjectMapStatus = 'available' | 'booked' | 'transferred' | 'rented'
 export type ProjectMapCellType = 'plot' | 'road' | 'park' | 'fence-h' | 'fence-v' | 'infra-h' | 'infra-v';
 export interface ProjectMapCell { x: number; y: number; type: ProjectMapCellType; plotId?: string }
 export interface ProjectMapLayout { cols: number; rows: number; cells: ProjectMapCell[] }
-export interface ProjectMapPlot { id: string; name: string; hasCustomer: boolean | null; isCompleted: boolean | null; saleStatus: string | null }
+export interface ProjectMapPlot {
+  id: string;
+  name: string;
+  hasCustomer: boolean | null;
+  isCompleted: boolean | null;
+  saleStatus: string | null;
+  /** Non-PII flag indicating legacy rental fields exist on plots table */
+  hasLegacyRentalMetadata?: boolean;
+}
 export interface ProjectMapSnapshot {
   projectName: string; actor: ProjectSalesSnapshot['actor']; layout: ProjectMapLayout;
   plots: ProjectMapPlot[]; salePages: ProjectSalesSnapshot[]; rentalPages?: RentalProjectPage[];
@@ -55,8 +63,17 @@ export function parseProjectMapPlots(value: unknown): ProjectMapPlot[] {
   if (!Array.isArray(value) || value.length > PROJECT_MAP_MAX_PLOTS) return bad();
   const plots = value.map(value => {
     const p = bookingRecord(value);
-    return { id: line(p.id), name: line(p.name), hasCustomer: bool(p.hasCustomer), isCompleted: bool(p.isCompleted),
-      saleStatus: p.saleStatus === null ? null : line(p.saleStatus) };
+    const hasLegacyRentalMetadata = Object.hasOwn(p, 'hasLegacyRentalMetadata')
+      ? (typeof p.hasLegacyRentalMetadata === 'boolean' ? p.hasLegacyRentalMetadata : bad())
+      : undefined;
+    return {
+      id: line(p.id),
+      name: line(p.name),
+      hasCustomer: bool(p.hasCustomer),
+      isCompleted: bool(p.isCompleted),
+      saleStatus: p.saleStatus === null ? null : line(p.saleStatus),
+      ...(hasLegacyRentalMetadata !== undefined ? { hasLegacyRentalMetadata } : {}),
+    };
   });
   if (new Set(plots.map(p => p.id)).size !== plots.length) return bad();
   return plots;
@@ -113,18 +130,36 @@ export function buildProjectMap(snapshot: ProjectMapSnapshot): { regions: Projec
     // Canonical ID and project only. Nicknames, leading zeroes and fuzzy names are not identity.
     const history = plot ? salesByPlot.get(id) ?? [] : [];
     const rentalHistory = plot ? rentalsByPlot.get(id) ?? [] : [];
-    const activeRentals = rentalHistory.filter(rental => ['active', 'renewed'].includes(rental.status));
+    const activeRentals = rentalHistory.filter(rental => ['active', 'renewed', 'pending_contract', 'pendingcontract'].includes(String(rental.status).toLowerCase()));
     const active = history.filter(sale => sale.stage !== 'cancelled');
     const currentSale = active.length === 1 ? active[0] : null;
     const currentRental = activeRentals.length === 1 ? activeRentals[0] : null;
+    const normalizedSaleStatus = (plot?.saleStatus ?? '').trim().toLowerCase();
+    const hasLegacyRentalMeta = plot?.hasLegacyRentalMetadata === true;
     let status: ProjectMapStatus = 'unknown';
-    if (plot && active.length === 0 && activeRentals.length === 0 && plot.hasCustomer === false && ['active', 'ready_for_sale'].includes(plot.saleStatus ?? '')) status = 'available';
+    if (
+      plot &&
+      active.length === 0 &&
+      activeRentals.length === 0 &&
+      plot.hasCustomer === false &&
+      !hasLegacyRentalMeta &&
+      ['active', 'ready_for_sale'].includes(plot.saleStatus ?? '')
+    ) {
+      status = 'available';
+    }
     if (plot?.hasCustomer === true && currentSale && activeRentals.length === 0) {
       const transferred = ['transferred', 'handover'].includes(currentSale.stage);
-      if (transferred && plot.saleStatus === 'transferred') status = 'transferred';
-      if (!transferred && ['active', 'ready_for_sale'].includes(plot.saleStatus ?? '')) status = 'booked';
+      if (transferred && normalizedSaleStatus === 'transferred') status = 'transferred';
+      if (!transferred && ['active', 'ready_for_sale', 'reserved', 'booked'].includes(normalizedSaleStatus)) status = 'booked';
     }
-    if (plot?.hasCustomer === true && currentRental && active.length === 0 && ['', 'active', 'normal', 'ready_for_sale', 'available', 'vacant'].includes((plot.saleStatus ?? '').trim().toLowerCase())) status = 'rented';
+    if (
+      plot?.hasCustomer === true &&
+      currentRental &&
+      active.length === 0 &&
+      ['', 'active', 'normal', 'ready_for_sale', 'available', 'vacant', 'rented', 'reserved'].includes(normalizedSaleStatus)
+    ) {
+      status = String(currentRental.status).toLowerCase().startsWith('pending') ? 'booked' : 'rented';
+    }
     return { key: id, plotId: plot?.id ?? null, name: plot?.name ?? id, x: b?.minX ?? 0, y: b?.minY ?? 0,
       width: b ? b.maxX - b.minX + 1 : 1, height: b ? b.maxY - b.minY + 1 : 1,
       // Unplaced registry entries may be infrastructure, not saleable house plots.

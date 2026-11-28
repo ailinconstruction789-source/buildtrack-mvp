@@ -8,8 +8,8 @@ import RentalPaymentLedgerModal from '../RentalPaymentLedgerModal';
 type Query = { table: string; action: 'read' | 'insert' | 'update'; payload?: Record<string, unknown> | Record<string, unknown>[];
   filters: [string, unknown][]; columns?: string; single: boolean };
 type Result = { data: unknown; error: { message: string } | null };
-const mocks = vi.hoisted(() => ({ from: vi.fn() }));
-vi.mock('@/lib/supabase', () => ({ supabase: { from: mocks.from } }));
+const mocks = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn() }));
+vi.mock('@/lib/supabase', () => ({ supabase: { from: mocks.from, rpc: (...args: any[]) => mocks.rpc(...args) } }));
 vi.mock('../LeadPicker', () => ({ default: ({ onToggleCreateNew }: { onToggleCreateNew: (value: boolean) => void }) =>
   <button type="button" onClick={() => onToggleCreateNew(true)}>New walk-in</button> }));
 vi.mock('../RentalReceiptModal', () => ({ default: () => null }));
@@ -64,6 +64,64 @@ beforeEach(() => {
   queries = [];
   resolveQuery = defaultResult;
   mocks.from.mockReset().mockImplementation(builder);
+  mocks.rpc.mockReset().mockImplementation(async (fnName: string, args: any) => {
+    if (fnName === 'sales_tx_sign_rental_contract') {
+      return {
+        data: {
+          command: 'rental_sign_contract',
+          leadId: args?.p_payload?.leadId || 'lead-1',
+          contractId: 'contract-signed-1',
+          plotId: args?.p_payload?.plotId || 'plot-1',
+          projectName: args?.p_payload?.projectName || 'Project',
+          rentalStatus: 'Active',
+        },
+        error: null,
+      };
+    }
+    if (fnName === 'sales_tx_book_rental') {
+      return {
+        data: {
+          command: 'rental_book',
+          leadId: args?.p_payload?.leadId || 'lead-1',
+          contractId: 'contract-booked-1',
+          plotId: args?.p_payload?.plotId || 'plot-1',
+          projectName: args?.p_payload?.projectName || 'Project',
+          rentalStatus: 'PendingContract',
+        },
+        error: null,
+      };
+    }
+    if (fnName === 'sales_tx_move_out_rental') {
+      return {
+        data: {
+          command: 'rental_move_out',
+          contractId: args?.p_payload?.contractId || 'contract-1',
+          leadId: args?.p_payload?.leadId || 'lead-1',
+          plotId: 'plot-1',
+          depositRefunded: 30000,
+          plotReleased: true,
+          rentalStatus: 'MovedOut',
+        },
+        error: null,
+      };
+    }
+    if (fnName === 'sales_tx_convert_rental_to_buy') {
+      return {
+        data: {
+          command: 'rental_convert_to_buy',
+          contractId: args?.p_payload?.contractId || 'contract-1',
+          leadId: args?.p_payload?.leadId || 'lead-1',
+          saleId: 'sale-converted-1',
+          plotId: 'plot-1',
+          finalPurchasePrice: args?.p_payload?.finalPurchasePrice || 3000000,
+          appliedBookingCredit: args?.p_payload?.appliedBookingCredit || 0,
+          rentalStatus: 'ConvertedToBuy',
+        },
+        error: null,
+      };
+    }
+    return { data: null, error: null };
+  });
   vi.spyOn(window, 'alert').mockImplementation(() => {});
 });
 
@@ -107,14 +165,18 @@ describe('Rental action identity and error safety', () => {
     await act(async () => release(ok([{ ...contract, id: 'old', tenant_name: 'Old Tenant' }])));
     expect(screen.queryByText('Old Tenant')).not.toBeInTheDocument();
   });
-  it.each(['error', 'zero rows'])('stops on a resolved contract update returning %s', async condition => {
+  it.each(['error', 'stale_state'])('stops on convert_to_buy RPC returning %s without direct writes or closing', async condition => {
     const onClose = vi.fn();
-    resolveQuery = q => q.action === 'update' ? condition === 'error' ? fail() : ok(null) : defaultResult(q);
+    mocks.rpc.mockResolvedValueOnce({
+      data: null,
+      error: { message: condition === 'error' ? 'write denied' : 'SALES_TX_STALE_STATE' },
+    });
     render(<RentalActionModal isOpen contractId="contract-1" onClose={onClose} />);
     await waitFor(() => expect(screen.getByRole('button', { name: 'ยืนยันเปลี่ยนเป็นซื้อแปลงนี้' })).toBeEnabled());
     submit(/ยืนยันเปลี่ยนเป็นซื้อแปลงนี้/);
-    await screen.findByText(condition === 'error' ? 'write denied' : /ไม่พบรายการที่แก้ไขได้/);
-    expect(writes()).toHaveLength(1);
+    await screen.findByText(condition === 'error' ? /write denied/ : /มีการเปลี่ยนแปลงระหว่างเปิดหน้าจอ/);
+    expect(mocks.rpc).toHaveBeenCalledTimes(1);
+    expect(writes()).toHaveLength(0);
     expect(onClose).not.toHaveBeenCalled();
     expect(window.alert).not.toHaveBeenCalled();
   });
@@ -135,32 +197,46 @@ describe('Rental action identity and error safety', () => {
     expect(writes('rental_contracts')[0].payload).toMatchObject({ status: 'Renewed', lease_end_date: '2027-02-01' });
     expect(writes('leads')[0].payload).toMatchObject({ rental_status: 'Renewed' });
   });
-  it('aligns ended lead state with the specific MovedOut contract status', async () => {
+  it('routes move-out atomically through sales_tx_move_out_rental RPC with zero direct leads/contracts/plots writes', async () => {
     const onClose = vi.fn();
     render(<RentalActionModal isOpen contractId="contract-1" onClose={onClose} />);
     await waitFor(() => expect(screen.getByRole('button', { name: 'ยืนยันเปลี่ยนเป็นซื้อแปลงนี้' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: /3. สิ้นสุดสัญญา/ }));
     submit(/ยืนยันการย้ายออก/);
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
-    expect(writes('leads')[0].payload).toMatchObject({ status: 'MovedOut', rental_status: 'MovedOut' });
-    expect(writes('rental_contracts')[0].payload).toMatchObject({ status: 'MovedOut' });
+    expect(mocks.rpc).toHaveBeenCalledWith(
+      'sales_tx_move_out_rental',
+      expect.objectContaining({
+        p_request_id: expect.any(String),
+        p_payload: expect.objectContaining({ contractId: 'contract-1', leadId: 'lead-1' }),
+      })
+    );
+    expect(writes()).toHaveLength(0);
   });
-  it('does not continue plot and lead writes after an account switch during the primary save', async () => {
+  it('does not close or fire alert after an account switch while convert_to_buy RPC is in flight', async () => {
     let release!: (result: Result) => void;
     const onClose = vi.fn();
-    resolveQuery = q => q.table === 'rental_contracts' && q.action === 'update'
-      ? new Promise<Result>(done => { release = done; }) : defaultResult(q);
+    mocks.rpc.mockImplementationOnce(() => new Promise<Result>(done => { release = done; }));
     const view = render(<RentalActionModal isOpen contractId="contract-1" user={user} onClose={onClose} />);
     await waitFor(() => expect(screen.getByRole('button', { name: 'ยืนยันเปลี่ยนเป็นซื้อแปลงนี้' })).toBeEnabled());
     submit(/ยืนยันเปลี่ยนเป็นซื้อแปลงนี้/);
     await waitFor(() => expect(release).toBeTypeOf('function'));
     view.rerender(<RentalActionModal isOpen contractId="contract-1" user={{ ...user, id: 'user-2' }} onClose={onClose} />);
-    await act(async () => release(ok({ id: 'contract-1' })));
-    expect(writes()).toHaveLength(1);
+    await act(async () => release(ok({
+      command: 'rental_convert_to_buy',
+      contractId: 'contract-1',
+      leadId: 'lead-1',
+      saleId: 'sale-converted-1',
+      plotId: 'plot-1',
+      finalPurchasePrice: 3000000,
+      appliedBookingCredit: 0,
+      rentalStatus: 'ConvertedToBuy',
+    })));
+    expect(writes()).toHaveLength(0);
     expect(onClose).not.toHaveBeenCalled();
     expect(window.alert).not.toHaveBeenCalled();
   });
-  it('never selects non-existent plots.customer_name during move-out or convert-to-buy', async () => {
+  it('never selects non-existent plots.customer_name or issues direct plot writes during move-out', async () => {
     const onClose = vi.fn();
     render(<RentalActionModal isOpen contractId="contract-1" onClose={onClose} />);
     await waitFor(() => expect(screen.getByRole('button', { name: 'ยืนยันเปลี่ยนเป็นซื้อแปลงนี้' })).toBeEnabled());
@@ -168,12 +244,12 @@ describe('Rental action identity and error safety', () => {
     submit(/ยืนยันการย้ายออก/);
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
     const plotReads = queries.filter(q => q.table === 'plots' && q.action === 'read');
-    expect(plotReads.length).toBeGreaterThan(0);
     for (const q of plotReads) {
       expect(q.columns || '').not.toContain('customer_name');
     }
+    expect(writes('plots')).toHaveLength(0);
   });
-  it('recovers an incomplete MovedOut contract opened from the plot map without rewriting rental_contracts', async () => {
+  it('submits recovery of an incomplete MovedOut contract opened from the plot map via atomic sales_tx_move_out_rental RPC', async () => {
     const onClose = vi.fn();
     resolveQuery = q => {
       if (q.table === 'rental_contracts' && q.action === 'read') {
@@ -194,84 +270,118 @@ describe('Rental action identity and error safety', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /ยืนยันการย้ายออก/ })).toBeEnabled());
     submit(/ยืนยันการย้ายออก/);
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
-    expect(writes('rental_contracts')).toHaveLength(0);
-    expect(writes('plots')).toHaveLength(1);
-    expect(writes('leads')[0].payload).toMatchObject({ status: 'MovedOut', rental_status: 'MovedOut' });
+    expect(mocks.rpc).toHaveBeenCalledWith(
+      'sales_tx_move_out_rental',
+      expect.objectContaining({ p_payload: expect.objectContaining({ contractId: 'contract-1' }) })
+    );
+    expect(writes()).toHaveLength(0);
   });
 });
 
 describe('Rental contract creation safety', () => {
   const renderContract = (extra: Record<string, unknown> = {}) => render(<RentalContractModal isOpen onClose={vi.fn()}
     lead={lead as never} user={user} salesOwners={[{ userId: 'user-1', displayName: 'Sales A' }]} {...extra} />);
-  it('does not create another contract from a rental lead', async () => {
+  it('does not create another contract from an already-Rented active rental lead', async () => {
     renderContract({ lead: { ...lead, status: 'Rented' } });
     // Wait for the asynchronous plot load, rather than asserting a one-second machine budget.
     await waitFor(() => expect(screen.getByRole('button', { name: 'ยืนยันบันทึกสัญญาเช่า' })).toBeEnabled(), { timeout: 10000 });
     submit(/ยืนยันบันทึกสัญญาเช่า/);
     await screen.findByText(/ลูกค้ารายนี้อยู่ในขั้นตอนจอง/);
+    expect(mocks.rpc).not.toHaveBeenCalled();
     expect(writes()).toHaveLength(0);
   });
-  it('rejects another existing Active or Renewed contract before inserting', async () => {
-    resolveQuery = q => q.table === 'rental_contracts' ? ok([{ id: 'existing' }]) : defaultResult(q);
+  it('surfaces server active-contract conflict from sales_tx_sign_rental_contract without direct writes', async () => {
+    mocks.rpc.mockResolvedValueOnce({ data: null, error: { message: 'SALES_TX_PLOT_UNAVAILABLE' } });
     renderContract();
     await waitFor(() => expect(screen.getByRole('button', { name: 'ยืนยันบันทึกสัญญาเช่า' })).toBeEnabled());
     submit(/ยืนยันบันทึกสัญญาเช่า/);
-    await screen.findByText(/ลูกค้ามีสัญญาเช่าที่ใช้งานอยู่แล้ว/);
+    await screen.findByText(/แปลงนี้ถูกจองหรือมีลูกค้ารายอื่นถือสิทธิ์อยู่แล้ว/);
     expect(writes()).toHaveLength(0);
-    expect(queries.find(q => q.table === 'rental_contracts')?.filters).toContainEqual(['status', ['Active', 'Renewed']]);
   });
-  it('stops on a contract insert error instead of updating a plot or announcing success', async () => {
+  it('stops on an RPC error instead of updating a plot or announcing success', async () => {
     const onClose = vi.fn();
-    resolveQuery = q => q.table === 'rental_contracts' && q.action === 'insert' ? fail('contract denied') : defaultResult(q);
+    mocks.rpc.mockResolvedValueOnce({ data: null, error: { message: 'contract denied' } });
     renderContract({ onClose });
     await waitFor(() => expect(screen.getByRole('button', { name: 'ยืนยันบันทึกสัญญาเช่า' })).toBeEnabled());
     submit(/ยืนยันบันทึกสัญญาเช่า/);
     await screen.findByText(/contract denied/);
-    expect(writes()).toHaveLength(1);
+    expect(mocks.rpc).toHaveBeenCalledTimes(1);
+    expect(writes()).toHaveLength(0);
     expect(onClose).not.toHaveBeenCalled();
   });
-  it('does not insert a second contract when retrying a failed lead update', async () => {
-    let failLead = true;
+  it('reuses the exact idempotency p_request_id on retry after transient RPC failure with zero direct writes', async () => {
     const onClose = vi.fn();
-    resolveQuery = q => q.table === 'leads' && q.action === 'update' && failLead ? fail('lead denied') : defaultResult(q);
+    mocks.rpc
+      .mockResolvedValueOnce({ data: null, error: { message: 'lead denied' } })
+      .mockResolvedValueOnce({
+        data: {
+          command: 'rental_sign_contract',
+          leadId: 'lead-1',
+          contractId: 'contract-signed-1',
+          plotId: 'plot-1',
+          projectName: 'Project',
+          rentalStatus: 'Active',
+        },
+        error: null,
+      });
     renderContract({ onClose });
     await waitFor(() => expect(screen.getByRole('button', { name: 'ยืนยันบันทึกสัญญาเช่า' })).toBeEnabled());
     submit(/ยืนยันบันทึกสัญญาเช่า/);
-    await screen.findByText(/บันทึกบางส่วนแล้ว.*lead denied/);
-    failLead = false;
+    await screen.findByText(/lead denied/);
     submit(/ยืนยันบันทึกสัญญาเช่า/);
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
-    expect(writes('rental_contracts')).toHaveLength(1);
-    expect(writes('plots')).toHaveLength(1);
+    expect(mocks.rpc).toHaveBeenCalledTimes(2);
+    expect(mocks.rpc.mock.calls[0][1].p_request_id).toBe(mocks.rpc.mock.calls[1][1].p_request_id);
+    expect(writes()).toHaveLength(0);
   });
-  it('reuses an acknowledged walk-in lead when the contract insert needs retrying', async () => {
-    let failContract = true;
+  it('creates walk-in tenant atomically inside sales_tx_sign_rental_contract with same requestId on retry', async () => {
     const onClose = vi.fn();
-    resolveQuery = q => q.table === 'rental_contracts' && q.action === 'insert' && failContract ? fail('contract denied') : defaultResult(q);
+    mocks.rpc
+      .mockResolvedValueOnce({ data: null, error: { message: 'contract denied' } })
+      .mockResolvedValueOnce({
+        data: {
+          command: 'rental_sign_contract',
+          leadId: 'lead-walkin-1',
+          contractId: 'contract-walkin-1',
+          plotId: 'plot-1',
+          projectName: 'Project',
+          rentalStatus: 'Active',
+        },
+        error: null,
+      });
     renderContract({ onClose });
     await waitFor(() => expect(screen.getByRole('button', { name: 'ยืนยันบันทึกสัญญาเช่า' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'New walk-in' }));
     fireEvent.change(screen.getByPlaceholderText('เช่น คุณสมศรี มีสุข (ลูกค้า Walk-in)'), { target: { value: 'New Tenant' } });
     submit(/ยืนยันบันทึกสัญญาเช่า/);
-    await screen.findByText(/บันทึกบางส่วนแล้ว.*contract denied/);
-    failContract = false;
+    await screen.findByText(/contract denied/);
     submit(/ยืนยันบันทึกสัญญาเช่า/);
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
-    expect(writes('leads').filter(q => q.action === 'insert')).toHaveLength(1);
-    expect((writes('rental_contracts')[1].payload as Record<string, unknown>[])[0].lead_id).toBe('leads-saved');
+    expect(mocks.rpc).toHaveBeenCalledTimes(2);
+    expect(mocks.rpc.mock.calls[0][1].p_request_id).toBe(mocks.rpc.mock.calls[1][1].p_request_id);
+    expect(mocks.rpc.mock.calls[0][1].p_payload).toMatchObject({ leadId: null, tenantName: 'New Tenant' });
+    expect(writes()).toHaveLength(0);
   });
-  it('does not create a contract when the old account active-contract read finishes late', async () => {
+  it('does not close or invoke onSaved when an account switch happens while sign RPC is in flight', async () => {
     let release!: (result: Result) => void;
-    resolveQuery = q => q.table === 'rental_contracts' && q.action === 'read'
-      ? new Promise<Result>(done => { release = done; }) : defaultResult(q);
-    const view = renderContract();
+    const onClose = vi.fn();
+    mocks.rpc.mockImplementationOnce(() => new Promise<Result>(done => { release = done; }));
+    const view = renderContract({ onClose });
     await waitFor(() => expect(screen.getByRole('button', { name: 'ยืนยันบันทึกสัญญาเช่า' })).toBeEnabled());
     submit(/ยืนยันบันทึกสัญญาเช่า/);
     await waitFor(() => expect(release).toBeTypeOf('function'));
-    view.rerender(<RentalContractModal isOpen lead={lead as never} user={{ ...user, id: 'user-2' }} onClose={vi.fn()}
+    view.rerender(<RentalContractModal isOpen lead={lead as never} user={{ ...user, id: 'user-2' }} onClose={onClose}
       salesOwners={[{ userId: 'user-1', displayName: 'Sales A' }]} />);
-    await act(async () => release(ok([])));
+    await act(async () => release(ok({
+      command: 'rental_sign_contract',
+      leadId: 'lead-1',
+      contractId: 'contract-signed-1',
+      plotId: 'plot-1',
+      projectName: 'Project',
+      rentalStatus: 'Active',
+    })));
     expect(writes()).toHaveLength(0);
+    expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'ยืนยันบันทึกสัญญาเช่า' })).toBeEnabled();
   });
 });

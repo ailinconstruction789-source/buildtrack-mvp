@@ -26,7 +26,20 @@ import { isSampleHouse, isPlotEligibleForSampleHouse, toggleSampleHouse, fetchTo
 import { fetchSalesWithoutLimit } from '@/lib/sales/fetchWithoutLimit';
 import { useSalesStaffOptions } from '@/hooks/useSalesStaffOptions';
 import SalesOverlay from './SalesOverlay';
-import { canStartSalesDeal, getLeadStage } from '@/lib/sales/leadStage';
+import { canEditSalesRole, canStartSalesDeal, getLeadStage } from '@/lib/sales/leadStage';
+import {
+  classifyPlotOccupancy,
+  type PlotRentalContractSnapshot,
+  type PlotSaleSnapshot,
+} from '@/lib/sales/plotAvailability';
+import {
+  classifySalesDeal,
+  getSalesDealConflictMessage,
+  RENTAL_PENDING_DISPLAY_LABEL,
+  RENTAL_SIGN_CONTRACT_BUTTON_LABEL,
+  resolveCanonicalPlotId,
+} from '@/lib/sales/dealClassification';
+import CancelRentalBookingModal from './CancelRentalBookingModal';
 import { loadSalesStatusHistory, mergeSalesTimeline, type SalesStatusHistoryRow } from '@/lib/sales/salesStatusHistory';
 import { broadcastSalesSync, subscribeToSalesSync } from '@/lib/sales/salesSyncBroadcast';
 
@@ -222,7 +235,12 @@ export default function SalesKanban({
   const [activeTab, setActiveTab] = useState<'daily_visits' | 'map' | 'booked' | 'rented' | 'transferred' | 'list' | 'pricing'>((initialTab as any) || 'daily_visits');
   const [search, setSearch] = useState('');
   
-  const [panelState, setPanelState] = useState<{type: 'default' | 'booking' | 'customer' | 'new-customer', plotId: string, lead: any}>({ type: 'default', plotId: '', lead: null });
+  const [panelState, setPanelState] = useState<{
+    type: 'default' | 'booking' | 'customer' | 'new-customer' | 'occupied_restricted';
+    plotId: string;
+    lead: any;
+    restrictedStatus?: string;
+  }>({ type: 'default', plotId: '', lead: null });
   const panelStateRef = React.useRef(panelState);
   useEffect(() => {
     panelStateRef.current = panelState;
@@ -366,6 +384,8 @@ export default function SalesKanban({
   // Real Plot Data from Supabase
   const [projectPlots, setProjectPlots] = useState<string[]>([]);
   const [projectPlotsData, setProjectPlotsData] = useState<any[]>([]);
+  const [projectSalesData, setProjectSalesData] = useState<PlotSaleSnapshot[]>([]);
+  const [projectRentalContractsData, setProjectRentalContractsData] = useState<PlotRentalContractSnapshot[]>([]);
   const [plotInfo, setPlotInfo] = useState<any>(null);
   const [loadingPlotInfo, setLoadingPlotInfo] = useState(false);
   const [fullImageUrl, setFullImageUrl] = useState<string | null>(null);
@@ -380,6 +400,7 @@ export default function SalesKanban({
   const [showRentalActionModal, setShowRentalActionModal] = useState<{ isOpen: boolean; lead: any | null; plot?: any | null }>({ isOpen: false, lead: null });
   const [showRentalPaymentModal, setShowRentalPaymentModal] = useState<{ isOpen: boolean; plot: any | null; lead: any | null; contractId?: string | null }>({ isOpen: false, plot: null, lead: null });
   const [showBookingModal, setShowBookingModal] = useState<{ isOpen: boolean; lead: any | null; plotId?: string | null }>({ isOpen: false, lead: null });
+  const [cancelRentalTarget, setCancelRentalTarget] = useState<any | null>(null);
   const bookingSalesOwners = useSalesStaffOptions(showBookingModal.isOpen, undefined, String(user?.id ?? user?.username ?? ''));
   const [selectedPlotLead, setSelectedPlotLead] = useState<any | null>(null);
 
@@ -392,6 +413,7 @@ export default function SalesKanban({
     setShowRentalModal({ isOpen: false, lead: null });
     setShowRentalActionModal({ isOpen: false, lead: null });
     setShowRentalPaymentModal({ isOpen: false, plot: null, lead: null });
+    setCancelRentalTarget(null);
   }, [user?.id, user?.username, user?.role]);
 
   // Excel Import State
@@ -412,16 +434,26 @@ export default function SalesKanban({
       setLoadingAvailability(true);
       setLoadError(null);
       try {
-        const [plotsData, salesData] = await Promise.all([
-          fetchSalesWithoutLimit('plots', { select: 'id, project_name, has_customer, sale_status, current_tenant_name, rental_program', orderBy: 'id', ascending: true }),
-          fetchSalesWithoutLimit('sales', { select: 'plot_id, contract_status', orderBy: 'id', ascending: true })
+        const [plotsData, salesData, rentalContractsData] = await Promise.all([
+          fetchSalesWithoutLimit('plots', { select: 'id, project_name, has_customer, sale_status, current_tenant_name, rental_program, lease_start_date, highlight_note', orderBy: 'id', ascending: true }),
+          fetchSalesWithoutLimit('sales', { select: 'id, plot_id, contract_status, crm_stage', orderBy: 'id', ascending: true }),
+          fetchSalesWithoutLimit('rental_contracts', { select: 'id, plot_id, status', orderBy: 'id', ascending: true })
         ]);
 
         if (isCancelled) return;
 
-        const occupied = new Set((salesData || [])
-          .filter((s: any) => (s.contract_status || '').toLowerCase() !== 'cancelled')
-          .map((s: any) => s.plot_id));
+        const salesByPlot = new Map<string, PlotSaleSnapshot[]>();
+        for (const s of (salesData || []) as PlotSaleSnapshot[]) {
+          if (!s.plot_id) continue;
+          const list = salesByPlot.get(s.plot_id);
+          if (list) list.push(s); else salesByPlot.set(s.plot_id, [s]);
+        }
+        const rentalsByPlot = new Map<string, PlotRentalContractSnapshot[]>();
+        for (const rc of (rentalContractsData || []) as PlotRentalContractSnapshot[]) {
+          if (!rc.plot_id) continue;
+          const list = rentalsByPlot.get(rc.plot_id);
+          if (list) list.push(rc); else rentalsByPlot.set(rc.plot_id, [rc]);
+        }
 
         const counts: Record<string, { total: number; vacant: number }> = {};
         for (const p of plotsData || []) {
@@ -431,12 +463,12 @@ export default function SalesKanban({
             counts[pName] = { total: 0, vacant: 0 };
           }
           counts[pName].total++;
-          const isVacant = p.has_customer === false &&
-            !p.current_tenant_name &&
-            !p.rental_program &&
-            (!p.sale_status || ['active', 'normal', 'ready_for_sale', 'available', 'vacant', ''].includes(p.sale_status.toLowerCase())) &&
-            !occupied.has(p.id);
-          if (isVacant) {
+          const occupancy = classifyPlotOccupancy({
+            plot: p,
+            sales: salesByPlot.get(p.id) ?? [],
+            rentalContracts: rentalsByPlot.get(p.id) ?? [],
+          });
+          if (occupancy.isAvailable) {
             counts[pName].vacant++;
           }
         }
@@ -461,11 +493,12 @@ export default function SalesKanban({
     const isCurrent = () => dataRequest.current === request && currentDataScope.current === scope;
     setLoadError(null);
     try {
-      // 1. Parallel fetch plots, leads, and sales for this project without limit
-      const [plotsData, nativeLeads, salesResult] = await Promise.all([
+      // 1. Parallel fetch plots, leads, sales, and rental contracts for this project without limit
+      const [plotsData, nativeLeads, salesResult, rentalContractsResult] = await Promise.all([
         fetchSalesWithoutLimit('plots', { filterCol: 'project_name', filterVal: projName, select: '*', orderBy: 'id', ascending: true }),
         fetchSalesWithoutLimit('leads', { filterCol: 'project_name', filterVal: projName, select: '*', orderBy: 'created_at', ascending: false }),
-        fetchSalesWithoutLimit('sales', { select: SALES_WITH_CUSTOMER_SELECT, orderBy: 'created_at', ascending: false })
+        fetchSalesWithoutLimit('sales', { select: SALES_WITH_CUSTOMER_SELECT, orderBy: 'created_at', ascending: false }),
+        fetchSalesWithoutLimit('rental_contracts', { filterCol: 'project_name', filterVal: projName, select: 'id, plot_id, status, lead_id', orderBy: 'created_at', ascending: false })
       ]);
 
       if (!isCurrent()) return;
@@ -481,6 +514,8 @@ export default function SalesKanban({
         projectPlotIds.has(s.plot_id) ||
         s.plots?.project_name === projName
       );
+      setProjectSalesData(projectSales as PlotSaleSnapshot[]);
+      setProjectRentalContractsData((rentalContractsResult || []) as PlotRentalContractSnapshot[]);
 
       // 2. Format sales into Kanban lead structure
       const claimedLeadIds = new Set<string>();
@@ -597,6 +632,8 @@ export default function SalesKanban({
           status: kanbanStatus,
           plot: s.plot_id || matchingPlot?.id || null,
           plotName: s.plots?.plot_name || matchingPlot?.plot_name || s.plot_id || null,
+          interested_plot_id: matchingLead?.interested_plot_id || s.plot_id || matchingPlot?.id || null,
+          interested_plot_name: matchingLead?.interested_plot_name || s.plots?.plot_name || matchingPlot?.plot_name || s.plot_id || null,
           bank: s.bank_name || (matchingLead?.notes ? customerDealDetails(matchingLead.notes).bank : '') || '',
           cancelReason: s.cancellation_reason || '',
           landOfficePrice: s.land_office_price?.toString() || extractAgreedPrices(matchingLead?.notes).landAppraisalPrice?.toString() || matchingPlot?.land_appraisal_price?.toString() || '',
@@ -746,6 +783,9 @@ export default function SalesKanban({
                 : (l.status || (bookDate ? 'Reserved' : 'Visit')),
               plot: l.interested_plot_id || matchingPlot?.id || null,
               plotName: l.interested_plot_name || matchingPlot?.plot_name || l.interested_plot_id || null,
+              interested_plot_id: l.interested_plot_id || matchingPlot?.id || null,
+              interested_plot_name: l.interested_plot_name || matchingPlot?.plot_name || l.interested_plot_id || null,
+              deal_revision: l.deal_revision || null,
               bank: customerDealDetails(l.notes).bank,
               cancelReason: l.lost_reason || '',
               landOfficePrice: extractAgreedPrices(l.notes).landAppraisalPrice?.toString() || matchingPlot?.land_appraisal_price?.toString() || '',
@@ -1065,13 +1105,26 @@ export default function SalesKanban({
     });
   };
 
-  // Compute available plots (A plot is available if it has no leads EXCEPT Visit and Cancelled)
-  const availablePlots = projectPlots.filter(p => !leads.find(l => l.plot === p && !['Visit', 'Cancelled', 'Rejected'].includes(l.status)));
+  // Compute available plots using canonical plot occupancy (NEVER treat missing loaded leads as vacant)
+  const availablePlots = projectPlots.filter(plotKey => {
+    const matchedPlot = projectPlotsData.find(d => d.id === plotKey || d.plot_name === plotKey);
+    if (!matchedPlot) return false;
+    const matchedSales = projectSalesData.filter(s => s.plot_id === matchedPlot.id);
+    const matchedRentals = projectRentalContractsData.filter(r => r.plot_id === matchedPlot.id);
+    const matchedLead = leads.find(l =>
+      (l.plot === matchedPlot.id || l.plot === plotKey || l.interested_plot_id === matchedPlot.id) &&
+      !['Visit', 'Cancelled', 'Rejected', 'Lost', 'MovedOut'].includes(l.status)
+    ) || null;
+    return classifyPlotOccupancy({
+      plot: matchedPlot,
+      sales: matchedSales,
+      rentalContracts: matchedRentals,
+      lead: matchedLead,
+    }).isAvailable;
+  });
 
   const handlePlotClick = (plotId: string, status: string, lead?: any) => {
-    if (status === 'Available' || status === 'Cancelled' || status === 'Rejected' || !lead) {
-      setPanelState({ type: 'booking', plotId, lead: null });
-    } else if (lead) {
+    if (lead) {
       const canonicalStatus = status === 'Transferred' || status === 'Handover'
         ? status
         : (STATUS_CONFIG[lead.status] ? lead.status : (stageToKanbanStatus(lead.status) || 'Reserved'));
@@ -1081,7 +1134,34 @@ export default function SalesKanban({
       formBaselineRef.current = initialForm;
       isFormDirtyRef.current = false;
       setEditCustomerFormState(initialForm);
+      return;
     }
+
+    // No visible lead (vacant OR RLS-hidden occupied plot OR unknown/conflicting plot):
+    // NEVER open booking form when map status is non-vacant or canonical occupancy says unavailable!
+    if (status === 'Available') {
+      const matchedPlot = projectPlotsData.find(d => d.id === plotId || d.plot_name === plotId);
+      if (matchedPlot) {
+        const occ = classifyPlotOccupancy({
+          plot: matchedPlot,
+          sales: projectSalesData.filter(s => s.plot_id === matchedPlot.id),
+          rentalContracts: projectRentalContractsData.filter(r => r.plot_id === matchedPlot.id),
+        });
+        if (!occ.isAvailable) {
+          setPanelState({
+            type: 'occupied_restricted',
+            plotId,
+            lead: null,
+            restrictedStatus: occ.status === 'unknown' ? 'Unknown' : occ.status === 'rental_active' ? 'Rented' : 'Reserved',
+          });
+          return;
+        }
+      }
+      setPanelState({ type: 'booking', plotId, lead: null });
+      return;
+    }
+
+    setPanelState({ type: 'occupied_restricted', plotId, lead: null, restrictedStatus: status || 'Unknown' });
   };
 
   const handleEditLeadClick = (lead: any) => {
@@ -1152,11 +1232,13 @@ export default function SalesKanban({
   };
 
   const handleDeleteCustomer = async (leadId: string) => {
-    if (!window.confirm("คุณต้องการลบข้อมูลลูกค้านี้ใช่หรือไม่?\nการลบจะทำการปลดแปลงกลับเป็นแปลงว่าง (Available) และลบสัญญาเช่า ประวัติค่างวด ยอดจอง และประวัติที่เกี่ยวข้องทั้งหมดออกถาวร")) return;
+    if (!window.confirm("คุณต้องการลบข้อมูลลูกค้าที่สิ้นสุดรายการแล้วใช่หรือไม่?\nหมายเหตุ: ระบบจะไม่อนุญาตให้ลบลูกค้าที่ยังมีจองเช่า สัญญาเช่า หรือรายการจองซื้อค้างอยู่ และจะไม่แตะต้องแปลงที่มีลูกค้ารายอื่นถือสิทธิ์")) return;
     
     try {
       setIsSubmitting(true);
-      const result = await deleteCustomerWithCascade(leadId, panelState.plotId || panelState.lead?.plot);
+      const result = await deleteCustomerWithCascade(leadId, panelState.plotId || panelState.lead?.plot, {
+        actorRole: user?.role,
+      });
       
       if (!result.success) {
         throw new Error(result.error || 'ลบข้อมูลลูกค้าไม่สำเร็จ');
@@ -1165,7 +1247,7 @@ export default function SalesKanban({
       // Refresh
       await fetchData();
       setPanelState({ type: 'default', plotId: '', lead: null });
-      alert(`🗑️ ลบข้อมูลลูกค้า "${result.customerName || 'ลูกค้า'}" สำเร็จ! ${result.releasedPlotIds.length > 0 ? `ปลดแปลง ${result.releasedPlotIds.join(', ')} เรียบร้อยแล้ว` : ''}`);
+      alert(`🗑️ ลบข้อมูลลูกค้า "${result.customerName || 'ลูกค้า'}" สำเร็จ! ${result.releasedPlotIds.length > 0 ? `ปลดแปลง Legacy ${result.releasedPlotIds.join(', ')} เรียบร้อยแล้ว` : ''}`);
     } catch (err: any) {
       console.error("Error deleting customer", err);
       alert(err.message || "เกิดข้อผิดพลาดในการลบข้อมูลลูกค้า");
@@ -1176,167 +1258,109 @@ export default function SalesKanban({
 
   const handleUpdateCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (user?.role != null && !canEditSalesRole(user.role)) {
+      alert('บัญชีของคุณมีสิทธิ์ดูข้อมูลอย่างเดียว ไม่สามารถบันทึกการเปลี่ยนแปลงได้');
+      return;
+    }
+    if (!panelState.lead) return;
+
+    const panelDeal = classifySalesDeal(panelState.lead);
+    if (panelDeal.isConflict) {
+      alert(getSalesDealConflictMessage(panelDeal.reason));
+      return;
+    }
+    if (panelDeal.isRentalEnded) {
+      alert('รายการเช่านี้สิ้นสุดแล้ว ไม่สามารถบันทึกการเปลี่ยนแปลงผ่านฟอร์มการขายได้');
+      return;
+    }
+    if (panelDeal.isRentalPending || panelDeal.isRentalActive) {
+      alert('กรุณาทำรายการเช่าผ่านคำสั่งเช่าที่ระบบรองรับ (ทำสัญญาเช่าจริง / ยกเลิกจองเช่า / จัดการสัญญาเช่า)');
+      return;
+    }
+
+    const leadId =
+      panelState.lead.leadId ||
+      (panelState.lead.sourceKind === 'lead' || !panelState.lead.saleId ? panelState.lead.id : null);
+    const saleId =
+      panelState.lead.saleId ||
+      (panelState.lead.sourceKind === 'lead' ? null : (panelState.lead.leadId ? panelState.lead.id : null));
+    const oldStatus = panelState.lead.status;
+    const newStatus = editCustomerForm.status;
+
+    // Never use absence of SalesDealStatusModal/editor as an excuse to fall back to legacy sales/plot mutations!
+    if (saleId || !leadId || !canStartSalesDeal(panelState.lead) || newStatus !== oldStatus) {
+      alert('การเปลี่ยนแปลงสถานะหรือรายการขายต้องดำเนินการผ่านคำสั่งมาตรฐานที่ระบบรองรับเท่านั้น');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
-      const leadId = panelState.lead.leadId || (panelState.lead.sourceKind === 'lead' || !panelState.lead.saleId ? panelState.lead.id : null);
-      const saleId = panelState.lead.saleId || (panelState.lead.sourceKind === 'lead' ? null : (panelState.lead.leadId ? panelState.lead.id : null));
-      const oldStatus = panelState.lead.status;
-      const newStatus = editCustomerForm.status;
-      const isNewBooking = oldStatus === 'Visit' && newStatus !== 'Visit';
-      const isRentDeal = isRentalCustomer(panelState.lead);
-      const txDateStr = editCustomerForm.transactionDate;
-      const txDate = txDateStr ? new Date(`${txDateStr}T12:00:00Z`).toISOString() : new Date().toISOString();
-      const parsedSalePrice = editCustomerForm.salePrice ? Number(editCustomerForm.salePrice.replace(/[^0-9.-]+/g,"")) : null;
-      const parsedLandOfficePrice = editCustomerForm.landOfficePrice ? Number(editCustomerForm.landOfficePrice.replace(/[^0-9.-]+/g,"")) : null;
-      const cancelReasonText = editCustomerForm.cancelReason?.trim() || (isRentDeal ? 'ยกเลิกการจองเช่า' : 'ยกเลิกการจอง');
-      
-      const salePayload: any = {
-        contract_status: newStatus === 'Transferred' || newStatus === 'Handover' ? 'Transferred' : (newStatus === 'Contracted' || newStatus === 'DownPayment' || newStatus === 'DocumentPrep' || newStatus === 'LoanProcessing' || newStatus === 'Approved' ? 'Contracted' : newStatus === 'Cancelled' ? 'Cancelled' : 'Reserved'),
-        crm_stage: kanbanStatusToStage(newStatus),
-        cancellation_reason: newStatus === 'Cancelled' ? cancelReasonText : null,
-        sale_price: parsedSalePrice,
-        land_office_price: parsedLandOfficePrice,
-        bank_name: editCustomerForm.bank || null,
-        ...(newStatus === 'Transferred' || newStatus === 'Handover' ? { transferred_at: txDate } : {}),
-        ...(newStatus === 'Cancelled' ? { cancelled_at: txDate, cancellation_category: 'booking_cancelled' } : {})
+      // Live server re-read BEFORE mutating even basic pre-booking lead contact info
+      const [latestLeadRes, latestSaleRes, latestRentalRes] = await Promise.all([
+        supabase
+          .from('leads')
+          .select('id, status, crm_status, deal_type, rental_status, active_rental_contract_id, rental_program, updated_at')
+          .eq('id', leadId)
+          .maybeSingle(),
+        supabase
+          .from('sales')
+          .select('id, contract_status')
+          .eq('lead_id', leadId)
+          .neq('contract_status', 'Cancelled')
+          .limit(1),
+        supabase
+          .from('rental_contracts')
+          .select('id, status')
+          .eq('lead_id', leadId)
+          .in('status', ['PendingContract', 'Active', 'Renewed'])
+          .limit(1),
+      ]);
+
+      if (latestLeadRes.error) throw new Error(latestLeadRes.error.message || 'ตรวจสอบสถานะลูกค้าล่าสุดไม่สำเร็จ');
+      if (latestSaleRes.error) throw new Error(latestSaleRes.error.message || 'ตรวจสอบรายการขายล่าสุดไม่สำเร็จ');
+      if (latestRentalRes.error) throw new Error(latestRentalRes.error.message || 'ตรวจสอบสัญญาเช่าล่าสุดไม่สำเร็จ');
+
+      const latestLead = latestLeadRes.data;
+      const latestActiveSale = latestSaleRes.data?.[0] || null;
+      const latestActiveRental = latestRentalRes.data?.[0] || null;
+      if (!latestLead) {
+        await fetchData();
+        alert('ไม่พบข้อมูลลูกค้าล่าสุดในระบบ กรุณาตรวจสอบอีกครั้ง');
+        return;
+      }
+
+      const latestDeal = classifySalesDeal({
+        ...latestLead,
+        saleId: latestActiveSale?.id ?? null,
+        contract_status: latestActiveSale?.contract_status ?? null,
+      });
+      if (
+        latestDeal.isConflict ||
+        latestDeal.blocksPurchaseModal ||
+        Boolean(latestActiveSale) ||
+        Boolean(latestActiveRental) ||
+        !canStartSalesDeal(latestLead)
+      ) {
+        await fetchData();
+        alert(
+          latestDeal.isConflict
+            ? getSalesDealConflictMessage(latestDeal.reason)
+            : 'สถานะลูกค้าบนระบบเปลี่ยนแล้ว กรุณาตรวจสอบข้อมูลล่าสุดก่อนทำรายการ'
+        );
+        return;
+      }
+
+      const leadUpdatePayload: Record<string, unknown> = {
+        customer_name: editCustomerForm.name.trim(),
+        phone: editCustomerForm.phone.trim() || null,
+        occupation: editCustomerForm.occupation.trim() || null,
+        updated_at: new Date().toISOString(),
       };
-
-      // 1. Update sales record if saleId exists
-      if (saleId) {
-        await checkedResult(supabase.from('sales').update(salePayload).eq('id', saleId));
+      if (editCustomerForm.agentName) {
+        leadUpdatePayload.agent_name = editCustomerForm.agentName.trim();
       }
 
-      // 2. Also check if there is an existing sale by lead_id
-      if (leadId) {
-        const { data: existingSale } = await checkedResult(supabase.from('sales').select('id').eq('lead_id', leadId).maybeSingle());
-        if (existingSale && existingSale.id !== saleId) {
-          await checkedResult(supabase.from('sales').update(salePayload).eq('id', existingSale.id));
-        } else if (isNewBooking && !saleId && !isRentDeal) {
-          await checkedResult(supabase.from('sales').insert([{ plot_id: panelState.plotId, ...salePayload }]));
-        }
-      }
-
-      // 3. Update leads table
-      if (leadId) {
-        const leadUpdatePayload: any = {
-          customer_name: editCustomerForm.name.trim(),
-          phone: editCustomerForm.phone.trim() || null,
-          occupation: editCustomerForm.occupation.trim() || null,
-          status: newStatus,
-          updated_at: new Date().toISOString()
-        };
-        if (editCustomerForm.agentName) {
-          leadUpdatePayload.agent_name = editCustomerForm.agentName.trim();
-        }
-        if (newStatus === 'Cancelled') {
-          leadUpdatePayload.lost_reason = cancelReasonText;
-          leadUpdatePayload.lost_reason_detail = txDateStr ? `วันที่ยกเลิก: ${txDateStr}` : null;
-          leadUpdatePayload.crm_status = isRentDeal ? 'Cancelled — ยกเลิกการจองเช่า' : 'Cancelled — ยกเลิกจอง';
-          if (isRentDeal) {
-            leadUpdatePayload.rental_status = 'Cancelled';
-          }
-        }
-        await checkedResult(supabase.from('leads').update(leadUpdatePayload).eq('id', leadId));
-      }
-
-      if (newStatus === 'Cancelled') {
-        if (isRentDeal && leadId) {
-          try {
-            const cancelNote = `[${txDateStr || new Date().toISOString().split('T')[0]} ยกเลิกการจองเช่า] เหตุผล: ${cancelReasonText}`;
-            await supabase.from('rental_contracts')
-              .update({
-                status: 'Cancelled',
-                notes: cancelNote,
-                updated_at: new Date().toISOString()
-              })
-              .eq('lead_id', leadId)
-              .in('status', ['Active', 'PendingContract']);
-          } catch (rcErr) {
-            console.warn('Could not cancel rental contracts:', rcErr);
-          }
-        }
-        const rawPlotIdentifier = panelState.lead?.plot || panelState.plotId;
-        if (rawPlotIdentifier) {
-          const projName = internalProject?.name || project?.name || 'ไอลิน6';
-          const matchedPlot = projectPlotsData.find(p =>
-            p.id === rawPlotIdentifier ||
-            p.plot_name === rawPlotIdentifier ||
-            p.id === `${projName}-${rawPlotIdentifier}`
-          );
-          const resolvedPlotId = matchedPlot?.id || (
-            projectPlotsData.some(p => String(p.id).startsWith(`${projName}-`)) && !String(rawPlotIdentifier).startsWith(`${projName}-`)
-              ? `${projName}-${rawPlotIdentifier}`
-              : rawPlotIdentifier
-          );
-          const releasedSaleStatus = matchedPlot?.sale_status === 'active' ? 'active' : 'ready_for_sale';
-
-          if (!isRentDeal || saleId) {
-            try {
-              const rpcRes = await supabase.rpc('cancel_plot_sale_and_release', {
-                p_plot_id: resolvedPlotId,
-                p_sale_id: saleId || null,
-                p_reason: cancelReasonText,
-              });
-              if (rpcRes.error) throw rpcRes.error;
-            } catch {
-              // Fallback to clearing non-guarded rental/display fields below
-            }
-          }
-
-          try {
-            // Clear rental/display fields without overwriting guarded stock columns (sale_status, has_customer)
-            // so guard_booking_plot_stock() allows the update cleanly.
-            const clearPlotPayload: Record<string, unknown> = {
-              current_tenant_name: null,
-              current_tenant_phone: null,
-              rental_program: null,
-              monthly_rent: null,
-              security_deposit: null,
-              lease_start_date: null,
-              lease_end_date: null,
-              highlight_note: null
-            };
-            if (!isRentDeal && !saleId && matchedPlot?.has_customer === false && ['active', 'ready_for_sale'].includes(String(matchedPlot?.sale_status || ''))) {
-              clearPlotPayload.sale_status = releasedSaleStatus;
-            }
-            let plotQuery = supabase.from('plots').update(clearPlotPayload).eq('id', resolvedPlotId);
-            if (projName && matchedPlot?.project_name) {
-              plotQuery = plotQuery.eq('project_name', projName);
-            }
-            await plotQuery;
-          } catch (plotErr) {
-            console.warn('Could not release plot on cancellation:', plotErr);
-          }
-        }
-      }
-
-      if (oldStatus !== newStatus || editCustomerForm.bank !== panelState.lead.bank || editCustomerForm.note) {
-        let noteParts = [];
-        if (oldStatus === newStatus && editCustomerForm.bank !== panelState.lead.bank) {
-          noteParts.push(`เปลี่ยนธนาคารเป็น: ${editCustomerForm.bank}`);
-        } else if ((newStatus === 'DocumentPrep' || newStatus === 'LoanProcessing') && editCustomerForm.bank) {
-          noteParts.push(`ยื่นผ่าน: ${editCustomerForm.bank}`);
-        } else if (newStatus === 'Cancelled' && editCustomerForm.cancelReason) {
-          noteParts.push(`เหตุผล: ${editCustomerForm.cancelReason}`);
-        } else if (['Approved', 'Transferred', 'Handover'].includes(newStatus) && editCustomerForm.landOfficePrice) {
-          noteParts.push(`ราคา ท.ด. ฿${parseInt(editCustomerForm.landOfficePrice).toLocaleString()}`);
-        }
-        
-        if (editCustomerForm.note) {
-          noteParts.push(`หมายเหตุ: ${editCustomerForm.note}`);
-        }
-        
-        const finalNote = noteParts.join(' | ');
-
-        await checkedResult(supabase.from('status_history').insert([{
-          entity_type: leadId ? 'lead' : 'sale',
-          entity_id: leadId || saleId,
-          old_status: oldStatus,
-          new_status: newStatus,
-          changed_by: (user?.username || 'Unknown') + (finalNote ? ` (${finalNote})` : ''),
-          created_at: txDate
-        }]));
-      }
+      await checkedResult(supabase.from('leads').update(leadUpdatePayload).eq('id', leadId));
 
       if (typeof window !== 'undefined') {
         broadcastSalesSync({ type: 'customer_updated', timestamp: Date.now() });
@@ -1344,7 +1368,7 @@ export default function SalesKanban({
       await fetchData();
       setPanelState({ type: 'default', plotId: '', lead: null });
     } catch (err) {
-      alert(`บันทึกข้อมูลลูกค้ายังไม่ครบ บางส่วนอาจบันทึกแล้ว: ${err instanceof Error ? err.message : 'กรุณาลองใหม่'}`);
+      alert(`บันทึกข้อมูลลูกค้าไม่สำเร็จ: ${err instanceof Error ? err.message : 'กรุณาลองใหม่'}`);
     } finally {
       setIsSubmitting(false);
     }
@@ -2148,7 +2172,13 @@ export default function SalesKanban({
 
             {/* MAP VIEW TAB */}
             {activeTab === 'map' && (
-              <SalesMap leads={leads} projectName={project?.name || 'ไอลิน6'} onPlotClick={handlePlotClick} />
+              <SalesMap
+                leads={leads}
+                sales={projectSalesData}
+                rentalContracts={projectRentalContractsData}
+                projectName={project?.name || 'ไอลิน6'}
+                onPlotClick={handlePlotClick}
+              />
             )}
 
             {/* LIST VIEW TAB (CRM Table) */}
@@ -2824,8 +2854,8 @@ export default function SalesKanban({
                         </div>
                       </div>
 
-                      {/* 🔑 Rental Information Card */}
-                      {(plotInfo.sale_status === 'Rented' || plotInfo.rental_program || plotInfo.current_tenant_name) && (
+                      {/* 🔑 Rental Information Card (แสดงรายละเอียดผู้เช่าเฉพาะเมื่อผู้ใช้มีสิทธิ์เห็น Lead ของแปลงนี้) */}
+                      {panelState.type === 'customer' && panelState.lead && (plotInfo.sale_status === 'Rented' || plotInfo.sale_status === 'rented' || plotInfo.rental_program || plotInfo.current_tenant_name) && (
                         <div className="col-span-2 p-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl space-y-2">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-1.5 font-bold text-xs text-blue-900">
@@ -2949,6 +2979,43 @@ export default function SalesKanban({
                   </div>
                 </div>
               ) : null}
+
+              {panelState.type === 'occupied_restricted' && (
+                <div className="flex flex-col h-full animate-in fade-in duration-300 space-y-5" data-testid="occupied-restricted-panel">
+                  <div className="flex justify-between items-center pb-3 border-b border-slate-100">
+                    <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
+                      <AlertTriangle className="text-amber-600" /> แปลง {projectPlotsData.find(d => d.id === panelState.plotId)?.plot_name || panelState.plotId}
+                    </h3>
+                    <button onClick={() => setPanelState({ type: 'default', plotId: '', lead: null })} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+                      <X size={18} />
+                    </button>
+                  </div>
+
+                  <div role="status" className={`rounded-2xl p-4 border space-y-2 ${
+                    panelState.restrictedStatus === 'Unknown'
+                      ? 'bg-amber-50 border-amber-300 text-amber-950'
+                      : 'bg-slate-50 border-slate-200 text-slate-800'
+                  }`}>
+                    <div className="font-bold text-sm flex items-center gap-2">
+                      <AlertTriangle size={16} className="shrink-0 text-amber-600" />
+                      <span>
+                        {panelState.restrictedStatus === 'Unknown'
+                          ? 'สถานะแปลงต้องตรวจสอบ (Unknown / Unavailable)'
+                          : panelState.restrictedStatus === 'Rented'
+                            ? 'แปลงนี้มีสัญญาเช่าอยู่ (ไม่ว่าง)'
+                            : panelState.restrictedStatus === 'Transferred' || panelState.restrictedStatus === 'Handover'
+                              ? 'แปลงนี้โอนกรรมสิทธิ์แล้ว (ไม่ว่าง)'
+                              : 'แปลงนี้ไม่ว่าง (มีผู้ถือสิทธิ์อยู่แล้ว)'}
+                      </span>
+                    </div>
+                    <p className="text-xs leading-relaxed opacity-90">
+                      {panelState.restrictedStatus === 'Unknown'
+                        ? 'ข้อมูลสถานะแปลง สัญญาเช่า หรือรายการขายขัดแย้งกันหรืออ่านไม่ครบ ระบบจะไม่เปิดให้จองแปลงนี้จนกว่า Admin จะตรวจสอบ'
+                        : 'ไม่พบสิทธิ์เข้าถึงรายละเอียดลูกค้าของแปลงนี้ภายใต้บัญชีปัจจุบัน ระบบจึงแสดงเฉพาะสถานะไม่ว่างโดยไม่เปิดเผยข้อมูลลูกค้า และไม่อนุญาตให้เปิดจองซ้ำ'}
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {panelState.type === 'booking' && (
                 <div className="flex flex-col h-full animate-in fade-in duration-300 space-y-5">
@@ -3212,18 +3279,55 @@ export default function SalesKanban({
                     await editor.save({ confirmedBySubmit: true });
                   };
                   const isSubmitting = editor ? editor.busy : panelSubmitting;
-                  const isRentalDeal = Boolean(
-                    panelState.lead?.deal_type === 'rent' ||
-                    panelState.lead?.rental_status === 'Active' ||
-                    panelState.lead?.rental_status === 'PendingContract' ||
-                    panelState.lead?.status === 'Rented' ||
-                    String(panelState.lead?.crm_status || '').includes('เช่า')
-                  );
+                  const panelDeal = classifySalesDeal(panelState.lead);
+                  const isConflictDeal = panelDeal.isConflict;
+                  const isRentalEndedDeal = panelDeal.isRentalEnded;
+                  const isRentalDeal = panelDeal.isRentalPending || panelDeal.isRentalActive;
+                  const isReadOnlyBlockedPanel = isConflictDeal || isRentalEndedDeal;
+                  const isUnsupportedLegacyPurchaseFallback =
+                    !editor &&
+                    panelDeal.isPurchaseFlow &&
+                    (Boolean(panelState.lead?.saleId) || !canStartSalesDeal(panelState.lead));
+                  const canEditPreBookingProfile =
+                    !editor &&
+                    panelDeal.isPurchaseFlow &&
+                    !panelState.lead?.saleId &&
+                    canStartSalesDeal(panelState.lead);
+                  const canWritePanel = user?.role != null ? canEditSalesRole(user.role) : true;
+                  const canonicalPanelPlotId = resolveCanonicalPlotId(panelState.lead, externalPlots || []) || panelState.plotId || null;
                   const rentalProgramLabel = panelState.lead?.rental_program === 'program_b'
                     ? 'เช่าออม (แบบ B)'
                     : panelState.lead?.rental_program === 'program_c'
                     ? 'เช่าการันตีซื้อ (แบบ C)'
                     : 'เช่าปกติ (แบบ A)';
+                  const openSharedCancelRentalDialog = () => {
+                    if (!canWritePanel || !panelDeal.isRentalPending) return;
+                    const targetLeadId =
+                      panelState.lead.leadId ||
+                      (panelState.lead.sourceKind === 'lead' || !panelState.lead.saleId ? panelState.lead.id : null);
+                    const matchedPendingContract = projectRentalContractsData.find(
+                      (c: any) =>
+                        c.status === 'PendingContract' &&
+                        ((targetLeadId && c.lead_id === targetLeadId) ||
+                          (canonicalPanelPlotId && c.plot_id === canonicalPanelPlotId))
+                    );
+                    setCancelRentalTarget({
+                      ...panelState.lead,
+                      id: targetLeadId || panelState.lead?.id,
+                      leadId: targetLeadId || panelState.lead?.leadId,
+                      project_name: panelState.lead?.project_name || project?.name || '',
+                      interested_plot_id: canonicalPanelPlotId || panelState.lead?.interested_plot_id || panelState.plotId,
+                      interested_plot_name: panelState.lead?.plotName || panelState.lead?.interested_plot_name || panelState.plotId,
+                      pending_rental_contract_id:
+                        panelState.lead?.pending_rental_contract_id ||
+                        (matchedPendingContract as any)?.id ||
+                        null,
+                      contract_deal_revision:
+                        panelState.lead?.contract_deal_revision ||
+                        (matchedPendingContract as any)?.deal_revision ||
+                        null,
+                    });
+                  };
 
                   return (
                 <div className="flex flex-col h-full animate-in fade-in duration-300">
@@ -3284,136 +3388,146 @@ export default function SalesKanban({
                         : 'ℹ️ สิทธิ์ผู้ใช้งานปัจจุบันเป็นแบบดูข้อมูลเท่านั้น ไม่สามารถบันทึกการเปลี่ยนแปลงได้'}
                     </div>
                   )}
-                  <form onSubmit={handleUpdateCustomer} className="space-y-4 flex-1" autoComplete="off">
-                    <div className="flex flex-col items-center p-4 bg-slate-50 border border-slate-100 rounded-2xl text-center mb-2">
-                      <div className="w-14 h-14 bg-white rounded-full shadow-sm flex items-center justify-center text-2xl font-bold text-[#0f172a] mb-3">
-                        {editCustomerForm.name.charAt(0) || '?'}
+                  {isReadOnlyBlockedPanel ? (
+                    <div className="space-y-4 flex-1">
+                      <div
+                        data-testid={isConflictDeal ? 'project-map-deal-conflict' : 'project-map-rental-ended'}
+                        role={isConflictDeal ? 'alert' : 'status'}
+                        className={`p-4 rounded-2xl border text-xs space-y-2 ${
+                          isConflictDeal
+                            ? 'bg-rose-50 border-rose-300 text-rose-950'
+                            : 'bg-slate-50 border-slate-200 text-slate-800'
+                        }`}
+                      >
+                        <div className="font-bold text-sm flex items-center gap-2">
+                          <AlertTriangle
+                            size={16}
+                            className={isConflictDeal ? 'text-rose-600 shrink-0' : 'text-slate-500 shrink-0'}
+                          />
+                          <span>
+                            {isConflictDeal
+                              ? 'พบข้อมูลดีลขัดแย้ง — ล็อกโหมดอ่านอย่างเดียวเพื่อตรวจสอบ'
+                              : 'รายการเช่านี้สิ้นสุดแล้ว (อ่านอย่างเดียว)'}
+                          </span>
+                        </div>
+                        <p className="leading-relaxed">
+                          {isConflictDeal
+                            ? getSalesDealConflictMessage(panelDeal.reason)
+                            : 'รายการนี้เป็นประวัติการเช่าที่สิ้นสุดแล้ว (MovedOut / Cancelled / Expired) ระบบไม่เปิดให้แก้ไขหรือบันทึกผ่านฟอร์มสถานะการขายเพื่อป้องกันข้อมูลผิดประเภท'}
+                        </p>
+                        {isConflictDeal && (
+                          <div className="text-[11px] font-mono bg-white/80 border border-rose-200 rounded-lg px-2.5 py-1.5 text-rose-800">
+                            รหัสสาเหตุ: {panelDeal.reason}
+                          </div>
+                        )}
                       </div>
-                      <div className="text-xs text-gray-500 mb-1">เยี่ยมชมเมื่อ: {panelState.lead.visitDate}</div>
-                      {panelState.lead.bookingDate && <div className="text-xs text-emerald-600 font-semibold">จองเมื่อ: {panelState.lead.bookingDate}</div>}
-                    </div>
 
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-700 mb-1">ชื่อลูกค้า (แก้ไขได้เมื่อจอง)</label>
-                      <input 
-                        type="text" 
-                        autoComplete="off"
-                        aria-label="ชื่อลูกค้า" disabled={Boolean(editor && (editor.locked || !editor.resolved?.leadId))}
-                          value={editCustomerForm.name} 
-                        onChange={e => setEditCustomerForm({...editCustomerForm, name: e.target.value})}
-                        className="w-full border border-slate-200 rounded-xl px-4 py-2 focus:outline-none focus:border-[#d4af37] text-sm font-bold text-[#0f172a]" 
-                        required 
-                      />
-                    </div>
-                    <div>
-                      <label className={`block text-xs font-semibold mb-1 ${['Transferred', 'Handover'].includes(editCustomerForm.status) ? 'text-blue-700 bg-blue-50 px-2 py-1 rounded-md inline-block border border-blue-200 shadow-sm' : 'text-slate-700'}`}>
-                        {['Transferred', 'Handover'].includes(editCustomerForm.status) ? '🗓️ วันที่โอนกรรมสิทธิ์ (ระบุย้อนหลังได้)' : 'วันที่ทำรายการ / วันที่อัปเดตสถานะ'}
-                      </label>
-                      <input 
-                        type="date" 
-                        aria-label="วันที่ทำรายการ" disabled={editor?.locked}
-                          value={editCustomerForm.transactionDate} 
-                        onChange={e => setEditCustomerForm({...editCustomerForm, transactionDate: e.target.value})}
-                        className={`w-full border rounded-xl px-4 py-2 focus:outline-none focus:border-[#d4af37] text-sm text-gray-700 ${['Transferred', 'Handover'].includes(editCustomerForm.status) ? 'border-blue-300 bg-blue-50/30' : 'border-slate-200'}`} 
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-700 mb-1">เบอร์โทรศัพท์</label>
-                        <input 
-                          type="tel" 
-                          autoComplete="off"
-                          aria-label="เบอร์โทรศัพท์" disabled={Boolean(editor && (editor.locked || !editor.resolved?.leadId))}
-                          value={editCustomerForm.phone} 
-                          onChange={e => setEditCustomerForm({...editCustomerForm, phone: formatPhoneNumber(e.target.value)})}
-                          className="w-full border border-slate-200 rounded-xl px-4 py-2 focus:outline-none focus:border-[#d4af37] text-sm" 
-                          placeholder="08X-XXX-XXXX"
-                        />
+                      <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-2 text-xs">
+                        <div className="flex justify-between gap-2">
+                          <span className="text-slate-500">ชื่อลูกค้า:</span>
+                          <span className="font-bold text-slate-900">{panelState.lead.name || panelState.lead.customer_name || '-'}</span>
+                        </div>
+                        <div className="flex justify-between gap-2">
+                          <span className="text-slate-500">เบอร์โทร:</span>
+                          <span className="font-semibold text-slate-800">{panelState.lead.phone || '-'}</span>
+                        </div>
+                        <div className="flex justify-between gap-2">
+                          <span className="text-slate-500">แปลง:</span>
+                          <span className="font-bold text-slate-800">{panelState.lead.plotName || panelState.lead.plot || panelState.plotId || '-'}</span>
+                        </div>
+                        <div className="flex justify-between gap-2">
+                          <span className="text-slate-500">สถานะหลัก:</span>
+                          <span className="font-semibold text-slate-800">{panelState.lead.status || '-'}</span>
+                        </div>
+                        {panelState.lead.deal_type && (
+                          <div className="flex justify-between gap-2">
+                            <span className="text-slate-500">ประเภทดีล (deal_type):</span>
+                            <span className="font-semibold text-slate-800">{panelState.lead.deal_type}</span>
+                          </div>
+                        )}
+                        {panelState.lead.rental_status && (
+                          <div className="flex justify-between gap-2">
+                            <span className="text-slate-500">สถานะเช่า (rental_status):</span>
+                            <span className="font-semibold text-slate-800">{panelState.lead.rental_status}</span>
+                          </div>
+                        )}
+                        {panelState.lead.saleId && (
+                          <div className="flex justify-between gap-2">
+                            <span className="text-slate-500">รหัสรายการขาย (saleId):</span>
+                            <span className="font-mono text-[11px] font-semibold text-rose-700">{panelState.lead.saleId}</span>
+                          </div>
+                        )}
                       </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-700 mb-1">อาชีพ</label>
-                        <input 
-                          type="text" 
-                          autoComplete="off"
-                          aria-label="อาชีพ" disabled={Boolean(editor && (editor.locked || !editor.resolved?.leadId))}
-                          value={editCustomerForm.occupation} 
-                          onChange={e => setEditCustomerForm({...editCustomerForm, occupation: e.target.value})}
-                          className="w-full border border-slate-200 rounded-xl px-4 py-2 focus:outline-none focus:border-[#d4af37] text-sm" 
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-700 mb-1">พนักงานขาย (Sales Agent)</label>
-                        <input 
-                          type="text" 
-                          autoComplete="off"
-                          aria-label="พนักงานขาย" disabled={Boolean(editor && (editor.locked || !editor.resolved?.leadId))}
-                          value={editCustomerForm.agentName} 
-                          onChange={e => setEditCustomerForm({...editCustomerForm, agentName: e.target.value})}
-                          className="w-full border border-slate-200 rounded-xl px-4 py-2 focus:outline-none focus:border-[#d4af37] text-sm" 
-                        />
-                      </div>
-                    </div>
 
-                    <div className="pt-2 border-t border-slate-100">
-                      <div className="flex items-center justify-between mb-2">
-                        <label className="block text-sm font-semibold text-slate-700">
-                          {isRentalDeal ? 'อัปเดตสถานะการเช่า (Rental Workflow)' : 'อัปเดตสถานะการขาย (Guided Workflow)'}
-                        </label>
-                        {isRentalDeal && (
+                      <div className="pt-2 flex flex-col gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setPanelState({ type: 'default', plotId: '', lead: null })}
+                          className="w-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold py-3 rounded-xl transition-colors"
+                        >
+                          ปิดหน้าต่าง
+                        </button>
+                      </div>
+                    </div>
+                  ) : isRentalDeal ? (
+                    <div className="space-y-4 flex-1" data-testid="project-map-rental-panel">
+                      <div className="flex flex-col items-center p-4 bg-slate-50 border border-slate-100 rounded-2xl text-center">
+                        <div className="w-14 h-14 bg-white rounded-full shadow-sm flex items-center justify-center text-2xl font-bold text-[#0f172a] mb-2">
+                          {(panelState.lead.name || panelState.lead.customer_name || '?').charAt(0)}
+                        </div>
+                        <div className="text-sm font-bold text-slate-900">{panelState.lead.name || panelState.lead.customer_name || 'ลูกค้าเช่า'}</div>
+                        <div className="text-xs text-slate-500">{panelState.lead.phone || '-'}</div>
+                        <div className="text-xs font-semibold text-blue-700 mt-1">
+                          แปลง {panelState.lead.plotName || panelState.lead.plot || panelState.plotId || '-'}
+                        </div>
+                      </div>
+
+                      <div className="pt-2 border-t border-slate-100">
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="block text-sm font-semibold text-slate-700">
+                            จัดการสถานะการเช่า (Rental Workflow)
+                          </label>
                           <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
                             {rentalProgramLabel}
                           </span>
-                        )}
-                      </div>
-                      
-                      {isRentalDeal ? (
+                        </div>
+
                         <div className="space-y-3 mb-4">
-                          {/* 1. Status Workflow Buttons for Rental */}
                           <div className="flex flex-wrap gap-2">
-                            {panelState.lead?.status !== 'Rented' ? (
+                            {panelDeal.isRentalPending ? (
                               <>
-                                <button
-                                  type="button"
-                                  disabled={editor?.locked}
-                                  onClick={() => setEditCustomerForm({ ...editCustomerForm, status: 'Reserved' })}
-                                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold border transition-all ${
-                                    editCustomerForm.status === 'Reserved'
-                                      ? 'bg-amber-500 text-white border-amber-600 shadow-md'
-                                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                                  }`}
-                                >
-                                  <Home size={14} className={editCustomerForm.status === 'Reserved' ? 'text-white' : 'text-amber-500'} />
-                                  จองเช่าแล้ว
-                                </button>
+                                <div className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold bg-amber-500 text-white border border-amber-600 shadow-sm">
+                                  <Home size={14} className="text-white" />
+                                  {RENTAL_PENDING_DISPLAY_LABEL}
+                                </div>
 
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setShowRentalModal({
-                                      isOpen: true,
-                                      lead: panelState.lead,
-                                      plotId: panelState.lead.plot || panelState.plotId || null,
-                                      defaultMode: 'contract'
-                                    });
-                                  }}
-                                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-bold bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800 text-white shadow-md shadow-blue-500/20 cursor-pointer transition-all"
-                                >
-                                  <FileText size={14} /> ทำสัญญาเช่าจริง
-                                </button>
+                                {canWritePanel && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setShowRentalModal({
+                                        isOpen: true,
+                                        lead: panelState.lead,
+                                        plotId: canonicalPanelPlotId,
+                                        defaultMode: 'contract'
+                                      });
+                                    }}
+                                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-bold bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800 text-white shadow-md shadow-blue-500/20 cursor-pointer transition-all"
+                                  >
+                                    <FileText size={14} /> {RENTAL_SIGN_CONTRACT_BUTTON_LABEL}
+                                  </button>
+                                )}
 
-                                <button
-                                  type="button"
-                                  disabled={editor?.locked}
-                                  onClick={() => setEditCustomerForm({ ...editCustomerForm, status: 'Cancelled' })}
-                                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold border transition-all ${
-                                    editCustomerForm.status === 'Cancelled'
-                                      ? 'bg-rose-600 text-white border-rose-700 shadow-md'
-                                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:text-rose-600'
-                                  }`}
-                                >
-                                  <XCircle size={14} className={editCustomerForm.status === 'Cancelled' ? 'text-white' : 'text-rose-500'} />
-                                  ยกเลิกจอง
-                                </button>
+                                {canWritePanel && (
+                                  <button
+                                    type="button"
+                                    onClick={openSharedCancelRentalDialog}
+                                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold border bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100 cursor-pointer transition-all"
+                                  >
+                                    <XCircle size={14} className="text-rose-500" />
+                                    ยกเลิกจองเช่า
+                                  </button>
+                                )}
                               </>
                             ) : (
                               <>
@@ -3421,19 +3535,21 @@ export default function SalesKanban({
                                   <Key size={14} /> สัญญาเช่า (Active)
                                 </div>
 
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setShowRentalActionModal({
-                                      isOpen: true,
-                                      lead: panelState.lead,
-                                      plot: panelState.plotId || panelState.lead.plot
-                                    });
-                                  }}
-                                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-bold bg-gradient-to-r from-cyan-700 to-blue-800 hover:from-cyan-800 hover:to-blue-900 text-white shadow-sm cursor-pointer transition-all"
-                                >
-                                  <Key size={14} /> จัดการสัญญาเช่า
-                                </button>
+                                {canWritePanel && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setShowRentalActionModal({
+                                        isOpen: true,
+                                        lead: panelState.lead,
+                                        plot: panelState.plotId || panelState.lead.plot
+                                      });
+                                    }}
+                                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-bold bg-gradient-to-r from-cyan-700 to-blue-800 hover:from-cyan-800 hover:to-blue-900 text-white shadow-sm cursor-pointer transition-all"
+                                  >
+                                    <Key size={14} /> จัดการสัญญาเช่า
+                                  </button>
+                                )}
 
                                 <button
                                   type="button"
@@ -3452,7 +3568,6 @@ export default function SalesKanban({
                             )}
                           </div>
 
-                          {/* 2. Rental Summary Card */}
                           <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3.5 space-y-2">
                             <div className="flex justify-between items-center text-xs">
                               <span className="text-slate-500 font-medium">โปรแกรมเช่า:</span>
@@ -3483,43 +3598,111 @@ export default function SalesKanban({
                               </div>
                             ) : null}
                           </div>
+                        </div>
+                      </div>
 
-                          {/* 3. Reason if Cancelled is selected */}
-                          {editCustomerForm.status === 'Cancelled' && (
-                            <div className="animate-in slide-in-from-top-2 duration-200">
-                              <label className="block text-xs font-semibold text-rose-700 mb-1">เหตุผลที่ยกเลิกจองเช่า</label>
-                              <textarea
-                                className="w-full border border-rose-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-rose-500 font-medium text-slate-700 bg-rose-50 text-sm min-h-[80px]"
-                                aria-label="เหตุผล"
-                                disabled={editor?.locked}
-                                value={editCustomerForm.cancelReason}
-                                onChange={e => setEditCustomerForm({ ...editCustomerForm, cancelReason: e.target.value })}
-                                placeholder="ระบุเหตุผลในการยกเลิกจอง..."
-                                required
-                              />
-                            </div>
-                          )}
+                      <div className="pt-2 flex flex-col gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setPanelState({ type: 'default', plotId: '', lead: null })}
+                          className="w-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold py-3 rounded-xl transition-colors"
+                        >
+                          ปิดหน้าต่าง
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                  <form onSubmit={handleUpdateCustomer} className="space-y-4 flex-1" autoComplete="off">
+                    <div className="flex flex-col items-center p-4 bg-slate-50 border border-slate-100 rounded-2xl text-center mb-2">
+                      <div className="w-14 h-14 bg-white rounded-full shadow-sm flex items-center justify-center text-2xl font-bold text-[#0f172a] mb-3">
+                        {editCustomerForm.name.charAt(0) || '?'}
+                      </div>
+                      <div className="text-xs text-gray-500 mb-1">เยี่ยมชมเมื่อ: {panelState.lead.visitDate}</div>
+                      {panelState.lead.bookingDate && <div className="text-xs text-emerald-600 font-semibold">จองเมื่อ: {panelState.lead.bookingDate}</div>}
+                    </div>
 
-                          {/* 4. Plot dropdown */}
-                          {editCustomerForm.status !== 'Cancelled' && (
-                            <div>
-                              <label className="block text-xs font-semibold text-emerald-700 mb-1">แปลงที่จอง/เช่า</label>
-                              <select
-                                className="w-full border border-emerald-300 rounded-xl px-4 py-2.5 focus:outline-none focus:border-emerald-500 font-bold text-emerald-800 bg-emerald-50 text-sm"
-                                aria-label="แปลงที่จอง"
-                                disabled={editor?.locked}
-                                value={editCustomerForm.plot}
-                                onChange={e => setEditCustomerForm({ ...editCustomerForm, plot: e.target.value })}
-                                required
-                              >
-                                <option value="" disabled>-- กรุณาเลือกแปลง --</option>
-                                {panelState.lead.plot && <option value={panelState.lead.plot}>{panelState.lead.plot} (แปลงปัจจุบัน)</option>}
-                                {availablePlots.map(p => (
-                                  <option key={p} value={p}>{p} (ว่าง)</option>
-                                ))}
-                              </select>
-                            </div>
-                          )}
+                    {isUnsupportedLegacyPurchaseFallback && (
+                      <div
+                        data-testid="legacy-fallback-blocked"
+                        role="status"
+                        className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900"
+                      >
+                        ℹ️ รายการนี้ไม่อยู่ในขั้นตอนที่เปิดให้แก้ไขจากฟอร์มด่วน ระบบล็อกโหมดอ่านอย่างเดียวเพื่อป้องกันการเขียนข้อมูลโดยไม่ผ่านคำสั่งมาตรฐาน
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">ชื่อลูกค้า (แก้ไขได้เมื่อจอง)</label>
+                      <input 
+                        type="text" 
+                        autoComplete="off"
+                        aria-label="ชื่อลูกค้า" disabled={isUnsupportedLegacyPurchaseFallback || !canWritePanel || Boolean(editor && (editor.locked || !editor.resolved?.leadId))}
+                          value={editCustomerForm.name} 
+                        onChange={e => setEditCustomerForm({...editCustomerForm, name: e.target.value})}
+                        className="w-full border border-slate-200 rounded-xl px-4 py-2 focus:outline-none focus:border-[#d4af37] text-sm font-bold text-[#0f172a] disabled:bg-slate-100" 
+                        required 
+                      />
+                    </div>
+                    <div>
+                      <label className={`block text-xs font-semibold mb-1 ${['Transferred', 'Handover'].includes(editCustomerForm.status) ? 'text-blue-700 bg-blue-50 px-2 py-1 rounded-md inline-block border border-blue-200 shadow-sm' : 'text-slate-700'}`}>
+                        {['Transferred', 'Handover'].includes(editCustomerForm.status) ? '🗓️ วันที่โอนกรรมสิทธิ์ (ระบุย้อนหลังได้)' : 'วันที่ทำรายการ / วันที่อัปเดตสถานะ'}
+                      </label>
+                      <input 
+                        type="date" 
+                        aria-label="วันที่ทำรายการ" disabled={!editor || editor.locked || !canWritePanel}
+                          value={editCustomerForm.transactionDate} 
+                        onChange={e => setEditCustomerForm({...editCustomerForm, transactionDate: e.target.value})}
+                        className={`w-full border rounded-xl px-4 py-2 focus:outline-none focus:border-[#d4af37] text-sm text-gray-700 disabled:bg-slate-100 ${['Transferred', 'Handover'].includes(editCustomerForm.status) ? 'border-blue-300 bg-blue-50/30' : 'border-slate-200'}`} 
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">เบอร์โทรศัพท์</label>
+                        <input 
+                          type="tel" 
+                          autoComplete="off"
+                          aria-label="เบอร์โทรศัพท์" disabled={isUnsupportedLegacyPurchaseFallback || !canWritePanel || Boolean(editor && (editor.locked || !editor.resolved?.leadId))}
+                          value={editCustomerForm.phone} 
+                          onChange={e => setEditCustomerForm({...editCustomerForm, phone: formatPhoneNumber(e.target.value)})}
+                          className="w-full border border-slate-200 rounded-xl px-4 py-2 focus:outline-none focus:border-[#d4af37] text-sm disabled:bg-slate-100" 
+                          placeholder="08X-XXX-XXXX"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">อาชีพ</label>
+                        <input 
+                          type="text" 
+                          autoComplete="off"
+                          aria-label="อาชีพ" disabled={isUnsupportedLegacyPurchaseFallback || !canWritePanel || Boolean(editor && (editor.locked || !editor.resolved?.leadId))}
+                          value={editCustomerForm.occupation} 
+                          onChange={e => setEditCustomerForm({...editCustomerForm, occupation: e.target.value})}
+                          className="w-full border border-slate-200 rounded-xl px-4 py-2 focus:outline-none focus:border-[#d4af37] text-sm disabled:bg-slate-100" 
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">พนักงานขาย (Sales Agent)</label>
+                        <input 
+                          type="text" 
+                          autoComplete="off"
+                          aria-label="พนักงานขาย" disabled={isUnsupportedLegacyPurchaseFallback || !canWritePanel || Boolean(editor && (editor.locked || !editor.resolved?.leadId))}
+                          value={editCustomerForm.agentName} 
+                          onChange={e => setEditCustomerForm({...editCustomerForm, agentName: e.target.value})}
+                          className="w-full border border-slate-200 rounded-xl px-4 py-2 focus:outline-none focus:border-[#d4af37] text-sm disabled:bg-slate-100" 
+                        />
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-100">
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="block text-sm font-semibold text-slate-700">
+                          อัปเดตสถานะการขาย (Guided Workflow)
+                        </label>
+                      </div>
+                      {!editor ? (
+                        <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600 mb-3">
+                          {canEditPreBookingProfile
+                            ? 'ลูกค้ายังอยู่ในขั้นตอนก่อนจอง สามารถอัปเดตข้อมูลติดต่อได้จากฟอร์มนี้ หากต้องการจองซื้อหรือเช่าแปลงกรุณาใช้คำสั่งจองจากผังโครงการ'
+                            : 'ไม่สามารถเปลี่ยนสถานะรายการนี้ได้โดยไม่ผ่านคำสั่งมาตรฐาน (SalesDealStatusModal)'}
                         </div>
                       ) : (
                         <>
@@ -3691,13 +3874,15 @@ export default function SalesKanban({
                           </p>
                         ) : null
                       )}
-                      <button type="submit" disabled={editor ? !editor.canSave : isSubmitting} className={`w-full text-white font-bold py-3 rounded-xl transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 ${editCustomerForm.status === 'Cancelled' ? 'bg-red-600 hover:bg-red-700' : 'bg-[#0f172a] hover:bg-[#1e293b]'}`}>
-                        {isSubmitting ? <><Loader2 className="animate-spin" size={18} /> กำลังบันทึก...</> : 'บันทึกการเปลี่ยนแปลง'}
-                      </button>
+                      {!isUnsupportedLegacyPurchaseFallback && (
+                        <button type="submit" disabled={editor ? !editor.canSave : (!canEditPreBookingProfile || !canWritePanel || isSubmitting)} className={`w-full text-white font-bold py-3 rounded-xl transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 ${editCustomerForm.status === 'Cancelled' ? 'bg-red-600 hover:bg-red-700' : 'bg-[#0f172a] hover:bg-[#1e293b]'}`}>
+                          {isSubmitting ? <><Loader2 className="animate-spin" size={18} /> กำลังบันทึก...</> : 'บันทึกการเปลี่ยนแปลง'}
+                        </button>
+                      )}
                       <button type="button" disabled={isSubmitting} onClick={() => setPanelState({ type: 'default', plotId: '', lead: null })} className="w-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold py-3 rounded-xl transition-colors">
                         ปิดหน้าต่าง
                       </button>
-                      {!isRentalDeal && (user?.role === 'Admin' || user?.role === 'Owner') && panelState.lead?.status !== 'Rented' && (
+                      {!isRentalDeal && !isReadOnlyBlockedPanel && !isUnsupportedLegacyPurchaseFallback && user?.role === 'Admin' && panelDeal.isPurchaseFlow && canStartSalesDeal(panelState.lead) && (
                         <button
                           type="button"
                           disabled={isSubmitting}
@@ -3721,6 +3906,7 @@ export default function SalesKanban({
                       )}
                     </div>
                   </form>
+                  )}
                   
                   {/* Timeline History */}
                   {(timeline.length > 0 || (statusHistory.scope === historyScope && (statusHistory.loading || statusHistory.error))) && (
@@ -3793,14 +3979,8 @@ export default function SalesKanban({
                 </div>
                   );
                 };
-                const isRentalDeal = Boolean(
-                  panelState.lead?.deal_type === 'rent' ||
-                  panelState.lead?.rental_status === 'Active' ||
-                  panelState.lead?.rental_status === 'PendingContract' ||
-                  panelState.lead?.status === 'Rented' ||
-                  String(panelState.lead?.crm_status || '').includes('เช่า')
-                );
-                return (!isRentalDeal && ['booked', 'transferred', 'loan'].includes(getLeadStage(panelState.lead))) ? <SalesDealStatusModal
+                const panelDeal = classifySalesDeal(panelState.lead);
+                return (panelDeal.isPurchaseFlow && !panelDeal.blocksPurchaseModal && ['booked', 'transferred', 'loan'].includes(getLeadStage(panelState.lead))) ? <SalesDealStatusModal
                   lead={panelState.lead} currentUser={user}
                   onClose={() => setPanelState({ type: 'default', plotId: '', lead: null })}
                   onSaved={async notice => {
@@ -4072,6 +4252,24 @@ export default function SalesKanban({
           onSaved={fetchData}
         />
       )}
+
+      {/* 🚫 Shared Cancel Rental Booking Reason Modal */}
+      <CancelRentalBookingModal
+        isOpen={Boolean(cancelRentalTarget)}
+        lead={cancelRentalTarget}
+        actorId={user?.displayName || user?.username || user?.id || 'Sales'}
+        actorRole={user?.role}
+        canManage={user?.role != null ? canEditSalesRole(user.role) : true}
+        onClose={() => setCancelRentalTarget(null)}
+        onCompleted={async result => {
+          await fetchData();
+          setPanelState({ type: 'default', plotId: '', lead: null });
+          if (result.message) alert(result.message);
+        }}
+        onReloadRequired={async () => {
+          await fetchData();
+        }}
+      />
 
     </div>
   );

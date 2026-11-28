@@ -7,10 +7,17 @@ import { isSampleHouse, fetchTodayInspectionStatus, fetchTodayInspectionMap, Sam
 import { subscribeToSalesSync } from '@/lib/sales/salesSyncBroadcast';
 import { getLeadStage } from '@/lib/sales/leadStage';
 import { salesDealStageOf } from '@/lib/sales/dealStatus';
+import {
+  classifyPlotOccupancy,
+  type PlotRentalContractSnapshot,
+  type PlotSaleSnapshot,
+} from '@/lib/sales/plotAvailability';
 
 interface SalesMapProps {
   projectName?: string;
   leads?: any[];
+  sales?: PlotSaleSnapshot[];
+  rentalContracts?: PlotRentalContractSnapshot[];
   onPlotClick?: (plotId: string, status: string, lead?: any) => void;
 }
 
@@ -34,6 +41,28 @@ interface MapCustomerIdentity {
   updated_at?: string | null;
 }
 
+export function resolveLayoutPlot<T extends MapPlotIdentity>(
+  layoutPlotId: string,
+  projectName: string,
+  plots: readonly T[],
+): T | undefined {
+  const compact = (value: string) => value.replace(/\s+/g, '');
+  const prefix = compact(projectName);
+  const projectAlias = /^ไอลิน(\d+)$/.exec(prefix)?.[1];
+  const kantAlias = /^กานต์รวี(\d+)(พิเศษ)?$/.exec(prefix);
+  const prefixes = [prefix, ...(projectAlias ? [`AL${projectAlias}`] : prefix === 'โยริว' ? ['YR']
+    : kantAlias ? [`K${kantAlias[1]}${kantAlias[2] ?? ''}`] : [])];
+  const label = (value: string) => {
+    let result = compact(value);
+    const matchedPrefix = prefixes.find(item => result.toLowerCase().startsWith(item.toLowerCase()));
+    if (matchedPrefix) result = result.slice(matchedPrefix.length).replace(/^-/, '');
+    return /^\d+$/.test(result) ? result.replace(/^0+(?=\d)/, '') : result;
+  };
+  const exactPlot = plots.find(item => item.id === layoutPlotId);
+  const labelMatches = exactPlot ? [] : plots.filter(item => item.plot_name && label(item.plot_name) === label(layoutPlotId));
+  return exactPlot ?? (labelMatches.length === 1 ? labelMatches[0] : undefined);
+}
+
 /** Resolve saved layout labels within this project, then select by plot identity. */
 export function matchingMapCustomer<T extends MapCustomerIdentity>(
   layoutPlotId: string, projectName: string, plots: readonly MapPlotIdentity[], customers: readonly T[],
@@ -50,9 +79,7 @@ export function matchingMapCustomer<T extends MapCustomerIdentity>(
     if (matchedPrefix) result = result.slice(matchedPrefix.length).replace(/^-/, '');
     return /^\d+$/.test(result) ? result.replace(/^0+(?=\d)/, '') : result;
   };
-  const exactPlot = plots.find(item => item.id === layoutPlotId);
-  const labelMatches = exactPlot ? [] : plots.filter(item => item.plot_name && label(item.plot_name) === label(layoutPlotId));
-  const plot = exactPlot ?? (labelMatches.length === 1 ? labelMatches[0] : undefined);
+  const plot = resolveLayoutPlot(layoutPlotId, projectName, plots);
   if (!plot) return null;
   let selected: T | null = null;
   let selectedTime = -Infinity;
@@ -80,13 +107,15 @@ export function matchingMapCustomer<T extends MapCustomerIdentity>(
   return selected;
 }
 
-export default function SalesMap({ projectName = 'ไอลิน6', leads = [], onPlotClick }: SalesMapProps) {
+export default function SalesMap({ projectName = 'ไอลิน6', leads = [], sales: externalSales, rentalContracts: externalRentalContracts, onPlotClick }: SalesMapProps) {
   const [loading, setLoading] = useState(true);
   const [mapGrid, setMapGrid] = useState<any[]>([]);
   const [gridCols, setGridCols] = useState(40);
   const [gridRows, setGridRows] = useState(24);
   const [mapZoom, setMapZoom] = useState(1);
   const [plots, setPlots] = useState<any[]>([]);
+  const [fetchedRentals, setFetchedRentals] = useState<PlotRentalContractSnapshot[]>([]);
+  const [readIncomplete, setReadIncomplete] = useState(false);
   const [showLegend, setShowLegend] = useState(false);
   const [inspectionStatus, setInspectionStatus] = useState<SampleHouseInspectionStatus | null>(null);
   const [inspectionMap, setInspectionMap] = useState<Record<string, SampleHouseInspectionStatus>>({});
@@ -119,9 +148,10 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
         setGridRows(24);
       }
 
-      // Fetch plots, progress, grass task assignments, and recent photos for this project
-      const [plotsRes, progressRes, grassTasksRes, photosRes, inspectRes, inspectMapRes] = await Promise.all([
+      // Fetch plots, rental contracts, progress, grass task assignments, and recent photos for this project
+      const [plotsRes, rentalsRes, progressRes, grassTasksRes, photosRes, inspectRes, inspectMapRes] = await Promise.all([
         supabase.from('plots').select('*').eq('project_name', projectName),
+        supabase.from('rental_contracts').select('id, plot_id, status').eq('project_name', projectName),
         supabase.from('vw_plot_progress').select('plot_id, overall_progress'),
         supabase.from('task_updates')
           .select('plot_id, progress, task_templates!inner(task_name)')
@@ -136,6 +166,10 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
       ]);
 
       if (dataRequest.current !== requestId) return;
+
+      const hasIncompleteRead = Boolean(plotsRes?.error || !Array.isArray(plotsRes?.data) || rentalsRes?.error);
+      setReadIncomplete(hasIncompleteRead);
+      setFetchedRentals(Array.isArray(rentalsRes?.data) ? (rentalsRes.data as PlotRentalContractSnapshot[]) : []);
       
       if (inspectRes) {
         setInspectionStatus(inspectRes);
@@ -144,7 +178,7 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
         setInspectionMap(inspectMapRes);
       }
         
-      if (plotsRes.data) {
+      if (Array.isArray(plotsRes?.data)) {
         const latestPhotos: Record<string, string> = {};
         if (photosRes.data) {
           // Since it's ordered by updated_at desc, the first one encountered is the latest
@@ -167,9 +201,14 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
           };
         });
         setPlots(plotsWithProgress);
+      } else {
+        setPlots([]);
       }
     } catch (err) {
       console.error("Error fetching sales map data:", err);
+      if (dataRequest.current === requestId) {
+        setReadIncomplete(true);
+      }
     } finally {
       if (dataRequest.current === requestId) {
         setLoading(false);
@@ -221,37 +260,61 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
     hasRight: mapGrid.some(c => c.x === x + 1 && c.y === y && c.type === type && (type !== 'plot' || c.plotId === plotId)) 
   });
 
+  const effectiveSales = externalSales ?? [];
+  const effectiveRentals = externalRentalContracts ?? fetchedRentals;
+
   const plotCustomers = useMemo(() => new Map(Object.keys(plotBounds).map(plotId =>
     [plotId, matchingMapCustomer(plotId, projectName, plots, leads)])), [plotBounds, projectName, plots, leads]);
   const findMatchingLead = (plotId: string) => plotCustomers.get(plotId) ?? null;
 
-  const getSalesStatus = (plotId: string) => {
+  const getPlotOccupancy = (plotId: string) => {
     const lead = findMatchingLead(plotId);
-    if (lead) {
-      if (lead.deal_type === 'rent' || lead.rental_status === 'Active' || lead.rental_status === 'Renewed' || lead.status === 'Rented' || lead.rental_status === 'PendingContract') {
-        return lead.status === 'Rented' || lead.rental_status === 'Active' || lead.rental_status === 'Renewed' ? 'Rented' : 'Reserved';
-      }
-      const stage = getLeadStage(lead);
-      if (stage === 'transferred' || lead.status === 'Transferred' || Boolean(lead.transferredDate || lead.transferred_date || (lead as any).transferred_at)) {
-        return salesDealStageOf(lead) === 'handover' ? 'Handover' : 'Transferred';
-      }
-      return lead.status;
-    }
+    const currentPlot = resolveLayoutPlot(plotId, projectName, plots) ?? null;
+    const plotSales = currentPlot ? effectiveSales.filter(s => s.plot_id === currentPlot.id) : [];
+    const plotRentals = currentPlot ? effectiveRentals.filter(r => r.plot_id === currentPlot.id) : [];
+    return {
+      lead,
+      plotInfo: currentPlot,
+      occupancy: classifyPlotOccupancy({
+        plot: currentPlot,
+        sales: plotSales,
+        rentalContracts: plotRentals,
+        lead,
+        readIncomplete,
+      }),
+    };
+  };
 
-    // Check plot flags from DB
-    const currentPlot = plots.find(p => p.id === plotId || p.plot_name === plotId);
-    if (currentPlot) {
-      if (currentPlot.sale_status === 'transferred') return 'Transferred';
-      if (currentPlot.sale_status === 'Rented' || currentPlot.current_tenant_name) {
-        if (currentPlot.sale_status !== 'Rented' && !currentPlot.lease_start_date && String(currentPlot.highlight_note || '').startsWith('จองเช่า:')) {
-          return 'Reserved';
-        }
+  const getSalesStatus = (plotId: string) => {
+    const { lead, occupancy } = getPlotOccupancy(plotId);
+
+    switch (occupancy.status) {
+      case 'available':
+        return 'Available';
+      case 'purchase_transferred':
+        return lead && salesDealStageOf(lead) === 'handover' ? 'Handover' : 'Transferred';
+      case 'rental_active':
         return 'Rented';
+      case 'rental_pending':
+        return 'Reserved';
+      case 'purchase_booked': {
+        if (lead) {
+          const stage = getLeadStage(lead);
+          if (stage === 'transferred') {
+            return salesDealStageOf(lead) === 'handover' ? 'Handover' : 'Transferred';
+          }
+          if (lead.status && !['Available', 'Cancelled', 'Lost', 'Visit'].includes(lead.status)) {
+            return lead.status;
+          }
+        }
+        return 'Reserved';
       }
-      if (currentPlot.has_customer && currentPlot.sale_status !== 'ready_for_sale') return 'Reserved';
+      case 'occupied_restricted':
+        return 'Reserved';
+      case 'unknown':
+      default:
+        return 'Unknown';
     }
-
-    return 'Available';
   };
 
   const getSalesColor = (status: string) => {
@@ -266,6 +329,7 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
       case 'Approved': return 'bg-blue-50 border-blue-500 text-blue-900 shadow-[0_0_15px_rgba(59,130,246,0.6)] border-[3px]';
       case 'Handover': return 'bg-sky-50 border-sky-500 text-sky-900 shadow-[0_0_15px_rgba(14,165,233,0.6)] border-[3px]';
       case 'Negotiation': return 'bg-orange-50 border-orange-400 text-orange-900 border-[2px]';
+      case 'Unknown': return 'bg-amber-50 border-amber-500 text-amber-950 border-[3px]';
       case 'Available': 
       default: return 'bg-white/90 border-slate-300 text-slate-700 shadow-sm hover:border-emerald-400 hover:shadow-md border-[2px]';
     }
@@ -338,29 +402,18 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
           {Object.entries(plotBounds).map(([plotId, bounds]:any) => {
             const w = bounds.maxX - bounds.minX + 1;
             const h = bounds.maxY - bounds.minY + 1;
-            const activeLead = findMatchingLead(plotId);
+            const { lead: activeLead, plotInfo, occupancy } = getPlotOccupancy(plotId);
             const status = getSalesStatus(plotId);
-            const customerName = [activeLead?.name, activeLead?.customer_name]
-              .find((value): value is string => typeof value === 'string' && Boolean(value.trim()))?.trim() || '';
-            
-            // Check if Construction is finished or grass is planted
-            const plotInfo = plots.find((p: any) => {
-              if (p.id === plotId || p.plot_name === plotId) return true;
-              const normP = p.plot_name.replace(/\s+/g, '');
-              const normId = plotId.replace(/\s+/g, '');
-              const prefix = projectName.replace(/\s+/g, '');
-              if (`${prefix}-${normP}` === normId || `${prefix}${normP}` === normId) return true;
-              if (normP === normId.replace(new RegExp(`^${prefix}-?`), '')) return true;
-              return false;
-            });
+            // Only expose customer name/agent when caller is authorized to see the lead record (RLS-safe)
+            const customerName = activeLead
+              ? ([activeLead?.name, activeLead?.customer_name]
+                  .find((value): value is string => typeof value === 'string' && Boolean(value.trim()))?.trim() || '')
+              : '';
             const isGrassPlanted = plotInfo?.isGrassPlanted || plotInfo?.is_completed || false;
             const isSample = isSampleHouse(plotInfo);
-            const isRented = activeLead?.deal_type === 'rent' || 
-                             activeLead?.rental_status === 'Active' || 
-                             activeLead?.status === 'Rented' || 
-                             plotInfo?.sale_status === 'Rented' || 
-                             !!plotInfo?.current_tenant_name || 
-                             !!plotInfo?.rental_program;
+            const isRentalActive = occupancy.status === 'rental_active';
+            const isRentalPending = occupancy.status === 'rental_pending';
+            const isUnknown = occupancy.status === 'unknown';
             const cardBorderClass = isSample && status === 'Available' 
               ? 'bg-amber-50/95 border-amber-500 text-amber-950 shadow-[0_0_15px_rgba(245,158,11,0.5)] border-[3px] ring-2 ring-amber-300' 
               : getSalesColor(status);
@@ -388,9 +441,18 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
 
                   <div className="flex flex-col items-center relative z-10 w-full px-0.5 mt-2 sm:mt-1">
                     <span className="font-bold text-[8px] sm:text-[9px] leading-tight text-center break-words">{plotId}</span>
-                    {status !== 'Available' && status !== 'Cancelled' && (
+                    {isUnknown ? (
+                      <div className="flex flex-col items-center mt-0.5" title="ข้อมูลสถานะแปลงขัดแย้งหรืออ่านไม่ครบ กรุณาตรวจสอบ">
+                        <AlertTriangle size={10} className="text-amber-700" strokeWidth={2.5} />
+                        <span className="text-[6px] sm:text-[7px] font-bold text-amber-900">ต้องตรวจสอบ</span>
+                      </div>
+                    ) : status !== 'Available' && status !== 'Cancelled' && (
                       <div className="flex flex-col items-center mt-0.5">
-                        {customerName && <span className="text-[6px] sm:text-[7px] text-center leading-tight font-semibold truncate w-full max-w-[40px] sm:max-w-[60px]" title={customerName}>{customerName}</span>}
+                        {customerName ? (
+                          <span className="text-[6px] sm:text-[7px] text-center leading-tight font-semibold truncate w-full max-w-[40px] sm:max-w-[60px]" title={customerName}>{customerName}</span>
+                        ) : (
+                          <span className="text-[6px] sm:text-[7px] text-center leading-tight font-semibold opacity-80">ไม่ว่าง</span>
+                        )}
                         <User size={10} className="opacity-80" strokeWidth={2.5} />
                         {activeLead?.agentName && (
                            <span className="text-[5px] sm:text-[6px] text-center leading-none mt-0.5 font-bold opacity-90 truncate w-full max-w-[20px] sm:max-w-[30px]" title={activeLead.agentName}>{activeLead.agentName}</span>
@@ -453,14 +515,20 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
                     ))
                   )}
 
-                  {/* 🏷️ Rental Badge (บ้านเช่า / Active Lease) */}
-                  {isRented && (
+                  {/* 🏷️ Rental Badge (เช่าจริง vs จองเช่า — ไม่เปิดเผยชื่อผู้เช่าหากไม่มีสิทธิ์เห็น Lead) */}
+                  {(isRentalActive || isRentalPending) && (
                     <div 
-                      className={`absolute ${isSample ? 'bottom-0 right-0 rounded-tl-md' : 'top-0 right-0 rounded-bl-md'} bg-teal-600 hover:bg-teal-700 text-white px-1 sm:px-1.5 py-0.5 text-[6px] sm:text-[8px] font-black shadow-xs z-30 flex items-center gap-0.5 transition-colors`}
-                      title={`บ้านเช่า (Active Lease)${plotInfo?.current_tenant_name ? ` · ผู้เช่า: ${plotInfo.current_tenant_name}` : ''}${plotInfo?.monthly_rent ? ` (${Number(plotInfo.monthly_rent).toLocaleString()} บ./ด.)` : ''}`}
+                      className={`absolute ${isSample ? 'bottom-0 right-0 rounded-tl-md' : 'top-0 right-0 rounded-bl-md'} ${
+                        isRentalPending ? 'bg-amber-600 hover:bg-amber-700' : 'bg-teal-600 hover:bg-teal-700'
+                      } text-white px-1 sm:px-1.5 py-0.5 text-[6px] sm:text-[8px] font-black shadow-xs z-30 flex items-center gap-0.5 transition-colors`}
+                      title={
+                        isRentalPending
+                          ? 'จองเช่า (รอทำสัญญา)'
+                          : `บ้านเช่า (Active Lease)${activeLead && customerName ? ` · ผู้เช่า: ${customerName}` : ''}`
+                      }
                     >
                       <span className="text-[7px] sm:text-[9px]">🏷️</span>
-                      <span className="font-black">เช่า</span>
+                      <span className="font-black">{isRentalPending ? 'จองเช่า' : 'เช่า'}</span>
                     </div>
                   )}
 
@@ -498,6 +566,7 @@ export default function SalesMap({ projectName = 'ไอลิน6', leads = [],
               <div className="flex items-center gap-3"><div className="w-3.5 h-3.5 rounded-full bg-slate-50 border border-slate-300 shadow-sm"></div> ว่าง (Available)</div>
               <div className="flex items-center gap-3"><div className="w-3.5 h-3.5 rounded-full bg-emerald-50 border-[2px] border-emerald-500 shadow-sm"></div> จองแล้ว (Reserved)</div>
               <div className="flex items-center gap-3"><div className="w-3.5 h-3.5 rounded-full bg-teal-50 border-[2px] border-teal-500 shadow-sm"></div> สัญญาเช่า (Rented)</div>
+              <div className="flex items-center gap-3"><div className="w-3.5 h-3.5 rounded-full bg-amber-50 border-[2px] border-amber-500 shadow-sm"></div> ต้องตรวจสอบ (Unknown)</div>
               <div className="flex items-center gap-3"><div className="w-3.5 h-3.5 rounded-full bg-pink-50 border-[2px] border-pink-500 shadow-sm"></div> ทำสัญญา (Contracted)</div>
               <div className="flex items-center gap-3"><div className="w-3.5 h-3.5 rounded-full bg-yellow-50 border-[2px] border-yellow-500 shadow-sm"></div> ผ่อนดาวน์ (DownPayment)</div>
               <div className="flex items-center gap-3"><div className="w-3.5 h-3.5 rounded-full bg-cyan-50 border-[2px] border-cyan-500 shadow-sm"></div> รอยื่นเอกสาร (Doc Prep)</div>

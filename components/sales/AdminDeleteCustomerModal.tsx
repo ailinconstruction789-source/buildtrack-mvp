@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { Lead } from '@/types/sales';
 import { deleteCustomerWithCascade, DeleteCustomerResult } from '@/lib/customerDeletionHelper';
+import { isAdminWriteRole } from '@/lib/sales/rentalTxClient';
 import SalesOverlay from './SalesOverlay';
 
 interface AdminDeleteCustomerModalProps {
@@ -37,10 +38,7 @@ export default function AdminDeleteCustomerModal({
 
   if (!isOpen || !lead) return null;
 
-  const isAdmin = !user?.role || 
-    user?.role?.toLowerCase() === 'admin' || 
-    user?.role?.toLowerCase() === 'owner' || 
-    user?.role?.toLowerCase() === 'superadmin';
+  const isAdmin = isAdminWriteRole(user?.role);
   const plotDisplay = lead.interested_plot_name || lead.interested_plot_id;
 
   const handleDelete = async () => {
@@ -53,7 +51,9 @@ export default function AdminDeleteCustomerModal({
     setErrorMsg(null);
 
     try {
-      const result = await deleteCustomerWithCascade(lead.id, lead.interested_plot_id);
+      const result = await deleteCustomerWithCascade(lead.id, lead.interested_plot_id, {
+        actorRole: user?.role,
+      });
       if (!result.success) {
         throw new Error(result.error || 'ลบข้อมูลลูกค้าไม่สำเร็จ');
       }
@@ -134,9 +134,9 @@ export default function AdminDeleteCustomerModal({
             </div>
             <ul className="space-y-1 text-slate-600 text-[11px]">
               {plotDisplay && (
-                <li className="flex items-start gap-1.5 text-emerald-900 font-semibold">
-                  <CheckCircle2 size={13} className="text-emerald-600 shrink-0 mt-0.5" />
-                  <span>ปลดแปลง <b>{plotDisplay}</b> กลับเป็นสถานะ <b>"ว่าง (Available)"</b> และล้างชื่อผู้เช่า/ผู้จองทันที</span>
+                <li className="flex items-start gap-1.5 text-amber-900 font-semibold">
+                  <CheckCircle2 size={13} className="text-amber-600 shrink-0 mt-0.5" />
+                  <span>ระบบจะตรวจสอบสิทธิ์แปลง <b>{plotDisplay}</b> ก่อนลบ — หากลูกค้ายังจองเช่า/เช่าอยู่/จองซื้อ หรือมีลูกค้ารายอื่นถือสิทธิ์แปลงนี้ ระบบจะไม่อนุญาตให้ลบหรือแตะต้องแปลงของผู้อื่น</span>
                 </li>
               )}
               <li className="flex items-start gap-1.5">

@@ -50,7 +50,12 @@ vi.mock('@/lib/supabase', () => ({ supabase: {
       single: async () => result(), maybeSingle: async () => result(),
       then: (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) => Promise.resolve(table === 'users' ? result() : { data: table === 'sales' && filters.lead_id ? [{ ...db.sale }] : [], error: null }).then(resolve, reject),
     }; return query;
-  }, rpc: async () => ({ data: { rows: [] }, error: null }),
+  }, rpc: async (name: string, args: any) => {
+    if (name !== 'sales_tx_cancel_purchase') return { data: { rows: [] }, error: null };
+    db.writes(name, args.p_payload);
+    return { data: { command: 'purchase_cancel', requestId: args.p_request_id, plotReleased: true,
+      saleId: db.sale.id, leadId: db.lead.id, plotId: plot.id }, error: null };
+  },
 } }));
 const user = { id: 'U1', username: 'Sales One', role: 'Sales' };
 let mapMode = false;
@@ -122,6 +127,15 @@ function confirm() {
   else fireEvent.click(screen.getByRole('checkbox', { name: 'ยืนยันรายการ' }));
 }
 describe('shared lifecycle through both actual entry components with fixture database', () => {
+  it('submits the exact cancellation from the original map sidebar', async () => {
+    await openMap();
+    choose('cancelled');
+    edit('เหตุผล', 'Customer withdrew');
+    await save();
+    expect(db.writes).toHaveBeenCalledTimes(1);
+    expect(db.writes).toHaveBeenCalledWith('sales_tx_cancel_purchase',
+      expect.objectContaining({ saleId:'S1', leadId:'L1', plotId:'P1', reason:'Customer withdrew' }));
+  });
   it('moves a cash customer from booking through transfer and handover using alternate routes', async () => {
     let view = await openHub('Original Customer'); choose('contracted'); await save(); view.unmount();
     view = await openMap(); choose('document_prep'); edit('ธนาคาร', 'ซื้อเงินสด'); choose('transfer_pending'); await save(); view.unmount();
@@ -233,7 +247,8 @@ describe('existing sidebar save binding safety with fixture data', () => {
   it('keeps Owner sidebar fields and save read-only', async () => {
     render(<SalesKanban project={{ name: 'Project A' }} user={{ ...user, role: 'Owner' }} initialTab="map" />);
     fireEvent.click(await screen.findByRole('button', { name: 'Open occupied test plot' }));
-    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+    expect(await screen.findByTestId('deal-lock-warning')).toHaveTextContent('ดูข้อมูลเท่านั้น');
+    await waitFor(() => expect(screen.queryByText('กำลังโหลดข้อมูลล่าสุด…')).not.toBeInTheDocument());
     expect(screen.getByRole('textbox', { name: 'ชื่อลูกค้า' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'บันทึกการเปลี่ยนแปลง' })).toBeDisabled();
     expect(db.writes).not.toHaveBeenCalled();

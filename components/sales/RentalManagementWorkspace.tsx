@@ -53,6 +53,15 @@ import TenantPortalModal from './TenantPortalModal';
 import AdminDeleteCustomerModal from './AdminDeleteCustomerModal';
 import RentalReceiptModal from './RentalReceiptModal';
 import { parseRentalInceptionDetails, RentalInceptionDetails } from '@/lib/rentalHelper';
+import {
+  classifySalesDeal,
+  RENTAL_SIGN_CONTRACT_BUTTON_LABEL,
+  resolveCanonicalPlotId,
+} from '@/lib/sales/dealClassification';
+import CancelRentalBookingModal from './CancelRentalBookingModal';
+import { canEditSalesRole } from '@/lib/sales/leadStage';
+import { isAdminWriteRole } from '@/lib/sales/rentalTxClient';
+import { subscribeToSalesSync } from '@/lib/sales/salesSyncBroadcast';
 
 export interface RentalInceptionDetailModalProps {
   isOpen: boolean;
@@ -332,7 +341,11 @@ export default function RentalManagementWorkspace({
   onNavigateToAlerts
 }: RentalManagementWorkspaceProps) {
   const [contracts, setContracts] = useState<RentalContract[]>([]);
+  const [pendingContractsByLeadId, setPendingContractsByLeadId] = useState<Record<string, RentalContract>>({});
+  const [orphanPendingContracts, setOrphanPendingContracts] = useState<RentalContract[]>([]);
   const [bookedLeads, setBookedLeads] = useState<Lead[]>([]);
+  const [cancelRentalTarget, setCancelRentalTarget] = useState<Record<string, any> | null>(null);
+  const cancellingLeadId = cancelRentalTarget ? String(cancelRentalTarget.leadId || cancelRentalTarget.id || '') : null;
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedProject, setSelectedProject] = useState<string>(selectedProjectName || 'all');
@@ -344,10 +357,16 @@ export default function RentalManagementWorkspace({
   const [overdueMap, setOverdueMap] = useState<Record<string, number>>({});
 
   // Modals state
-  const [contractModal, setContractModal] = useState<{ isOpen: boolean; lead: Lead | null; plotId: string | null }>({
+  const [contractModal, setContractModal] = useState<{
+    isOpen: boolean;
+    lead: Lead | null;
+    plotId: string | null;
+    defaultMode?: 'booking' | 'contract';
+  }>({
     isOpen: false,
     lead: null,
-    plotId: null
+    plotId: null,
+    defaultMode: undefined,
   });
 
   const [ledgerModal, setLedgerModal] = useState<{ 
@@ -406,10 +425,8 @@ export default function RentalManagementWorkspace({
     details: null
   });
 
-  const isAdmin = !user?.role || 
-    user?.role?.toLowerCase() === 'admin' || 
-    user?.role?.toLowerCase() === 'owner' || 
-    user?.role?.toLowerCase() === 'superadmin';
+  const canWriteSales = canEditSalesRole(user?.role);
+  const isAdmin = isAdminWriteRole(user?.role);
 
   // Fetch all rental contracts and overdue payments
   const fetchContractsData = useCallback(async () => {
@@ -423,7 +440,18 @@ export default function RentalManagementWorkspace({
       const { data: contractList, error: contractErr } = await query;
       if (contractErr) throw contractErr;
 
-      setContracts(contractList || []);
+      const allContracts = contractList || [];
+      const pendingRows = allContracts.filter((c: any) => c.status === 'PendingContract');
+      const nonPendingRows = allContracts.filter((c: any) => c.status !== 'PendingContract');
+      const pendingByLead: Record<string, RentalContract> = {};
+      pendingRows.forEach((c: any) => {
+        if (c.lead_id && !pendingByLead[c.lead_id]) {
+          pendingByLead[c.lead_id] = c;
+        }
+      });
+
+      setContracts(nonPendingRows);
+      setPendingContractsByLeadId(pendingByLead);
 
       // 2. Fetch overdue payments to flag rows
       const todayStr = new Date().toISOString().split('T')[0];
@@ -446,7 +474,7 @@ export default function RentalManagementWorkspace({
       }
       setOverdueMap(ovMap);
 
-      // 3. Fetch rental booking leads (PendingContract or rental deal in Reserved)
+      // 3. Fetch rental booking leads (PendingContract) classified via shared dealClassification helper
       try {
         let bookedLeadsQuery = supabase
           .from('leads')
@@ -460,16 +488,23 @@ export default function RentalManagementWorkspace({
 
         const { data: leadsData } = await bookedLeadsQuery;
         const activeLeadIds = new Set(
-          (contractList || [])
+          nonPendingRows
             .filter((c: any) => ['Active', 'Renewed'].includes(c.status))
             .map((c: any) => c.lead_id)
             .filter(Boolean)
         );
-        const pendingList = (leadsData || []).filter((l: any) => !activeLeadIds.has(l.id));
+        const pendingList = (leadsData || []).filter((l: any) => {
+          if (activeLeadIds.has(l.id)) return false;
+          return classifySalesDeal(l).isRentalPending;
+        });
+        const pendingLeadIds = new Set(pendingList.map((l: any) => l.id).filter(Boolean));
+        const orphans = pendingRows.filter((c: any) => !c.lead_id || !pendingLeadIds.has(c.lead_id));
         setBookedLeads(pendingList as Lead[]);
+        setOrphanPendingContracts(orphans);
       } catch (leadErr) {
         console.warn('Could not fetch booked rental leads:', leadErr);
         setBookedLeads([]);
+        setOrphanPendingContracts(pendingRows);
       }
 
     } catch (err) {
@@ -482,6 +517,37 @@ export default function RentalManagementWorkspace({
   useEffect(() => {
     fetchContractsData();
   }, [fetchContractsData]);
+
+  useEffect(() => {
+    return subscribeToSalesSync(() => {
+      fetchContractsData();
+    });
+  }, [fetchContractsData]);
+
+  const handleCancelPendingRental = useCallback((item: RentalWorkspaceItem) => {
+    if (!canWriteSales) {
+      alert('บัญชีของคุณมีสิทธิ์ดูข้อมูลอย่างเดียว ไม่สามารถยกเลิกการจองเช่าได้');
+      return;
+    }
+    const targetLeadId = item.lead_id || item.rawLead?.id;
+    if (!targetLeadId) return;
+
+    const pendingContract = pendingContractsByLeadId[targetLeadId] || orphanPendingContracts.find(c => c.id === item.id);
+    setCancelRentalTarget({
+      ...(item.rawLead || {}),
+      id: targetLeadId,
+      leadId: targetLeadId,
+      customer_name: item.tenant_name || item.rawLead?.customer_name,
+      status: item.rawLead?.status || 'Reserved',
+      deal_type: item.rawLead?.deal_type || 'rent',
+      rental_status: item.rawLead?.rental_status || 'PendingContract',
+      interested_plot_id: item.plot_id || item.rawLead?.interested_plot_id,
+      interested_plot_name: item.plot_name || item.rawLead?.interested_plot_name,
+      project_name: item.project_name || item.rawLead?.project_name,
+      pending_rental_contract_id: pendingContract?.id || null,
+      contract_deal_revision: (pendingContract as any)?.deal_revision || null,
+    });
+  }, [canWriteSales, orphanPendingContracts, pendingContractsByLeadId]);
 
   // Expiry check helper (days remaining)
   const getRemainingDays = (endDateStr?: string | null): number => {
@@ -508,42 +574,59 @@ export default function RentalManagementWorkspace({
     }
   };
 
-  // Map pending rental booking leads into workspace items with precomputed inception
+  // Map pending rental booking leads (+ any orphan PendingContract rows) into workspace items without duplicates
   const bookedItems = useMemo<RentalWorkspaceItem[]>(() => {
-    return bookedLeads.map((lead) => {
+    const leadItems: RentalWorkspaceItem[] = bookedLeads.map((lead) => {
+      const matchedContract = pendingContractsByLeadId[lead.id];
       const inception = parseRentalInceptionDetails(lead);
       const fee = inception.contractFee !== null && inception.contractFee !== undefined
         ? inception.contractFee
         : (lead.rental_program === 'program_c' ? (Number((lead as any).rental_contract_fee || 20000)) : 0);
 
+      const enrichedLead = matchedContract
+        ? ({
+            ...lead,
+            pending_rental_contract_id: matchedContract.id,
+            contract_deal_revision: (matchedContract as any).deal_revision || null,
+          } as Lead)
+        : lead;
+
       return {
-        id: `lead-booking-${lead.id}`,
+        id: matchedContract?.id || `lead-booking-${lead.id}`,
         lead_id: lead.id,
-        plot_id: lead.interested_plot_id || '',
-        plot_name: lead.interested_plot_name || lead.interested_plot_id || 'N/A',
-        project_name: lead.project_name || '',
-        tenant_name: lead.customer_name || 'ไม่ระบุชื่อ',
-        tenant_phone: lead.phone || '',
-        agent_name: lead.agent_name || lead.sales_owner || lead.salesOwner || '',
-        program_type: (lead.rental_program as RentalProgramType) || 'program_a',
-        monthly_rent: Number(lead.rental_monthly_rent || 0),
-        security_deposit: Number(lead.rental_deposit || 0),
-        advance_rent: 0,
+        plot_id: matchedContract?.plot_id || lead.interested_plot_id || '',
+        plot_name: matchedContract?.plot_name || lead.interested_plot_name || lead.interested_plot_id || 'N/A',
+        project_name: matchedContract?.project_name || lead.project_name || '',
+        tenant_name: lead.customer_name || matchedContract?.tenant_name || 'ไม่ระบุชื่อ',
+        tenant_phone: lead.phone || matchedContract?.tenant_phone || '',
+        agent_name: lead.agent_name || lead.sales_owner || lead.salesOwner || matchedContract?.agent_name || '',
+        program_type: ((lead.rental_program || matchedContract?.program_type) as RentalProgramType) || 'program_a',
+        monthly_rent: Number(lead.rental_monthly_rent || matchedContract?.monthly_rent || 0),
+        security_deposit: Number(lead.rental_deposit || matchedContract?.security_deposit || 0),
+        advance_rent: Number(matchedContract?.advance_rent || 0),
         contract_fee: fee,
         booking_amount: Number(lead.booking_amount || 0),
         booking_date: lead.booking_date || null,
-        lease_duration_months: 12,
-        lease_start_date: lead.rental_start_date || lead.booking_date || '-',
-        lease_end_date: '-',
+        lease_duration_months: Number(matchedContract?.lease_duration_months || 12),
+        lease_start_date: lead.rental_start_date || matchedContract?.lease_start_date || lead.booking_date || '-',
+        lease_end_date: matchedContract?.lease_end_date || '-',
         status: 'PendingContract' as any,
         accumulated_savings: 0,
-        created_at: (lead as any).created_at || new Date().toISOString(),
+        created_at: (lead as any).created_at || matchedContract?.created_at || new Date().toISOString(),
         isPendingBooking: true,
-        rawLead: lead,
+        rawLead: enrichedLead,
         inception
       };
     });
-  }, [bookedLeads]);
+
+    const orphanItems: RentalWorkspaceItem[] = orphanPendingContracts.map((c) => ({
+      ...c,
+      isPendingBooking: true,
+      inception: parseRentalInceptionDetails(c),
+    }));
+
+    return [...leadItems, ...orphanItems];
+  }, [bookedLeads, orphanPendingContracts, pendingContractsByLeadId]);
 
   // Memoized enriched contracts with inception pre-parsed to eliminate regex overhead in render & filter loops
   const enrichedContracts = useMemo<RentalWorkspaceItem[]>(() => {
@@ -708,12 +791,14 @@ export default function RentalManagementWorkspace({
             </button>
           )}
 
-          <button
-            onClick={() => setContractModal({ isOpen: true, lead: null, plotId: null })}
-            className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-amber-600/20 transition-all cursor-pointer hover:scale-102"
-          >
-            <Plus size={16} strokeWidth={3} /> ทำสัญญาเช่าใหม่
-          </button>
+          {canWriteSales && (
+            <button
+              onClick={() => setContractModal({ isOpen: true, lead: null, plotId: null, defaultMode: 'contract' })}
+              className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-amber-600/20 transition-all cursor-pointer hover:scale-102"
+            >
+              <Plus size={16} strokeWidth={3} /> ทำสัญญาเช่าใหม่
+            </button>
+          )}
         </div>
       </div>
 
@@ -1000,12 +1085,14 @@ export default function RentalManagementWorkspace({
           <p className="text-xs text-slate-500 max-w-md mx-auto">
             คุณสามารถกดปุ่ม "ทำสัญญาเช่าใหม่" ด้านบนเพื่อเริ่มบันทึกข้อมูลสัญญาเช่าหลังแรกได้ทันที
           </p>
-          <button
-            onClick={() => setContractModal({ isOpen: true, lead: null, plotId: null })}
-            className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs inline-flex items-center gap-1.5 shadow-md shadow-amber-600/20 transition-all cursor-pointer"
-          >
-            <Plus size={16} /> ทำสัญญาเช่าใหม่
-          </button>
+          {canWriteSales && (
+            <button
+              onClick={() => setContractModal({ isOpen: true, lead: null, plotId: null, defaultMode: 'contract' })}
+              className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs inline-flex items-center gap-1.5 shadow-md shadow-amber-600/20 transition-all cursor-pointer"
+            >
+              <Plus size={16} /> ทำสัญญาเช่าใหม่
+            </button>
+          )}
         </div>
       ) : viewMode === 'table' ? (
         
@@ -1149,29 +1236,30 @@ export default function RentalManagementWorkspace({
                             >
                               <FileCheck size={14} />
                             </button>
-                            <button
-                              type="button"
-                              onClick={() => setContractModal({
-                                isOpen: true,
-                                lead: contract.rawLead || null,
-                                plotId: contract.plot_id
-                              })}
-                              className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white font-bold text-xs flex items-center gap-1 shadow-xs transition-all cursor-pointer"
-                              title="ทำสัญญาเช่าจริงจากข้อมูลจอง"
-                            >
-                              <FileText size={13} /> ทำสัญญาเช่าจริง
-                            </button>
-                            {isAdmin && contract.lead_id && (
+                            {canWriteSales && (
                               <button
                                 type="button"
-                                onClick={() => setDeleteModal({
+                                onClick={() => setContractModal({
                                   isOpen: true,
-                                  lead: contract.rawLead || null
+                                  lead: contract.rawLead || null,
+                                  plotId: resolveCanonicalPlotId(contract.rawLead || contract, plots) || contract.plot_id,
+                                  defaultMode: 'contract',
                                 })}
-                                className="p-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 transition-colors cursor-pointer"
-                                title="ลบข้อมูลการจอง (Admin)"
+                                className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white font-bold text-xs flex items-center gap-1 shadow-xs transition-all cursor-pointer"
+                                title="ทำสัญญาเช่าจริงจากข้อมูลจอง"
                               >
-                                <Trash2 size={15} />
+                                <FileText size={13} /> {RENTAL_SIGN_CONTRACT_BUTTON_LABEL}
+                              </button>
+                            )}
+                            {canWriteSales && contract.lead_id && (
+                              <button
+                                type="button"
+                                disabled={cancellingLeadId === contract.lead_id}
+                                onClick={() => handleCancelPendingRental(contract)}
+                                className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs transition-colors cursor-pointer disabled:opacity-50"
+                                title="ยกเลิกการจองเช่าและคืนแปลง"
+                              >
+                                {cancellingLeadId === contract.lead_id ? 'กำลังยกเลิก...' : 'ยกเลิกจอง'}
                               </button>
                             )}
                           </div>
@@ -1342,14 +1430,14 @@ export default function RentalManagementWorkspace({
                           {/* ⚡ ดำเนินการ (ต่อสัญญา/ซื้อบ้าน/ย้ายออก) */}
                           <button
                             type="button"
-                            disabled={!['Active', 'Renewed'].includes(contract.status)}
+                            disabled={!canWriteSales || !['Active', 'Renewed'].includes(contract.status)}
                             onClick={() => setActionModal({
                               isOpen: true,
                               contractId: contract.id,
                               plot: { id: contract.plot_id, plot_name: contract.plot_name, project_name: contract.project_name },
                               lead: contract.lead_id ? { id: contract.lead_id, customer_name: contract.tenant_name, phone: contract.tenant_phone || undefined } as any : null
                             })}
-                            className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold transition-colors cursor-pointer"
+                            className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                             title="ดำเนินการ: เปลี่ยนเป็นซื้อบ้าน / ต่อสัญญา / ย้ายออก"
                           >
                             <Key size={15} className="text-amber-700" />
@@ -1381,8 +1469,8 @@ export default function RentalManagementWorkspace({
                             <Smartphone size={15} className="text-purple-700" />
                           </button>
 
-                          {/* 🗑️ ลบข้อมูล (เฉพาะ Admin) */}
-                          {isAdmin && contract.lead_id && (
+                          {/* 🗑️ ลบข้อมูลลูกค้าที่สิ้นสุดแล้ว (เฉพาะ Admin — ห้ามใช้แทนการยกเลิกจองหรือย้ายออก) */}
+                          {isAdmin && contract.lead_id && ['Cancelled', 'MovedOut'].includes(contract.status) && (
                             <button
                               type="button"
                               onClick={() => setDeleteModal({
@@ -1397,7 +1485,7 @@ export default function RentalManagementWorkspace({
                                 } as any
                               })}
                               className="p-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 transition-colors cursor-pointer"
-                              title="ลบข้อมูลสัญญาและลูกค้า (Admin)"
+                              title="ลบข้อมูลลูกค้าที่สิ้นสุดแล้ว (Admin)"
                             >
                               <Trash2 size={15} />
                             </button>
@@ -1519,28 +1607,29 @@ export default function RentalManagementWorkspace({
                     >
                       <FileCheck size={15} />
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setContractModal({
-                        isOpen: true,
-                        lead: contract.rawLead || null,
-                        plotId: contract.plot_id
-                      })}
-                      className="flex-1 py-2 px-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white font-bold flex items-center justify-center gap-1 transition-colors cursor-pointer shadow-xs"
-                    >
-                      <FileText size={14} /> ทำสัญญาเช่าจริง
-                    </button>
-                    {isAdmin && contract.lead_id && (
+                    {canWriteSales && (
                       <button
                         type="button"
-                        onClick={() => setDeleteModal({
+                        onClick={() => setContractModal({
                           isOpen: true,
-                          lead: contract.rawLead || null
+                          lead: contract.rawLead || null,
+                          plotId: resolveCanonicalPlotId(contract.rawLead || contract, plots) || contract.plot_id,
+                          defaultMode: 'contract',
                         })}
-                        className="p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 transition-colors cursor-pointer"
-                        title="ลบข้อมูลการจอง (Admin)"
+                        className="flex-1 py-2 px-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white font-bold flex items-center justify-center gap-1 transition-colors cursor-pointer shadow-xs"
                       >
-                        <Trash2 size={15} />
+                        <FileText size={14} /> {RENTAL_SIGN_CONTRACT_BUTTON_LABEL}
+                      </button>
+                    )}
+                    {canWriteSales && contract.lead_id && (
+                      <button
+                        type="button"
+                        disabled={cancellingLeadId === contract.lead_id}
+                        onClick={() => handleCancelPendingRental(contract)}
+                        className="py-2 px-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold transition-colors cursor-pointer disabled:opacity-50"
+                        title="ยกเลิกการจองเช่าและคืนแปลง"
+                      >
+                        {cancellingLeadId === contract.lead_id ? 'กำลังยกเลิก...' : 'ยกเลิกจอง'}
                       </button>
                     )}
                   </div>
@@ -1673,14 +1762,14 @@ export default function RentalManagementWorkspace({
 
                   <button
                     type="button"
-                    disabled={!['Active', 'Renewed'].includes(contract.status)}
+                    disabled={!canWriteSales || !['Active', 'Renewed'].includes(contract.status)}
                     onClick={() => setActionModal({
                       isOpen: true,
                       contractId: contract.id,
                       plot: { id: contract.plot_id, plot_name: contract.plot_name, project_name: contract.project_name },
                       lead: contract.lead_id ? { id: contract.lead_id, customer_name: contract.tenant_name, phone: contract.tenant_phone || undefined } as any : null
                     })}
-                    className="p-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 transition-colors cursor-pointer"
+                    className="p-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                     title="ดำเนินการสัญญา (ซื้อบ้าน/ต่อสัญญา/ย้ายออก)"
                   >
                     <Key size={15} />
@@ -1721,9 +1810,10 @@ export default function RentalManagementWorkspace({
       {contractModal.isOpen && (
         <RentalContractModal
           isOpen={contractModal.isOpen}
-          onClose={() => setContractModal({ isOpen: false, lead: null, plotId: null })}
+          onClose={() => setContractModal({ isOpen: false, lead: null, plotId: null, defaultMode: undefined })}
           lead={contractModal.lead}
           plotId={contractModal.plotId}
+          defaultMode={contractModal.defaultMode}
           projectName={selectedProject !== 'all' ? selectedProject : (contractModal.lead?.project_name || 'ไอลิน สันทราย 2')}
           user={user}
           onSaved={fetchContractsData}
@@ -1812,6 +1902,27 @@ export default function RentalManagementWorkspace({
           details={inceptionModal.details}
         />
       )}
+
+      {/* 🚫 Shared Cancel Rental Booking Reason Modal */}
+      <CancelRentalBookingModal
+        isOpen={Boolean(cancelRentalTarget)}
+        lead={cancelRentalTarget}
+        actorId={user?.displayName || user?.username || user?.id || 'Sales'}
+        actorRole={user?.role}
+        canManage={canWriteSales}
+        onClose={() => setCancelRentalTarget(null)}
+        onCompleted={async result => {
+          if (result.shouldRefresh) {
+            await fetchContractsData();
+          }
+          if (result.message) {
+            alert(result.message);
+          }
+        }}
+        onReloadRequired={async () => {
+          await fetchContractsData();
+        }}
+      />
 
     </div>
   );

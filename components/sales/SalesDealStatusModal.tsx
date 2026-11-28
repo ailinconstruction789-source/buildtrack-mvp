@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode, type Dispatch
 import dynamic from 'next/dynamic';
 import { supabase } from '@/lib/supabase';
 import { canEditSalesRole, getLeadStage } from '@/lib/sales/leadStage';
+import { classifySalesDeal, getSalesDealConflictMessage } from '@/lib/sales/dealClassification';
 import { customerDealDetails, customerDealSummary, extractAgreedPrices } from '@/lib/sales/customerDealDetails';
 import SalesOverlay from './SalesOverlay';
 import PostBookingLink from './PostBookingLink';
@@ -14,6 +15,7 @@ import CustomerHistoryTimeline from './CustomerHistoryTimeline';
 import { bangkokToday } from '@/lib/sales/actionFilters';
 import { SALES_BANK_NAMES, CASH_BANK_OPTION } from '@/lib/sales/banks';
 import { broadcastSalesSync, subscribeToSalesSync } from '@/lib/sales/salesSyncBroadcast';
+import { createTxRequestId, translateSalesTxError } from '@/lib/sales/rentalTxClient';
 import { salesDealStages as stages, salesDealNextStages, salesDealPaymentMethodOf, salesDealLeadStatus, salesDealContractStatus, salesDealTransitionError, salesDealStageOf as stageOf } from '@/lib/sales/dealStatus';
 const CustomerDealDetailsEditor = dynamic(() => import('./CustomerDealDetailsEditor'), {
   loading: () => <p role="status">กำลังเปิดฟอร์มแก้ข้อมูล…</p>,
@@ -44,7 +46,7 @@ export interface SalesDealEditorModel {
   lockReason?: 'protected_crm' | 'read_only_role' | 'terminal_stage' | 'missing_record' | null;
   changed?: boolean;
 }
-const leadColumns = 'id,customer_name,phone,occupation,agent_name,status,crm_status,notes,project_name,interested_plot_id,interested_plot_name,transferred_date,updated_at';
+const leadColumns = 'id,customer_name,phone,occupation,agent_name,status,crm_status,deal_type,rental_status,active_rental_contract_id,rental_program,notes,project_name,interested_plot_id,interested_plot_name,transferred_date,updated_at';
 const saleColumns = 'id,lead_id,plot_id,booking_route,crm_stage,contract_status,sale_price,land_office_price,bank_name,payment_method,project_interest_id,external_booking_id,transferred_at,updated_at';
 const str = (value: unknown) => value == null ? '' : String(value);
 function draftOf(lead: Row | null, sale: Row | null): Draft {
@@ -122,6 +124,8 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
     } | null;
   }>({ lead: false, sale: false, history: false, payload: null, effectiveValues: null });
   const leadInitial = useRef<string | null>(null);
+  const cancelSnapshot = useRef<{ saleId: string; plotId: string; leadId: string | null; expectedSaleUpdatedAt: string | null; expectedLeadUpdatedAt: string | null } | null>(null);
+  const cancelAttempt = useRef<{ fingerprint: string; id: string } | null>(null);
   const inFlight = useRef(false);
   const mounted = useRef(true);
   const requestSeq = useRef(0);
@@ -163,7 +167,15 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
     lead.interested_plot_name || lead.interested_plot_id
   );
   const actorId = str(currentUser?.id);
-  const terminal = !['booked', 'transferred', 'loan'].includes(getLeadStage(lead)) || initial === 'handover';
+  const initialDeal = classifySalesDeal(lead);
+  const rentalBlockedMessage = initialDeal.isRentalPending
+    ? 'รายการนี้เป็นการจองเช่ารอทำสัญญา กรุณาใช้เมนู "ทำสัญญาเช่าจริง" ในขั้นตอนการเช่า ไม่สามารถบันทึกเป็นการขายจากหน้าต่างนี้ได้'
+    : initialDeal.isRentalActive
+      ? 'รายการนี้เป็นสัญญาเช่าที่มีผลอยู่ กรุณาใช้เมนู "จัดการสัญญาเช่า" (หากต้องการเปลี่ยนเป็นซื้อต้องใช้ขั้นตอนเปลี่ยนเช่าเป็นซื้อโดยเฉพาะ)'
+      : initialDeal.isConflict
+        ? 'ข้อมูลประเภทดีลขัดแย้ง ไม่สามารถบันทึกผ่านหน้าต่างสถานะการขายได้'
+        : null;
+  const terminal = initialDeal.blocksPurchaseModal || !['booked', 'transferred', 'loan'].includes(getLeadStage(lead)) || initial === 'handover';
   const editable = canEditSalesRole(currentUser?.role) && !terminal && Boolean(leadId || suppliedSaleId);
 
   // Subscribe to cross-tab / in-window sync events to keep open editor updated
@@ -198,6 +210,7 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
   useEffect(() => {
     const currentReq = ++requestSeq.current;
     setLoading(true); setResolved(null); setProtectedSale(null); setError('');
+    cancelSnapshot.current = null;
     if (!editable && !suppliedSaleId) { setLoading(false); return; }
     let cancelled = false;
     const controller = new AbortController();
@@ -208,7 +221,18 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
           const result = await supabase.from('leads').select(leadColumns).eq('id', leadId).single();
           if (result.error) throw result.error;
           currentLead = result.data;
-          if (!currentLead || currentLead.id !== leadId || !['booked', 'transferred', 'loan'].includes(getLeadStage(currentLead))) throw new Error('สถานะลูกค้าเปลี่ยนแล้ว กรุณาปิดและโหลดข้อมูลล่าสุด');
+          if (!currentLead || currentLead.id !== leadId) throw new Error('สถานะลูกค้าเปลี่ยนแล้ว กรุณาปิดและโหลดข้อมูลล่าสุด');
+          const latestDeal = classifySalesDeal(currentLead);
+          if (latestDeal.blocksPurchaseModal) {
+            throw new Error(
+              latestDeal.isRentalPending
+                ? 'รายการนี้ถูกเปลี่ยนเป็นการจองเช่ารอทำสัญญาแล้ว กรุณาใช้เมนูทำสัญญาเช่าจริงแทนหน้าต่างสถานะการขาย'
+                : latestDeal.isRentalActive
+                  ? 'รายการนี้เป็นสัญญาเช่าที่ใช้งานอยู่แล้ว กรุณาใช้เมนูจัดการสัญญาเช่า (หากต้องการเปลี่ยนเป็นซื้อให้ใช้ขั้นตอนเปลี่ยนเช่าเป็นซื้อโดยเฉพาะ)'
+                  : 'ข้อมูลประเภทดีลขัดแย้งหรือสิ้นสุดการเช่าแล้ว ไม่สามารถบันทึกเป็นการขายจากหน้าต่างนี้ได้'
+            );
+          }
+          if (!['booked', 'transferred', 'loan'].includes(getLeadStage(currentLead))) throw new Error('สถานะลูกค้าเปลี่ยนแล้ว กรุณาปิดและโหลดข้อมูลล่าสุด');
         }
         if (cancelled || currentReq !== requestSeq.current) return;
         if (suppliedSaleId) {
@@ -258,6 +282,23 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
           }
         }
         if (cancelled || currentReq !== requestSeq.current) return;
+        const loadedDeal = classifySalesDeal({
+          ...(currentLead || lead),
+          saleId: currentSale?.id ?? suppliedSaleId ?? null,
+          contract_status: currentSale?.contract_status ?? (lead as any)?.contract_status ?? null,
+        });
+        if (loadedDeal.isConflict) {
+          throw new Error(getSalesDealConflictMessage(loadedDeal.reason));
+        }
+        if (loadedDeal.blocksPurchaseModal) {
+          throw new Error(
+            loadedDeal.isRentalPending
+              ? 'รายการนี้เป็นการจองเช่ารอทำสัญญา กรุณาใช้เมนูทำสัญญาเช่าจริงแทนหน้าต่างสถานะการขาย'
+              : loadedDeal.isRentalActive
+                ? 'รายการนี้เป็นสัญญาเช่าที่ใช้งานอยู่ กรุณาใช้เมนูจัดการสัญญาเช่า'
+                : 'ข้อมูลประเภทดีลขัดแย้งหรือสิ้นสุดการเช่าแล้ว ไม่สามารถบันทึกเป็นการขายจากหน้าต่างนี้ได้'
+          );
+        }
         const isLegacyUnlinkedSale = Boolean(currentSale && !currentSale.lead_id && leadId);
         const isProtected = Boolean(currentSale && !isLegacyUnlinkedSale && currentSale.booking_route !== 'legacy_import' && (currentSale.project_interest_id || currentSale.external_booking_id));
         if (currentSale && isProtected) {
@@ -303,10 +344,11 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
             initialEventDateRef.current = serverEventDate;
             isEventDateDirtyRef.current = false;
           }
-        } else if (!isEventDateDirtyRef.current && serverEventDate) {
-          setEventDateState(serverEventDate);
-          initialEventDateRef.current = serverEventDate;
         } else {
+          if (!isEventDateDirtyRef.current && serverEventDate) {
+            setEventDateState(serverEventDate);
+            initialEventDateRef.current = serverEventDate;
+          }
           const base = originalBaseline.current || { ...values };
           let fieldConflict: string | null = null;
           const fieldNames: Record<keyof Draft, string> = {
@@ -349,6 +391,23 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
           }
         }
         const resolvedPlot = currentSale?.plot_id || currentLead?.interested_plot_id || currentLead?.interested_plot_name || modalPlotId || null;
+        // A plot/name fallback is useful for display, but is not a cancellation identity.
+        if (currentSale?.id && currentSale.plot_id && (suppliedSaleId === currentSale.id || (leadId && currentSale.lead_id === leadId))
+          && (!leadId || currentSale.lead_id === leadId)) {
+          let linkedLead = currentLead;
+          if (currentSale.lead_id && !linkedLead) {
+            const result = await supabase.from('leads').select('id,updated_at').eq('id', currentSale.lead_id).single();
+            if (cancelled || currentReq !== requestSeq.current) return;
+            if (!result.error && result.data?.id === currentSale.lead_id) linkedLead = result.data;
+          }
+          if (!currentSale.lead_id || linkedLead?.id === currentSale.lead_id) {
+            cancelSnapshot.current = {
+              saleId: str(currentSale.id), plotId: str(currentSale.plot_id), leadId: currentSale.lead_id ? str(currentSale.lead_id) : null,
+              expectedSaleUpdatedAt: currentSale.updated_at == null ? null : str(currentSale.updated_at),
+              expectedLeadUpdatedAt: linkedLead?.updated_at == null ? null : str(linkedLead.updated_at),
+            };
+          }
+        }
         setResolved({ leadId, saleId: currentSale ? str(currentSale.id) : null, plotId: resolvedPlot ? str(resolvedPlot) : null });
       } catch (failure) {
         if (!cancelled && currentReq === requestSeq.current) setError(failure instanceof Error ? failure.message : (failure as { message?: string })?.message || 'โหลดข้อมูลล่าสุดไม่สำเร็จ');
@@ -387,6 +446,34 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
     const stageChanged = submitted.target !== initial;
     progress.current.payload = submitted;
     try {
+      if (submitted.target === 'cancelled') {
+        const identity = cancelSnapshot.current;
+        if (!identity) throw new Error('ยังยืนยันรายการขายและแปลงที่เชื่อมกับลูกค้าไม่ได้ กรุณาเปิดรายการขายที่ตรงกันก่อนยกเลิก');
+        const salePatch: Row = {}, leadPatch: Row = {};
+        if (dirtyFieldsRef.current.has('price')) salePatch.sale_price = price;
+        if (dirtyFieldsRef.current.has('landOfficePrice')) salePatch.land_office_price = appraisal;
+        if (dirtyFieldsRef.current.has('bank')) salePatch.bank_name = draft.bank.trim() || null;
+        if (dirtyFieldsRef.current.has('method')) salePatch.payment_method = draft.method;
+        for (const [key, column] of [['name', 'customer_name'], ['phone', 'phone'], ['occupation', 'occupation'], ['agentName', 'agent_name']] as const) {
+          if (identity.leadId && dirtyFieldsRef.current.has(key)) leadPatch[column] = draft[key]?.trim() || null;
+        }
+        const payload = { ...identity, reason: submitted.reason, category: submitted.cancelCategory, eventDate: submitted.eventDate, note: submitted.note, salePatch, leadPatch };
+        const fingerprint = JSON.stringify(payload);
+        if (cancelAttempt.current?.fingerprint !== fingerprint) cancelAttempt.current = { fingerprint, id: createTxRequestId() };
+        const requestId = cancelAttempt.current.id;
+        const { data, error: failure } = await supabase.rpc('sales_tx_cancel_purchase', { p_request_id: requestId, p_payload: payload });
+        if (failure) throw translateSalesTxError(failure);
+        if (data?.command !== 'purchase_cancel' || data.requestId !== requestId || data.saleId !== identity.saleId
+          || data.plotId !== identity.plotId || data.leadId !== identity.leadId || typeof data.plotReleased !== 'boolean') {
+          throw new Error('ยังไม่ได้รับผลยืนยันการยกเลิกรายการขายนี้ กรุณาตรวจสอบหรือลองบันทึกอีกครั้ง');
+        }
+        broadcastSalesSync({ type: 'sales_deal_saved', saleId: identity.saleId, plotId: identity.plotId, leadId: identity.leadId, timestamp: Date.now() });
+        if (mounted.current) {
+          progress.current.payload = null;
+          onSaved(data.plotReleased ? 'ยกเลิกการจองและคืนแปลงแล้ว' : 'ยกเลิกการจองแล้ว แปลงยังมีผู้ถือสิทธิ์');
+        }
+        return;
+      }
       let currentLead: Row | null = null, currentSale: Row | null = null;
       let isLegacySale = false;
       const assertNoFieldConflict = (keys: readonly (keyof ReturnType<typeof draftOf>)[], latest: ReturnType<typeof draftOf>) => {
@@ -400,7 +487,18 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         const result = await supabase.from('leads').select(leadColumns).eq('id', resolved.leadId).single();
         if (result.error) throw result.error;
         currentLead = result.data;
-        if (!currentLead || currentLead.id !== resolved.leadId || !['booked', 'transferred', 'loan'].includes(getLeadStage(currentLead)) || stageOf(currentLead) !== leadInitial.current) throw new Error('สถานะลูกค้าเปลี่ยนแล้ว กรุณาปิดและโหลดข้อมูลล่าสุด');
+        if (!currentLead || currentLead.id !== resolved.leadId) throw new Error('สถานะลูกค้าเปลี่ยนแล้ว กรุณาปิดและโหลดข้อมูลล่าสุด');
+        const latestDeal = classifySalesDeal(currentLead);
+        if (latestDeal.blocksPurchaseModal) {
+          throw new Error(
+            latestDeal.isRentalPending
+              ? 'รายการนี้เป็นการจองเช่ารอทำสัญญา ไม่สามารถบันทึกเป็นการขายหรือสร้างรายการขายจากหน้าต่างนี้ได้ กรุณาใช้เมนูทำสัญญาเช่าจริง'
+              : latestDeal.isRentalActive
+                ? 'รายการนี้เป็นสัญญาเช่าที่ใช้งานอยู่ ไม่สามารถบันทึกเป็นการขายจากหน้าต่างนี้ได้ กรุณาใช้ขั้นตอนเปลี่ยนเช่าเป็นซื้อในเมนูจัดการสัญญาเช่า'
+                : 'ข้อมูลประเภทดีลขัดแย้งหรือสิ้นสุดการเช่าแล้ว ไม่สามารถบันทึกเป็นการขายจากหน้าต่างนี้ได้'
+          );
+        }
+        if (!['booked', 'transferred', 'loan'].includes(getLeadStage(currentLead)) || stageOf(currentLead) !== leadInitial.current) throw new Error('สถานะลูกค้าเปลี่ยนแล้ว กรุณาปิดและโหลดข้อมูลล่าสุด');
         const latest = draftOf(currentLead, null);
         assertNoFieldConflict(resolved.saleId ? ['name', 'phone', 'occupation', 'agentName'] : ['name', 'phone', 'occupation', 'agentName', 'price', 'bank', 'method'], latest);
       }
@@ -414,6 +512,23 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         if (!currentSale || isProtectedSale || currentSale.id !== resolved.saleId || !['booked', 'transferred', 'loan'].includes(getLeadStage({ status: currentSale.contract_status })) || (!isLegacySale && stageOf(currentSale) !== initial)
           || (resolved.leadId && currentSale.lead_id && currentSale.lead_id !== resolved.leadId)) throw new Error('สถานะรายการขายเปลี่ยนแล้ว กรุณาปิดและโหลดข้อมูลล่าสุด');
         assertNoFieldConflict(['price', 'bank', 'method', 'landOfficePrice'], draftOf(currentLead, currentSale));
+        const combinedDeal = classifySalesDeal({
+          ...(currentLead || lead),
+          saleId: currentSale?.id ?? suppliedSaleId ?? null,
+          contract_status: currentSale?.contract_status ?? (lead as any)?.contract_status ?? null,
+        });
+        if (combinedDeal.isConflict) {
+          throw new Error(getSalesDealConflictMessage(combinedDeal.reason));
+        }
+        if (combinedDeal.blocksPurchaseModal) {
+          throw new Error(
+            combinedDeal.isRentalPending
+              ? 'รายการนี้เป็นการจองเช่ารอทำสัญญา ไม่สามารถบันทึกเป็นการขายหรือสร้างรายการขายจากหน้าต่างนี้ได้ กรุณาใช้เมนูทำสัญญาเช่าจริง'
+              : combinedDeal.isRentalActive
+                ? 'รายการนี้เป็นสัญญาเช่าที่ใช้งานอยู่ ไม่สามารถบันทึกเป็นการขายจากหน้าต่างนี้ได้ กรุณาใช้ขั้นตอนเปลี่ยนเช่าเป็นซื้อในเมนูจัดการสัญญาเช่า'
+                : 'ข้อมูลประเภทดีลขัดแย้งหรือสิ้นสุดการเช่าแล้ว ไม่สามารถบันทึกเป็นการขายจากหน้าต่างนี้ได้'
+          );
+        }
       }
       if (!mounted.current) return;
 
@@ -462,6 +577,10 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
 
       let activeSaleId = resolved.saleId;
       if (!activeSaleId && resolved.leadId && targetPlotId) {
+        const latestDealGuard = classifySalesDeal(currentLead || lead);
+        if (latestDealGuard.blocksPurchaseModal) {
+          throw new Error('รายการนี้เป็นดีลเช่าหรือมีสถานะขัดแย้ง ไม่อนุญาตให้สร้างรายการขายจากหน้าต่างนี้');
+        }
         const { data: ensureRes, error: ensureErr } = await supabase.rpc('ensure_lead_sale_record', {
           p_lead_id: resolved.leadId,
           p_plot_id: targetPlotId,
@@ -488,7 +607,6 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         if ((stageChanged || saleNeedsStatusSync || eventDateChanged) && submitted.target === 'contracted') patch.contracted_at = stamp;
         if ((stageChanged || saleNeedsStatusSync || eventDateChanged || submitted.target === 'transferred') && submitted.target === 'transferred') patch.transferred_at = stamp;
         if ((stageChanged || saleNeedsStatusSync || eventDateChanged) && submitted.target === 'handover') patch.crm_handover_at = stamp;
-        if ((stageChanged || saleNeedsStatusSync || eventDateChanged) && submitted.target === 'cancelled') Object.assign(patch, { cancelled_at: stamp, cancellation_reason: submitted.reason, cancellation_category: submitted.cancelCategory });
         if (dirtyFieldsRef.current.has('price') && submitted.draft.price !== originalBaseline.current?.price) patch.sale_price = submitted.draft.price.trim() ? Number(submitted.draft.price.replace(/,/g, '')) : null;
         if (dirtyFieldsRef.current.has('landOfficePrice') && submitted.draft.landOfficePrice !== originalBaseline.current?.landOfficePrice) patch.land_office_price = submitted.draft.landOfficePrice?.trim() ? Number(submitted.draft.landOfficePrice.replace(/,/g, '')) : null;
         if (dirtyFieldsRef.current.has('bank') && submitted.draft.bank !== originalBaseline.current?.bank) patch.bank_name = submitted.draft.bank.trim() || null;
@@ -520,7 +638,6 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
         const patch: Row = { notes: `${added}\n\n${str(currentLead?.notes)}`, updated_at: stamp };
         if (stageChanged || leadInitial.current !== submitted.target || leadNeedsStatusSync) Object.assign(patch, { status: targetLeadStatus, crm_status: option.label });
         if ((stageChanged || leadNeedsStatusSync || eventDateChanged || !currentLead?.transferred_date || submitted.target === 'transferred') && submitted.target === 'transferred') patch.transferred_date = new Date(submitted.eventDate + 'T12:00:00+07:00').toISOString();
-        if (stageChanged && submitted.target === 'cancelled') patch.lost_reason = submitted.reason;
         for (const [key, column] of [['name', 'customer_name'], ['phone', 'phone'], ['occupation', 'occupation'], ['agentName', 'agent_name']] as const) {
           if (dirtyFieldsRef.current.has(key)) patch[column] = submitted.draft[key]?.trim() || null;
         }
@@ -580,19 +697,6 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
           try {
             await supabase.from('plots').update({ sale_status: 'transferred', has_customer: true }).eq('id', targetPlotId);
           } catch {}
-        } else if (submitted.target === 'cancelled') {
-          try {
-            const rpcRes = await supabase.rpc('cancel_plot_sale_and_release', {
-              p_plot_id: targetPlotId,
-              p_sale_id: resolved.saleId || null,
-              p_reason: submitted.reason || null,
-            });
-            if (rpcRes.error) throw rpcRes.error;
-          } catch {
-            try {
-              await supabase.from('plots').update({ sale_status: 'available', has_customer: false, highlight_note: null }).eq('id', targetPlotId);
-            } catch {}
-          }
         }
       }
       if (typeof window !== 'undefined') {
@@ -753,7 +857,9 @@ function DealEditor({ lead, currentUser, onClose, onSaved, renderEditor }: Props
           )}
         </div>}
         <p className="text-xs text-slate-500">แสดงเฉพาะขั้นถัดไปที่ทำได้ เงินสดข้ามสินเชื่อ หลังโอนทำได้เฉพาะส่งมอบ ไม่บันทึกการจองใหม่</p>
-      </> : <p className="text-sm text-slate-600">รายการนี้ดูรายละเอียดได้ตามสิทธิ์เดิม รายการส่งมอบแล้วหรือยกเลิกแล้วไม่เปิดแก้ขั้นตอนจากฟอร์มนี้</p>}
+      </> : rentalBlockedMessage ? (
+        <p role="alert" className="text-sm font-medium text-amber-900 bg-amber-50 border border-amber-200 rounded-xl p-3">{rentalBlockedMessage}</p>
+      ) : <p className="text-sm text-slate-600">รายการนี้ดูรายละเอียดได้ตามสิทธิ์เดิม รายการส่งมอบแล้วหรือยกเลิกแล้วไม่เปิดแก้ขั้นตอนจากฟอร์มนี้</p>}
       {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
       {editable && !protectedSale && <button type="button" disabled={!canSave} onClick={() => void save()} className="bg-amber-500 rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50">{busy ? 'กำลังบันทึก…' : 'บันทึกข้อมูล'}</button>}
     </div>

@@ -29,6 +29,13 @@ import type { LoadSalesStartupData } from '@/types/salesStartup';
 import SalesOverlay from './SalesOverlay';
 import { salesDealActionLabel, salesDealStageOf } from '@/lib/sales/dealStatus';
 import { getLeadStage, canStartSalesDeal, canEditSalesRole, preserveLeadDealStage } from '@/lib/sales/leadStage';
+import {
+  classifySalesDeal,
+  RENTAL_PENDING_DISPLAY_LABEL,
+  RENTAL_SIGN_CONTRACT_BUTTON_LABEL,
+  resolveCanonicalPlotId,
+} from '@/lib/sales/dealClassification';
+import CancelRentalBookingModal from './CancelRentalBookingModal';
 import { isCancelledBookingLead } from '@/lib/sales/leadLifecycle';
 import { broadcastSalesSync } from '@/lib/sales/salesSyncBroadcast';
 import { stageToKanbanStatus, parseStageFromNoteText } from './SalesKanban';
@@ -134,8 +141,14 @@ export default function MySalesWorkspace({
   const [statusTarget, setStatusTarget] = useState<any | null>(null);
   const [followUpTarget, setFollowUpTarget] = useState<any | null>(null);
   const [appointmentTarget, setAppointmentTarget] = useState<any | null>(null);
-  const [rentalTarget, setRentalTarget] = useState<any | null>(null);
+  const [rentalTarget, setRentalTarget] = useState<{
+    lead: any;
+    plotId: string | null;
+    defaultMode?: 'booking' | 'contract';
+  } | null>(null);
   const [rentalActionTarget, setRentalActionTarget] = useState<any | null>(null);
+  const [cancelRentalTarget, setCancelRentalTarget] = useState<any | null>(null);
+  const cancellingRentalLeadId = cancelRentalTarget ? String(cancelRentalTarget.leadId || cancelRentalTarget.id || '') : null;
 
   // 🛡️ Admin Role Check
   const isAdmin = ['admin', 'owner', 'superadmin', 'manager'].includes((currentUser?.role || '').toLowerCase());
@@ -291,10 +304,14 @@ export default function MySalesWorkspace({
           lead.interested_plot_name = hyphenMatch ? hyphenMatch[1].trim() : rawInterest;
         }
 
+        const baseDeal = classifySalesDeal(lead);
+
         // Adjust display crm_status if status is Reserved / Booked / Transferred / Cancelled
-        if ((lead.status === 'Reserved' || lead.status === 'Booked') && (!lead.crm_status || lead.crm_status.includes('Follow-up'))) {
+        if (baseDeal.isRentalPending && (!lead.crm_status || lead.crm_status.includes('Follow-up'))) {
+          lead.crm_status = RENTAL_PENDING_DISPLAY_LABEL;
+        } else if (!baseDeal.isRentalPending && !baseDeal.isRentalActive && (lead.status === 'Reserved' || lead.status === 'Booked') && (!lead.crm_status || lead.crm_status.includes('Follow-up'))) {
           lead.crm_status = 'วางเงินจองแปลงแล้ว';
-        } else if (lead.status === 'Transferred' && (!lead.crm_status || lead.crm_status.includes('Follow-up'))) {
+        } else if (!baseDeal.isRentalPending && !baseDeal.isRentalActive && lead.status === 'Transferred' && (!lead.crm_status || lead.crm_status.includes('Follow-up'))) {
           lead.crm_status = 'โอนกรรมสิทธิ์แล้ว';
         } else if (lead.status === 'Cancelled' && (!lead.crm_status || lead.crm_status === 'Lost — ยุติการซื้อ / ไม่จอง')) {
           lead.crm_status = 'Cancelled — ยกเลิกจอง';
@@ -333,22 +350,24 @@ export default function MySalesWorkspace({
             lead.booking_date = matchedSale.importedHistory.bookedDate;
           }
 
-          if (matchedSale.stage === 'transferred') {
-            lead.status = 'Transferred';
-            lead.crm_status = 'โอนกรรมสิทธิ์แล้ว';
-          } else if (matchedSale.stage === 'contracted') {
-            lead.status = 'Contracted';
-            lead.crm_status = 'ทำสัญญาแล้ว';
-          } else if (matchedSale.stage === 'booked' && lead.status !== 'Transferred') {
-            lead.status = 'Booked';
-            lead.crm_status = 'วางเงินจองแปลงแล้ว';
-          } else if (matchedSale.stage === 'cancelled') {
-            lead.status = 'Cancelled';
-            lead.crm_status = 'Cancelled — ยกเลิกจอง';
-          }
-          if (lead.saleId && getLeadStage(lead) === 'booked') {
-            const progressLabel = salesDealStages.find(stage => stage.id === matchedSale.crmStage)?.label;
-            if (progressLabel) lead.crm_status = progressLabel;
+          if (!baseDeal.isRentalPending && !baseDeal.isRentalActive) {
+            if (matchedSale.stage === 'transferred') {
+              lead.status = 'Transferred';
+              lead.crm_status = 'โอนกรรมสิทธิ์แล้ว';
+            } else if (matchedSale.stage === 'contracted') {
+              lead.status = 'Contracted';
+              lead.crm_status = 'ทำสัญญาแล้ว';
+            } else if (matchedSale.stage === 'booked' && lead.status !== 'Transferred') {
+              lead.status = 'Booked';
+              lead.crm_status = 'วางเงินจองแปลงแล้ว';
+            } else if (matchedSale.stage === 'cancelled') {
+              lead.status = 'Cancelled';
+              lead.crm_status = 'Cancelled — ยกเลิกจอง';
+            }
+            if (lead.saleId && getLeadStage(lead) === 'booked') {
+              const progressLabel = salesDealStages.find(stage => stage.id === matchedSale.crmStage)?.label;
+              if (progressLabel) lead.crm_status = progressLabel;
+            }
           }
         }
 
@@ -607,7 +626,7 @@ export default function MySalesWorkspace({
         // For past years (e.g. 2025, 2024), strictly filter items matching that year.
         if ((selectedYear === '2026' || selectedYear === new Date().getFullYear().toString())
 ) {
-          if (stage === 'active' || stage === 'appointment' || stage === 'visited' || stage === 'loan' || stage === 'rented') {
+          if (stage === 'active' || stage === 'appointment' || stage === 'visited' || stage === 'loan' || stage === 'rented' || classifySalesDeal(lead).isRentalPending) {
             // keep ongoing active pipeline and rental leads
           } else if (itemYear !== targetYearNum) {
             return false;
@@ -879,12 +898,60 @@ export default function MySalesWorkspace({
     }
   });
   const openBooking = (lead: any) => {
-    if (lead.saleId || ['booked', 'transferred'].includes(getStageCategory(lead))) { setStatusTarget(lead); return; }
+    const deal = classifySalesDeal(lead);
+    if (deal.isConflict) {
+      setNotice('⚠️ ข้อมูลสถานะดีลขัดแย้ง กรุณาตรวจสอบข้อมูลก่อนทำรายการ');
+      return;
+    }
+    if (deal.isRentalPending) {
+      openRental(lead, 'contract');
+      return;
+    }
+    if (deal.isRentalActive) {
+      openRental(lead);
+      return;
+    }
+    if (deal.isRentalEnded) return;
+    if (lead.saleId || ['booked', 'transferred'].includes(getStageCategory(lead))) {
+      setStatusTarget(lead);
+      return;
+    }
+    if (!canWrite) return;
     setBookingTarget(lead);
   };
-  const openRental = (lead: any) => {
-    if (getLeadStage(lead) === 'rented') setRentalActionTarget(lead);
-    else setRentalTarget(lead);
+  const openRental = (lead: any, explicitMode?: 'booking' | 'contract') => {
+    if (!canWrite) return;
+    const deal = classifySalesDeal(lead);
+    if (deal.isConflict) {
+      setNotice('⚠️ ข้อมูลสถานะดีลขัดแย้ง กรุณาตรวจสอบข้อมูลก่อนทำรายการ');
+      return;
+    }
+    if (deal.isRentalActive) {
+      setRentalActionTarget(lead);
+      return;
+    }
+    if (deal.isRentalPending) {
+      setRentalTarget({
+        lead,
+        plotId: resolveCanonicalPlotId(lead, dbPlots),
+        defaultMode: 'contract',
+      });
+      return;
+    }
+    if (deal.isRentalEnded) return;
+    setRentalTarget({
+      lead,
+      plotId: resolveCanonicalPlotId(lead, dbPlots),
+      defaultMode: explicitMode,
+    });
+  };
+  const handleCancelRentalBooking = (lead: any) => {
+    if (!canWrite) return;
+    const deal = classifySalesDeal(lead);
+    if (!deal.isRentalPending) return;
+    const targetId = String(lead?.leadId || lead?.id || '');
+    if (!targetId) return;
+    setCancelRentalTarget(lead);
   };
 
   // Instant Check-in Visit Handler (records actual_visit_date directly from My Sales Hub)
@@ -1509,7 +1576,7 @@ export default function MySalesWorkspace({
                   const stage = getStageCategory(l);
                   const targetYearNum = selectedYear === 'unknown' ? null : parseInt(selectedYear, 10);
                   if (selectedYear === '2026' || selectedYear === new Date().getFullYear().toString()) {
-                    if (stage === 'active' || stage === 'appointment' || stage === 'visited' || stage === 'loan' || stage === 'rented') {
+                    if (stage === 'active' || stage === 'appointment' || stage === 'visited' || stage === 'loan' || stage === 'rented' || classifySalesDeal(l).isRentalPending) {
                       // include ongoing active and rental leads
                     } else if (itemYear !== targetYearNum) {
                       return false;
@@ -1586,8 +1653,11 @@ export default function MySalesWorkspace({
                 <tbody className="divide-y divide-slate-100 text-slate-700 font-medium">
                   {filteredLeads.map((lead, idx) => {
                     const stage = getStageCategory(lead);
+                    const deal = classifySalesDeal(lead);
                     const isMine = isMyLead(lead);
                     const plotName = getLeadPlotName(lead);
+                    const canStartDeal = !deal.isConflict && !deal.isRentalPending && !deal.isRentalActive && !deal.isRentalEnded && canStartSalesDeal(lead);
+                    const isCancellingThisRental = cancellingRentalLeadId === String(lead.leadId || lead.id || '');
 
                     return (
                       <tr key={lead.id || idx} className="hover:bg-amber-50/30 transition-colors">
@@ -1673,6 +1743,9 @@ export default function MySalesWorkspace({
                         <td className="py-3 px-4">
                           <div className="space-y-1">
                             <span className={`px-2.5 py-1 rounded-lg text-[10px] font-black inline-block border ${
+                              deal.isConflict ? 'bg-rose-100 text-rose-900 border-rose-300' :
+                              deal.isRentalPending ? 'bg-cyan-100 text-cyan-900 border-cyan-300' :
+                              deal.isRentalActive ? 'bg-teal-100 text-teal-900 border-teal-300' :
                               stage === 'transferred' ? 'bg-emerald-100 text-emerald-900 border-emerald-300' :
                               stage === 'booked' ? 'bg-amber-100 text-amber-900 border-amber-300' :
                               stage === 'rented' ? 'bg-teal-100 text-teal-900 border-teal-300' :
@@ -1683,7 +1756,13 @@ export default function MySalesWorkspace({
                               stage === 'lost' ? 'bg-rose-100 text-rose-900 border-rose-300' :
                               'bg-blue-100 text-blue-900 border-blue-300'
                             }`}>
-                              {stage === 'transferred' ? (salesDealStageOf(lead) === 'handover' ? '🏡 ส่งมอบบ้านแล้ว' : '🏡 โอนกรรมสิทธิ์แล้ว') : (lead.crm_status || lead.status || 'กำลังติดตาม')}
+                              {deal.isConflict
+                                ? '⚠️ ข้อมูลสถานะดีลขัดแย้ง'
+                                : deal.isRentalPending
+                                  ? RENTAL_PENDING_DISPLAY_LABEL
+                                  : stage === 'transferred'
+                                    ? (salesDealStageOf(lead) === 'handover' ? '🏡 ส่งมอบบ้านแล้ว' : '🏡 โอนกรรมสิทธิ์แล้ว')
+                                    : (lead.crm_status || lead.status || 'กำลังติดตาม')}
                             </span>
                             {lead.transferred_date && (
                               <span className="text-[10px] text-emerald-700 font-bold block flex items-center gap-1">
@@ -1721,7 +1800,7 @@ export default function MySalesWorkspace({
                             </button>
 
                             {/* Quick Check-in button for unvisited leads */}
-                            {canWrite && Boolean(lead.leadId) && canStartSalesDeal(lead) && !lead.actual_visit_date && (
+                            {canWrite && Boolean(lead.leadId) && canStartDeal && !lead.actual_visit_date && (
                               <button
                                 type="button"
                                 onClick={() => handleCheckInLead(lead)}
@@ -1739,7 +1818,7 @@ export default function MySalesWorkspace({
                             )}
 
                             {/* Appointment button */}
-                            {canWrite && canStartSalesDeal(lead) && (
+                            {canWrite && canStartDeal && (
                               <button
                                 type="button"
                                 onClick={() => openAppointment(lead)}
@@ -1755,12 +1834,37 @@ export default function MySalesWorkspace({
                               </button>
                             )}
 
-                            {canWrite && canStartSalesDeal(lead) && <>
+                            {canWrite && canStartDeal && <>
                               <button type="button" onClick={() => openBooking(lead)} className="px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-lg text-[11px] font-bold">จองแปลง</button>
                               <button type="button" onClick={() => openRental(lead)} className="px-2.5 py-1 bg-teal-50 border border-teal-200 rounded-lg text-[11px] font-bold">เช่า</button>
                             </>}
-                            {(['booked', 'transferred'].includes(stage) || lead.saleId) && <button type="button" onClick={() => setStatusTarget(lead)} className="px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-lg text-[11px] font-bold">{salesDealActionLabel(lead, canWrite)}</button>}
-                            {canWrite && stage === 'rented' && <button type="button" onClick={() => setRentalActionTarget(lead)} className="px-2.5 py-1 bg-teal-50 border border-teal-200 rounded-lg text-[11px] font-bold">จัดการสัญญาเช่า</button>}
+                            {deal.isPurchaseFlow && (['booked', 'transferred'].includes(stage) || Boolean(lead.saleId)) && (
+                              <button type="button" onClick={() => setStatusTarget(lead)} className="px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-lg text-[11px] font-bold">{salesDealActionLabel(lead, canWrite)}</button>
+                            )}
+                            {canWrite && deal.isRentalPending && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => openRental(lead, 'contract')}
+                                  className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white border border-blue-700 rounded-lg text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+                                >
+                                  <FileText size={12} /> {RENTAL_SIGN_CONTRACT_BUTTON_LABEL}
+                                </button>
+                                {Boolean(lead.leadId) && (
+                                  <button
+                                    type="button"
+                                    disabled={isCancellingThisRental}
+                                    onClick={() => handleCancelRentalBooking(lead)}
+                                    className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer transition-colors disabled:opacity-50"
+                                  >
+                                    {isCancellingThisRental ? 'กำลังยกเลิก...' : 'ยกเลิกจองเช่า'}
+                                  </button>
+                                )}
+                              </>
+                            )}
+                            {canWrite && deal.isRentalActive && (
+                              <button type="button" onClick={() => setRentalActionTarget(lead)} className="px-2.5 py-1 bg-teal-50 border border-teal-200 rounded-lg text-[11px] font-bold">จัดการสัญญาเช่า</button>
+                            )}
                           </div>
                         </td>
 
@@ -1931,7 +2035,9 @@ export default function MySalesWorkspace({
                     stage="booked"
                     canWrite={canWrite} onBook={() => openBooking(lead)}
                     onFollowUp={() => openFollowUp(lead)}
-                    onRent={() => openRental(lead)}
+                    onRent={() => openRental(lead, classifySalesDeal(lead).isRentalPending ? 'contract' : undefined)}
+                    onCancelRentalBooking={() => handleCancelRentalBooking(lead)}
+                    isCancellingRental={cancellingRentalLeadId === String(lead.leadId || lead.id || '')}
                     onQuickStatus={(status, label) => handleQuickStatusChange(lead.id, status, label)}
                     onEditCustomer={() => handleOpenEditCustomer(lead)}
                   />
@@ -2323,8 +2429,10 @@ export default function MySalesWorkspace({
         <RentalContractModal
           isOpen={true}
           onClose={() => setRentalTarget(null)}
-          lead={rentalTarget}
-          projectName={rentalTarget.project_name}
+          lead={rentalTarget.lead}
+          plotId={rentalTarget.plotId}
+          projectName={rentalTarget.lead.project_name}
+          defaultMode={rentalTarget.defaultMode}
           salesOwners={salesOwners}
           user={currentUser}
           onSaved={() => {
@@ -2337,6 +2445,22 @@ export default function MySalesWorkspace({
 
       {statusTarget && <SalesDealStatusModal key={myUserId + ':' + currentUser?.role + ':' + statusTarget.id} lead={statusTarget} currentUser={currentUser} onClose={() => setStatusTarget(null)} onSaved={msg => { setNotice(msg); setStatusTarget(null); fetchData(true); }} />}
       {rentalActionTarget && <RentalActionModal key={myUserId + ':' + rentalActionTarget.id} isOpen onClose={() => setRentalActionTarget(null)} lead={rentalActionTarget.sourceKind === 'rental_plot' ? null : rentalActionTarget} plot={rentalActionTarget.sourceKind === 'rental_plot' ? { id: rentalActionTarget.plotId, project_name: rentalActionTarget.project_name } : null} contractId={rentalActionTarget.active_rental_contract_id} user={currentUser} onSaved={() => { setRentalActionTarget(null); setNotice('อัปเดตสัญญาเช่าแล้ว'); fetchData(true); }} />}
+      <CancelRentalBookingModal
+        isOpen={Boolean(cancelRentalTarget)}
+        lead={cancelRentalTarget}
+        actorId={myDisplayName || myUsername || myUserId || 'Sales'}
+        actorRole={currentUser?.role}
+        canManage={canWrite}
+        onClose={() => setCancelRentalTarget(null)}
+        onCompleted={result => {
+          if (result.message) setNotice(result.message);
+          if (result.shouldRefresh) fetchData(true);
+        }}
+        onReloadRequired={result => {
+          if (result.message) setNotice(result.message);
+          fetchData(true);
+        }}
+      />
       {/* 6. Modal: Admin Customer Import & Export */}
       {showAdminDataModal && (
         <AdminCustomerImportExportModal
@@ -2499,6 +2623,8 @@ function LeadKanbanCard({
   onCheckIn,
   isCheckingIn,
   onRent,
+  onCancelRentalBooking,
+  isCancellingRental,
   onQuickStatus,
   canWrite,
   onEditCustomer
@@ -2514,9 +2640,13 @@ function LeadKanbanCard({
   onCheckIn?: () => void;
   isCheckingIn?: boolean;
   onRent: () => void;
+  onCancelRentalBooking?: () => void;
+  isCancellingRental?: boolean;
   onQuickStatus: (status: string, label: string) => void;
   onEditCustomer?: () => void;
 }) {
+  const deal = classifySalesDeal(lead);
+  const canStartDeal = !deal.isConflict && !deal.isRentalPending && !deal.isRentalActive && !deal.isRentalEnded && canStartSalesDeal(lead);
   return (
     <div className={`p-3.5 bg-white rounded-xl border transition-all shadow-2xs space-y-2.5 ${
       stage === 'transferred' ? 'border-emerald-200 ring-1 ring-emerald-100' :
@@ -2571,6 +2701,16 @@ function LeadKanbanCard({
         ) : stage === 'booked' ? (
           <span className="text-[9px] font-bold text-amber-800">⚠️ ยังไม่ระบุแปลง</span>
         ) : null}
+        {deal.isRentalPending && (
+          <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-cyan-100 text-cyan-900 border border-cyan-300">
+            {RENTAL_PENDING_DISPLAY_LABEL}
+          </span>
+        )}
+        {deal.isConflict && (
+          <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-rose-100 text-rose-900 border border-rose-300">
+            ⚠️ สถานะดีลขัดแย้ง
+          </span>
+        )}
       </div>
 
       {/* Channel / Transfer date */}
@@ -2604,7 +2744,7 @@ function LeadKanbanCard({
             <PhoneCall size={10} className="text-blue-600" /> ตาม
           </button>
 
-          {canWrite && Boolean(lead.leadId) && canStartSalesDeal(lead) && !lead.actual_visit_date && onCheckIn && (
+          {canWrite && Boolean(lead.leadId) && canStartDeal && !lead.actual_visit_date && onCheckIn && (
             <button
               type="button"
               disabled={isCheckingIn}
@@ -2617,7 +2757,7 @@ function LeadKanbanCard({
             </button>
           )}
 
-          {canWrite && canStartSalesDeal(lead) && onAppointment && (
+          {canWrite && canStartDeal && onAppointment && (
             <button
               type="button"
               onClick={onAppointment}
@@ -2634,8 +2774,8 @@ function LeadKanbanCard({
           )}
         </div>
 
-        <div className="flex items-center gap-1">
-          {(canWrite && ['active', 'appointment', 'visited', 'loan', 'booked'].includes(stage) || stage === 'transferred') && (
+        <div className="flex items-center gap-1 flex-wrap">
+          {deal.isPurchaseFlow && ((canWrite && ['active', 'appointment', 'visited', 'loan', 'booked'].includes(stage)) || stage === 'transferred') && (
             <button
               type="button"
               onClick={onBook}
@@ -2644,13 +2784,45 @@ function LeadKanbanCard({
               <Tag size={10} className="text-amber-600" /> {['booked', 'transferred'].includes(stage) ? salesDealActionLabel(lead, canWrite) : 'จอง'}
             </button>
           )}
-          {canWrite && ['active', 'appointment', 'visited', 'loan', 'rented'].includes(stage) && <button
-            type="button"
-            onClick={onRent}
-            className="px-2 py-1 bg-teal-50 hover:bg-teal-100 text-teal-900 border border-teal-200 rounded-lg text-[10px] font-black inline-flex items-center gap-1 cursor-pointer"
-          >
-            <Key size={10} className="text-teal-600" /> {stage === 'rented' ? 'จัดการสัญญาเช่า' : 'เช่า'}
-          </button>}
+          {canWrite && deal.isRentalPending && (
+            <>
+              <button
+                type="button"
+                onClick={onRent}
+                className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white border border-blue-700 rounded-lg text-[10px] font-black inline-flex items-center gap-1 cursor-pointer"
+              >
+                <FileText size={10} /> {RENTAL_SIGN_CONTRACT_BUTTON_LABEL}
+              </button>
+              {Boolean(lead.leadId) && onCancelRentalBooking && (
+                <button
+                  type="button"
+                  disabled={isCancellingRental}
+                  onClick={onCancelRentalBooking}
+                  className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-[10px] font-black inline-flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                >
+                  {isCancellingRental ? 'กำลังยกเลิก...' : 'ยกเลิกจองเช่า'}
+                </button>
+              )}
+            </>
+          )}
+          {canWrite && deal.isRentalActive && (
+            <button
+              type="button"
+              onClick={onRent}
+              className="px-2 py-1 bg-teal-50 hover:bg-teal-100 text-teal-900 border border-teal-200 rounded-lg text-[10px] font-black inline-flex items-center gap-1 cursor-pointer"
+            >
+              <Key size={10} className="text-teal-600" /> จัดการสัญญาเช่า
+            </button>
+          )}
+          {canWrite && canStartDeal && ['active', 'appointment', 'visited', 'loan'].includes(stage) && (
+            <button
+              type="button"
+              onClick={onRent}
+              className="px-2 py-1 bg-teal-50 hover:bg-teal-100 text-teal-900 border border-teal-200 rounded-lg text-[10px] font-black inline-flex items-center gap-1 cursor-pointer"
+            >
+              <Key size={10} className="text-teal-600" /> เช่า
+            </button>
+          )}
         </div>
       </div>
 

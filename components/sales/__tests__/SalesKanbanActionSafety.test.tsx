@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import SalesKanban, { stageToKanbanStatus } from '../SalesKanban';
 
-const mocks = vi.hoisted(() => ({ read: vi.fn(), mutation: vi.fn(), chosen: null as any }));
+const mocks = vi.hoisted(() => ({ read: vi.fn(), mutation: vi.fn(), rpc: vi.fn(), chosen: null as any }));
 vi.mock('@/lib/sales/fetchWithoutLimit', () => ({ fetchSalesWithoutLimit: mocks.read }));
 vi.mock('@/hooks/useSalesStaffOptions', () => ({ useSalesStaffOptions: () => [] }));
 vi.mock('../DailyVisitsScheduleView', () => ({ default: () => null }));
@@ -33,7 +33,7 @@ vi.mock('@/lib/supabase', () => ({ supabase: {
     };
     return query;
   },
-  rpc: async () => ({ data: { rows: [] }, error: null }),
+  rpc: (...args: any[]) => mocks.rpc(...args),
   auth: { getSession: async () => ({ data: { session: null } }) },
 } }));
 
@@ -42,6 +42,7 @@ const interested = { id: 'lead-1', customer_name: 'Interested A', status: 'Visit
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.chosen = interested;
+  mocks.rpc.mockResolvedValue({ data: { rows: [] }, error: null });
   mocks.read.mockImplementation(async (table: string) => table === 'plots' ? [plot] : table === 'leads' ? [interested] : []);
   vi.spyOn(console, 'error').mockImplementation(() => {});
   vi.spyOn(window, 'alert').mockImplementation(() => {});
@@ -132,7 +133,7 @@ describe('post-booking map categories', () => {
     expect(mocks.mutation).not.toHaveBeenCalled();
   });
 
-  it('cancels a rental booking using valid leads columns (lost_reason, rental_status) without sending cancellation_reason to leads', async () => {
+  it('cancels a pending rental booking via unified sales_tx_cancel_rental_booking RPC with zero direct plots/leads/contracts writes', async () => {
     const rentalLead = {
       id: 'lead-rent-1',
       customer_name: 'ผู้เช่าทดสอบ',
@@ -142,44 +143,54 @@ describe('post-booking map categories', () => {
       rental_program: 'program_a',
       rental_monthly_rent: 29000,
       phone: '0812345678',
-      interested_plot_id: 'plot-1',
-      interested_plot_name: 'A1',
+      interested_plot_id: 'Project A-42',
+      interested_plot_name: '42',
       crm_status: 'จองเช่า — รอทำสัญญา (Rent (เช่า))',
     };
+    mocks.rpc.mockImplementation(async (fnName: string) => {
+      if (fnName === 'sales_tx_cancel_rental_booking') {
+        return {
+          data: {
+            command: 'rental_cancel_booking',
+            leadId: 'lead-rent-1',
+            plotId: 'Project A-42',
+            plotReleased: true,
+            rentalStatus: 'Cancelled',
+          },
+          error: null,
+        };
+      }
+      return { data: { rows: [] }, error: null };
+    });
     mocks.read.mockImplementation(async (table: string) =>
       table === 'plots' ? [{ ...plot, id: 'Project A-42', plot_name: '42', sale_status: 'ready_for_sale', current_tenant_name: 'ผู้เช่าทดสอบ', rental_program: 'program_a' }]
-      : table === 'leads' ? [{ ...rentalLead, interested_plot_id: 'Project A-42', interested_plot_name: '42' }]
+      : table === 'leads' ? [rentalLead]
       : []
     );
     render(<SalesKanban project={{ name: 'Project A' }} user={{ id: 'U1', username: 'NOOK', role: 'Sales' }} initialTab="map" />);
     await waitFor(() => expect(mocks.read).toHaveBeenCalledWith('leads', expect.anything()));
     fireEvent.click(await screen.findByRole('button', { name: 'Open occupied plot' }));
 
-    fireEvent.click(await screen.findByRole('button', { name: /ยกเลิกจอง/ }));
-    const reasonBox = await screen.findByRole('textbox', { name: 'เหตุผล' });
+    fireEvent.click(await screen.findByRole('button', { name: /ยกเลิกจองเช่า/ }));
+    const reasonBox = await screen.findByRole('textbox', { name: /เหตุผลในการยกเลิกจองเช่า/ });
     fireEvent.change(reasonBox, { target: { value: 'นักลงทุนซื้อพร้อมผู้เช่า' } });
 
-    fireEvent.click(screen.getByRole('button', { name: 'บันทึกการเปลี่ยนแปลง' }));
+    fireEvent.click(screen.getByRole('button', { name: /ยืนยันยกเลิกจองเช่า/ }));
 
     await waitFor(() => {
-      const leadUpdateCall = mocks.mutation.mock.calls.find((c: any[]) => c[0] === 'leads' && c[1] === 'update');
-      expect(leadUpdateCall).toBeDefined();
-      const payload = leadUpdateCall![2];
-      expect(payload.status).toBe('Cancelled');
-      expect(payload.lost_reason).toBe('นักลงทุนซื้อพร้อมผู้เช่า');
-      expect(payload.rental_status).toBe('Cancelled');
-      expect(payload.crm_status).toBe('Cancelled — ยกเลิกการจองเช่า');
-      expect(payload).not.toHaveProperty('cancellation_reason');
-      expect(payload).not.toHaveProperty('cancelled_at');
+      expect(mocks.rpc).toHaveBeenCalledWith(
+        'sales_tx_cancel_rental_booking',
+        expect.objectContaining({
+          p_request_id: expect.any(String),
+          p_payload: expect.objectContaining({
+            leadId: 'lead-rent-1',
+            reason: 'นักลงทุนซื้อพร้อมผู้เช่า',
+          }),
+        })
+      );
     });
 
-    const plotUpdateCall = mocks.mutation.mock.calls.find((c: any[]) => c[0] === 'plots' && c[1] === 'update');
-    expect(plotUpdateCall).toBeDefined();
-    expect(plotUpdateCall![2]).toMatchObject({
-      has_customer: false,
-      current_tenant_name: null,
-      rental_program: null,
-      highlight_note: null,
-    });
+    // Zero direct writes to plots, leads, or rental_contracts
+    expect(mocks.mutation).not.toHaveBeenCalled();
   });
 });

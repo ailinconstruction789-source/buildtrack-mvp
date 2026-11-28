@@ -12,6 +12,13 @@ import SalesOverlay from './SalesOverlay';
 import { excelReportApi } from '@/lib/sales/excelReportClient';
 import { useSalesWorkspaceMode } from './SalesWorkspaceModeProvider';
 import { isExternalProject } from '@/lib/projectUtils';
+import { classifySalesDeal } from '@/lib/sales/dealClassification';
+import {
+  appendDeduplicatedOrphanRentalRecords,
+  classifyDashboardPlotBucket,
+  classifyDashboardRecord,
+  findActiveOrPendingRentalContract,
+} from '@/lib/sales/dashboardRentalClassification';
 
 const getTodayDateStr = () => {
   const d = new Date();
@@ -320,29 +327,35 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
           };
         });
 
-        // Append sale-stage leads (transferred, booked, contracted, cancelled) from lData not yet in allSalesRows
+        // Append sale-stage & rental-stage leads from lData not yet in allSalesRows (marked isSyntheticLead: true
+        // so occupancy classifier NEVER mistakes synthetic rental leads for purchase sales!)
         (lData || []).forEach((l: any) => {
+          const deal = classifySalesDeal(l);
           const statusLower = (l.status || '').toLowerCase();
           const crmText = `${l.crm_status || ''} ${l.auto_status || ''} ${l.lost_reason || ''}`;
           const isCancelled = statusLower === 'cancelled' || /cancelled|ยกเลิกจอง|หลุดจอง/i.test(crmText);
           const isPreBookingLost = !isCancelled && (statusLower === 'lost' || /lost|ยุติการซื้อ|ไม่สนใจ|ไม่ซื้อ|ไม่จอง/i.test(crmText));
           if (isPreBookingLost && !l.booking_date && !l.transferred_date) return;
+          if (deal.isRentalEnded && !isCancelled && !l.booking_date) return;
 
-          const isTransferred = !isCancelled && (
+          const isTransferred = !isCancelled && !deal.isRentalActive && !deal.isRentalPending && (
             statusLower === 'transferred' ||
             Boolean(l.transferred_date) ||
             /transferred|won|โอนแล้ว|โอนกรรมสิทธิ์/i.test(crmText)
           );
           const isRented = !isCancelled && !isTransferred && (
+            deal.isRentalActive ||
             statusLower === 'rented' ||
             l.rental_status === 'Active' ||
-            /rented|ทำสัญญาเช่าแล้ว|อยู่ระหว่างเช่า/i.test(crmText)
+            l.rental_status === 'Renewed'
           );
-          const isContracted = !isCancelled && !isTransferred && !isRented && (
+          const isRentalPendingLead = !isCancelled && !isTransferred && !isRented && deal.isRentalPending;
+          const isContracted = !isCancelled && !isTransferred && !isRented && !isRentalPendingLead && (
             statusLower === 'contracted' ||
             /contracted|ทำสัญญา|ชำระเงินดาวน์|เตรียมเอกสาร|pre-approval|ยื่นกู้|สินเชื่อผ่าน|รอโอน/i.test(crmText)
           );
           const isBooked = !isCancelled && !isTransferred && !isRented && !isContracted && (
+            isRentalPendingLead ||
             Boolean(l.booking_date) ||
             ['reserved', 'booked'].includes(statusLower) ||
             l.rental_status === 'PendingContract' ||
@@ -388,6 +401,7 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
 
           allSalesRows.push({
             saleId: `lead-${l.id}`,
+            isSyntheticLead: true,
             customerId: l.id,
             customerName: l.customer_name,
             phone: l.phone || '',
@@ -403,9 +417,11 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
             salePrice,
             tdPrice,
             expectedTransferDate,
-            dealType: l.deal_type || (isRented || l.rental_status ? 'rent' : null),
+            dealType: deal.isConvertedToBuy ? 'buy' : (l.deal_type || (isRented || isRentalPendingLead || l.rental_status ? 'rent' : null)),
             rentalProgram: l.rental_program || null,
-            rentalStatus: l.rental_status || null,
+            rentalStatus: deal.isConvertedToBuy
+              ? 'ConvertedToBuy'
+              : (l.rental_status || (isRented ? 'Active' : isRentalPendingLead ? 'PendingContract' : null)),
             rentalStartDate: l.rental_start_date || null,
             contractDate: l.contract_date || null
           });
@@ -651,32 +667,29 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
         const resolvedTdPrice = tdPrice ?? s.tdPrice ?? matchingPlot?.land_appraisal_price ?? salePrice;
         const expectedTransfer = customerExpectedTransferDay(s) || s.expectedTransferDate || extractExpectedTransferDate(s.notes) || extractExpectedTransferDate(matchingLead?.notes) || extractExpectedTransferDate(matchingPlot?.highlight_note) || null;
 
-        const matchingContract = (data.rentalContracts || []).find((c: any) =>
-          (s.customerId && c.lead_id === s.customerId) ||
-          (c.plot_id && (c.plot_id === s.plotId || c.plot_id === matchingPlot?.id)) ||
-          (c.plot_name && c.project_name && c.plot_name === s.plotName && c.project_name === s.projectName)
-        );
+        const matchingContract = findActiveOrPendingRentalContract(data.rentalContracts || [], {
+          customerId: s.customerId,
+          plotId: s.plotId || matchingPlot?.id,
+          plotName: s.plotName,
+          projectName: s.projectName,
+        });
 
-        const dealType = s.dealType || s.deal_type || matchingLead?.deal_type || (matchingContract ? 'rent' : null);
-        const rentalProgram = s.rentalProgram || s.rental_program || matchingLead?.rental_program || matchingContract?.rental_program || null;
-        const rentalStatus = s.rentalStatus || s.rental_status || matchingLead?.rental_status || matchingContract?.status || null;
+        const rentalClassification = classifyDashboardRecord({
+          record: s,
+          matchingLead,
+          matchingPlot,
+          matchingLiveContract: matchingContract,
+          isCancelled,
+          isTransferred,
+        });
+
+        const dealType = rentalClassification.dealType;
+        const rentalProgram = s.rentalProgram || s.rental_program || matchingLead?.rental_program || matchingContract?.program_type || matchingContract?.rental_program || null;
+        const rentalStatus = rentalClassification.rentalStatus;
         const rentalStartDate = matchingContract?.lease_start_date?.split('T')[0] || s.rentalStartDate?.split('T')[0] || matchingLead?.rental_start_date?.split('T')[0] || null;
         const contractDate = s.contractDate?.split('T')[0] || matchingLead?.contract_date?.split('T')[0] || matchingContract?.created_at?.split('T')[0] || null;
-
-        const crmNotesText = `${matchingLead?.crm_status || ''} ${matchingLead?.notes || ''} ${s.notes || ''} ${matchingPlot?.highlight_note || ''}`;
-        const isRental = dealType === 'rent' || dealType === 'rent_to_own' ||
-          Boolean(rentalProgram) ||
-          Boolean(rentalStatus) ||
-          Boolean(matchingContract) ||
-          /จองเช่า|เช่าออม|สัญญาเช่า|Rent \(เช่า\)|^เช่า:/i.test(crmNotesText);
-
-        const isRentalContracted = isRental && (
-          s.stage === 'rented' ||
-          (matchingLead?.status || '').toLowerCase() === 'rented' ||
-          rentalStatus === 'Active' ||
-          matchingContract?.status === 'Active' ||
-          /Rented|ทำสัญญาเช่าแล้ว|อยู่ระหว่างเช่า/i.test(crmNotesText)
-        );
+        const isRental = rentalClassification.isRental;
+        const isRentalContracted = rentalClassification.isRentalActive;
 
         const effectiveStage = isCancelled ? 'cancelled' 
           : isTransferred ? 'transferred' 
@@ -691,12 +704,15 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
         const statusLabel = effectiveStage === 'transferred' ? 'โอนแล้ว' 
           : effectiveStage === 'cancelled' ? 'ยกเลิก' 
           : effectiveStage === 'rented' ? 'ทำสัญญาแล้ว'
+          : rentalClassification.isRentalPending ? 'จองเช่า'
           : ['booked', 'contracted'].includes(effectiveStage) ? 'จองแล้ว' 
           : 'รอโอน';
 
         return {
           id: s.saleId,
           saleId: s.saleId,
+          customerId: s.customerId || matchingLead?.id || null,
+          isSyntheticLead: Boolean(s.isSyntheticLead || String(s.saleId || '').startsWith('lead-')),
           plot_id: s.plotId,
           plot_name: s.plotName || s.plotId,
           project_name: s.projectName,
@@ -720,9 +736,14 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
           rentalStartDate,
           contractDate,
           isRental,
+          isRentalActive: rentalClassification.isRentalActive,
+          isRentalPending: rentalClassification.isRentalPending,
+          isRentalEnded: rentalClassification.isRentalEnded,
           isRentalContracted,
+          isPurchase: rentalClassification.isPurchase,
+          isConflict: rentalClassification.isConflict,
           plot: matchingPlot || { id: s.plotId, plot_name: s.plotName, project_name: s.projectName, selling_price: salePrice, land_appraisal_price: resolvedTdPrice },
-          sale: { ...s, stage: effectiveStage, tdPrice: resolvedTdPrice, expectedTransferDate: expectedTransfer, dealType, rentalProgram, rentalStatus, rentalStartDate, contractDate, isRental, isRentalContracted }
+          sale: { ...s, stage: effectiveStage, tdPrice: resolvedTdPrice, expectedTransferDate: expectedTransfer, dealType, rentalProgram, rentalStatus, rentalStartDate, contractDate, isRental, isRentalContracted, isRentalPending: rentalClassification.isRentalPending }
         };
       });
     } else if (data.fallbackSales && data.fallbackSales.length > 0) {
@@ -735,32 +756,29 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
         const isCancelled = s.contract_status === 'Cancelled' || s.crm_stage === 'cancelled';
         const isTransferred = !isCancelled && (s.contract_status === 'Transferred' || s.crm_stage === 'transferred' || Boolean(s.transferred_at) || Boolean(matchingLead?.transferred_date));
         
-        const matchingContract = (data.rentalContracts || []).find((c: any) =>
-          (s.lead_id && c.lead_id === s.lead_id) ||
-          (c.plot_id && (c.plot_id === s.plot_id || c.plot_id === matchingPlot?.id)) ||
-          (c.plot_name && c.project_name && c.plot_name === matchingPlot?.plot_name && c.project_name === matchingPlot?.project_name)
-        );
+        const matchingContract = findActiveOrPendingRentalContract(data.rentalContracts || [], {
+          customerId: s.lead_id || matchingLead?.id,
+          plotId: s.plot_id || matchingPlot?.id,
+          plotName: matchingPlot?.plot_name,
+          projectName: matchingPlot?.project_name,
+        });
 
-        const dealType = s.deal_type || matchingLead?.deal_type || (matchingContract ? 'rent' : null);
-        const rentalProgram = s.rental_program || matchingLead?.rental_program || matchingContract?.rental_program || null;
-        const rentalStatus = s.rental_status || matchingLead?.rental_status || matchingContract?.status || null;
+        const rentalClassification = classifyDashboardRecord({
+          record: s,
+          matchingLead,
+          matchingPlot,
+          matchingLiveContract: matchingContract,
+          isCancelled,
+          isTransferred,
+        });
+
+        const dealType = rentalClassification.dealType;
+        const rentalProgram = s.rental_program || matchingLead?.rental_program || matchingContract?.program_type || matchingContract?.rental_program || null;
+        const rentalStatus = rentalClassification.rentalStatus;
         const rentalStartDate = matchingContract?.lease_start_date?.split('T')[0] || matchingLead?.rental_start_date?.split('T')[0] || null;
         const contractDate = matchingLead?.contract_date?.split('T')[0] || matchingContract?.created_at?.split('T')[0] || null;
-
-        const crmNotesText = `${matchingLead?.crm_status || ''} ${matchingLead?.notes || ''} ${s.notes || ''} ${matchingPlot?.highlight_note || ''}`;
-        const isRental = dealType === 'rent' || dealType === 'rent_to_own' ||
-          Boolean(rentalProgram) ||
-          Boolean(rentalStatus) ||
-          Boolean(matchingContract) ||
-          /จองเช่า|เช่าออม|สัญญาเช่า|Rent \(เช่า\)|^เช่า:/i.test(crmNotesText);
-
-        const isRentalContracted = isRental && (
-          (s.crm_stage || '').toLowerCase() === 'rented' ||
-          (matchingLead?.status || '').toLowerCase() === 'rented' ||
-          rentalStatus === 'Active' ||
-          matchingContract?.status === 'Active' ||
-          /Rented|ทำสัญญาเช่าแล้ว|อยู่ระหว่างเช่า/i.test(crmNotesText)
-        );
+        const isRental = rentalClassification.isRental;
+        const isRentalContracted = rentalClassification.isRentalActive;
 
         const effectiveStage = isCancelled ? 'cancelled' 
           : isTransferred ? 'transferred' 
@@ -774,6 +792,9 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
 
         return {
           id: s.id,
+          saleId: s.id,
+          customerId: s.lead_id || matchingLead?.id || null,
+          isSyntheticLead: false,
           plot_id: s.plot_id,
           plot_name: matchingPlot?.plot_name || s.plot_id,
           project_name: matchingPlot?.project_name || 'ไม่ระบุ',
@@ -794,11 +815,20 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
           rentalStartDate,
           contractDate,
           isRental,
+          isRentalActive: rentalClassification.isRentalActive,
+          isRentalPending: rentalClassification.isRentalPending,
+          isRentalEnded: rentalClassification.isRentalEnded,
           isRentalContracted,
+          isPurchase: rentalClassification.isPurchase,
+          isConflict: rentalClassification.isConflict,
           plot: matchingPlot,
-          sale: { ...s, dealType, rentalProgram, rentalStatus, rentalStartDate, contractDate, isRental, isRentalContracted }
+          sale: { ...s, dealType, rentalProgram, rentalStatus, rentalStartDate, contractDate, isRental, isRentalContracted, isRentalPending: rentalClassification.isRentalPending }
         };
       });
+    }
+
+    if (!data.canonical && (data.rentalContracts || []).length > 0) {
+      records = appendDeduplicatedOrphanRentalRecords(records, data.rentalContracts || [], data.plots || []);
     }
 
     // Filter records by project if specified. When viewing all, exclude external projects (งานนอกโครงการ / บ้านสั่งสร้างพิเศษ)
@@ -990,34 +1020,23 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       }
 
       const plotSales = salesByPlot.get(p.id) || [];
-
-      // 1. Sale transferred in selectedYear (up to targetDateStr)
-      const transferInYear = plotSales.find((s: any) => 
-        ['transferred', 'handover'].includes((s.stage || s.status || '').toLowerCase()) &&
-        s.transferDate && s.transferDate.startsWith(selectedYear) && s.transferDate <= targetDateStr
+      const plotContracts = (data.rentalContracts || []).filter((c: any) =>
+        c.plot_id === p.id || (c.project_name === p.project_name && c.plot_name === p.plot_name)
+      );
+      const plotLeads = (data.leads || []).filter((l: any) =>
+        l.interested_plot_id === p.id ||
+        (l.project_name === p.project_name && l.interested_plot_name && l.interested_plot_name === p.plot_name)
       );
 
-      // 2. Sale transferred in a prior year (< selectedYear-01-01)
-      const transferPrior = plotSales.find((s: any) => 
-        ['transferred', 'handover'].includes((s.stage || s.status || '').toLowerCase()) &&
-        s.transferDate && s.transferDate < `${selectedYear}-01-01`
-      );
-
-      // Check if plot is an already-contracted active rental (occupied, not waiting and not available)
-      const isPlotRentedActive = plotSales.some((s: any) =>
-        s.isRental && (s.isRentalContracted || s.rentalStatus === 'Active' || s.stage === 'rented' || s.status === 'Rented')
-      ) || (data.rentalContracts || []).some((c: any) =>
-        c.status === 'Active' && (c.plot_id === p.id || (c.project_name === p.project_name && c.plot_name === p.plot_name))
-      );
-
-      // 3. Active waiting sale (booked on or before targetDateStr, not cancelled, not transferred yet, not an active rental)
-      const waitingSale = plotSales.find((s: any) => 
-        s.stage !== 'cancelled' && s.status !== 'Cancelled' &&
-        !['transferred', 'handover'].includes((s.stage || s.status || '').toLowerCase()) &&
-        !(s.isRental && (s.isRentalContracted || s.rentalStatus === 'Active' || s.stage === 'rented' || s.status === 'Rented')) &&
-        (!s.bookDate || s.bookDate <= targetDateStr) &&
-        (!s.cancelDate || s.cancelDate > targetDateStr)
-      );
+      const plotClass = classifyDashboardPlotBucket({
+        plot: p,
+        plotRecords: plotSales,
+        plotContracts,
+        plotLeads,
+        selectedYear,
+        targetDateStr,
+        isCanonical: Boolean(data.canonical),
+      });
 
       let price = Number(p.selling_price || 0);
       let appraisal = Number(p.land_appraisal_price || 0);
@@ -1025,12 +1044,12 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
       projectGroups[proj].total++;
       // A completed imported sale with an unknown day is sold stock, but has no
       // justified calendar year. Keep it out of both dated totals and vacancies.
-      if (data.canonical && plotSales.some((s: any) => ['transferred', 'handover'].includes(s.stage) && !s.transferDate)
-        && !transferInYear && !transferPrior) return;
+      if (plotClass.bucket === 'skip_unknown_canonical_transfer') return;
 
-      if (transferInYear) {
-        price = data.canonical ? Number(transferInYear.salePrice ?? 0) : transferInYear.salePrice ? Number(transferInYear.salePrice) : price;
-        appraisal = transferInYear.tdPrice || transferInYear.sale?.tdPrice || appraisal || price;
+      if (plotClass.bucket === 'transferred') {
+        const transferInYear = plotClass.transferInYear;
+        price = data.canonical ? Number(transferInYear?.salePrice ?? 0) : transferInYear?.salePrice ? Number(transferInYear.salePrice) : price;
+        appraisal = transferInYear?.tdPrice || transferInYear?.sale?.tdPrice || appraisal || price;
         if (appraisal <= 0) appraisal = price;
 
         projectGroups[proj].transferred++;
@@ -1038,8 +1057,8 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
         projectGroups[proj].baseVal += Number(p.selling_price || 0);
         projectGroups[proj].transAppraisal += appraisal;
         projectGroups[proj].transferredPlots.push({ ...p, activeSale: transferInYear, price, appraisal });
-      } else if (isPlotRentedActive) {
-        const rentedSale = plotSales.find((s: any) => s.isRental);
+      } else if (plotClass.bucket === 'rented') {
+        const rentedSale = plotClass.rentedRecord;
         // Prioritize selling_price from plots table (Pricing tab), fallback to activeSale or p.selling_price
         price = Number(p.selling_price || 0) || (rentedSale?.salePrice ? Number(rentedSale.salePrice) : price);
         appraisal = Number(p.land_appraisal_price || 0) || rentedSale?.tdPrice || rentedSale?.sale?.tdPrice || price;
@@ -1048,9 +1067,9 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
         projectGroups[proj].rented++;
         projectGroups[proj].rentVal += price;
         projectGroups[proj].baseVal += Number(p.selling_price || 0);
-        projectGroups[proj].rentedPlots.push({ ...p, activeSale: rentedSale, price, appraisal });
-      } else if (waitingSale || (!data.canonical && !transferPrior && !isPlotRentedActive && ['booked', 'contracted', 'reserved'].includes((p.sale_status || '').toLowerCase()))) {
-        const sale = waitingSale || plotSales.find((s: any) => s.stage !== 'cancelled' && s.status !== 'Cancelled');
+        projectGroups[proj].rentedPlots.push({ ...p, activeSale: rentedSale, price, appraisal, isPendingRental: plotClass.isPendingRental });
+      } else if (plotClass.bucket === 'waiting') {
+        const sale = plotClass.waitingSale;
         price = data.canonical ? Number(sale?.salePrice ?? 0) : sale?.salePrice ? Number(sale.salePrice) : price;
         appraisal = sale?.tdPrice || sale?.sale?.tdPrice || appraisal || price;
         if (appraisal <= 0) appraisal = price;
@@ -1060,8 +1079,8 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
         projectGroups[proj].baseVal += Number(p.selling_price || 0);
         projectGroups[proj].waitAppraisal += appraisal;
         projectGroups[proj].waitingPlots.push({ ...p, activeSale: sale, price, appraisal });
-      } else if (transferPrior || (!data.canonical && !transferInYear && (p.sale_status || '').toLowerCase() === 'transferred')) {
-        const sale = transferPrior || plotSales.find((s: any) => ['transferred', 'handover'].includes((s.stage || s.status || '').toLowerCase()));
+      } else if (plotClass.bucket === 'priorTransferred') {
+        const sale = plotClass.transferPrior;
         price = data.canonical ? Number(sale?.salePrice ?? 0) : sale?.salePrice ? Number(sale.salePrice) : price;
         appraisal = sale?.tdPrice || sale?.sale?.tdPrice || appraisal || price;
         if (appraisal <= 0) appraisal = price;
@@ -1070,12 +1089,16 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
         projectGroups[proj].priorTransVal += price;
         projectGroups[proj].priorTransAppraisal += appraisal;
         projectGroups[proj].priorTransferredPlots.push({ ...p, activeSale: sale, price, appraisal });
-      } else {
+      } else if (plotClass.bucket === 'available') {
         if (appraisal <= 0) appraisal = price;
         projectGroups[proj].available++;
         projectGroups[proj].availVal += price;
         projectGroups[proj].baseVal += Number(p.selling_price || 0);
         projectGroups[proj].availablePlots.push({ ...p, price, appraisal });
+      } else {
+        // Non-vacant / RLS-restricted / conflicting / unknown plots are NEVER counted as available
+        // and NEVER inflated into purchase sales revenue.
+        projectGroups[proj].baseVal += Number(p.selling_price || 0);
       }
     });
 
@@ -1247,8 +1270,19 @@ export default function SalesDashboardExcelStyle({ project, onViewDefects, isAct
     });
     const rentContractedPlots = Array.from(rentContractedPlotsMap.values());
 
+    const allRentedPendingPlots = allProjectsList.flatMap(([_, stats]) =>
+      (stats.rentedPlots || []).filter((p: any) => p.isPendingRental)
+    );
     const saleWaitingPlots = allWaitingPlots.filter(p => !isPlotRental(p) && isPlotExpectingThisMonth(p));
-    const rentWaitingPlots = allWaitingPlots.filter(p => isPlotRental(p) && isRentalWaitingThisMonth(p));
+    const rentWaitingMap = new Map<string, any>();
+    [...allRentedPendingPlots, ...allWaitingPlots.filter(p => isPlotRental(p))].forEach(p => {
+      if (!isRentalWaitingThisMonth(p)) return;
+      const key = p.id || `${p.project_name}-${p.plot_name}`;
+      if (key && !rentWaitingMap.has(key)) {
+        rentWaitingMap.set(key, p);
+      }
+    });
+    const rentWaitingPlots = Array.from(rentWaitingMap.values());
 
     const saleTransferredVal = saleTransferredPlots.reduce((sum: number, r: any) => sum + (r.salePrice || 0), 0);
     const saleWaitingVal = saleWaitingPlots.reduce((sum: number, p: any) => sum + (p.price || 0), 0);

@@ -22,6 +22,14 @@ import RentalPortfolioAnalytics from './RentalPortfolioAnalytics';
 import AvailablePlotSelect from './AvailablePlotSelect';
 import type { InterestedPlot } from '@/lib/sales/plotAvailability';
 import { recheckInterestedPlot } from '@/lib/sales/plotAvailabilityClient';
+import { canEditSalesRole, getLeadStage } from '@/lib/sales/leadStage';
+import {
+  classifySalesDeal,
+  RENTAL_PENDING_DISPLAY_LABEL,
+  RENTAL_SIGN_CONTRACT_BUTTON_LABEL,
+  resolveCanonicalPlotId,
+} from '@/lib/sales/dealClassification';
+import CancelRentalBookingModal from './CancelRentalBookingModal';
 
 interface LeadTrackerViewProps {
   leads: Lead[];
@@ -62,12 +70,15 @@ export default function LeadTrackerView({
   const [showFollowUpModal, setShowFollowUpModal] = useState<{ isOpen: boolean; lead: Lead | null }>({ isOpen: false, lead: null });
   const [showVisitModal, setShowVisitModal] = useState<{ isOpen: boolean; lead: Lead | null }>({ isOpen: false, lead: null });
   const [showBookingModal, setShowBookingModal] = useState<{ isOpen: boolean; lead: Lead | null }>({ isOpen: false, lead: null });
-  const [showRentalModal, setShowRentalModal] = useState<{ isOpen: boolean; lead: Lead | null; plotId?: string | null }>({ isOpen: false, lead: null });
+  const [showRentalModal, setShowRentalModal] = useState<{ isOpen: boolean; lead: Lead | null; plotId?: string | null; defaultMode?: 'booking' | 'contract' }>({ isOpen: false, lead: null });
   const [showRentalActionModal, setShowRentalActionModal] = useState<{ isOpen: boolean; lead: Lead | null; plot?: any | null }>({ isOpen: false, lead: null });
   const [showRentalPaymentModal, setShowRentalPaymentModal] = useState<{ isOpen: boolean; lead: Lead | null; plotId?: string | null }>({ isOpen: false, lead: null });
   const [showLostModal, setShowLostModal] = useState<{ isOpen: boolean; lead: Lead | null }>({ isOpen: false, lead: null });
   const [showSurveyModal, setShowSurveyModal] = useState<{ isOpen: boolean; lead: Lead | null }>({ isOpen: false, lead: null });
   const [showAdminDeleteModal, setShowAdminDeleteModal] = useState<{ isOpen: boolean; lead: Lead | null }>({ isOpen: false, lead: null });
+  const [cancelRentalTarget, setCancelRentalTarget] = useState<Lead | null>(null);
+  const cancellingRentalId = cancelRentalTarget?.id ?? null;
+  const canWrite = user?.role != null ? canEditSalesRole(user.role) : true;
   
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [newLeadPlot, setNewLeadPlot] = useState<InterestedPlot | null>(null);
@@ -625,8 +636,20 @@ export default function LeadTrackerView({
         <RentalAlertsWidget
           projectName={filterProject !== 'all' ? filterProject : undefined}
           onOpenContractAction={(cId, pId, lId) => {
+            if (!canWrite) return;
             const l = leads.find(lead => lead.id === lId || lead.interested_plot_id === pId);
-            if (l) setShowRentalActionModal({ isOpen: true, lead: l });
+            if (!l) return;
+            const deal = classifySalesDeal(l);
+            if (deal.isRentalActive) {
+              setShowRentalActionModal({ isOpen: true, lead: l });
+            } else if (deal.isRentalPending) {
+              setShowRentalModal({
+                isOpen: true,
+                lead: l,
+                plotId: resolveCanonicalPlotId(l, plots),
+                defaultMode: 'contract',
+              });
+            }
           }}
           onOpenPaymentLedger={(cId, pId, lId) => {
             const l = leads.find(lead => lead.id === lId || lead.interested_plot_id === pId);
@@ -716,15 +739,16 @@ export default function LeadTrackerView({
               ) : (
                 filteredLeads.map((l, index) => {
                   const hasVisited = !!l.actual_visit_date;
-                  const isBooked = l.crm_status?.includes('Booked') || l.crm_status?.includes('จอง') || l.status === 'Reserved';
-                  const isLost = l.crm_status?.includes('Lost') || l.status === 'Cancelled';
-                  const isRented = Boolean(
-                    l.rental_status === 'Active' ||
-                    l.crm_status?.includes('เช่า') ||
-                    l.crm_status?.includes('Rented') ||
-                    l.crm_status?.includes('Rent-to-Own')
-                  );
+                  const deal = classifySalesDeal(l);
+                  const leadStage = getLeadStage(l);
+                  const isRentalPending = deal.isRentalPending;
+                  const isRentalActive = deal.isRentalActive;
+                  const isConflict = deal.isConflict;
+                  const isBooked = deal.isPurchaseFlow && ['booked', 'transferred'].includes(leadStage);
+                  const isLost = deal.isRentalEnded || leadStage === 'lost';
                   const rentalMeta = l.rental_program ? RENTAL_PROGRAM_DETAILS[l.rental_program] : null;
+                  const canonicalPlotId = resolveCanonicalPlotId(l, plots);
+                  const isCancellingThisRental = cancellingRentalId === l.id;
 
                   return (
                     <tr key={l.id} className="hover:bg-slate-50/80 transition-colors group">
@@ -787,20 +811,34 @@ export default function LeadTrackerView({
                         </button>
                       </td>
                       <td className="p-3 whitespace-nowrap">
-                        <select
-                          value={l.crm_status || 'Follow-up — อยู่ระหว่างติดตาม'}
-                          onChange={e => handleUpdateCRMStatus(l.id, e.target.value)}
-                          className={`text-xs font-bold px-2 py-1 rounded-lg border focus:outline-none cursor-pointer ${
-                            isRented ? 'bg-cyan-50 text-cyan-900 border-cyan-300' :
-                            isBooked ? 'bg-orange-50 text-orange-800 border-orange-200' :
-                            isLost ? 'bg-rose-50 text-rose-800 border-rose-200' :
-                            'bg-slate-50 text-slate-700 border-slate-200'
-                          }`}
-                        >
-                          {CRM_STATUS_LIST.map(s => (
-                            <option key={s} value={s}>{s}</option>
-                          ))}
-                        </select>
+                        {isConflict ? (
+                          <span className="inline-block text-xs font-bold px-2.5 py-1 rounded-lg border bg-rose-50 text-rose-800 border-rose-300">
+                            ⚠️ ข้อมูลสถานะดีลขัดแย้ง
+                          </span>
+                        ) : isRentalPending ? (
+                          <span className="inline-block text-xs font-bold px-2.5 py-1 rounded-lg border bg-cyan-50 text-cyan-900 border-cyan-300">
+                            {RENTAL_PENDING_DISPLAY_LABEL}
+                          </span>
+                        ) : (
+                          <select
+                            disabled={!canWrite}
+                            value={l.crm_status || 'Follow-up — อยู่ระหว่างติดตาม'}
+                            onChange={e => {
+                              if (!canWrite) return;
+                              handleUpdateCRMStatus(l.id, e.target.value);
+                            }}
+                            className={`text-xs font-bold px-2 py-1 rounded-lg border focus:outline-none cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${
+                              isRentalActive ? 'bg-cyan-50 text-cyan-900 border-cyan-300' :
+                              isBooked ? 'bg-orange-50 text-orange-800 border-orange-200' :
+                              isLost ? 'bg-rose-50 text-rose-800 border-rose-200' :
+                              'bg-slate-50 text-slate-700 border-slate-200'
+                            }`}
+                          >
+                            {CRM_STATUS_LIST.map(s => (
+                              <option key={s} value={s}>{s}</option>
+                            ))}
+                          </select>
+                        )}
                       </td>
                       <td className="p-3 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
@@ -813,8 +851,8 @@ export default function LeadTrackerView({
                             <Sparkles size={12} className="text-indigo-600" /> SOP พาชม
                           </button>
 
-                          {/* Button 1: Convert to Booking (If not booked/lost/rented) */}
-                          {!isBooked && !isLost && !isRented && (
+                          {/* Button 1: Convert to Booking (If not booked/lost/rented/pending/conflict) */}
+                          {canWrite && !isBooked && !isLost && !isRentalPending && !isRentalActive && !isConflict && (
                             <button
                               onClick={() => setShowBookingModal({ isOpen: true, lead: l })}
                               className="bg-orange-600 hover:bg-orange-700 text-white font-bold px-2.5 py-1 rounded-lg text-xs flex items-center gap-1 shadow-sm transition-colors cursor-pointer"
@@ -825,9 +863,9 @@ export default function LeadTrackerView({
                           )}
 
                           {/* Button 1.5: Rental Contract Button (Right next to Booking button) */}
-                          {!isBooked && !isLost && !isRented && (
+                          {canWrite && !isBooked && !isLost && !isRentalPending && !isRentalActive && !isConflict && (
                             <button
-                              onClick={() => setShowRentalModal({ isOpen: true, lead: l, plotId: l.interested_plot_id })}
+                              onClick={() => setShowRentalModal({ isOpen: true, lead: l, plotId: canonicalPlotId })}
                               className="bg-gradient-to-r from-blue-700 to-indigo-700 hover:from-blue-800 hover:to-indigo-800 text-white font-bold px-2.5 py-1 rounded-lg text-xs flex items-center gap-1 shadow-sm transition-colors cursor-pointer"
                               title="ทำสัญญาเช่า / เช่าออม (แบบ A, B, C)"
                             >
@@ -835,23 +873,54 @@ export default function LeadTrackerView({
                             </button>
                           )}
 
-                          {/* Button 1.6: Manage Lease & Track Payments (When actively renting) */}
-                          {isRented && (
+                          {/* Button 1.55: Pending Rental Booking -> Sign Real Rental Contract / Safe Cancel */}
+                          {canWrite && isRentalPending && (
                             <>
                               <button
-                                onClick={() => setShowRentalPaymentModal({ isOpen: true, lead: l, plotId: l.interested_plot_id })}
+                                onClick={() => setShowRentalModal({
+                                  isOpen: true,
+                                  lead: l,
+                                  plotId: canonicalPlotId,
+                                  defaultMode: 'contract',
+                                })}
+                                className="bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800 text-white font-bold px-2.5 py-1 rounded-lg text-xs flex items-center gap-1 shadow-sm transition-colors cursor-pointer"
+                                title="ทำสัญญาเช่าจริงจากรายการจองเช่า"
+                              >
+                                <FileText size={12} /> {RENTAL_SIGN_CONTRACT_BUTTON_LABEL}
+                              </button>
+                              <button
+                                disabled={isCancellingThisRental}
+                                onClick={() => {
+                                  if (!canWrite) return;
+                                  setCancelRentalTarget(l);
+                                }}
+                                className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold px-2 py-1 rounded-lg text-xs flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
+                                title="ยกเลิกการจองเช่าและคืนแปลง"
+                              >
+                                {isCancellingThisRental ? 'กำลังยกเลิก...' : 'ยกเลิกจองเช่า'}
+                              </button>
+                            </>
+                          )}
+
+                          {/* Button 1.6: Manage Lease & Track Payments (When actively renting ONLY) */}
+                          {isRentalActive && (
+                            <>
+                              <button
+                                onClick={() => setShowRentalPaymentModal({ isOpen: true, lead: l, plotId: canonicalPlotId })}
                                 className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-2 py-1 rounded-lg text-xs flex items-center gap-1 shadow-sm transition-colors cursor-pointer"
                                 title="ตารางติดตามการจ่ายค่าเช่ารายเดือน"
                               >
                                 <CreditCard size={12} /> ค่าเช่า
                               </button>
-                              <button
-                                onClick={() => setShowRentalActionModal({ isOpen: true, lead: l })}
-                                className="bg-gradient-to-r from-cyan-700 to-blue-800 hover:from-cyan-800 hover:to-blue-900 text-white font-bold px-2 py-1 rounded-lg text-xs flex items-center gap-1 shadow-sm transition-colors cursor-pointer"
-                                title="จัดการสัญญาเช่า: เปลี่ยนเป็นซื้อ / ต่อสัญญา / ย้ายออก"
-                              >
-                                <Key size={12} /> สัญญา
-                              </button>
+                              {canWrite && (
+                                <button
+                                  onClick={() => setShowRentalActionModal({ isOpen: true, lead: l })}
+                                  className="bg-gradient-to-r from-cyan-700 to-blue-800 hover:from-cyan-800 hover:to-blue-900 text-white font-bold px-2 py-1 rounded-lg text-xs flex items-center gap-1 shadow-sm transition-colors cursor-pointer"
+                                  title="จัดการสัญญาเช่า: เปลี่ยนเป็นซื้อ / ต่อสัญญา / ย้ายออก"
+                                >
+                                  <Key size={12} /> สัญญา
+                                </button>
+                              )}
                             </>
                           )}
 
@@ -865,7 +934,7 @@ export default function LeadTrackerView({
                           </button>
 
                           {/* Button 3: Lost */}
-                          {!isLost && (
+                          {canWrite && !isLost && !isRentalPending && !isRentalActive && !isConflict && (
                             <button
                               onClick={() => setShowLostModal({ isOpen: true, lead: l })}
                               className="bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold p-1.5 rounded-lg text-xs transition-colors cursor-pointer"
@@ -1463,6 +1532,7 @@ export default function LeadTrackerView({
           lead={showRentalModal.lead}
           plotId={showRentalModal.plotId}
           projectName={showRentalModal.lead?.project_name || (filterProject !== 'all' ? filterProject : 'ไอลิน สันทราย 2')}
+          defaultMode={showRentalModal.defaultMode}
           user={user}
           onSaved={onRefresh}
         />
@@ -1506,6 +1576,23 @@ export default function LeadTrackerView({
           }}
         />
       )}
+
+      {/* 🚫 Shared Cancel Rental Booking Reason Modal */}
+      <CancelRentalBookingModal
+        isOpen={Boolean(cancelRentalTarget)}
+        lead={cancelRentalTarget}
+        actorId={user?.displayName || user?.username || user?.id || 'Sales'}
+        actorRole={user?.role}
+        canManage={canWrite}
+        onClose={() => setCancelRentalTarget(null)}
+        onCompleted={result => {
+          if (result.message) alert(result.message);
+          if (result.shouldRefresh) onRefresh();
+        }}
+        onReloadRequired={() => {
+          onRefresh();
+        }}
+      />
 
     </div>
   );

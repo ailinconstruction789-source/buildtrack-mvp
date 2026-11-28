@@ -1,6 +1,6 @@
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import SalesDashboardExcelStyle from '../SalesDashboardExcelStyle';
 
 vi.mock('@/lib/sales/fetchWithoutLimit', () => ({
@@ -203,6 +203,13 @@ vi.mock('recharts', () => ({
 describe('SalesDashboard Card 3 Pipeline - Sales vs Rental Separation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Fixture data uses October 2026 dates (2026-10-28 waiting transfer, 2026-10-01 lease start)
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-20T05:00:00Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('correctly separates monthly sales transfers from rental contracts and pending bookings', async () => {

@@ -4,11 +4,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import RentalContractModal from '../RentalContractModal';
 
 const mocks = vi.hoisted(() => ({
-  from: vi.fn()
+  from: vi.fn(),
+  rpc: vi.fn(),
 }));
 
 vi.mock('@/lib/supabase', () => ({
-  supabase: { from: mocks.from }
+  supabase: { from: mocks.from, rpc: (...args: any[]) => mocks.rpc(...args) }
 }));
 
 vi.mock('../LeadPicker', () => ({
@@ -80,7 +81,7 @@ describe('RentalContractModal - Plot ordering, Booked plots & Historical dates',
       rawMockImpl(((table: string) => ensureChainable(fn(table))) as any)) as any;
   });
 
-  it('sorts plots in natural numerical order and shows booked plots with 🟡 ติดจอง', async () => {
+  it('sorts vacant plots in natural numerical order and withholds other customers booked/transferred plots via canonical occupancy', async () => {
     const mockPlots = [
       { id: 'p10', plot_name: 'แปลง 10', sale_status: 'Available', has_customer: false, price: 3000000, project_name: 'ไอลิน สันทราย 2' },
       { id: 'p2', plot_name: 'แปลง 2', sale_status: 'Booked', has_customer: true, price: 2800000, project_name: 'ไอลิน สันทราย 2' },
@@ -117,20 +118,15 @@ describe('RentalContractModal - Plot ordering, Booked plots & Historical dates',
 
     const options = screen.getAllByRole('option');
     const plotOptions = options.filter(o => o.getAttribute('value')?.startsWith('p'));
-    
-    // Natural order check: แปลง 1, แปลง 2, แปลง 10 (แปลง 20 is transferred so excluded)
-    expect(plotOptions.map(o => o.getAttribute('value'))).toEqual(['p1', 'p2', 'p10']);
 
-    // Check status tags
+    // Natural order check: แปลง 1 before แปลง 10; other customer's booked p2 and transferred p20 are withheld
+    expect(plotOptions.map(o => o.getAttribute('value'))).toEqual(['p1', 'p10']);
+
     const optP1 = plotOptions.find(o => o.getAttribute('value') === 'p1');
-    const optP2 = plotOptions.find(o => o.getAttribute('value') === 'p2');
     const optP10 = plotOptions.find(o => o.getAttribute('value') === 'p10');
 
     expect(optP1?.textContent).toContain('🟢 ว่าง');
     expect(optP1?.hasAttribute('disabled')).toBe(false);
-
-    expect(optP2?.textContent).toContain('🟡 ติดจอง');
-    expect(optP2?.hasAttribute('disabled')).toBe(true);
 
     expect(optP10?.textContent).toContain('🟢 ว่าง');
     expect(optP10?.hasAttribute('disabled')).toBe(false);
@@ -424,11 +420,22 @@ describe('RentalContractModal - Plot ordering, Booked plots & Historical dates',
     expect(screen.getByText(/35,789.47 บาท/i)).toBeInTheDocument();
   });
 
-  it('submits rental booking successfully without non-existent columns', async () => {
+  it('submits rental booking via atomic sales_tx_book_rental RPC with zero direct plots/leads writes', async () => {
     const onSaved = vi.fn();
     const onClose = vi.fn();
-    let leadsPayload: any = null;
-    let plotsUpdatedPayload: any = null;
+    const directTableWrites: string[] = [];
+
+    mocks.rpc.mockResolvedValueOnce({
+      data: {
+        command: 'rental_book',
+        leadId: 'lead-test-1',
+        contractId: 'rc-book-1',
+        plotId: 'p1',
+        projectName: 'ไอลิน สันทราย 2',
+        rentalStatus: 'PendingContract',
+      },
+      error: null,
+    });
 
     mocks.from.mockImplementation((table: string) => {
       if (table === 'plots') {
@@ -439,40 +446,23 @@ describe('RentalContractModal - Plot ordering, Booked plots & Historical dates',
               error: null
             })
           }),
-          update: vi.fn().mockImplementation((payload: any) => {
-            plotsUpdatedPayload = payload;
-            return {
-              eq: vi.fn().mockResolvedValue({ data: { id: 'p1' }, error: null })
-            };
+          update: vi.fn().mockImplementation(() => {
+            directTableWrites.push('plots.update');
+            return { eq: vi.fn().mockResolvedValue({ data: null, error: null }) };
           })
-        };
-      }
-      if (table === 'leads') {
-        return {
-          update: vi.fn().mockImplementation((payload: any) => {
-            leadsPayload = payload;
-            return {
-              eq: vi.fn().mockResolvedValue({ data: null, error: null })
-            };
-          }),
-          insert: vi.fn().mockImplementation((payload: any[]) => {
-            leadsPayload = payload[0];
-            return {
-              select: vi.fn().mockReturnValue({
-                single: vi.fn().mockResolvedValue({ data: { id: 'lead-new' }, error: null })
-              })
-            };
-          })
-        };
-      }
-      if (table === 'status_history') {
-        return {
-          insert: vi.fn().mockResolvedValue({ data: null, error: null })
         };
       }
       return {
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockResolvedValue({ data: [], error: null })
+        }),
+        update: vi.fn().mockImplementation(() => {
+          directTableWrites.push(`${table}.update`);
+          return { eq: vi.fn().mockResolvedValue({ data: null, error: null }) };
+        }),
+        insert: vi.fn().mockImplementation(() => {
+          directTableWrites.push(`${table}.insert`);
+          return Promise.resolve({ data: null, error: null });
         })
       };
     });
@@ -497,12 +487,10 @@ describe('RentalContractModal - Plot ordering, Booked plots & Historical dates',
       />
     );
 
-    // Wait for plots to finish loading
     await waitFor(() => {
       expect(screen.queryByText(/กำลังโหลดแปลง.../i)).not.toBeInTheDocument();
     });
 
-    // Submit booking
     const submitBtn = screen.getByRole('button', { name: /ยืนยันบันทึกการจองเช่า \(ล็อกแปลง\)/i });
     fireEvent.click(submitBtn);
 
@@ -511,23 +499,24 @@ describe('RentalContractModal - Plot ordering, Booked plots & Historical dates',
       expect(onSaved).toHaveBeenCalled();
     });
 
-    // Check payload sent to leads: must NOT contain expected_transfer_date
-    expect(leadsPayload).toBeDefined();
-    expect(leadsPayload.expected_transfer_date).toBeUndefined();
-    expect(leadsPayload.deal_type).toBe('rent');
-    expect(leadsPayload.status).toBe('Reserved');
-
-    // Check payload sent to plots: must NOT contain customer_name or guarded stock columns (sale_status, has_customer)
-    expect(plotsUpdatedPayload).toBeDefined();
-    expect(plotsUpdatedPayload.customer_name).toBeUndefined();
-    expect(plotsUpdatedPayload.sale_status).toBeUndefined();
-    expect(plotsUpdatedPayload.has_customer).toBeUndefined();
-    expect(plotsUpdatedPayload.current_tenant_name).toBe('คุณสมศักดิ์ จองเช่า');
-    expect(plotsUpdatedPayload.rental_program).toBe('program_a');
-    expect(plotsUpdatedPayload.highlight_note).toContain('จองเช่า');
+    // Transactional RPC called with clean domain payload; DB-level column/guard integrity verified in PG17 integration suite
+    expect(mocks.rpc).toHaveBeenCalledWith(
+      'sales_tx_book_rental',
+      expect.objectContaining({
+        p_request_id: expect.any(String),
+        p_payload: expect.objectContaining({
+          projectName: 'ไอลิน สันทราย 2',
+          plotId: 'p1',
+          leadId: 'lead-test-1',
+          tenantName: 'คุณสมศักดิ์ จองเช่า',
+          programType: 'program_a',
+        }),
+      })
+    );
+    expect(directTableWrites).toHaveLength(0);
   });
 
-  it('passes live guard_booking_plot_stock trigger on ready_for_sale plots for both rental booking and contract signing', async () => {
+  it('routes both rental booking and contract signing on ready_for_sale plots through guarded RPCs without direct client plots writes', async () => {
     const plotRow: Record<string, any> = {
       id: 'ไอลิน 3-68',
       plot_name: '68',
@@ -538,55 +527,48 @@ describe('RentalContractModal - Plot ordering, Booked plots & Historical dates',
       rental_program: null,
       price: 9950000
     };
-    const simulatedStockGuard = (payload: Record<string, any>) => {
-      if ('sale_status' in payload || 'has_customer' in payload) {
-        return { data: null, error: { message: 'EXTERNAL_WRITER_STOCK_COMMAND_REQUIRED' } };
-      }
-      Object.assign(plotRow, payload);
-      return { data: [{ id: plotRow.id }], count: 1, error: null };
-    };
+    const directPlotsWrites: any[] = [];
 
-    const makeChain = (resolver: () => Promise<any>) => {
-      const chain: any = {
-        eq: vi.fn().mockImplementation(() => chain),
-        neq: vi.fn().mockImplementation(() => chain),
-        in: vi.fn().mockImplementation(() => chain),
-        is: vi.fn().mockImplementation(() => chain),
-        select: vi.fn().mockImplementation(() => chain),
-        single: vi.fn().mockImplementation(() => resolver()),
-        then: (resolve: any, reject: any) => resolver().then(resolve, reject)
-      };
-      return chain;
-    };
+    mocks.rpc
+      .mockResolvedValueOnce({
+        data: {
+          command: 'rental_book',
+          leadId: 'lead-68',
+          contractId: 'rc-68',
+          plotId: 'ไอลิน 3-68',
+          projectName: 'ไอลิน 3',
+          rentalStatus: 'PendingContract',
+        },
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: {
+          command: 'rental_sign_contract',
+          leadId: 'lead-68',
+          contractId: 'rc-68',
+          plotId: 'ไอลิน 3-68',
+          projectName: 'ไอลิน 3',
+          rentalStatus: 'Active',
+        },
+        error: null,
+      });
 
     mocks.from.mockImplementation((table: string) => {
       if (table === 'plots') {
         return {
-          select: vi.fn().mockImplementation(() => makeChain(async () => ({ data: [{ ...plotRow }], error: null }))),
-          update: vi.fn().mockImplementation((payload: Record<string, any>) => makeChain(async () => simulatedStockGuard(payload)))
-        };
-      }
-      if (table === 'leads') {
-        return {
-          select: vi.fn().mockImplementation(() => makeChain(async () => ({ data: [], error: null }))),
-          update: vi.fn().mockImplementation(() => makeChain(async () => ({ data: { id: 'lead-68' }, error: null })))
-        };
-      }
-      if (table === 'rental_contracts') {
-        return {
-          select: vi.fn().mockImplementation(() => makeChain(async () => ({ data: [], error: null }))),
-          insert: vi.fn().mockImplementation(() => makeChain(async () => ({ data: { id: 'rc-68' }, error: null })))
-        };
-      }
-      if (table === 'sales') {
-        return {
-          select: vi.fn().mockImplementation(() => makeChain(async () => ({ data: [], error: null }))),
-          update: vi.fn().mockImplementation(() => makeChain(async () => ({ data: [], error: null })))
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({ data: [{ ...plotRow }], error: null })
+          }),
+          update: vi.fn().mockImplementation((payload: any) => {
+            directPlotsWrites.push(payload);
+            return { eq: vi.fn().mockResolvedValue({ data: null, error: { message: 'EXTERNAL_WRITER_STOCK_COMMAND_REQUIRED' } }) };
+          })
         };
       }
       return {
-        select: vi.fn().mockImplementation(() => makeChain(async () => ({ data: [], error: null }))),
-        insert: vi.fn().mockImplementation(() => makeChain(async () => ({ data: null, error: null })))
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: [], error: null })
+        })
       };
     });
 
@@ -620,13 +602,12 @@ describe('RentalContractModal - Plot ordering, Booked plots & Historical dates',
       expect(onBookingSaved).toHaveBeenCalledOnce();
       expect(onBookingClose).toHaveBeenCalledOnce();
     });
-    expect(plotRow.sale_status).toBe('ready_for_sale');
-    expect(plotRow.has_customer).toBe(false);
-    expect(plotRow.current_tenant_name).toBe('Evelyn Suen Yim Siong');
-    expect(plotRow.highlight_note).toContain('จองเช่า:');
+    expect(mocks.rpc).toHaveBeenNthCalledWith(1, 'sales_tx_book_rental', expect.objectContaining({
+      p_payload: expect.objectContaining({ projectName: 'ไอลิน 3', plotId: 'ไอลิน 3-68', leadId: 'lead-68', tenantName: 'Evelyn Suen Yim Siong' })
+    }));
     unmount();
 
-    // Now convert the same rental booking to an active rental contract under the same stock guard
+    // Now convert the same rental booking to an active rental contract via sales_tx_sign_rental_contract
     const onContractSaved = vi.fn();
     const onContractClose = vi.fn();
     render(
@@ -661,11 +642,11 @@ describe('RentalContractModal - Plot ordering, Booked plots & Historical dates',
       expect(onContractSaved).toHaveBeenCalledOnce();
       expect(onContractClose).toHaveBeenCalledOnce();
     });
-    expect(plotRow.sale_status).toBe('ready_for_sale');
-    expect(plotRow.has_customer).toBe(false);
-    expect(plotRow.current_tenant_name).toBe('Evelyn Suen Yim Siong');
-    expect(plotRow.highlight_note).toContain('เช่า:');
-    expect(plotRow.lease_start_date).toBeTruthy();
+    expect(mocks.rpc).toHaveBeenNthCalledWith(2, 'sales_tx_sign_rental_contract', expect.objectContaining({
+      p_payload: expect.objectContaining({ projectName: 'ไอลิน 3', plotId: 'ไอลิน 3-68', leadId: 'lead-68', tenantName: 'Evelyn Suen Yim Siong' })
+    }));
+    // Zero direct writes to plots; live guard_booking_plot_stock permit interop verified in PG17 integration suite
+    expect(directPlotsWrites).toHaveLength(0);
   });
 
   it('preserves user-input monthly rent and does not reset to 15000 on props or background re-renders', async () => {
@@ -825,41 +806,31 @@ describe('RentalContractModal - Plot ordering, Booked plots & Historical dates',
     expect(screen.getByText(/ยังไม่มีข้อมูลการจองเดิมในระบบ/i)).toBeInTheDocument();
   });
 
-  it('correctly populates and saves bookingDate from bookingDate or booking_date aliases', async () => {
-    let savedPayload: any = null;
+  it('correctly populates and submits bookingDate from bookingDate or booking_date aliases via sales_tx_book_rental', async () => {
+    mocks.rpc.mockResolvedValueOnce({
+      data: {
+        command: 'rental_book',
+        leadId: 'lead-real-999',
+        contractId: 'rc-999',
+        plotId: 'p1',
+        projectName: 'ไอลิน สันทราย 2',
+        rentalStatus: 'PendingContract',
+      },
+      error: null,
+    });
     mocks.from.mockImplementation((table: string) => {
       if (table === 'plots') {
         return {
           select: vi.fn().mockReturnValue({
             eq: vi.fn().mockResolvedValue({
-              data: [{ id: 'p1', plot_name: 'A-01', sale_status: 'Available' }],
+              data: [{ id: 'p1', plot_name: 'A-01', sale_status: 'Available', has_customer: false }],
               error: null
             })
-          }),
-          update: vi.fn().mockReturnValue({
-            eq: vi.fn().mockResolvedValue({ data: null, error: null })
-          })
-        };
-      }
-      if (table === 'leads') {
-        return {
-          update: vi.fn().mockImplementation((payload: any) => {
-            savedPayload = payload;
-            return {
-              eq: vi.fn().mockResolvedValue({ data: null, error: null })
-            };
-          })
-        };
-      }
-      if (table === 'sales') {
-        return {
-          update: vi.fn().mockReturnValue({
-            eq: vi.fn().mockResolvedValue({ data: null, error: null })
           })
         };
       }
       return {
-        insert: vi.fn().mockResolvedValue({ data: null, error: null })
+        select: vi.fn().mockResolvedValue({ data: [], error: null })
       };
     });
 
@@ -885,44 +856,46 @@ describe('RentalContractModal - Plot ordering, Booked plots & Historical dates',
       />
     );
 
-    // booking date input should be populated from lead.bookingDate
     const bookingDateInput = screen.getByLabelText(/วันที่วางเงินจอง/i) as HTMLInputElement;
     expect(bookingDateInput.value).toBe('2026-10-12');
 
-    // Wait for plots to finish loading
     await waitFor(() => {
       expect(screen.queryByText(/กำลังโหลดแปลง.../i)).not.toBeInTheDocument();
     });
 
-    // User changes booking date to 2026-10-14
     fireEvent.change(bookingDateInput, { target: { value: '2026-10-14' } });
     expect(bookingDateInput.value).toBe('2026-10-14');
 
-    // Click submit
     const submitBtn = screen.getByRole('button', { name: /ยืนยันบันทึกการจองเช่า \(ล็อกแปลง\)/i });
     fireEvent.click(submitBtn);
 
     await waitFor(() => {
-      expect(savedPayload).toBeDefined();
+      expect(mocks.rpc).toHaveBeenCalledWith(
+        'sales_tx_book_rental',
+        expect.objectContaining({
+          p_payload: expect.objectContaining({
+            leadId: 'lead-real-999',
+            bookingDate: '2026-10-14',
+          }),
+        })
+      );
     });
-
-    expect(savedPayload.booking_date).toBe('2026-10-14T00:00:00.000Z');
   });
 
   it('allows a customer who previously booked rental (PendingContract / จองเช่า) to sign actual rental contract without false stage blocking', async () => {
-    let contractPayload: any = null;
-    let leadUpdatePayload: any = null;
-    let statusHistoryPayload: any = null;
+    mocks.rpc.mockResolvedValueOnce({
+      data: {
+        command: 'rental_sign_contract',
+        leadId: 'lead-artipact',
+        contractId: 'contract-artipact-1',
+        plotId: 'p35',
+        projectName: 'โยริว',
+        rentalStatus: 'Active',
+      },
+      error: null,
+    });
 
     mocks.from.mockImplementation((table: string) => {
-      if (table === 'status_history') {
-        return {
-          insert: vi.fn().mockImplementation((payload) => {
-            statusHistoryPayload = payload[0];
-            return Promise.resolve({ data: null, error: null });
-          })
-        };
-      }
       if (table === 'plots') {
         return {
           select: vi.fn().mockReturnValue({
@@ -932,64 +905,10 @@ describe('RentalContractModal - Plot ordering, Booked plots & Historical dates',
               ],
               error: null
             })
-          }),
-          update: vi.fn().mockReturnValue({
-            eq: vi.fn().mockResolvedValue({ data: null, error: null })
           })
-        };
-      }
-      if (table === 'rental_contracts') {
-        const inPromise = Promise.resolve({ data: [], error: null });
-        (inPromise as any).limit = vi.fn().mockResolvedValue({ data: [], error: null });
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              in: vi.fn().mockReturnValue(inPromise)
-            })
-          }),
-          insert: vi.fn().mockImplementation((payload) => {
-            contractPayload = payload[0];
-            return {
-              select: vi.fn().mockReturnValue({
-                single: vi.fn().mockResolvedValue({ data: { id: 'contract-artipact-1' }, error: null })
-              })
-            };
-          })
-        };
-      }
-      if (table === 'leads') {
-        const chain: any = {
-          neq: vi.fn().mockResolvedValue({ data: [], error: null }),
-          single: vi.fn().mockResolvedValue({ data: { id: 'lead-artipact' }, error: null })
-        };
-        chain.eq = vi.fn().mockReturnValue(chain);
-        chain.in = vi.fn().mockReturnValue(chain);
-        return {
-          select: vi.fn().mockReturnValue(chain),
-          update: vi.fn().mockImplementation((payload) => {
-            leadUpdatePayload = payload;
-            return {
-              eq: vi.fn().mockReturnValue({
-                select: vi.fn().mockReturnValue({
-                  single: vi.fn().mockResolvedValue({ data: { id: 'lead-artipact' }, error: null })
-                })
-              })
-            };
-          })
-        };
-      }
-      if (table === 'sales') {
-        const chain: any = {
-          neq: vi.fn().mockResolvedValue({ data: [], error: null })
-        };
-        chain.eq = vi.fn().mockReturnValue(chain);
-        return {
-          select: vi.fn().mockReturnValue(chain),
-          update: vi.fn().mockReturnValue(chain)
         };
       }
       return {
-        insert: vi.fn().mockResolvedValue({ data: null, error: null }),
         select: vi.fn().mockResolvedValue({ data: [], error: null })
       };
     });
@@ -1011,10 +930,13 @@ describe('RentalContractModal - Plot ordering, Booked plots & Historical dates',
       sales_owner: 'NOOK'
     };
 
+    const onSaved = vi.fn();
+    const onClose = vi.fn();
     render(
       <RentalContractModal
         isOpen
-        onClose={vi.fn()}
+        onClose={onClose}
+        onSaved={onSaved}
         defaultMode="contract"
         plotId="p35"
         lead={bookedLead as any}
@@ -1023,38 +945,141 @@ describe('RentalContractModal - Plot ordering, Booked plots & Historical dates',
       />
     );
 
-    // Wait for plots to finish loading
     await waitFor(() => {
       expect(screen.queryByText(/กำลังโหลดแปลง.../i)).not.toBeInTheDocument();
     });
 
-    // Make sure the error banner is NOT present
     expect(screen.queryByText(/ลูกค้ารายนี้อยู่ในขั้นตอนจอง โอน เช่า/i)).not.toBeInTheDocument();
 
-    // Click submit "ยืนยันบันทึกสัญญาเช่า"
     const submitBtn = screen.getByRole('button', { name: /ยืนยันบันทึกสัญญาเช่า/i });
     expect(submitBtn).toBeEnabled();
     fireEvent.click(submitBtn);
 
-    // Wait for insertion
     await waitFor(() => {
-      expect(contractPayload).toBeDefined();
+      expect(mocks.rpc).toHaveBeenCalledWith(
+        'sales_tx_sign_rental_contract',
+        expect.objectContaining({
+          p_request_id: expect.any(String),
+          p_payload: expect.objectContaining({
+            leadId: 'lead-artipact',
+            plotId: 'p35',
+            projectName: 'โยริว',
+            tenantName: 'บจก.อาร์ติแพคท์',
+            agentName: 'NOOK',
+            bookingAmount: 5000,
+          }),
+        })
+      );
+    });
+    expect(onSaved).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('keeps customer own booked plot selectable and pre-selected when opened from Project Map lead shape (plot/plotName without interested_plot_id)', async () => {
+    const mockPlots = [
+      { id: 'yorio-33', plot_name: '33', project_name: 'โยริว', sale_status: 'ready_for_sale', has_customer: false, selling_price: 1862000 },
+      {
+        id: 'yorio-42',
+        plot_name: '42',
+        project_name: 'โยริว',
+        sale_status: 'ready_for_sale',
+        has_customer: true,
+        current_tenant_name: 'นายภาณุวิชญ์ อุ่นเรือน',
+        highlight_note: 'จองเช่า: นายภาณุวิชญ์ อุ่นเรือน',
+        selling_price: 1972000,
+      },
+      {
+        id: 'yorio-43',
+        plot_name: '43',
+        project_name: 'โยริว',
+        sale_status: 'Reserved',
+        has_customer: true,
+        current_tenant_name: 'ลูกค้ารายอื่น',
+        selling_price: 2050000,
+      },
+    ];
+
+    mocks.from.mockImplementation((table: string) => {
+      if (table === 'plots') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({ data: mockPlots, error: null }),
+          }),
+        };
+      }
+      if (table === 'sales') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        };
+      }
+      if (table === 'rental_contracts') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        };
+      }
+      return {
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+        }),
+      };
     });
 
-    // Verify contract created with deducted booking amount note and correct lead ID
-    expect(contractPayload.lead_id).toBe('lead-artipact');
-    expect(contractPayload.tenant_name).toBe('บจก.อาร์ติแพคท์');
-    expect(contractPayload.status).toBe('Active');
+    // Exact formatted lead shape produced by Project Map (SalesKanban) using plot / plotName aliases
+    const projectMapLead = {
+      id: 'lead-yorio-42',
+      leadId: 'lead-yorio-42',
+      customer_name: 'นายภาณุวิชญ์ อุ่นเรือน',
+      name: 'นายภาณุวิชญ์ อุ่นเรือน',
+      phone: '',
+      project_name: 'โยริว',
+      status: 'Reserved',
+      deal_type: 'rent',
+      rental_status: 'PendingContract',
+      rental_program: 'program_a',
+      booking_amount: 17000,
+      booking_date: '2026-09-14',
+      plot: 'yorio-42',
+      plotName: '42',
+      agentName: 'NOOK',
+    };
 
-    // Verify lead status updated to Rented & Active
-    expect(leadUpdatePayload).toBeDefined();
-    expect(leadUpdatePayload.status).toBe('Rented');
-    expect(leadUpdatePayload.rental_status).toBe('Active');
-    // Verify status_history was logged with contract timestamp
-    expect(statusHistoryPayload).toBeDefined();
-    expect(statusHistoryPayload.new_status).toBe('Rented');
-    expect(statusHistoryPayload.created_at).toBeDefined();
-    expect(statusHistoryPayload.changed_by).toContain('ทำสัญญาเช่า (NOOK)');
+    render(
+      <RentalContractModal
+        isOpen
+        onClose={vi.fn()}
+        defaultMode="contract"
+        projectName="โยริว"
+        plotId="yorio-42"
+        lead={projectMapLead as any}
+        user={{ displayName: 'NOOK', role: 'Sales' }}
+        salesOwners={[{ userId: 'u-nook', displayName: 'NOOK' }]}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText(/กำลังโหลดแปลง.../i)).not.toBeInTheDocument();
+    });
+
+    const plotSelect = screen
+      .getAllByRole('combobox')
+      .find(el => el.textContent?.includes('เลือกแปลงบ้าน')) as HTMLSelectElement;
+    expect(plotSelect).toBeTruthy();
+    const options = Array.from(plotSelect.querySelectorAll('option'));
+    const plot42Option = options.find(opt => opt.value === 'yorio-42');
+    const plot43Option = options.find(opt => opt.value === 'yorio-43');
+
+    expect(plot42Option).toBeTruthy();
+    expect(plot42Option?.disabled).toBe(false);
+    expect(plot42Option?.textContent).toContain('42');
+    expect(plot42Option?.textContent).toContain('แปลงของลูกค้ารายนี้');
+    expect(plotSelect.value).toBe('yorio-42');
+
+    // Another customer's booked plot must still be withheld
+    expect(plot43Option).toBeUndefined();
   });
 });
 

@@ -120,13 +120,25 @@ async function handleProjectRead(request: Request, map: boolean, excel = false):
     const project = await client.from('projects').select('name,layout_data').eq('name', scope.projectName).maybeSingle();
     if (project.error) rpcFailure(project.error);
     if (!project.data || project.data.name !== scope.projectName) return fail(503, 'READ_UNAVAILABLE');
-    const plotReply = await client.from('plots').select('id,plot_name,project_name,has_customer,is_completed,sale_status', { count: 'exact' })
+    const plotReply = await client.from('plots').select('id,plot_name,project_name,has_customer,is_completed,sale_status,current_tenant_name,rental_program,lease_start_date', { count: 'exact' })
       .eq('project_name', scope.projectName).order('id').range(0, PROJECT_MAP_MAX_PLOTS - 1);
     if (plotReply.error) rpcFailure(plotReply.error);
     if (!Array.isArray(plotReply.data) || plotReply.count !== plotReply.data.length || plotReply.count > PROJECT_MAP_MAX_PLOTS) return fail(503, 'READ_UNAVAILABLE');
-    const plots = plotReply.data.map(plot => {
+    const plots = plotReply.data.map((plot: any) => {
       if (plot.project_name !== scope.projectName) return fail(503, 'READ_UNAVAILABLE');
-      return { id: plot.id, name: plot.plot_name || plot.id, hasCustomer: plot.has_customer, isCompleted: plot.is_completed, saleStatus: plot.sale_status };
+      const hasLegacyRentalMetadata = Boolean(
+        (typeof plot.current_tenant_name === 'string' && plot.current_tenant_name.trim()) ||
+        (typeof plot.rental_program === 'string' && plot.rental_program.trim()) ||
+        (typeof plot.lease_start_date === 'string' && plot.lease_start_date.trim())
+      );
+      return {
+        id: plot.id,
+        name: plot.plot_name || plot.id,
+        hasCustomer: plot.has_customer,
+        isCompleted: plot.is_completed,
+        saleStatus: plot.sale_status,
+        ...(hasLegacyRentalMetadata ? { hasLegacyRentalMetadata: true } : {}),
+      };
     });
     if (rentalPages) {
       // A start/end/conversion or profile change during the multi-query read

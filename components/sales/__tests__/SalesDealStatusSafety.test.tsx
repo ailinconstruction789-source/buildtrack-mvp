@@ -4,9 +4,9 @@ import SalesDealStatusModal from '../SalesDealStatusModal';
 import SalesWorkspaceModeProvider from '../SalesWorkspaceModeProvider';
 import { customerHistoryTimeline } from '@/lib/sales/customerHistory';
 
-const mocks = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn(), context: vi.fn() }));
+const mocks = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn(), context: vi.fn(), rpc: vi.fn() }));
 vi.mock('@/lib/sales/customerDealReadClient', () => ({ customerDealReadApi: { read: mocks.context } }));
-vi.mock('@/lib/supabase', () => ({ supabase: { from: (table: string) => {
+vi.mock('@/lib/supabase', () => ({ supabase: { rpc: mocks.rpc, from: (table: string) => {
   let payload: unknown; const filters: Record<string, unknown> = {};
   const query = {
     select: () => query, insert: (value: unknown) => { payload = value; return query; }, update: (value: unknown) => { payload = value; return query; },
@@ -194,12 +194,21 @@ describe('shared terminal workflow and audit checkpoints', () => {
     expect(mocks.write).not.toHaveBeenCalled();
   });
   it('requires cancellation reason and reconfirmation after changing it', async () => {
+    mocks.read.mockImplementation(async (table: string) => ({ data: table === 'leads' ? freshLead : { ...freshSale, plot_id: 'P1' } }));
+    mocks.rpc.mockResolvedValueOnce({ error: { message: 'SALES_TX_STALE_STATE' } })
+      .mockImplementation(async (_rpc, args) => ({ data: { command: 'purchase_cancel', requestId: args.p_request_id, plotReleased: true, saleId: 'S1', plotId: 'P1', leadId: 'L1' } }));
     open(); await ready(); choose('cancelled'); confirmEvent(); save(); expect(await screen.findByRole('alert')).toHaveTextContent('เหตุผล');
     edit('เหตุผล', 'Customer stopped buying'); expect(screen.getByRole('checkbox', { name: 'ยืนยันรายการ' })).not.toBeChecked();
     fireEvent.change(screen.getByRole('combobox', { name: 'ประเภทการยกเลิก' }), { target: { value: 'other' } });
-    fireEvent.click(screen.getByRole('checkbox', { name: 'ยืนยันรายการ' })); save(); await waitFor(() => expect(saved).toHaveBeenCalledOnce());
-    expect(mocks.write).toHaveBeenCalledWith('sales', expect.objectContaining({ contract_status: 'Cancelled', crm_stage: 'cancelled', cancellation_category: 'other', cancellation_reason: 'Customer stopped buying', cancelled_at: '2026-10-09T05:00:00.000Z' }), expect.anything());
-    expect(mocks.write).toHaveBeenCalledWith('leads', expect.objectContaining({ status: 'Cancelled', lost_reason: 'Customer stopped buying' }), expect.anything());
+    fireEvent.click(screen.getByRole('checkbox', { name: 'ยืนยันรายการ' })); save();
+    expect(await screen.findByRole('alert')).toHaveTextContent('เปลี่ยนแปลง');
+    expect(saved).not.toHaveBeenCalled();
+    save(); await waitFor(() => expect(saved).toHaveBeenCalledOnce());
+    expect(mocks.rpc.mock.calls[1]).toEqual(mocks.rpc.mock.calls[0]);
+    expect(mocks.rpc).toHaveBeenCalledWith('sales_tx_cancel_purchase', { p_request_id: expect.any(String),
+      p_payload: expect.objectContaining({ saleId:'S1', plotId:'P1', leadId:'L1', expectedSaleUpdatedAt:'sale-version-1', expectedLeadUpdatedAt:'version-1',
+        category:'other', reason:'Customer stopped buying', eventDate:'2026-10-09' }) });
+    expect(mocks.write).not.toHaveBeenCalled();
   });
   it('blocks lead-only terminal changes before updating anything', async () => {
     arrangeStage('booked', 'Booked'); open({ ...lead, saleId: null }); await ready(); choose('cancelled'); edit('เหตุผล', 'Cancel request'); confirmEvent(); save();

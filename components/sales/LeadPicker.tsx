@@ -210,9 +210,9 @@ export default function LeadPicker({
                       ({currentLead.phone || currentLead.phoneNumber})
                     </span>
                   )}
-                  {(currentLead.interested_plot_name || currentLead.interestedPlotName || currentLead.interested_plot_id) && (
+                  {(currentLead.interested_plot_name || currentLead.interestedPlotName || currentLead.plotName || currentLead.interested_plot_id || currentLead.plot) && (
                     <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-1.5 py-0.2 rounded border border-amber-200 shrink-0">
-                      แปลง {currentLead.interested_plot_name || currentLead.interestedPlotName || currentLead.interested_plot_id}
+                      แปลง {currentLead.interested_plot_name || currentLead.interestedPlotName || currentLead.plotName || currentLead.interested_plot_id || currentLead.plot}
                     </span>
                   )}
                 </div>

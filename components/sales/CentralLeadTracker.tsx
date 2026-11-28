@@ -17,6 +17,13 @@ import RentalContractModal from './RentalContractModal';
 import RentalActionModal from './RentalActionModal';
 import SalesOverlay from './SalesOverlay';
 import { getLeadStage, canStartSalesDeal } from '@/lib/sales/leadStage';
+import {
+  classifySalesDeal,
+  RENTAL_PENDING_DISPLAY_LABEL,
+  RENTAL_SIGN_CONTRACT_BUTTON_LABEL,
+  resolveCanonicalPlotId,
+} from '@/lib/sales/dealClassification';
+import CancelRentalBookingModal from './CancelRentalBookingModal';
 import SalesDealStatusModal from './SalesDealStatusModal';
 import { isCancelledBookingLead, isPreBookingLost, nativeLeadId } from '@/lib/sales/leadLifecycle';
 import { readLeadActivitySnapshot, writeLeadActivitySummary } from '@/lib/sales/leadActivity';
@@ -146,8 +153,8 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
   const changed = JSON.stringify(filters) !== JSON.stringify(snapshot.search?.filters || {});
 
   // Re-activate cold/lost lead back to active
-  const cancellingRental = useRef(false);
-  const [isCancellingRental, setIsCancellingRental] = useState(false);
+  const [cancelRentalTarget, setCancelRentalTarget] = useState<any | null>(null);
+  const isCancellingRental = Boolean(cancelRentalTarget);
   const handleReactivate = async (cust: any) => {
     if (!canManage || disabled || !nativeLeadId(cust) || !isPreBookingLost(cust)) return;
     if (reactivating.current) return;
@@ -200,306 +207,12 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
     }
   };
 
-  const isRentalPendingCustomer = (cust: any) => {
-    if (!cust) return false;
-    const isRent = cust.deal_type === 'rent' || cust.rental_status === 'PendingContract' || (typeof cust.status === 'string' && cust.status.includes('เช่า'));
-    return Boolean(isRent && (cust.rental_status === 'PendingContract' || cust.status === 'Reserved' || cust.status === 'จองเช่า' || cust.crm_status?.includes('จองเช่า') || getCustomerStageCategory(cust) === 'booked'));
-  };
+  const isRentalPendingCustomer = (cust: any) => classifySalesDeal(cust).isRentalPending;
 
-  const handleCancelRentalBooking = async (cust: any) => {
-    if (!canManage || disabled || cancellingRental.current) return;
-    const leadId = cust?.id || cust?.leadId;
-    if (!leadId) {
-      setAppointmentNotice('ไม่พบรหัสลูกค้า (Lead ID)');
-      return;
-    }
-
-    cancellingRental.current = true;
-    setIsCancellingRental(true);
-
-    let contractsCancelled = false;
-    let shouldReleasePlot = false;
-    let plotReleased = false;
-    let leadCancelled = false;
-
-    try {
-      // Step 0: Fetch fresh lead from Supabase to verify status has not changed
-      const { data: freshLead, error: freshLeadErr } = await supabase
-        .from('leads')
-        .select('id, customer_name, status, crm_status, deal_type, rental_status, interested_plot_id, interested_plot_name, project_name, notes')
-        .eq('id', leadId)
-        .maybeSingle();
-
-      if (freshLeadErr) {
-        setAppointmentNotice('ไม่สามารถตรวจสอบสถานะล่าสุดของลูกค้าได้: ' + freshLeadErr.message);
-        return;
-      }
-      if (!freshLead) {
-        setAppointmentNotice('ไม่พบข้อมูลลูกค้าในระบบ');
-        return;
-      }
-      if (freshLead.status === 'Cancelled' || freshLead.rental_status === 'Cancelled') {
-        setAppointmentNotice('รายการนี้ถูกยกเลิกไปแล้ว');
-        setSelectedCustomer(null);
-        onApply(filters);
-        return;
-      }
-      if (freshLead.rental_status === 'Active' || freshLead.status === 'Rented') {
-        setAppointmentNotice('สัญญานี้มีผลบังคับใช้ (Active) แล้ว ไม่สามารถยกเลิกด้วยการยกเลิกจองเช่าได้ กรุณาใช้เมนูจัดการสัญญาเช่า');
-        return;
-      }
-
-      // Check existing rental contracts for this lead
-      const { data: existingContracts, error: contractsErr } = await supabase
-        .from('rental_contracts')
-        .select('id, status, plot_id, plot_name, project_name, notes')
-        .eq('lead_id', leadId)
-        .in('status', ['Active', 'PendingContract', 'Renewed']);
-      if (contractsErr) {
-        setAppointmentNotice('ไม่สามารถตรวจสอบสัญญาเช่าล่าสุดได้: ' + contractsErr.message);
-        return;
-      }
-
-      if (existingContracts && existingContracts.some(c => ['Active', 'Renewed'].includes(c.status))) {
-        setAppointmentNotice('สัญญานี้มีผลบังคับใช้ (Active) แล้ว ไม่สามารถยกเลิกด้วยการยกเลิกจองเช่าได้ กรุณาใช้เมนูจัดการสัญญาเช่า');
-        return;
-      }
-
-      const customerDisplayName = freshLead.customer_name || cust.name || 'ลูกค้า';
-      const cleanName = (val: unknown) =>
-        typeof val === 'string' ? val.trim().toLowerCase().replace(/^(นาย|นาง|นางสาว|คุณ)\s*/, '') : '';
-      const ok = window.confirm(`ยืนยันยกเลิกการจองเช่าของคุณ "${customerDisplayName}" และคืนแปลงใช่หรือไม่?`);
-      if (!ok) return;
-      const nowIso = new Date().toISOString();
-      const cancellationNote = `[${new Date().toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })} ยกเลิกการจองเช่า โดย ${snapshot.actor.userId}]\nยกเลิกการจองเช่าและคืนแปลงสู่สถานะว่าง`;
-      const combinedNotes = freshLead.notes ? `${cancellationNote}\n\n---\n${freshLead.notes}` : cancellationNote;
-
-      const pendingContracts = existingContracts?.filter(c => c.status === 'PendingContract') || [];
-
-      // 1. Resolve and verify target plot preconditions BEFORE ANY WRITE
-      let targetPlotId = pendingContracts[0]?.plot_id || freshLead.interested_plot_id;
-      let targetPlotName = pendingContracts[0]?.plot_name || freshLead.interested_plot_name;
-      const targetProject = pendingContracts[0]?.project_name || freshLead.project_name || cust.projectName;
-
-      let plotToRelease: any = null;
-
-      if (targetPlotId) {
-        let query = supabase.from('plots').select('id, project_name, plot_name, sale_status, has_customer, current_tenant_name, current_tenant_phone, rental_program, monthly_rent, highlight_note').eq('id', targetPlotId);
-        if (targetProject) query = query.eq('project_name', targetProject);
-        const { data: pById, error: pByIdErr } = await query;
-        if (pByIdErr) throw new Error('ตรวจสอบข้อมูลแปลงไม่สำเร็จ: ' + pByIdErr.message);
-        if (pById && pById.length === 1) {
-          plotToRelease = pById[0];
-        } else if (pById && pById.length === 0 && !targetPlotName) {
-          throw new Error('ไม่พบแปลงที่เกี่ยวข้องในระบบ หรือข้อมูลแปลงถูกลบไปแล้ว');
-        }
-      }
-
-      if (!plotToRelease && targetPlotName) {
-        let query = supabase.from('plots').select('id, project_name, plot_name, sale_status, has_customer, current_tenant_name, current_tenant_phone, rental_program, monthly_rent, highlight_note').eq('plot_name', targetPlotName);
-        if (targetProject) query = query.eq('project_name', targetProject);
-        const { data: pByName, error: pByNameErr } = await query;
-        if (pByNameErr) throw new Error('ตรวจสอบข้อมูลแปลงไม่สำเร็จ: ' + pByNameErr.message);
-        if (pByName && pByName.length > 1) {
-          throw new Error(`พบแปลงชื่อ "${targetPlotName}" ซ้ำกันในโครงการ กรุณาตรวจสอบรหัสแปลงก่อนทำรายการ`);
-        } else if (pByName && pByName.length === 1) {
-          plotToRelease = pByName[0];
-        } else if (pByName && pByName.length === 0) {
-          throw new Error(`ไม่พบแปลงชื่อ "${targetPlotName}" ในโครงการ`);
-        }
-      }
-
-      shouldReleasePlot = false;
-      if (plotToRelease) {
-        if (plotToRelease.sale_status === 'Transferred') {
-          throw new Error('แปลงนี้ถูกโอนกรรมสิทธิ์ไปแล้ว ไม่สามารถคืนแปลงได้');
-        }
-
-        // Verify who actually holds this plot in database tables (sales and rental_contracts)
-        const salesOnPlot = await supabase
-          .from('sales')
-          .select('id, lead_id, contract_status')
-          .eq('plot_id', plotToRelease.id)
-          .neq('contract_status', 'Cancelled');
-
-        const contractsOnPlot = await supabase
-          .from('rental_contracts')
-          .select('id, lead_id, status')
-          .eq('plot_id', plotToRelease.id)
-          .in('status', ['Active', 'PendingContract', 'Renewed']);
-
-        if (salesOnPlot?.error) throw new Error('ตรวจสอบข้อมูลการขายของแปลงไม่สำเร็จ: ' + salesOnPlot.error.message);
-        if (contractsOnPlot?.error) throw new Error('ตรวจสอบข้อมูลสัญญาเช่าของแปลงไม่สำเร็จ: ' + contractsOnPlot.error.message);
-
-        // If an Active or Renewed rental contract exists on this plot, it can NEVER be cancelled through booking cancellation
-        const hasActiveOrRenewedContract = (contractsOnPlot.data || []).some((c: any) => ['Active', 'Renewed'].includes(c.status));
-        if (hasActiveOrRenewedContract) {
-          throw new Error('แปลงนี้มีสัญญาเช่าที่มีผลบังคับใช้ (Active) แล้ว ไม่สามารถยกเลิกผ่านการยกเลิกจองได้ กรุณาใช้เมนูจัดการสัญญาเช่า');
-        }
-
-        // Check if another customer holds an active sale on this plot
-        const otherSaleHolder = (salesOnPlot.data || []).find((s: any) => s.lead_id && s.lead_id !== leadId);
-        if (otherSaleHolder) {
-          throw new Error('แปลงนี้มีลูกค้ารายอื่นถือสิทธิ์การจอง/ซื้ออยู่ ไม่สามารถยกเลิกหรือคืนแปลงได้');
-        }
-
-        // Check if another customer holds an active or pending contract on this plot
-        const otherContractHolder = (contractsOnPlot.data || []).find((c: any) => c.lead_id && c.lead_id !== leadId);
-        if (otherContractHolder) {
-          throw new Error('แปลงนี้มีผู้เช่ารายอื่นถือสิทธิ์อยู่ ไม่สามารถยกเลิกหรือคืนแปลงได้');
-        }
-
-        const cleanCust = cleanName(customerDisplayName);
-        const cleanPlotCust = cleanName(plotToRelease.customer_name);
-        const cleanPlotTenant = cleanName(plotToRelease.current_tenant_name);
-
-        if (cleanPlotTenant && cleanCust && cleanPlotTenant !== cleanCust) {
-          throw new Error(`แปลงนี้มีผู้เช่าอื่น (${plotToRelease.current_tenant_name}) ถือสิทธิ์อยู่ ไม่สามารถคืนแปลงได้`);
-        }
-        if (cleanPlotCust && cleanCust && cleanPlotCust !== cleanCust) {
-          throw new Error(`แปลงนี้มีลูกค้ารายอื่น (${plotToRelease.customer_name}) ถือสิทธิ์อยู่ ไม่สามารถคืนแปลงได้`);
-        }
-
-        // Current lead authority: verified via pending contract on this plot, active sale for this lead on this plot, or matching interested plot
-        const hasMatchingPendingContract = pendingContracts.some(c => c.plot_id === plotToRelease.id);
-        const hasMatchingSale = (salesOnPlot.data || []).some((s: any) => s.lead_id === leadId);
-        const hasMatchingInterestedPlot = Boolean(
-          (freshLead.interested_plot_id && freshLead.interested_plot_id === plotToRelease.id) ||
-          (freshLead.interested_plot_name && freshLead.interested_plot_name === plotToRelease.plot_name) ||
-          (cust.plot && (cust.plot === plotToRelease.id || cust.plot === plotToRelease.plot_name))
-        );
-
-        const hasRentalPlotData = Boolean(
-          plotToRelease.current_tenant_name ||
-          plotToRelease.current_tenant_phone ||
-          plotToRelease.rental_program ||
-          plotToRelease.monthly_rent ||
-          plotToRelease.highlight_note
-        );
-        const isPlotOccupied = Boolean(plotToRelease.has_customer || hasRentalPlotData || (plotToRelease.sale_status && !['available', 'active', 'normal', 'ready_for_sale', 'vacant'].includes(String(plotToRelease.sale_status).toLowerCase())));
-
-        if (hasMatchingPendingContract || hasMatchingSale || hasMatchingInterestedPlot) {
-          shouldReleasePlot = hasRentalPlotData;
-        } else if (isPlotOccupied) {
-          throw new Error('ไม่สามารถคืนแปลงได้ เนื่องจากแปลงไม่ได้ถูกผูกสิทธิ์กับลูกค้ารายนี้อย่างชัดเจน');
-        }
-      }
-
-      // 2. Cancel pending rental contracts if any
-      if (pendingContracts.length > 0) {
-        for (const contract of pendingContracts) {
-          const { data: updContract, error: cancelContractErr } = await supabase
-            .from('rental_contracts')
-            .update({
-              status: 'Cancelled',
-              notes: contract.notes ? `${cancellationNote}\n---\n${contract.notes}` : cancellationNote,
-              updated_at: nowIso
-            })
-            .eq('id', contract.id)
-            .eq('status', 'PendingContract')
-            .select('id');
-
-          if (cancelContractErr) {
-            throw new Error('ยกเลิกสัญญาเช่าไม่สำเร็จ: ' + cancelContractErr.message);
-          }
-          if (!updContract || updContract.length === 0) {
-            throw new Error('สถานะสัญญาเช่าถูกแก้ไขก่อนหน้า ไม่สามารถยกเลิกได้');
-          }
-        }
-        contractsCancelled = true;
-      }
-
-      // 3. Release plot rental/display fields if held by this customer
-      // (Do not overwrite guarded stock columns sale_status/has_customer directly.)
-      if (shouldReleasePlot && plotToRelease) {
-        let plotUpdQuery = supabase
-          .from('plots')
-          .update({
-            current_tenant_name: null,
-            current_tenant_phone: null,
-            rental_program: null,
-            monthly_rent: null,
-            security_deposit: null,
-            lease_start_date: null,
-            lease_end_date: null,
-            highlight_note: null
-          })
-          .eq('id', plotToRelease.id);
-
-        plotUpdQuery = plotUpdQuery.neq('sale_status', 'Rented').neq('sale_status', 'Transferred');
-
-        if (plotToRelease.current_tenant_name) {
-          plotUpdQuery = plotUpdQuery.eq('current_tenant_name', plotToRelease.current_tenant_name);
-        } else if (plotToRelease.customer_name) {
-          plotUpdQuery = plotUpdQuery.eq('customer_name', plotToRelease.customer_name);
-        }
-
-        const { data: updPlotResult, error: plotUpdErr } = await plotUpdQuery.select('id');
-        if (plotUpdErr) throw new Error('คืนแปลงสู่สถานะว่างไม่สำเร็จ: ' + plotUpdErr.message);
-        if (!updPlotResult || updPlotResult.length === 0) {
-          throw new Error('สถานะแปลงถูกแก้ไขโดยผู้ใช้อื่นก่อนหน้า ไม่สามารถคืนแปลงได้');
-        }
-        plotReleased = true;
-      }
-
-      // 4. Update lead
-      let leadUpdQuery = supabase
-        .from('leads')
-        .update({
-          status: 'Cancelled',
-          crm_status: 'Cancelled — ยกเลิกการจองเช่า',
-          rental_status: 'Cancelled',
-          lost_reason: 'ยกเลิกการจองเช่า',
-          notes: combinedNotes,
-          updated_at: nowIso
-        })
-        .eq('id', leadId);
-
-      leadUpdQuery = leadUpdQuery
-        .in('rental_status', ['PendingContract', 'pendingcontract', 'pending_contract', 'booked', 'Booked', null, ''])
-        .neq('rental_status', 'Active');
-
-      const { data: updLeadResult, error: leadUpdErr } = await leadUpdQuery.select('id');
-
-      if (leadUpdErr) throw new Error('ปรับสถานะลูกค้าไม่สำเร็จ: ' + leadUpdErr.message);
-      if (!updLeadResult || updLeadResult.length === 0) {
-        throw new Error('สถานะลูกค้าถูกแก้ไขโดยผู้ใช้อื่นก่อนหน้า');
-      }
-      leadCancelled = true;
-
-      if (typeof window !== 'undefined') {
-        broadcastSalesSync({ type: 'cancel_rental_booking', leadId, timestamp: Date.now() });
-      }
-
-      // 5. Log status history ONLY after primary operations succeeded
-      const { error: histErr } = await supabase.from('status_history').insert([{
-        entity_type: 'lead',
-        entity_id: leadId,
-        old_status: freshLead.status || 'Reserved',
-        new_status: 'Cancelled',
-        changed_by: `ยกเลิกการจองเช่า (${snapshot.actor.userId})`,
-        created_at: nowIso
-      }]);
-
-      if (histErr) {
-        console.warn('Status history logging warning:', histErr);
-      }
-
-      setAppointmentNotice(`ยกเลิกการจองเช่าของคุณ ${customerDisplayName} เรียบร้อยแล้ว`);
-      setSelectedCustomer(null);
-      onApply(filters);
-    } catch (err: any) {
-      console.error('Error cancelling rental booking:', err);
-      const errText = err instanceof Error ? err.message : String(err || 'เกิดข้อผิดพลาดในการยกเลิก');
-      if (contractsCancelled && (shouldReleasePlot && !plotReleased || !leadCancelled)) {
-        setAppointmentNotice(`⚠️ บันทึกบางส่วน: สัญญาเช่ายกเลิกแล้ว แต่การคืนแปลงหรืออัปเดตสถานะลูกค้าไม่สมบูรณ์ (${errText}) กรุณาตรวจสอบ`);
-      } else {
-        setAppointmentNotice(errText);
-      }
-    } finally {
-      cancellingRental.current = false;
-      if (mounted.current) setIsCancellingRental(false);
-    }
+  const handleCancelRentalBooking = (cust: any) => {
+    if (!canManage || disabled) return;
+    if (!classifySalesDeal(cust).isRentalPending) return;
+    setCancelRentalTarget(cust);
   };
 
   return (
@@ -646,6 +359,7 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
         )}
         {displayedCustomers.map((customer, index) => {
           const stage = getCustomerStageCategory(customer);
+          const deal = classifySalesDeal(customer);
           const isCancelledDeal = stage === 'lost' && isCancelledBookingLead(customer);
           return (
             <tr key={customer.id} onClick={(e) => {
@@ -674,7 +388,11 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
               <td className="min-w-44 space-y-1.5 p-3.5 text-slate-700 text-xs">
                 <p>
                   <span className={`inline-block px-2.5 py-0.5 rounded-full font-bold text-[11px] ${
-                    stage === 'rented'
+                    deal.isConflict
+                      ? 'bg-rose-100 text-rose-900 border border-rose-300'
+                      : deal.isRentalPending
+                      ? 'bg-cyan-100 text-cyan-900 border border-cyan-300'
+                      : stage === 'rented'
                       ? 'bg-blue-100 text-blue-900 border border-blue-200'
                       : stage === 'booked'
                       ? 'bg-orange-100 text-orange-800 border border-orange-200'
@@ -684,7 +402,21 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
                       ? 'bg-slate-200 text-slate-700 border border-slate-300'
                       : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
                   }`}>
-                    {stage === 'transferred' ? '🏡 โอนแล้ว' : stage === 'rented' ? '🔑 สัญญาเช่า' : stage === 'booked' ? '🏷️ จองแล้ว' : isCancelledDeal ? '🚫 ยกเลิกจอง' : stage === 'lost' ? '💤 พักติดตาม/ไม่สนใจ' : `🟢 ${trackerStatusLabel(customer.intakeStatus)}`}
+                    {deal.isConflict
+                      ? '⚠️ ข้อมูลสถานะดีลขัดแย้ง'
+                      : deal.isRentalPending
+                      ? `🔑 ${RENTAL_PENDING_DISPLAY_LABEL}`
+                      : stage === 'transferred'
+                      ? '🏡 โอนแล้ว'
+                      : stage === 'rented'
+                      ? '🔑 สัญญาเช่า'
+                      : stage === 'booked'
+                      ? '🏷️ จองแล้ว'
+                      : isCancelledDeal
+                      ? '🚫 ยกเลิกจอง'
+                      : stage === 'lost'
+                      ? '💤 พักติดตาม/ไม่สนใจ'
+                      : `🟢 ${trackerStatusLabel(customer.intakeStatus)}`}
                   </span>
                 </p>
                 {customer.interests.map(interest => <p key={interest.id} className="text-[11px] text-slate-600">{interest.projectName}: <span className="font-semibold text-blue-700">{trackerStatusLabel(interest.engagementStatus)}</span></p>)}
@@ -742,23 +474,33 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
             {/* Scrollable Drawer Body */}
             <div className="p-5 sm:p-6 overflow-y-auto flex-1 space-y-5">
               {/* Status Banner */}
+              {(() => {
+                const selectedDeal = classifySalesDeal(selectedCustomer);
+                const selectedStage = getCustomerStageCategory(selectedCustomer);
+                return (
               <div className={`p-3 rounded-2xl border flex items-center justify-between text-xs ${
-                getCustomerStageCategory(selectedCustomer) === 'rented'
+                selectedDeal.isConflict
+                  ? 'bg-rose-50 border-rose-200 text-rose-900'
+                  : selectedDeal.isRentalPending
+                  ? 'bg-cyan-50 border-cyan-200 text-cyan-900'
+                  : selectedStage === 'rented'
                   ? 'bg-blue-50 border-blue-200 text-blue-900'
-                  : getCustomerStageCategory(selectedCustomer) === 'booked'
+                  : selectedStage === 'booked'
                   ? 'bg-orange-50 border-orange-200 text-orange-800'
-                  : getCustomerStageCategory(selectedCustomer) === 'lost' && isCancelledBookingLead(selectedCustomer)
+                  : selectedStage === 'lost' && isCancelledBookingLead(selectedCustomer)
                   ? 'bg-orange-50 border-orange-200 text-orange-900'
-                  : getCustomerStageCategory(selectedCustomer) === 'lost'
+                  : selectedStage === 'lost'
                   ? 'bg-slate-100 border-slate-200 text-slate-800'
                   : 'bg-emerald-50 border-emerald-200 text-emerald-800'
               }`}>
                 <span className="font-bold">
-                  {getCustomerStageCategory(selectedCustomer) === 'rented' && '🔑 สถานะ: สัญญาเช่า (Rental Contract)'}
-                  {getCustomerStageCategory(selectedCustomer) === 'booked' && '🏷️ สถานะ: จองแปลงแล้ว (Booked)'}
-                  {getCustomerStageCategory(selectedCustomer) === 'lost' && isCancelledBookingLead(selectedCustomer) && '🚫 สถานะ: ยกเลิกจอง (Cancelled Booking)'}
-                  {getCustomerStageCategory(selectedCustomer) === 'lost' && !isCancelledBookingLead(selectedCustomer) && '💤 สถานะ: พักการติดตาม / ไม่สนใจ'}
-                  {getCustomerStageCategory(selectedCustomer) === 'active' && `🟢 สถานะ: กำลังติดตาม (${trackerStatusLabel(selectedCustomer.intakeStatus)})`}
+                  {selectedDeal.isConflict && '⚠️ สถานะ: ข้อมูลสถานะดีลขัดแย้ง (กรุณาตรวจสอบก่อนทำรายการ)'}
+                  {!selectedDeal.isConflict && selectedDeal.isRentalPending && `🔑 สถานะ: ${RENTAL_PENDING_DISPLAY_LABEL}`}
+                  {!selectedDeal.isConflict && !selectedDeal.isRentalPending && selectedStage === 'rented' && '🔑 สถานะ: สัญญาเช่า (Rental Contract)'}
+                  {!selectedDeal.isConflict && !selectedDeal.isRentalPending && selectedStage === 'booked' && '🏷️ สถานะ: จองแปลงแล้ว (Booked)'}
+                  {!selectedDeal.isConflict && !selectedDeal.isRentalPending && selectedStage === 'lost' && isCancelledBookingLead(selectedCustomer) && '🚫 สถานะ: ยกเลิกจอง (Cancelled Booking)'}
+                  {!selectedDeal.isConflict && !selectedDeal.isRentalPending && selectedStage === 'lost' && !isCancelledBookingLead(selectedCustomer) && '💤 สถานะ: พักการติดตาม / ไม่สนใจ'}
+                  {!selectedDeal.isConflict && !selectedDeal.isRentalPending && selectedStage === 'active' && `🟢 สถานะ: กำลังติดตาม (${trackerStatusLabel(selectedCustomer.intakeStatus)})`}
                 </span>
                 {canManage && nativeLeadId(selectedCustomer) && isPreBookingLost(selectedCustomer) && (
                   <button
@@ -772,6 +514,8 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
                   </button>
                 )}
               </div>
+                );
+              })()}
 
               <div className="grid grid-cols-2 gap-3 text-xs">
                 <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
@@ -868,15 +612,26 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
             </div>
 
             {/* Sticky Drawer Footer Actions */}
+            {(() => {
+              const selectedDeal = classifySalesDeal(selectedCustomer);
+              const selectedStage = getCustomerStageCategory(selectedCustomer);
+              const canManageActiveRental = Boolean(
+                !selectedDeal.isConflict &&
+                !selectedDeal.isRentalPending &&
+                (selectedDeal.isRentalActive || Boolean(selectedCustomer.active_rental_contract_id))
+              );
+              const canStartNewDeal = Boolean(
+                canManage &&
+                bookingEnabled &&
+                !selectedDeal.isConflict &&
+                !selectedDeal.isRentalPending &&
+                !selectedDeal.isRentalActive &&
+                !selectedDeal.isRentalEnded &&
+                canStartSalesDeal(selectedCustomer)
+              );
+              return (
             <div className="sticky bottom-0 z-10 bg-slate-50/95 backdrop-blur-sm border-t border-slate-100 p-4 sm:p-5 space-y-2 shrink-0">
-              {canManage && bookingEnabled && (
-                getCustomerStageCategory(selectedCustomer) === 'rented' ||
-                Boolean(selectedCustomer.active_rental_contract_id) ||
-                selectedCustomer.rental_status === 'Active' ||
-                selectedCustomer.rental_status === 'MovedOut' ||
-                selectedCustomer.rental_status === 'ConvertedToBuy' ||
-                selectedCustomer.status === 'Rented'
-              ) && (
+              {canManage && bookingEnabled && canManageActiveRental && (
                 <button
                   type="button"
                   onClick={() => setRentalActionTarget({ customer: selectedCustomer, interest: selectedCustomer.interests?.[0] })}
@@ -887,7 +642,7 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
                 </button>
               )}
 
-              {bookingEnabled && canStartSalesDeal(selectedCustomer) && (
+              {canStartNewDeal && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <button
                     type="button"
@@ -915,7 +670,7 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
                     onClick={() => setRentalTarget({ customer: selectedCustomer, interest: selectedCustomer.interests?.[0], defaultMode: 'contract' })}
                     className="w-full py-2.5 sm:py-3 rounded-xl bg-gradient-to-r from-blue-700 to-indigo-700 hover:from-blue-800 hover:to-indigo-800 text-white font-bold text-xs sm:text-sm text-center block shadow-sm transition-colors cursor-pointer"
                   >
-                    🔑 ทำสัญญาเช่า (แปลง {selectedCustomer.interests?.[0]?.plotId || selectedCustomer.interested_plot_name || 'ที่จอง'})
+                    🔑 {RENTAL_SIGN_CONTRACT_BUTTON_LABEL} (แปลง {selectedCustomer.interests?.[0]?.plotId || selectedCustomer.interested_plot_name || 'ที่จอง'})
                   </button>
                   <button
                     type="button"
@@ -928,7 +683,7 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
                 </div>
               )}
 
-              {!isRentalPendingCustomer(selectedCustomer) && ['booked', 'transferred'].includes(getCustomerStageCategory(selectedCustomer)) && (
+              {selectedDeal.isPurchaseFlow && !selectedDeal.isConflict && ['booked', 'transferred'].includes(selectedStage) && (
                 <button type="button" onClick={() => setStatusTarget({ ...selectedCustomer, project_name: selectedCustomer.interests?.[0]?.projectName, plot: selectedCustomer.interests?.[0]?.plotId, plotId: selectedCustomer.interests?.[0]?.plotId, plotName: selectedCustomer.interests?.[0]?.plotId })} className="w-full py-2.5 rounded-xl bg-amber-50 text-amber-900 text-sm font-bold">{salesDealActionLabel(selectedCustomer, canManage)}</button>
               )}
               <button type="button" onClick={() => setSelectedCustomer(null)}
@@ -936,11 +691,35 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
                 ปิดแผงข้อมูล
               </button>
             </div>
+              );
+            })()}
           </div>
         </SalesOverlay>
       )}
 
       {statusTarget && <SalesDealStatusModal key={snapshot.actor.userId + ':' + snapshot.actor.role + ':' + statusTarget.id} lead={statusTarget} currentUser={{ role: snapshot.actor.role }} onClose={() => setStatusTarget(null)} onSaved={msg => { setStatusTarget(null); setSelectedCustomer(null); setAppointmentNotice(msg); onApply(filters); }} />}
+      <CancelRentalBookingModal
+        isOpen={Boolean(cancelRentalTarget)}
+        lead={cancelRentalTarget}
+        actorId={ownerName(snapshot.actor.userId) || snapshot.actor.userId}
+        actorRole={snapshot.actor.role}
+        canManage={canManage}
+        onClose={() => setCancelRentalTarget(null)}
+        onCompleted={result => {
+          if (!mounted.current) return;
+          if (result.message) setAppointmentNotice(result.message);
+          if (result.shouldRefresh) {
+            setSelectedCustomer(null);
+            onApply(filters);
+          }
+        }}
+        onReloadRequired={result => {
+          if (!mounted.current) return;
+          if (result.message) setAppointmentNotice(result.message);
+          setSelectedCustomer(null);
+          onApply(filters);
+        }}
+      />
       {/* 🌟 5. Modal Dialog for In-App Visit Appointment */}
       {appointmentTarget && (
         <CentralVisitAppointmentModal
@@ -1043,12 +822,17 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
             agent_name: (snapshot.search?.owners || snapshot.salesOwners || []).find(o => o.userId === rentalTarget.customer.ownerUserId)?.displayName,
             created_at: rentalTarget.customer.leadCreatedAt || new Date().toISOString()
           } : null}
-          plotId={rentalTarget.interest?.plotId || rentalTarget.customer?.interested_plot_id || null}
+          plotId={resolveCanonicalPlotId({
+            ...rentalTarget.customer,
+            interested_plot_id: rentalTarget.interest?.plotId || rentalTarget.customer?.interested_plot_id || null,
+            interested_plot_name: rentalTarget.interest?.plotName || rentalTarget.customer?.interested_plot_name || null,
+          })}
           projectName={rentalTarget.interest?.projectName || rentalTarget.customer?.project_name || projects[0] || 'ไอลิน สันทราย 2'}
           salesOwners={snapshot.salesOwners}
           defaultMode={rentalTarget.defaultMode}
           user={{
             userId: snapshot.actor.userId,
+            role: snapshot.actor.role,
             displayName: (snapshot.search?.owners || snapshot.salesOwners || []).find(o => o.userId === snapshot.actor.userId)?.displayName || 'คุณ',
             username: (snapshot.search?.owners || snapshot.salesOwners || []).find(o => o.userId === snapshot.actor.userId)?.displayName || 'คุณ'
           }}
@@ -1081,6 +865,10 @@ function TrackerSession({ snapshot, filters, onFilterChange, onApply, leadWorkEn
             notes: rentalActionTarget.customer.notes || ''
           } : null}
           plot={rentalActionTarget.interest?.plotId ? { id: rentalActionTarget.interest.plotId, project_name: rentalActionTarget.interest.projectName || projects[0] } : null}
+          user={{
+            userId: snapshot.actor.userId,
+            role: snapshot.actor.role,
+          }}
           onSaved={() => {
             setAppointmentNotice(`✨ อัปเดตสัญญาเช่าเรียบร้อยแล้ว`);
             setSelectedCustomer(null);
