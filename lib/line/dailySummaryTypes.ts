@@ -44,7 +44,16 @@ export interface UrgentAlertItem {
   message: string;
 }
 
+export interface SalesProjectStockSummary {
+  projectName: string;
+  totalPlots: number;
+  transferredPlots: number;
+  remainingPlots: number;
+}
+
 export interface SalesSummaryMetrics {
+  includedProjects: SalesProjectStockSummary[];
+  totalRemainingPlots: number;
   leadsToday: number;
   visitsToday: number;
   bookingsToday: number;

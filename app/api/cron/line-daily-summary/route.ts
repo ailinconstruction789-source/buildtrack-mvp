@@ -80,7 +80,7 @@ async function handleCronRequest(request: Request, triggerSource: 'cron' | 'manu
 }
 
 /**
- * Vercel Cron triggers GET /api/cron/line-daily-summary daily at 12:00 UTC (19:00 Asia/Bangkok).
+ * Vercel Cron triggers GET /api/cron/line-daily-summary on Mon/Wed/Fri at 12:00 UTC (19:00 Asia/Bangkok).
  */
 export async function GET(request: Request) {
   return handleCronRequest(request, 'cron');

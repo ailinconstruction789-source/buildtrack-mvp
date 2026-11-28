@@ -10,6 +10,7 @@ import {
 import type {
   DailySummaryReport,
   ProjectConstructionMetrics,
+  SalesProjectStockSummary,
   SalesSummaryMetrics,
   TransferScheduleItem,
   UrgentAlertItem,
@@ -411,8 +412,14 @@ function emptyConstructionMetrics(projectName: string): ProjectConstructionMetri
   };
 }
 
+function normalizeProjectKey(name: unknown): string {
+  return String(name || '').trim().replace(/\s+/g, '').toLowerCase();
+}
+
 /**
  * Pure computation engine: converts raw Supabase rows into a structured DailySummaryReport.
+ * - Construction & QC scope: active commercial projects from ไอลิน 6 onwards (excludes legacy, closed, and external sites).
+ * - Sales scope: all open commercial projects with remaining unsold/pending-transfer plots (excludes closed & external sites).
  * Exported for deterministic unit testing.
  */
 export function computeDailySummaryReport(
@@ -421,26 +428,79 @@ export function computeDailySummaryReport(
 ): DailySummaryReport {
   const window: BangkokDayWindow = getBangkokDayWindow(options.reportDate);
   const projectFilter = options.projectFilter?.trim() || null;
+  const projectFilterKey = projectFilter ? normalizeProjectKey(projectFilter) : null;
 
-  // 1. Determine active commercial projects
-  const activeProjects = (raw.projects || []).filter((proj) => {
+  // 1A. Construction & QC scope: active commercial projects from ไอลิน 6 onwards
+  const constructionProjects = (raw.projects || []).filter((proj) => {
     if (!proj?.name) return false;
-    if (projectFilter) return proj.name === projectFilter;
+    if (projectFilterKey) return normalizeProjectKey(proj.name) === projectFilterKey;
     if (proj.is_closed) return false;
     if (!isRelevantExecutiveProject(proj.name)) return false;
     if (isExternalProject(proj)) return false;
     return true;
   });
 
-  const activeProjectNames = new Set(activeProjects.map((p) => String(p.name)));
+  const activeProjectNames = new Set(constructionProjects.map((p) => String(p.name)));
   if (activeProjectNames.size === 0 && projectFilter) {
     activeProjectNames.add(projectFilter);
   }
+  const constructionProjectKeys = new Set(Array.from(activeProjectNames).map(normalizeProjectKey));
 
-  const scopedPlots = (raw.plots || []).filter((p) => activeProjectNames.has(String(p.project_name)));
+  // 1B. Sales scope: all open non-external projects that still have unsold / non-transferred plots
+  const openCommercialProjects = (raw.projects || []).filter((proj) => {
+    if (!proj?.name) return false;
+    if (projectFilterKey) return normalizeProjectKey(proj.name) === projectFilterKey;
+    if (proj.is_closed) return false;
+    if (isExternalProject(proj)) return false;
+    return true;
+  });
+
+  const salesStockByProject: SalesProjectStockSummary[] = [];
+  for (const proj of openCommercialProjects) {
+    const pName = String(proj.name);
+    const pKey = normalizeProjectKey(pName);
+    const projPlots = (raw.plots || []).filter((pl) => normalizeProjectKey(pl.project_name) === pKey);
+    const totalPlots = projPlots.length;
+    const transferredPlots = projPlots.filter((pl) => isPlotCompleted(pl)).length;
+    const remainingPlots = Math.max(0, totalPlots - transferredPlots);
+
+    // Include if it still has plots remaining to sell/transfer, or is an active construction project / explicitly filtered
+    if (remainingPlots > 0 || constructionProjectKeys.has(pKey) || projectFilterKey !== null) {
+      salesStockByProject.push({
+        projectName: pName,
+        totalPlots,
+        transferredPlots,
+        remainingPlots,
+      });
+    }
+  }
+  // Sort sales projects by remaining plots descending, then Thai name
+  salesStockByProject.sort(
+    (a, b) => b.remainingPlots - a.remainingPlots || a.projectName.localeCompare(b.projectName, 'th'),
+  );
+
+  const salesProjectNames = new Set(salesStockByProject.map((p) => p.projectName));
+  if (salesProjectNames.size === 0 && projectFilter) {
+    salesProjectNames.add(projectFilter);
+  }
+  const salesProjectKeys = new Set(Array.from(salesProjectNames).map(normalizeProjectKey));
+  const totalRemainingPlots = salesStockByProject.reduce((sum, p) => sum + p.remainingPlots, 0);
+
+  // Scoped plots for Construction (ไอลิน 6+) vs Sales (all open commercial projects with remaining stock)
+  const scopedPlots = (raw.plots || []).filter((p) =>
+    constructionProjectKeys.has(normalizeProjectKey(p.project_name)),
+  );
   const plotById = new Map<string, RawPlotRow>();
   for (const plot of scopedPlots) {
     plotById.set(String(plot.id), plot);
+  }
+
+  const salesPlotById = new Map<string, RawPlotRow>();
+  for (const plot of raw.plots || []) {
+    const pKey = normalizeProjectKey(plot.project_name);
+    if (salesProjectKeys.has(pKey) || constructionProjectKeys.has(pKey)) {
+      salesPlotById.set(String(plot.id), plot);
+    }
   }
 
   // Group templates by house_type_id
@@ -452,10 +512,10 @@ export function computeDailySummaryReport(
     else templatesByHouseType.set(htId, [t]);
   }
 
-  // Index assignments & schedules by plot_id -> task_template_id
+  // Index assignments & schedules by plot_id -> task_template_id (for both construction & sales plots)
   const assignmentByPlotTask = new Map<string, RawAssignmentRow>();
   for (const a of raw.assignments || []) {
-    if (!plotById.has(String(a.plot_id))) continue;
+    if (!salesPlotById.has(String(a.plot_id))) continue;
     assignmentByPlotTask.set(`${a.plot_id}::${a.task_template_id}`, a);
   }
 
@@ -777,22 +837,43 @@ export function computeDailySummaryReport(
     overall.todayDeltaPct = Math.max(0, overall.actualProgressPct - overallStartSum / overallWeight);
   }
 
-  // 2. Open defects per plot (used both for transfer readiness & alerts)
+  // 2. Open defects per plot (across both construction & sales projects for accurate transfer readiness & alerts)
   const openDefectsByPlot = new Map<string, number>();
   for (const d of raw.defects || []) {
-    if (!plotById.has(String(d.plot_id))) continue;
+    if (!salesPlotById.has(String(d.plot_id))) continue;
     if (!isDefectOpen(d)) continue;
     const pid = String(d.plot_id);
     openDefectsByPlot.set(pid, (openDefectsByPlot.get(pid) || 0) + 1);
   }
 
-  // 3. Sales & CRM metrics
-  const matchesProjectScope = (projName: unknown): boolean => {
+  const computeActualProgressForPlot = (plot: RawPlotRow | null | undefined): number => {
+    if (!plot) return 0;
+    const cached = plotStats.get(String(plot.id));
+    if (cached) return cached.actualPct;
+    const templates = templatesByHouseType.get(String(plot.house_type_id)) || [];
+    let totalCost = 0;
+    let weightedActual = 0;
+    for (const tmpl of templates) {
+      if (tmpl.is_progress_counted === false) continue;
+      const assign = assignmentByPlotTask.get(`${plot.id}::${tmpl.id}`);
+      if (assign?.is_excluded) continue;
+      const cost = Number(tmpl.cost) > 0 ? Number(tmpl.cost) : 1;
+      totalCost += cost;
+      weightedActual += (Number(assign?.current_progress) || 0) * cost;
+    }
+    if (totalCost > 0) return weightedActual / totalCost;
+    return isPlotCompleted(plot) ? 100 : Number(plot.progress) || 0;
+  };
+
+  // 3. Sales & CRM metrics (all open commercial projects with remaining unsold/pending-transfer plots, excluding external)
+  const matchesSalesScope = (projName: unknown): boolean => {
     const clean = String(projName || '').trim();
     if (!clean) return !projectFilter;
-    if (projectFilter) return clean === projectFilter;
-    if (activeProjectNames.size === 0) return true;
-    return activeProjectNames.has(clean);
+    if (isExternalProject(clean, raw.projects)) return false;
+    const key = normalizeProjectKey(clean);
+    if (projectFilterKey) return key === projectFilterKey;
+    if (salesProjectKeys.size === 0) return true;
+    return salesProjectKeys.has(key);
   };
 
   const leadById = new Map<string, RawLeadRow>();
@@ -800,7 +881,7 @@ export function computeDailySummaryReport(
     leadById.set(String(lead.id), lead);
   }
 
-  const scopedLeads = (raw.leads || []).filter((lead) => matchesProjectScope(lead.project_name));
+  const scopedLeads = (raw.leads || []).filter((lead) => matchesSalesScope(lead.project_name));
 
   let leadsToday = 0;
   let leadsMtd = 0;
@@ -865,7 +946,7 @@ export function computeDailySummaryReport(
   for (const v of raw.leadVisits || []) {
     const vDay = toBangkokDateString(v.visited_at || v.visit_date || v.created_at);
     if (vDay !== window.dateStr) continue;
-    if (projectFilter && v.project_name && String(v.project_name) !== projectFilter) continue;
+    if (v.project_name && !matchesSalesScope(v.project_name)) continue;
     const lid = v.lead_id ? String(v.lead_id) : null;
     if (lid && visitedLeadIdsToday.has(lid)) continue;
     extraVisitsToday++;
@@ -875,10 +956,10 @@ export function computeDailySummaryReport(
   const upcomingTransfersMap = new Map<string, TransferScheduleItem>();
 
   for (const sale of raw.sales || []) {
-    const plot = sale.plot_id ? plotById.get(String(sale.plot_id)) : null;
+    const plot = sale.plot_id ? salesPlotById.get(String(sale.plot_id)) : null;
     const lead = sale.lead_id ? leadById.get(String(sale.lead_id)) : null;
     const projName = String(plot?.project_name || lead?.project_name || '').trim();
-    if (!matchesProjectScope(projName)) continue;
+    if (!matchesSalesScope(projName)) continue;
 
     const cancelled = isCancelledStatus(sale.contract_status, sale.crm_stage);
     const transferred = isTransferredStatus(sale.contract_status, lead?.crm_status, sale.crm_stage);
@@ -907,11 +988,10 @@ export function computeDailySummaryReport(
 
     const plotId = String(sale.plot_id || sale.id);
     const plotLabel = String(plot?.plot_name || plot?.id || lead?.interested_plot_name || 'ไม่ระบุแปลง');
-    const stat = plot ? plotStats.get(String(plot.id)) : undefined;
-    const houseProgressPct = stat ? stat.actualPct : Number(plot?.progress) || 0;
+    const houseProgressPct = computeActualProgressForPlot(plot);
     const openDefectsCount = plot ? openDefectsByPlot.get(String(plot.id)) || 0 : 0;
     const isHouseReady =
-      (stat ? stat.isCompleted : houseProgressPct >= 100) && openDefectsCount === 0;
+      ((plot ? isPlotCompleted(plot) : false) || houseProgressPct >= 100) && openDefectsCount === 0;
 
     const isTransferredToday = actualTransferDay === window.dateStr;
     const isExpectedToday = !transferred && expectedTransferDay === window.dateStr;
@@ -961,7 +1041,7 @@ export function computeDailySummaryReport(
     if (tDay !== window.dateStr) continue;
     const pid = String(lead.interested_plot_id || lead.id);
     if (transfersTodayMap.has(pid)) continue;
-    const plot = lead.interested_plot_id ? plotById.get(String(lead.interested_plot_id)) : null;
+    const plot = lead.interested_plot_id ? salesPlotById.get(String(lead.interested_plot_id)) : null;
     transfersTodayMap.set(pid, {
       plotId: pid,
       plotLabel: String(plot?.plot_name || lead.interested_plot_name || 'ไม่ระบุแปลง'),
@@ -990,7 +1070,7 @@ export function computeDailySummaryReport(
   let customerVoicesToday = 0;
   let lowScoreVoicesToday = 0;
   for (const cv of raw.customerVoices || []) {
-    if (!matchesProjectScope(cv.project_name)) continue;
+    if (!matchesSalesScope(cv.project_name)) continue;
     const cvDay = toBangkokDateString(cv.survey_date || cv.created_at);
     if (cvDay !== window.dateStr) continue;
     customerVoicesToday++;
@@ -1056,6 +1136,8 @@ export function computeDailySummaryReport(
   }
 
   const sales: SalesSummaryMetrics = {
+    includedProjects: salesStockByProject,
+    totalRemainingPlots,
     leadsToday,
     visitsToday: visitedLeadIdsToday.size + extraVisitsToday,
     bookingsToday: bookedKeysToday.size,

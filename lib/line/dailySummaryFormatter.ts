@@ -36,11 +36,11 @@ function formatTransferReadiness(item: TransferScheduleItem): string {
   return issues.join(', ');
 }
 
-function formatConstructionBlock(c: ProjectConstructionMetrics, showHeader = true): string[] {
-  const lines: string[] = [];
-  if (showHeader) {
-    lines.push('🏗️ ฝั่งก่อสร้าง');
-  }
+function formatConstructionBlock(
+  c: ProjectConstructionMetrics,
+  headerLabel = '🏗️ ฝั่งก่อสร้าง',
+): string[] {
+  const lines: string[] = [headerLabel];
 
   const varianceIcon = c.variancePct >= 0 ? '✅' : c.variancePct <= -5 ? '🔴' : '🟡';
   lines.push(
@@ -80,22 +80,27 @@ function formatConstructionBlock(c: ProjectConstructionMetrics, showHeader = tru
  */
 export function formatDailySummaryText(report: DailySummaryReport): string {
   const thaiDate = formatThaiShortDate(report.reportDate, true);
-  const scopeLabel = report.projectFilter
+  const constructionScopeLabel = report.projectFilter
     ? `โครงการ: ${report.projectFilter}`
     : report.projectsConstruction.length === 1
       ? `โครงการ: ${report.projectsConstruction[0].projectName}`
-      : `ภาพรวมทุกโครงการ (${report.projectsConstruction.length} โครงการ)`;
+      : `ภาพรวมก่อสร้าง (${report.projectsConstruction.length} โครงการ)`;
 
   const lines: string[] = [
     `📊 สรุปรายวัน BuildTrack | ${thaiDate} (19:00 น.)`,
-    scopeLabel,
     '',
   ];
 
-  // 1. Construction & QC (Overall)
-  lines.push(...formatConstructionBlock(report.overallConstruction, true));
+  // 1. Construction & QC (Projects from ไอลิน 6 onwards)
+  const constructionHeader = report.projectFilter
+    ? `🏗️ ฝั่งก่อสร้าง (${report.projectFilter})`
+    : report.projectsConstruction.length === 1
+      ? `🏗️ ฝั่งก่อสร้าง (${report.projectsConstruction[0].projectName})`
+      : `🏗️ ฝั่งก่อสร้าง (${constructionScopeLabel})`;
 
-  // Per-project compact breakdown when tracking multiple active projects
+  lines.push(...formatConstructionBlock(report.overallConstruction, constructionHeader));
+
+  // Per-project compact breakdown when tracking multiple active construction projects (e.g., ไอลิน6 + ไอลิน7)
   if (!report.projectFilter && report.projectsConstruction.length > 1) {
     lines.push('📌 แยกรายโครงการ:');
     for (const proj of report.projectsConstruction) {
@@ -116,10 +121,19 @@ export function formatDailySummaryText(report: DailySummaryReport): string {
     }
   }
 
-  // 2. Sales & CRM
+  // 2. Sales & CRM (All open projects with remaining unsold/pending-transfer units, excluding external sites)
   const s = report.sales;
+  const showSalesProjectPrefix = !report.projectFilter && s.includedProjects.length > 1;
+  const salesHeader = report.projectFilter
+    ? `💼 ฝั่งขาย (${report.projectFilter})`
+    : s.includedProjects.length > 1
+      ? `💼 ฝั่งขาย (รวม ${s.includedProjects.length} โครงการที่ยังเปิดขาย)`
+      : s.includedProjects.length === 1
+        ? `💼 ฝั่งขาย (${s.includedProjects[0].projectName})`
+        : '💼 ฝั่งขาย';
+
   lines.push('');
-  lines.push('💼 ฝั่งขาย');
+  lines.push(salesHeader);
 
   const todayFunnelParts = [
     `Lead ใหม่ ${s.leadsToday}`,
@@ -138,6 +152,15 @@ export function formatDailySummaryText(report: DailySummaryReport): string {
     `• สะสมเดือนนี้: Lead ${s.leadsMtd} | จอง ${s.bookingsMtd} แปลง | โอน ${s.transfersMtd} แปลง`,
   );
 
+  if (s.includedProjects.length > 0 && s.totalRemainingPlots > 0) {
+    const breakdown = s.includedProjects
+      .filter((p) => p.remainingPlots > 0)
+      .map((p) => `${p.projectName}: ${p.remainingPlots}`)
+      .join(' | ');
+    const breakdownSuffix = breakdown ? ` (${breakdown})` : '';
+    lines.push(`• คงเหลือยังไม่โอน: ${s.totalRemainingPlots} แปลง${breakdownSuffix}`);
+  }
+
   // Alert-only: SLA breach / uncontacted leads > 24h
   if (s.slaBreachCount > 0) {
     lines.push(`• ⏰ ค้างติดตาม (ยังไม่ติดต่อ >24 ชม.): ${s.slaBreachCount} ราย`);
@@ -147,7 +170,7 @@ export function formatDailySummaryText(report: DailySummaryReport): string {
   if (s.transfersToday.length > 0) {
     lines.push('🏠 โอน / คาดการณ์โอนวันนี้:');
     for (const item of s.transfersToday.slice(0, 6)) {
-      const projPrefix = report.projectsConstruction.length > 1 ? `[${item.projectName}] ` : '';
+      const projPrefix = showSalesProjectPrefix ? `[${item.projectName}] ` : '';
       const custPart = item.customerName ? ` (${item.customerName})` : '';
       lines.push(`  - ${projPrefix}แปลง ${item.plotLabel}${custPart}: ${formatTransferReadiness(item)}`);
     }
@@ -157,7 +180,7 @@ export function formatDailySummaryText(report: DailySummaryReport): string {
   if (s.upcomingTransfers7Days.length > 0) {
     lines.push(`📅 คาดการณ์โอนใน 7 วัน (${s.upcomingTransfers7Days.length} แปลง):`);
     for (const item of s.upcomingTransfers7Days.slice(0, 6)) {
-      const projPrefix = report.projectsConstruction.length > 1 ? `[${item.projectName}] ` : '';
+      const projPrefix = showSalesProjectPrefix ? `[${item.projectName}] ` : '';
       const dateShort = item.expectedTransferDate ? formatThaiShortDate(item.expectedTransferDate, false) : '-';
       lines.push(
         `  - ${projPrefix}แปลง ${item.plotLabel} (${dateShort}): ${formatTransferReadiness(item)}`,

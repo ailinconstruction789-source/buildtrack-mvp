@@ -227,15 +227,96 @@ describe('computeDailySummaryReport & formatDailySummaryText', () => {
 
     const text = formatDailySummaryText(report);
     expect(text).toContain('📊 สรุปรายวัน BuildTrack | 28 พ.ย. 2569 (19:00 น.)');
-    expect(text).toContain('โครงการ: ไอลิน 6');
+    expect(text).toContain('🏗️ ฝั่งก่อสร้าง (ไอลิน 6)');
     expect(text).toContain('ความก้าวหน้าวันนี้: +5% | สะสม: 90% (แผน 100% | -10% 🔴)');
     expect(text).toContain('QC ค้างสะสม: 2 งาน (ค้าง >3 วัน: 1 | รอ PE: 1)');
     expect(text).toContain('แปลง A-12 (ไอลิน 6) ค้างแก้ Defect 2 รายการ (นัดโอนใน 5 วัน)');
+    expect(text).toContain('💼 ฝั่งขาย (ไอลิน 6)');
     expect(text).toContain('Lead ใหม่ 1 | เข้าชม 2 | จอง 1');
+    expect(text).toContain('คงเหลือยังไม่โอน: 1 แปลง (ไอลิน 6: 1)');
     expect(text).toContain('ค้างติดตาม (ยังไม่ติดต่อ >24 ชม.): 1 ราย');
     expect(text).toContain('แปลง B-04 (คุณวิชัย): โอนสำเร็จ ✅');
     expect(text).toContain('แปลง A-12 (3 ธ.ค.): รอแก้ Defect 2 รายการ, งานก่อสร้าง 80%');
     expect(text).toContain('🔗 ดูรายละเอียดเพิ่มเติม: https://buildtrack.vercel.app');
+  });
+
+  it('scopes construction to ไอลิน 6+ while aggregating sales across all open projects with remaining stock (excluding external sites)', () => {
+    const raw: DailySummaryRawData = {
+      ...createEmptyRawData(),
+      projects: [
+        { name: 'ไอลิน6', is_closed: false, is_external: false },
+        { name: 'ไอลิน 4', is_closed: false, is_external: false }, // open with remaining stock -> included in sales, excluded in construction
+        { name: 'โยริว', is_closed: false, is_external: false },   // open with remaining stock -> included in sales, excluded in construction
+        { name: 'ไอลิน 2', is_closed: true, is_external: false },  // closed -> excluded from both
+        { name: 'บ้านคุณโอ', is_closed: false, is_external: true }, // external -> excluded from both
+      ],
+      plots: [
+        { id: 'A6-1', plot_name: 'A-01', project_name: 'ไอลิน6', house_type_id: 'ht1', is_completed: false },
+        { id: 'A6-2', plot_name: 'A-02', project_name: 'ไอลิน6', house_type_id: 'ht1', is_completed: false },
+        { id: 'A4-1', plot_name: 'C-09', project_name: 'ไอลิน 4', house_type_id: 'ht1', is_completed: false },
+        { id: 'A4-2', plot_name: 'C-10', project_name: 'ไอลิน 4', house_type_id: 'ht1', is_completed: true },
+        { id: 'YR-1', plot_name: 'Y-01', project_name: 'โยริว', house_type_id: 'ht1', is_completed: false },
+        { id: 'A2-1', plot_name: 'OLD-1', project_name: 'ไอลิน 2', house_type_id: 'ht1', is_completed: true },
+        { id: 'EXT-1', plot_name: 'O-01', project_name: 'บ้านคุณโอ', house_type_id: 'ht1', is_completed: false },
+      ],
+      taskTemplates: [
+        { id: 't1', house_type_id: 'ht1', task_name: 'โครงสร้าง', cost: 100, is_progress_counted: true },
+      ],
+      assignments: [
+        { plot_id: 'A6-1', task_template_id: 't1', current_progress: 50 },
+        { plot_id: 'A6-2', task_template_id: 't1', current_progress: 50 },
+        { plot_id: 'A4-1', task_template_id: 't1', current_progress: 100 }, // should NOT affect construction average (50%)
+        { plot_id: 'YR-1', task_template_id: 't1', current_progress: 100 },
+      ],
+      defects: [
+        { id: 'd-a4', plot_id: 'A4-1', status: 'open', created_at: '2026-11-27T10:00:00+07:00' },
+      ],
+      leads: [
+        // Space variant 'ไอลิน 6' should match 'ไอลิน6'
+        { id: 'l-a6', project_name: 'ไอลิน 6', customer_name: 'ลูกค้าไอลิน6', lead_date: '2026-11-28T10:00:00+07:00', contacted_date: '2026-11-28T10:30:00+07:00' },
+        { id: 'l-a4', project_name: 'ไอลิน 4', customer_name: 'ลูกค้าไอลิน4', lead_date: '2026-11-28T11:00:00+07:00', contacted_date: '2026-11-28T11:10:00+07:00', actual_visit_date: '2026-11-28T13:00:00+07:00' },
+        { id: 'l-yr', project_name: 'โยริว', customer_name: 'ลูกค้าโยริว', lead_date: '2026-11-28T12:00:00+07:00', contacted_date: '2026-11-28T12:10:00+07:00' },
+        // External project lead MUST be excluded
+        { id: 'l-ext', project_name: 'บ้านคุณโอ', customer_name: 'ลูกค้างานนอก', lead_date: '2026-11-28T12:00:00+07:00' },
+      ],
+      sales: [
+        {
+          id: 's-a4',
+          lead_id: 'l-a4',
+          plot_id: 'A4-1',
+          contract_status: 'Contracted',
+          bank_status: 'Approved',
+          expected_transfer_date: '2026-11-30', // in 2 days on ไอลิน 4
+          created_at: '2026-11-15T10:00:00+07:00',
+        },
+      ],
+    };
+
+    const report = computeDailySummaryReport(raw, { reportDate: '2026-11-28' });
+
+    // Construction scope: ONLY ไอลิน6 (progress = 50%, not polluted by ไอลิน 4 / โยริว)
+    expect(report.projectsConstruction.map((p) => p.projectName)).toEqual(['ไอลิน6']);
+    expect(report.overallConstruction.totalPlots).toBe(2);
+    expect(report.overallConstruction.actualProgressPct).toBeCloseTo(50, 1);
+
+    // Sales scope: ไอลิน6 (2), โยริว (1), ไอลิน 4 (1) — excludes บ้านคุณโอ & ไอลิน 2 (sorted by remaining desc, then Thai collation)
+    expect(report.sales.includedProjects.map((p) => p.projectName)).toEqual(['ไอลิน6', 'โยริว', 'ไอลิน 4']);
+    expect(report.sales.totalRemainingPlots).toBe(4);
+    expect(report.sales.leadsToday).toBe(3); // ไอลิน6 + ไอลิน 4 + โยริว (not บ้านคุณโอ)
+    expect(report.sales.visitsToday).toBe(1);
+    expect(report.sales.upcomingTransfers7Days).toHaveLength(1);
+    expect(report.sales.upcomingTransfers7Days[0].projectName).toBe('ไอลิน 4');
+    expect(report.sales.upcomingTransfers7Days[0].openDefectsCount).toBe(1);
+
+    // Defect alert on upcoming ไอลิน 4 transfer should be surfaced
+    expect(report.urgentAlerts.some((a) => a.message.includes('C-09') && a.message.includes('ไอลิน 4'))).toBe(true);
+
+    const text = formatDailySummaryText(report);
+    expect(text).toContain('🏗️ ฝั่งก่อสร้าง (ไอลิน6)');
+    expect(text).toContain('💼 ฝั่งขาย (รวม 3 โครงการที่ยังเปิดขาย)');
+    expect(text).toContain('คงเหลือยังไม่โอน: 4 แปลง (ไอลิน6: 2 | โยริว: 1 | ไอลิน 4: 1)');
+    expect(text).toContain('[ไอลิน 4] แปลง C-09 (30 พ.ย.): รอแก้ Defect 1 รายการ');
+    expect(text).not.toContain('บ้านคุณโอ');
   });
 
   it('omits alert-only sections when counts are zero', () => {
